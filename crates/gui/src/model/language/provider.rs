@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
-    io::{Read, Write},
+    io::Read,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, OnceLock},
     time::Duration,
@@ -231,21 +231,8 @@ fn read_cached(spec: &Spec, root: &Path) -> Result<Option<(Vec<u8>, String)>> {
 }
 
 fn save(spec: &Spec, root: &Path, bundle: &Bundle) -> Result<()> {
-    std::fs::create_dir_all(root)?;
     let target = root.join(format!("{}.json", spec.name));
-    let temporary = root.join(format!(".{}-{}.part", spec.name, std::process::id()));
-    let result = (|| -> Result<()> {
-        let mut file = std::fs::File::create(&temporary)?;
-        serde_json::to_writer(&mut file, bundle)?;
-        file.flush()?;
-        file.sync_all()?;
-        std::fs::rename(&temporary, target)?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(temporary);
-    }
-    result
+    Ok(artifact::fs::save(&target, serde_json::to_vec(bundle)?)?)
 }
 
 fn download(asset: &Asset, progress: &mut dyn FnMut(u64)) -> Result<Vec<u8>> {

@@ -5,6 +5,7 @@
 //! `use super::*`: these methods work on the same struct and reach the same
 //! names as the rest of it.
 use super::*;
+use artifact::kind::Kind;
 
 impl Workspace {
     /// A fresh table in the active project, opened as it lands.
@@ -51,7 +52,7 @@ impl Workspace {
         project.reload_tables();
         // Found by key rather than taken as a known row: the list is ordered by
         // age, and where the newest lands is the list's business, not this one's.
-        project.tables.iter().position(|table| table.key == key)
+        project.table_ix(&key)
     }
 
     /// Every project's tables are on show, so picking one brings its project
@@ -67,7 +68,7 @@ impl Workspace {
         open.reload_page();
         let id = open.tables[ix].key.clone();
         self.active = Some(project);
-        self.remember(project, state::Kind::Table, id, cx);
+        self.remember(project, Kind::Table, id, cx);
         cx.notify();
     }
 

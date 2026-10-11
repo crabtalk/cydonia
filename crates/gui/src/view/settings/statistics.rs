@@ -6,7 +6,10 @@ use crate::{
         prices::{self, Prices},
         statistics::{Logs, RANGES, Spend, Summary, Tokens},
     },
-    view::settings::{GROUP_GAP, LABEL_GAP, SettingsWindow},
+    view::{
+        kit::text::{grouped, tokens},
+        settings::{GROUP_GAP, LABEL_GAP, SettingsWindow},
+    },
 };
 use bezel::{
     gpui::{self, AnyElement, App, Context, Global, Hsla, SharedString, Task, div, prelude::*, px},
@@ -476,28 +479,7 @@ fn cached(t: &Tokens) -> Option<f64> {
     (input > 0).then(|| t.cache_read as f64 * 100. / input as f64)
 }
 
-fn count(n: u64) -> String {
-    let digits = n.to_string();
-    let mut out = String::new();
-    for (ix, ch) in digits.chars().enumerate() {
-        if ix > 0 && (digits.len() - ix).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(ch);
-    }
-    out
-}
-
-fn tokens(n: u64) -> String {
-    match n {
-        0..1_000 => n.to_string(),
-        1_000..1_000_000 => format!("{:.1}K", n as f64 / 1e3),
-        1_000_000..1_000_000_000 => format!("{:.1}M", n as f64 / 1e6),
-        _ => format!("{:.2}B", n as f64 / 1e9),
-    }
-}
-
 fn dollars(cost: f64) -> String {
     let cents = (cost * 100.).round() as u64;
-    format!("${}.{:02}", count(cents / 100), cents % 100)
+    format!("${}.{:02}", grouped(cents / 100), cents % 100)
 }

@@ -10,22 +10,9 @@
 //! the move.
 
 use crate::model::settings;
+use artifact::kind::Kind;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf};
-
-/// The four things a project holds. Which one a launch lands on is the last
-/// one that was open, so the window comes back where it was left.
-///
-/// A space is not among them: it spans projects and is kept beside this file
-/// rather than in any of them — see [`crate::model::spaces`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Kind {
-    Session,
-    Board,
-    Article,
-    Table,
-}
 
 /// What a project's list is ordered by, under the pins.
 ///
@@ -147,10 +134,7 @@ pub(crate) fn path() -> Option<PathBuf> {
 /// otherwise leave a tab no agent can spawn in. The active project is resolved
 /// by path first, so dropping an earlier one doesn't shift it.
 pub fn restore() -> State {
-    let stored: State = path()
-        .and_then(|path| std::fs::read_to_string(path).ok())
-        .and_then(|body| toml::from_str(&body).ok())
-        .unwrap_or_default();
+    let stored: State = settings::read_toml(path());
     let active = stored.projects.get(stored.active).cloned();
     let projects: Vec<PathBuf> = stored
         .projects
@@ -181,13 +165,7 @@ pub fn restore() -> State {
 /// Best effort: a state file that cannot be written is not worth failing a
 /// click over.
 pub fn save(state: &State) {
-    let Some(path) = path() else {
-        return;
-    };
-    if let Ok(body) = toml::to_string_pretty(state)
-        && let Some(dir) = path.parent()
-    {
-        let _ = std::fs::create_dir_all(dir);
-        let _ = std::fs::write(&path, body);
+    if let Some(path) = path() {
+        let _ = settings::write_toml(&path, state);
     }
 }

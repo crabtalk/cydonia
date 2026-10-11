@@ -2,6 +2,7 @@
 
 mod common;
 
+use artifact::kind::Kind;
 use common::{Rail, Scratch, refused, said};
 use cydonia_mcp::rail::Change;
 use serde_json::json;
@@ -17,7 +18,7 @@ fn a_session_is_sent_to_by_its_reference() {
     let filed: artifact::session::record::Record =
         serde_json::from_value(json!({"id": record, "agent": "claude", "title": "t", "name": null, "updated": 0, "items": []})).unwrap();
     store.save_session(&filed).unwrap();
-    let number = artifact::entry::number(scratch.path(), "session", &record).unwrap();
+    let number = artifact::entry::number(scratch.path(), Kind::Session, &record).unwrap();
 
     said(server.call(
         "session_send",
@@ -121,7 +122,7 @@ fn filed(scratch: &Scratch, said: &[(&str, &str)]) -> String {
     store.save_session(&filed).unwrap();
     format!(
         "#{}",
-        artifact::entry::number(scratch.path(), "session", &record).unwrap()
+        artifact::entry::number(scratch.path(), Kind::Session, &record).unwrap()
     )
 }
 
@@ -245,12 +246,12 @@ fn a_message_from_a_session_is_signed_with_its_turn() {
     let to = filed(&scratch, &[("hello", "hi")]);
     let caller = artifact::entry::Registry::open(scratch.path())
         .unwrap()
-        .resolve("session", from[1..].parse().unwrap())
+        .resolve(Kind::Session, from[1..].parse().unwrap())
         .unwrap()
         .unwrap();
     let target = artifact::entry::Registry::open(scratch.path())
         .unwrap()
-        .resolve("session", to[1..].parse().unwrap())
+        .resolve(Kind::Session, to[1..].parse().unwrap())
         .unwrap()
         .unwrap();
 

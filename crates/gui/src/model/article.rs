@@ -17,6 +17,7 @@ use crate::model::{
     workspace::Workspace,
 };
 use crate::view::component::{file::pictures::Pictures, margin::Glide};
+use artifact::kind::Kind;
 use artifact::project::Project as _;
 use artifact::{
     article as layout,
@@ -153,7 +154,7 @@ impl Article {
     fn new(project: &Path, store: Store, held: layout::Article) -> Self {
         let properties = store.properties(&held.id);
         Self {
-            number: store.number("article", &held.id).ok(),
+            number: store.number(Kind::Article, &held.id).ok(),
             path: layout::content(&layout::dir(project).join(&held.id)),
             cover: held.cover.as_ref().and_then(file_url::to_path),
             title: properties.title,

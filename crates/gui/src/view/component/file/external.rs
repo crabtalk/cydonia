@@ -308,17 +308,25 @@ fn output(result: std::process::Output) -> Result<String> {
         .to_owned())
 }
 
+/// What `script` lists for `file`, cydonia left out and icons decoded.
 #[cfg(target_os = "macos")]
-fn applications(file: &Path) -> Result<Vec<Application>> {
+fn listed(script: &str, file: &Path) -> Result<Vec<Application>> {
     let json = output(
         Command::new("/usr/bin/osascript")
-            .args(["-l", "JavaScript", "-e", APPLICATIONS])
+            .args(["-l", "JavaScript", "-e", script])
             .arg(file)
             .output()
             .context("Could not find applications")?,
     )?;
     let mut apps: Vec<Application> = serde_json::from_str(&json)?;
     apps.retain(|app| !app.name.eq_ignore_ascii_case("cydonia"));
+    decode_icons(&mut apps);
+    Ok(apps)
+}
+
+#[cfg(target_os = "macos")]
+fn applications(file: &Path) -> Result<Vec<Application>> {
+    let mut apps = listed(APPLICATIONS, file)?;
     apps.sort_by_cached_key(|app| {
         (
             !app.kind.is_empty(),
@@ -326,7 +334,6 @@ fn applications(file: &Path) -> Result<Vec<Application>> {
             app.name.to_lowercase(),
         )
     });
-    decode_icons(&mut apps);
     apps.dedup_by(|a, b| a.path == b.path);
     Ok(apps)
 }
@@ -346,17 +353,7 @@ fn decode_icons(apps: &mut [Application]) {
 /// first. `file` need not exist: only its extension is read.
 #[cfg(target_os = "macos")]
 pub(crate) fn image_applications(file: &Path) -> Result<Vec<Application>> {
-    let json = output(
-        Command::new("/usr/bin/osascript")
-            .args(["-l", "JavaScript", "-e", IMAGE_APPLICATIONS])
-            .arg(file)
-            .output()
-            .context("Could not find applications")?,
-    )?;
-    let mut apps: Vec<Application> = serde_json::from_str(&json)?;
-    apps.retain(|app| !app.name.eq_ignore_ascii_case("cydonia"));
-    decode_icons(&mut apps);
-    Ok(apps)
+    listed(IMAGE_APPLICATIONS, file)
 }
 
 /// Off macOS nothing lists what opens a picture: the desktop's default only.
@@ -420,12 +417,21 @@ pub(crate) const LISTS: bool = cfg!(target_os = "macos");
 
 /// What showing a file in its folder is called here.
 pub(crate) const REVEAL: &str = if cfg!(target_os = "macos") {
-    "Show in Finder"
+    "Reveal in Finder"
 } else if cfg!(windows) {
     "Show in Explorer"
 } else {
-    "Open containing folder"
+    "Open in File Manager"
 };
+
+/// [`show`], off the main thread.
+pub(crate) fn reveal(path: std::path::PathBuf, cx: &bezel::gpui::App) {
+    cx.background_executor()
+        .spawn(async move {
+            let _ = show(&path);
+        })
+        .detach();
+}
 
 /// The menu row that shows a file in its folder.
 pub(crate) fn reveal_row(theme: &Theme, id: impl Into<ElementId>) -> Stateful<Div> {

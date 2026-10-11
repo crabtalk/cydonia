@@ -29,7 +29,7 @@ pub fn read(params: Option<&Value>, hidden: &[&str]) -> Result<Value, Error> {
         .and_then(Value::as_str)
         .ok_or_else(|| Error::invalid_params("uri is required, as a string"))?;
     let resource = uri
-        .strip_prefix("cydonia://resources/")
+        .strip_prefix(prompts::resources::PREFIX)
         .filter(|name| !hidden.contains(name))
         .and_then(prompts::resources::read)
         .ok_or_else(|| {

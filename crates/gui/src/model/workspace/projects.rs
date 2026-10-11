@@ -5,6 +5,7 @@
 //! `use super::*`: these methods work on the same struct and reach the same
 //! names as the rest of it.
 use super::*;
+use artifact::kind::Kind;
 
 impl Workspace {
     /// The projects on the rail, in the order the sidebar lists them.
@@ -126,12 +127,13 @@ impl Workspace {
     /// `/private/tmp/x` from a tool are one project, and opening the second
     /// would otherwise list the same directory twice.
     pub fn project_at(&self, path: &Path) -> Option<usize> {
+        let settled = path.canonicalize().ok();
         self.projects.iter().position(|open| {
             open.path == path
                 || open
                     .path
                     .canonicalize()
-                    .is_ok_and(|settled| settled == path)
+                    .is_ok_and(|held| held == path || settled.as_ref() == Some(&held))
         })
     }
 
@@ -194,17 +196,17 @@ impl Workspace {
         };
         let at = |path: Option<&Path>| path.is_some_and(|path| path.to_string_lossy() == id);
         match kind {
-            state::Kind::Session => {
+            Kind::Session => {
                 project.active = project
                     .sessions
                     .iter()
                     .find(|chat| chat.record.as_deref() == Some(id.as_str()))
                     .map(|chat| chat.id);
             }
-            state::Kind::Board => {
+            Kind::Board => {
                 project.board = project.boards.iter().position(|board| board.id == id);
             }
-            state::Kind::Article => {
+            Kind::Article => {
                 project.article = project
                     .articles
                     .iter()
@@ -213,8 +215,8 @@ impl Workspace {
                     project.articles[at].open(text_size, cx);
                 }
             }
-            state::Kind::Table => {
-                project.table = project.tables.iter().position(|table| table.key == id);
+            Kind::Table => {
+                project.table = project.table_ix(&id);
                 project.reload_page();
             }
         }
@@ -224,7 +226,7 @@ impl Workspace {
         let woken = self
             .projects
             .get(ix)
-            .filter(|_| matches!(kind, state::Kind::Session))
+            .filter(|_| matches!(kind, Kind::Session))
             .and_then(|open| open.active);
         if let Some(id) = woken {
             self.wake_session(id, cx);
@@ -235,7 +237,7 @@ impl Workspace {
     /// What the active project was last showing, by kind. What the window puts
     /// its pane on when it lands here — [`Self::open_last_entry`] opens the
     /// entry, and this is how the view learns which one of the four it was.
-    pub fn landing(&self) -> Option<state::Kind> {
+    pub fn landing(&self) -> Option<Kind> {
         let open = self.active_project()?;
         self.last.get(&open.path).map(|entry| entry.kind)
     }
@@ -251,7 +253,7 @@ impl Workspace {
     pub(super) fn remember(
         &mut self,
         project: usize,
-        kind: state::Kind,
+        kind: Kind,
         id: String,
         cx: &mut Context<Self>,
     ) {
@@ -268,7 +270,7 @@ impl Workspace {
     pub(super) fn note_landing(
         &mut self,
         project: usize,
-        kind: state::Kind,
+        kind: Kind,
         id: String,
         cx: &mut Context<Self>,
     ) {
@@ -288,28 +290,25 @@ impl Workspace {
         self.drop_archived_from_spaces(cx);
     }
 
-    pub(super) fn prune_archived_for(&mut self, kind: Option<state::Kind>, cx: &mut Context<Self>) {
+    pub(super) fn prune_archived_for(&mut self, kind: Option<Kind>, cx: &mut Context<Self>) {
         for (ix, project) in self.projects.iter_mut().enumerate() {
             let active = self.active == Some(ix);
             for chat in &mut project.sessions {
-                if !(active
-                    && kind == Some(state::Kind::Session)
-                    && project.active == Some(chat.id))
-                {
+                if !(active && kind == Some(Kind::Session) && project.active == Some(chat.id)) {
                     chat.unload_history();
                 }
             }
             for (at, article) in project.articles.iter_mut().enumerate() {
-                if !(active && kind == Some(state::Kind::Article) && project.article == Some(at)) {
+                if !(active && kind == Some(Kind::Article) && project.article == Some(at)) {
                     article.unload(cx);
                 }
             }
-            project.unload_boards(if active && kind == Some(state::Kind::Board) {
+            project.unload_boards(if active && kind == Some(Kind::Board) {
                 project.board
             } else {
                 None
             });
-            if !(active && kind == Some(state::Kind::Table))
+            if !(active && kind == Some(Kind::Table))
                 && project
                     .table
                     .and_then(|at| project.tables.get(at))

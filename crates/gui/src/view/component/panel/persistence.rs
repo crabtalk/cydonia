@@ -65,9 +65,7 @@ pub(super) fn remove_saved_browsers() -> std::io::Result<()> {
     for panel in saved.projects.values_mut() {
         panel.remove_browsers();
     }
-    let temporary = path.with_extension("json.tmp");
-    std::fs::write(&temporary, serde_json::to_vec(&saved)?)?;
-    std::fs::rename(temporary, path)
+    artifact::fs::save(&path, serde_json::to_vec(&saved)?)
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -255,14 +253,8 @@ impl Cydonia {
         let Some(path) = path() else {
             return;
         };
-        if let Ok(bytes) = serde_json::to_vec(&saved)
-            && let Some(dir) = path.parent()
-            && std::fs::create_dir_all(dir).is_ok()
-        {
-            let temporary = path.with_extension("json.tmp");
-            if std::fs::write(&temporary, bytes).is_ok() {
-                let _ = std::fs::rename(temporary, path);
-            }
+        if let Ok(bytes) = serde_json::to_vec(&saved) {
+            let _ = artifact::fs::save(&path, bytes);
         }
     }
 }

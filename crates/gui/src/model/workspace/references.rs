@@ -5,8 +5,8 @@ use super::{Showing, Workspace};
 use crate::model::{article::Disk, project::Project};
 use artifact::{
     article::anchor,
+    kind::Kind,
     reference::{self, Span, Target, Within},
-    search::Kind,
 };
 use bezel::gpui::{App, Entity, Global, WeakEntity};
 use std::{ops::Range, path::PathBuf, rc::Rc};
@@ -86,6 +86,7 @@ impl Workspace {
         let Some((kind, showing, title)) = entry(project, number) else {
             return Err(format!("Nothing is {text}"));
         };
+        reference::fits(text, kind, within)?;
         let part = match (within, &showing) {
             (None, _) => None,
             (Some(Within::Span(turns)), Showing::Session(_)) => Some(Part::Turns(turns)),
@@ -94,10 +95,7 @@ impl Workspace {
                 let disk = article.map(|article| article.disk()).unwrap_or_default();
                 Some(Part::Passage(passage(disk, within, text)?))
             }
-            (Some(Within::Heading(_)), Showing::Session(_)) => {
-                return Err(format!("{text} names a heading, which only an article has"));
-            }
-            (Some(_), _) => return Err(format!("{text} names part of an entry that has none")),
+            (Some(_), _) => unreachable!("refused by `reference::fits`"),
         };
         Ok(Resolved {
             project: project.path.clone(),
@@ -114,7 +112,7 @@ impl Workspace {
             Some(name) => self
                 .projects
                 .iter()
-                .find(|project| project.path.file_name().is_some_and(|last| last == name)),
+                .find(|project| reference::names(&project.path, name)),
             None => self.active_project(),
         }
     }
@@ -172,19 +170,10 @@ fn entry(project: &Project, number: u64) -> Option<(Kind, Showing, String)> {
 /// The card `key-handle` names in `project`, as a part of its board. `text`
 /// is the reference, for the refusal.
 fn card(project: &Project, key: &str, handle: u64, text: &str) -> Result<Resolved, String> {
-    let Some(board) = project
-        .boards
-        .iter()
-        .find(|board| board.key.eq_ignore_ascii_case(key))
-    else {
+    let Some(board) = project.boards.iter().find(|board| board.keyed(key)) else {
         return Err(format!("No board has the key {key}"));
     };
-    let Some(found) = board
-        .columns
-        .iter()
-        .flat_map(|column| column.cards.iter())
-        .find(|card| card.handle == Some(handle))
-    else {
+    let Some(found) = board.card_at(handle) else {
         return Err(format!("Nothing is {text}"));
     };
     let Some(number) = board.number else {
@@ -209,25 +198,12 @@ fn card(project: &Project, key: &str, handle: u64, text: &str) -> Result<Resolve
 /// The blocks of `disk` a span of lines or a heading names. `text` is the
 /// reference, for the refusal.
 fn passage(disk: Rc<Disk>, within: Within<'_>, text: &str) -> Result<Passage, String> {
-    let (bytes, label) = match within {
-        Within::Span(span) => {
-            let bytes = anchor::lines(&disk.text, span).ok_or_else(|| {
-                format!(
-                    "{text} starts past the article's last line, {}",
-                    disk.text.lines().count()
-                )
-            })?;
-            let label = match span.from == span.to {
-                true => format!("line {span}"),
-                false => format!("lines {span}"),
-            };
-            (bytes, label)
-        }
-        Within::Heading(name) => {
-            let (heading, bytes) = anchor::section(&disk.text, name)
-                .ok_or_else(|| format!("{text} names a heading the article does not have"))?;
-            (bytes, heading.text)
-        }
+    let (bytes, heading) = anchor::excerpt(&disk.text, within, text)?;
+    let label = match (heading, within) {
+        (Some(heading), _) => heading.text,
+        (None, Within::Span(span)) if span.from == span.to => format!("line {span}"),
+        (None, Within::Span(span)) => format!("lines {span}"),
+        (None, Within::Heading(name)) => name.to_owned(),
     };
     let first = disk
         .blocks

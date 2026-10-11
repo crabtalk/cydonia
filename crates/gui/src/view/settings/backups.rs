@@ -4,11 +4,14 @@
 //!
 //! Listed only while a backup exists.
 
-use crate::view::settings::{self, SettingsWindow};
+use crate::view::component::file::external;
+use crate::view::settings::{self, SettingsWindow, labelled};
 use artifact::backup::Backup;
+#[cfg(feature = "desktop")]
+use bezel::theme::{TextStyle, Typeset};
 use bezel::{
     gpui::{AnyElement, Context, div, prelude::*, px},
-    theme::{TextStyle, Theme, Typeset},
+    theme::Theme,
     ui::{
         icons,
         tooltip::Tooltip,
@@ -66,33 +69,26 @@ impl SettingsWindow {
         if !backup.config.is_empty() {
             meta.push("settings".into());
         }
-        let text = div()
-            .flex_1()
-            .min_w_0()
-            .flex()
-            .flex_col()
-            .child(theme.row_title(format!("cydonia {release}")))
-            .child(
-                div()
-                    .mt(px(4.))
-                    .text_style(TextStyle::Subheadline)
-                    .text_color(theme.text_muted)
-                    .child(match asking {
-                        Some(Ask::Delete) => "Delete this backup? Rolling back to this release \
-                                              will no longer be possible."
-                            .to_owned(),
-                        Some(Ask::RollBack) => format!(
-                            "Install cydonia {release} and put these files back? Changes \
-                             made since the migration are lost. cydonia quits once it is \
-                             downloaded."
-                        ),
-                        None => meta.join(" · "),
-                    }),
-            );
+        let text = labelled(
+            &theme,
+            format!("cydonia {release}"),
+            match asking {
+                Some(Ask::Delete) => "Delete this backup? Rolling back to this release \
+                                      will no longer be possible."
+                    .to_owned(),
+                Some(Ask::RollBack) => format!(
+                    "Install cydonia {release} and put these files back? Changes \
+                     made since the migration are lost. cydonia quits once it is \
+                     downloaded."
+                ),
+                None => meta.join(" · "),
+            },
+            false,
+        );
         let version = backup.version.clone();
-        let controls = match asking {
-            Some(ask) => {
-                div()
+        let controls =
+            match asking {
+                Some(ask) => div()
                     .flex_none()
                     .flex()
                     .flex_row()
@@ -120,52 +116,44 @@ impl SettingsWindow {
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.answer_backup(&version, ask, cx)
                             })),
-                    )
-            }
-            None => {
-                let dir = backup.dir.clone();
-                let (delete, roll) = (backup.version.clone(), backup.version.clone());
-                div()
-                    .flex_none()
-                    .flex()
-                    .flex_row()
-                    .gap(px(2.))
-                    .child(
-                        theme
-                            .icon_button(icons::files::FolderOpen, ButtonStyle::Ghost, None)
-                            .id(("backup-reveal", ix))
-                            .tooltip(|window, cx| Tooltip::text("Reveal in Finder", window, cx))
-                            .on_click(move |_, _, cx| {
-                                let dir = dir.clone();
-                                cx.background_executor()
-                                    .spawn(async move {
-                                        let _ = crate::view::component::file::external::show(&dir);
-                                    })
-                                    .detach();
-                            }),
-                    )
-                    .children(self.can_roll_back(cx).then(|| {
-                        theme
-                            .icon_button(icons::files::ArchiveRestore, ButtonStyle::Ghost, None)
-                            .id(("backup-roll-back", ix))
-                            .tooltip(|window, cx| Tooltip::text("Roll back", window, cx))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.backup_ask = Some((roll.clone(), Ask::RollBack));
-                                cx.notify();
-                            }))
-                    }))
-                    .child(
-                        theme
-                            .icon_button(icons::files::Trash, ButtonStyle::Ghost, None)
-                            .id(("backup-delete", ix))
-                            .tooltip(|window, cx| Tooltip::text("Delete", window, cx))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.backup_ask = Some((delete.clone(), Ask::Delete));
-                                cx.notify();
-                            })),
-                    )
-            }
-        };
+                    ),
+                None => {
+                    let dir = backup.dir.clone();
+                    let (delete, roll) = (backup.version.clone(), backup.version.clone());
+                    div()
+                        .flex_none()
+                        .flex()
+                        .flex_row()
+                        .gap(px(2.))
+                        .child(
+                            theme
+                                .icon_button(icons::files::FolderOpen, ButtonStyle::Ghost, None)
+                                .id(("backup-reveal", ix))
+                                .tooltip(|window, cx| Tooltip::text(external::REVEAL, window, cx))
+                                .on_click(move |_, _, cx| external::reveal(dir.clone(), cx)),
+                        )
+                        .children(self.can_roll_back(cx).then(|| {
+                            theme
+                                .icon_button(icons::files::ArchiveRestore, ButtonStyle::Ghost, None)
+                                .id(("backup-roll-back", ix))
+                                .tooltip(|window, cx| Tooltip::text("Roll back", window, cx))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.backup_ask = Some((roll.clone(), Ask::RollBack));
+                                    cx.notify();
+                                }))
+                        }))
+                        .child(
+                            theme
+                                .icon_button(icons::files::Trash, ButtonStyle::Ghost, None)
+                                .id(("backup-delete", ix))
+                                .tooltip(|window, cx| Tooltip::text("Delete", window, cx))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.backup_ask = Some((delete.clone(), Ask::Delete));
+                                    cx.notify();
+                                })),
+                        )
+                }
+            };
         theme
             .card_row(ix == 0)
             .child(text)

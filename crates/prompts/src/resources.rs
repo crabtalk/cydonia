@@ -9,9 +9,12 @@ pub struct Resource {
     pub content: &'static str,
 }
 
+/// What every resource's URI starts with; the name follows.
+pub const PREFIX: &str = "cydonia://resources/";
+
 impl Resource {
     pub fn uri(&self) -> String {
-        format!("cydonia://resources/{}", self.name)
+        format!("{PREFIX}{}", self.name)
     }
 }
 

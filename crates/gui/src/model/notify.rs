@@ -61,11 +61,7 @@ fn body(chat: &ChatSession) -> String {
 
 /// The first line of `text`, short enough for a notification to show whole.
 fn clipped(text: &str) -> String {
-    let line = text.trim().lines().next().unwrap_or_default().trim();
-    match line.char_indices().nth(BODY) {
-        Some((at, _)) => format!("{}…", &line[..at]),
-        None => line.to_owned(),
-    }
+    artifact::text::clip(text.trim().lines().next().unwrap_or_default(), BODY)
 }
 
 /// What a press on one of these does: bring the app back, and open the session

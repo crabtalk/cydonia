@@ -19,9 +19,9 @@ pub mod comments;
 pub mod cover;
 pub mod properties;
 
-#[cfg(feature = "sqlite")]
-use crate::entry;
 use crate::project::{Project as _, fs};
+#[cfg(feature = "sqlite")]
+use crate::{entry, kind::Kind};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use url::Url;
@@ -87,10 +87,7 @@ pub fn id_of(content: &Path) -> String {
 /// This millisecond's directory, or the first after it that is not taken. Two
 /// articles made inside one millisecond is the only way that happens.
 pub fn free(dir: &Path, stamp: u128) -> PathBuf {
-    (stamp..)
-        .map(|stamp| dir.join(stamp.to_string()))
-        .find(|article| !article.exists())
-        .unwrap_or_else(|| dir.join(stamp.to_string()))
+    dir.join(crate::stamp::free(stamp, |id| dir.join(id).exists()))
 }
 
 // ── moving one to another project ────────────────────────────────
@@ -130,7 +127,7 @@ pub fn move_to(content: &Path, to: &Path) -> std::io::Result<PathBuf> {
     carry_assets(&arrived, from, to);
     carry_sessions(&id, from, &id_of(&arrived), to)?;
     #[cfg(feature = "sqlite")]
-    let _ = entry::Registry::open(from).and_then(|registry| registry.remove("article", &id));
+    let _ = entry::Registry::open(from).and_then(|registry| registry.remove(Kind::Article, &id));
     Ok(arrived)
 }
 
@@ -179,8 +176,8 @@ pub fn remove(content: &Path) -> std::io::Result<()> {
     }
     #[cfg(feature = "sqlite")]
     if let Some(project) = project {
-        let _ =
-            entry::Registry::open(&project).and_then(|registry| registry.remove("article", &id));
+        let _ = entry::Registry::open(&project)
+            .and_then(|registry| registry.remove(Kind::Article, &id));
     }
     #[cfg(not(feature = "sqlite"))]
     let _ = (id, project);

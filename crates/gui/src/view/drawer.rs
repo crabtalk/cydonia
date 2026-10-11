@@ -6,7 +6,7 @@
 
 use crate::{
     model::workspace::{Showing, references::Part},
-    view::{board::OpenCard, entry_link::load_history, root::Cydonia, sidebar::Row},
+    view::{board::OpenCard, root::Cydonia, sidebar::Row},
 };
 use artifact::space::Member;
 use bezel::{
@@ -274,7 +274,7 @@ impl Cydonia {
             } => {
                 let id = *id;
                 self.workspace
-                    .update(cx, |workspace, _| load_history(workspace, id));
+                    .update(cx, |workspace, _| workspace.load_history(id));
             }
             Row::Entry {
                 showing: Showing::Article(_),
@@ -681,7 +681,7 @@ impl Cydonia {
         };
         let title = self.label_of_row(&named.row, cx);
         let lead = vec![
-            icons::icon(crate::view::search::kind_icon(named.kind))
+            icons::icon(crate::view::kit::icon::kind_icon(named.kind))
                 .size(px(14.))
                 .text_color(theme.text_muted)
                 .into_any_element(),

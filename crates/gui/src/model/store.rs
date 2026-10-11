@@ -9,9 +9,9 @@ use anyhow::Result;
 use artifact::{
     article::{Article, comments::Comments, properties::Properties},
     board::Board,
+    kind::Kind,
     project::{Project, Watching, fs, memory},
     session::record::Record,
-    space::Kind,
 };
 use std::{
     collections::HashMap,
@@ -190,15 +190,15 @@ impl Project for Store {
         each!(self, store => store.watch(knock))
     }
 
-    fn number(&self, kind: &str, id: &str) -> Result<u64> {
+    fn number(&self, kind: Kind, id: &str) -> Result<u64> {
         each!(self, store => store.number(kind, id))
     }
 
-    fn resolve(&self, kind: &str, number: u64) -> Result<Option<String>> {
+    fn resolve(&self, kind: Kind, number: u64) -> Result<Option<String>> {
         each!(self, store => store.resolve(kind, number))
     }
 
-    fn retire(&self, kind: &str, id: &str) -> Result<()> {
+    fn retire(&self, kind: Kind, id: &str) -> Result<()> {
         each!(self, store => store.retire(kind, id))
     }
 }

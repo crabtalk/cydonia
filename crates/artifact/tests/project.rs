@@ -3,7 +3,7 @@
 mod common;
 
 use common::Scratch;
-use cydonia_artifact::{article::properties::Properties, project::Project as _, space::Kind};
+use cydonia_artifact::{article::properties::Properties, kind::Kind, project::Project as _};
 use std::fs;
 
 #[test]
@@ -72,23 +72,23 @@ fn removing_an_article_retires_its_number() {
     let scratch = Scratch::new("project-remove");
     let store = scratch.store();
     let made = store.create_article("").unwrap();
-    let number = store.number("article", &made.id).unwrap();
+    let number = store.number(Kind::Article, &made.id).unwrap();
     assert_eq!(
-        store.resolve("article", number).unwrap().as_deref(),
+        store.resolve(Kind::Article, number).unwrap().as_deref(),
         Some(made.id.as_str())
     );
     store.remove_article(&made.id).unwrap();
     assert!(store.articles().is_empty());
-    assert_eq!(store.resolve("article", number).unwrap(), None);
+    assert_eq!(store.resolve(Kind::Article, number).unwrap(), None);
 }
 
 #[test]
 fn a_retired_number_is_not_reissued() {
     let scratch = Scratch::new("project-retire");
     let store = scratch.store();
-    let first = store.number("board", "a").unwrap();
-    store.retire("board", "a").unwrap();
-    assert_ne!(store.number("board", "a").unwrap(), first);
+    let first = store.number(Kind::Board, "a").unwrap();
+    store.retire(Kind::Board, "a").unwrap();
+    assert_ne!(store.number(Kind::Board, "a").unwrap(), first);
 }
 
 #[test]

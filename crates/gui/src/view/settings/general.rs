@@ -3,9 +3,11 @@
 
 #[cfg(feature = "desktop")]
 use crate::model::update::{self, Status, Updater};
+#[cfg(feature = "desktop")]
+use crate::view::settings::labelled;
 use crate::{
     assets,
-    view::settings::{SettingsWindow, Switch},
+    view::settings::{SettingsWindow, Switch, group},
 };
 use bezel::{
     gpui::{AnyElement, Context, div, img, prelude::*, px},
@@ -16,7 +18,7 @@ use bezel::{
 use bezel::{
     gpui::{Entity, SharedString},
     motion::{Fade, Painter},
-    ui::widgets::{ButtonStyle, Buttons, Controls},
+    ui::widgets::{ButtonStyle, Buttons},
 };
 
 /// What this build is, read at compile time from `Cargo.toml` — the same
@@ -66,13 +68,13 @@ impl SettingsWindow {
                     .child(
                         theme
                             .card_row(true)
-                            .child(div().flex_1().min_w_0().child(theme.row_title("Version")))
+                            .child(theme.row_title("Version").flex_1())
                             .child(theme.badge(VERSION)),
                     )
                     .child(
                         theme
                             .card_row(false)
-                            .child(div().flex_1().min_w_0().child(theme.row_title("Commit")))
+                            .child(theme.row_title("Commit").flex_1())
                             .child(match commit_url() {
                                 Some(url) => div()
                                     .id("commit")
@@ -115,11 +117,7 @@ impl SettingsWindow {
         let on = workspace.settings.notify_turns;
         let theme = Theme::of(cx).clone();
         Some(
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(super::LABEL_GAP))
-                .child(theme.field_label("Notifications"))
+            group(&theme, "Notifications")
                 .child(
                     theme.group_box().child(
                         self.switch_row(
@@ -164,45 +162,22 @@ impl SettingsWindow {
             "Look for a release. This copy is picked up from the site."
         };
         Some(
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(super::LABEL_GAP))
-                .child(theme.field_label("Updates"))
+            group(&theme, "Updates")
                 .child(
                     theme
                         .group_box()
                         .child(
-                            theme
-                                .card_row(true)
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .flex()
-                                        .flex_col()
-                                        .child(theme.row_title("Automatic updates"))
-                                        .child(
-                                            div()
-                                                .mt(px(4.))
-                                                .truncate()
-                                                .text_style(TextStyle::Subheadline)
-                                                .text_color(theme.text_muted)
-                                                .child(blurb),
-                                        ),
-                                )
-                                .child(
-                                    div()
-                                        .id("auto-update")
-                                        .cursor_pointer()
-                                        .child(theme.toggle(auto))
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.workspace.update(cx, |workspace, cx| {
-                                                workspace.set_auto_update(!auto, cx)
-                                            });
-                                            cx.notify();
-                                        })),
-                                ),
+                            self.switch_row(
+                                Switch::new("auto-update", "Automatic updates", blurb, auto)
+                                    .first(true)
+                                    .truncate(),
+                                cx,
+                                move |this, cx| {
+                                    this.workspace.update(cx, |workspace, cx| {
+                                        workspace.set_auto_update(!auto, cx)
+                                    });
+                                },
+                            ),
                         )
                         .child(self.release_row(&updater, cx)),
                 )
@@ -247,22 +222,7 @@ impl SettingsWindow {
         let updater = updater.clone();
         theme
             .card_row(false)
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(theme.row_title(line))
-                    .child(
-                        div()
-                            .mt(px(4.))
-                            .truncate()
-                            .text_style(TextStyle::Subheadline)
-                            .text_color(theme.text_muted)
-                            .child(detail),
-                    ),
-            )
+            .child(labelled(&theme, line, detail, true))
             .child(if working {
                 div()
                     .flex_none()

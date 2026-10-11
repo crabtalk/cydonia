@@ -13,8 +13,9 @@ use crate::{
             menu::{self, Menu},
             panel::changes_toggle,
         },
+        kit::new::{self, New},
         leaf::Pane,
-        root::Cydonia,
+        root::{Cydonia, NewSession},
         sidebar::{Dragged, Row},
     },
 };
@@ -27,8 +28,7 @@ use bezel::{
     motion::Painter,
     theme::Theme,
     ui::{
-        docking, icons, menu::Item, popover, tabs, titlebar::CaptionSide, tooltip::Tooltip,
-        widgets::Content,
+        docking, icons, menu::Item, tabs, titlebar::CaptionSide, tooltip::Tooltip, widgets::Content,
     },
 };
 
@@ -41,16 +41,6 @@ use bezel::{
 pub struct SeamDrag {
     pub path: Vec<usize>,
     pub at: usize,
-}
-
-/// What a pane's `+` makes.
-#[derive(Clone, Copy)]
-enum New {
-    /// On the agent at this index of the settings.
-    Session(usize),
-    Board,
-    Article,
-    Table,
 }
 
 /// The least of a split a pane may be squeezed to. A pane thinner than this
@@ -554,15 +544,8 @@ impl Cydonia {
         pane: crate::view::leaf::Pane,
         cx: &App,
     ) -> Option<Member> {
-        use crate::view::leaf::Pane;
         let workspace = self.workspace.read(cx);
-        let open = workspace.projects.get(project)?;
-        let showing = match pane {
-            Pane::Chat => Showing::Session(open.active?),
-            Pane::Board => Showing::Board(open.boards.get(open.board?)?.id.clone()),
-            Pane::Article => Showing::Article(open.articles.get(open.article?)?.id.clone()),
-            Pane::Table => Showing::Table(open.tables.get(open.table?)?.key.clone()),
-        };
+        let showing = workspace.projects.get(project)?.selected(pane.kind())?;
         workspace.member_of(project, showing)
     }
 
@@ -905,11 +888,11 @@ impl Cydonia {
             ));
         }
         let rows = menu::sections([zoom, moves]);
-        let id = SharedString::from(format!("pane-menu-card-{key}"));
-        Some(popover::anchored_menu_below(
-            id.clone(),
-            self.menu_card(id, rows, window, cx),
-            None,
+        Some(self.menu_below(
+            SharedString::from(format!("pane-menu-card-{key}")),
+            rows,
+            window,
+            cx,
         ))
     }
 
@@ -995,7 +978,7 @@ impl Cydonia {
         }
         self.sync_leaves(window, cx);
         if let Some((_, showing)) = alone {
-            self.show_pane(pane_of(showing), cx);
+            self.show_pane(Pane::of(showing.kind()), cx);
         }
         if let Some(entry) = kept.or_else(|| self.leaf().entry.clone()) {
             self.focused = usize::MAX;
@@ -1175,74 +1158,15 @@ impl Cydonia {
         if self.menu.as_ref() != Some(&Menu::PaneAdd(key.clone())) {
             return None;
         }
-        let workspace = self.workspace.read(cx);
-        let features = &workspace.settings.features;
-        let (sessions, boards, tables) = (features.sessions, features.boards, features.tables);
-        let agents: Vec<(String, Option<icons::Icon>)> = workspace
-            .settings
-            .agents
-            .iter()
-            .map(|entry| (entry.name.clone(), workspace.agent_icon(&entry.name)))
-            .collect();
-        let mut rows = Vec::new();
-        if sessions && agents.len() > 1 {
-            let picks = agents
-                .into_iter()
-                .enumerate()
-                .map(|(at, (name, icon))| {
-                    let icon = icon.unwrap_or_else(|| icons::social::MessageCircle.into());
-                    let pane = pane.clone();
-                    menu::row(
-                        Item::action(name).with_icon(icon),
-                        move |this, window, cx| {
-                            this.new_in_pane(&pane, project, New::Session(at), window, cx)
-                        },
-                    )
-                })
-                .collect();
-            rows.push(menu::submenu(
-                "New session",
-                icons::social::MessageCirclePlus,
-                picks,
-            ));
-        } else if sessions && agents.len() == 1 {
+        let rows = new::rows(new::offered(self.workspace.read(cx)), |kind| {
             let pane = pane.clone();
-            rows.push(menu::row(
-                Item::action("New session").with_icon(icons::social::MessageCirclePlus),
-                move |this, window, cx| {
-                    this.new_in_pane(&pane, project, New::Session(0), window, cx)
-                },
-            ));
-        }
-        for (shown, label, icon, kind) in [
-            (
-                boards,
-                "New board",
-                icons::Icon::from(icons::development::SquareKanban),
-                New::Board,
-            ),
-            (
-                true,
-                "New article",
-                icons::files::FilePlus.into(),
-                New::Article,
-            ),
-            (tables, "New table", icons::files::Table2.into(), New::Table),
-        ] {
-            if !shown {
-                continue;
-            }
-            let pane = pane.clone();
-            rows.push(menu::row(
-                Item::action(label).with_icon(icon),
-                move |this, window, cx| this.new_in_pane(&pane, project, kind, window, cx),
-            ));
-        }
-        let id = SharedString::from(format!("pane-add-card-{key}"));
-        Some(popover::anchored_menu_below(
-            id.clone(),
-            self.menu_card(id, rows, window, cx),
-            None,
+            Box::new(move |this, window, cx| this.new_in_pane(&pane, project, kind, window, cx))
+        });
+        Some(self.menu_below(
+            SharedString::from(format!("pane-add-card-{key}")),
+            rows,
+            window,
+            cx,
         ))
     }
 
@@ -1259,11 +1183,21 @@ impl Cydonia {
         if let New::Board = kind {
             return self.ask_new_board_into(project, Some(pane.clone()), window, cx);
         }
+        // No agent to open one on: the session pane says so and offers the
+        // install.
+        if let New::Session(None) = kind
+            && self.workspace.read(cx).preferred_agent().is_none()
+        {
+            return self.new_session_action(&NewSession, window, cx);
+        }
         let member = self.workspace.update(cx, |workspace, cx| {
             workspace.select_project(project, cx);
             let showing = match kind {
                 New::Session(at) => {
-                    let agent = workspace.settings.agents.get(at).cloned()?;
+                    let agent = match at {
+                        Some(at) => workspace.settings.agents.get(at).cloned()?,
+                        None => workspace.preferred_agent()?,
+                    };
                     let id = workspace.new_session(agent, None, cx)?;
                     // A space names its members by file, and a new session
                     // has none until its first turn.
@@ -1329,16 +1263,6 @@ fn seam_id(path: &[usize], at: usize) -> usize {
         .fold(1usize, |id, step| id.wrapping_mul(31).wrapping_add(*step))
         .wrapping_mul(31)
         .wrapping_add(at)
-}
-
-/// The pane one entry is read in.
-fn pane_of(showing: Showing) -> Pane {
-    match showing {
-        Showing::Session(_) => Pane::Chat,
-        Showing::Board(_) => Pane::Board,
-        Showing::Article(_) => Pane::Article,
-        Showing::Table(_) => Pane::Table,
-    }
 }
 
 #[cfg(test)]

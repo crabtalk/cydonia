@@ -8,7 +8,7 @@
 use crate::{
     model::settings::Feature,
     view::component::file::external,
-    view::settings::{SettingsWindow, Switch},
+    view::settings::{SettingsWindow, Switch, group},
 };
 use bezel::{
     gpui::{AnyElement, Context, div, prelude::*, px},
@@ -94,22 +94,17 @@ impl SettingsWindow {
                 ),
             )
             .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(super::LABEL_GAP))
-                    .child(theme.field_label("Right panel"))
-                    .child(
-                        theme.group_box().children(
-                            Feature::PANEL
-                                .into_iter()
-                                .filter(|feature| feature.available())
-                                .enumerate()
-                                .map(|(ix, feature)| {
-                                    self.feature_row(ix, Feature::ALL.len(), feature, cx)
-                                }),
-                        ),
+                group(&theme, "Right panel").child(
+                    theme.group_box().children(
+                        Feature::PANEL
+                            .into_iter()
+                            .filter(|feature| feature.available())
+                            .enumerate()
+                            .map(|(ix, feature)| {
+                                self.feature_row(ix, Feature::ALL.len(), feature, cx)
+                            }),
                     ),
+                ),
             )
             .children(self.drawer_group(cx))
             .when(
@@ -130,11 +125,7 @@ impl SettingsWindow {
         let on = settings.drawer_composer;
         let theme = Theme::of(cx).clone();
         Some(
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(super::LABEL_GAP))
-                .child(theme.field_label("Drawer"))
+            group(&theme, "Drawer")
                 .child(
                     theme.group_box().child(
                         self.switch_row(

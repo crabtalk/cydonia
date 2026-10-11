@@ -58,13 +58,7 @@ impl Cydonia {
     pub(crate) fn toolbar(&self, pane: Pane, cx: &App) -> Option<Toolbar> {
         let workspace = self.workspace.read(cx);
         let project = workspace.active?;
-        let open = workspace.projects.get(project)?;
-        let showing = match pane {
-            Pane::Chat => Showing::Session(open.active?),
-            Pane::Board => Showing::Board(open.boards.get(open.board?)?.id.clone()),
-            Pane::Article => Showing::Article(open.articles.get(open.article?)?.id.clone()),
-            Pane::Table => Showing::Table(open.tables.get(open.table?)?.key.clone()),
-        };
+        let showing = workspace.projects.get(project)?.selected(pane.kind())?;
         self.toolbar_of(project, showing, cx)
     }
 
@@ -78,56 +72,21 @@ impl Cydonia {
             project: open.path.clone(),
             showing: showing.clone(),
         };
-        let ix = open.ix_of(&showing)?;
-        Some(match showing {
-            Showing::Session(id) => {
-                let chat = open.session(id)?;
-                Toolbar {
-                    title: chat.label(),
-                    number: chat.number,
-                    entry: Some(Entry {
-                        row,
-                        archived: chat.closed,
-                        naming: Naming::Inline(Renaming::Session(id)),
-                    }),
-                }
-            }
-            Showing::Board(_) => {
-                let board = &open.boards[ix];
-                Toolbar {
-                    title: board.label().to_owned(),
-                    number: board.number,
-                    entry: Some(Entry {
-                        row,
-                        archived: board.archived,
-                        naming: Naming::Panel(board.id.clone()),
-                    }),
-                }
-            }
-            Showing::Article(_) => {
-                let article = &open.articles[ix];
-                Toolbar {
-                    title: article.label().to_owned(),
-                    number: article.number,
-                    entry: Some(Entry {
-                        row,
-                        archived: article.archived,
-                        naming: Naming::Page,
-                    }),
-                }
-            }
-            Showing::Table(_) => {
-                let table = &open.tables[ix];
-                Toolbar {
-                    title: table.name.clone(),
-                    number: table.number,
-                    entry: Some(Entry {
-                        row,
-                        archived: table.archived,
-                        naming: Naming::Inline(Renaming::Table(table.key.clone())),
-                    }),
-                }
-            }
+        let facts = open.facts(&showing)?;
+        let naming = match showing {
+            Showing::Session(id) => Naming::Inline(Renaming::Session(id)),
+            Showing::Board(id) => Naming::Panel(id),
+            Showing::Article(_) => Naming::Page,
+            Showing::Table(key) => Naming::Inline(Renaming::Table(key)),
+        };
+        Some(Toolbar {
+            title: facts.label,
+            number: facts.number,
+            entry: Some(Entry {
+                row,
+                archived: facts.archived,
+                naming,
+            }),
         })
     }
 

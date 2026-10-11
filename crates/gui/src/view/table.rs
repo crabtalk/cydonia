@@ -24,7 +24,7 @@ use bezel::{
         icons,
         input::{Shape, TextField},
         menu::Item,
-        popover, table,
+        table,
         widgets::Buttons,
     },
 };
@@ -507,11 +507,11 @@ impl Cydonia {
             Item::action("Delete column").with_icon(icons::files::Trash),
             move |this, _, cx| this.delete_column(ix, cx),
         ));
-        let id = SharedString::from(format!("column-menu-{ix}"));
-        Some(popover::anchored_menu_below(
-            id.clone(),
-            self.menu_card(id, rows, window, cx),
-            None,
+        Some(self.menu_below(
+            SharedString::from(format!("column-menu-{ix}")),
+            rows,
+            window,
+            cx,
         ))
     }
 

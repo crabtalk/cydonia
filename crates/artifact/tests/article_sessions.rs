@@ -4,6 +4,7 @@
 mod common;
 
 use common::Scratch;
+use cydonia_artifact::kind::Kind;
 use cydonia_artifact::{
     article, entry,
     project::{Project as _, fs},
@@ -40,8 +41,14 @@ fn a_session_under_an_article_is_filed_and_listed_with_it() {
     assert_eq!(read.article.as_deref(), Some(made.id.as_str()));
 
     let listed = entry::catalog(&store).unwrap();
-    let session = listed.iter().find(|entry| entry.kind == "session").unwrap();
-    let article = listed.iter().find(|entry| entry.kind == "article").unwrap();
+    let session = listed
+        .iter()
+        .find(|entry| entry.kind == Kind::Session)
+        .unwrap();
+    let article = listed
+        .iter()
+        .find(|entry| entry.kind == Kind::Article)
+        .unwrap();
     assert_eq!(session.article, Some(article.number));
 }
 

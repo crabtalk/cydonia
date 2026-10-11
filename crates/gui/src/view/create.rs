@@ -6,18 +6,24 @@
 //! moment the key is free is the moment before there are any, and that is this
 //! one.
 
-use crate::view::root::Cydonia;
+use crate::view::{
+    kit::{
+        dialog::{answers, dialog},
+        form,
+    },
+    root::Cydonia,
+};
 use artifact::board::{self, key};
 use artifact::space::Member;
 use bezel::{
     gpui::{
         self, AnyElement, App, Context, Entity, Focusable as _, KeyBinding, SharedString,
-        Subscription, Window, actions, div, prelude::*, px,
+        Subscription, Window, actions, prelude::*,
     },
-    theme::{TextStyle, Theme, Typeset},
+    theme::Theme,
     ui::{
         input::{FieldEvent, TextField},
-        widgets::{ButtonStyle, Buttons, Scaffolding as _},
+        popover,
     },
 };
 use std::collections::HashSet;
@@ -26,10 +32,6 @@ actions!(cydonia_create, [CommitBoard, DismissBoard]);
 
 /// Claimed on the dialog's fields, so `enter` makes the board.
 const CREATE_CONTEXT: &str = "CydoniaNewBoard";
-
-/// How wide the labels run, so the two fields start on one edge. The identity
-/// panel's measure — the dialog asks for the same two things.
-const LABEL_WIDTH: f32 = 34.;
 
 pub fn bindings() -> Vec<KeyBinding> {
     vec![
@@ -60,17 +62,6 @@ pub(crate) struct Making {
     _watch: Subscription,
 }
 
-/// One of the dialog's fields, holding what it opens with.
-fn seed(content: SharedString, placeholder: &'static str, cx: &mut App) -> Entity<TextField> {
-    let field = cx.new(|cx| {
-        TextField::new(cx)
-            .with_key_context(CREATE_CONTEXT)
-            .with_placeholder(placeholder)
-    });
-    field.update(cx, |field, cx| field.set_content(content, cx));
-    field
-}
-
 impl Cydonia {
     /// Raise the question. Every New Board comes through here — the sidebar's
     /// `+` and the menu bar both — so a board is never made unnamed.
@@ -97,8 +88,13 @@ impl Cydonia {
         self.renaming = None;
         self.info = None;
         let derived = self.derived_key(project, "", cx);
-        let name = seed(SharedString::default(), "name this board…", cx);
-        let key = seed(derived.clone(), "KEY", cx);
+        let name = form::field(
+            CREATE_CONTEXT,
+            SharedString::default(),
+            "name this board…",
+            cx,
+        );
+        let key = form::field(CREATE_CONTEXT, derived.clone(), "KEY", cx);
         // Subscribed rather than observed: a field notifies on its own caret
         // blink, and the key would be rederived twice a second.
         let watch = cx.subscribe(&name, |this, field, event: &FieldEvent, cx| {
@@ -205,96 +201,45 @@ impl Cydonia {
         cx.notify();
     }
 
-    /// The dialog, over a scrim that takes the press dismissing it — the same
-    /// shape the delete question is asked in.
-    pub(crate) fn new_board_dialog(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    /// The dialog, over a scrim that takes the press dismissing it.
+    pub(crate) fn new_board_dialog(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let making = self.making.as_ref()?;
         let theme = Theme::of(cx).clone();
-        Some(
-            div()
-                .id("new-board-scrim")
-                .absolute()
-                .inset_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .bg(theme.scrim())
-                .child(bezel::ui::cover::cover())
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.dismiss_new_board(&DismissBoard, window, cx)
-                }))
-                .child(
-                    div()
-                        .id("new-board-dialog")
-                        .w(px(360.))
-                        .flex()
-                        .flex_col()
-                        .gap(px(10.))
-                        .p(px(20.))
-                        .rounded(px(Theme::panel_radius()))
-                        .border_1()
-                        .border_color(theme.border)
-                        .bg(theme.surface)
-                        // The press that answers must not reach the scrim.
-                        .on_click(|_, _, cx| cx.stop_propagation())
-                        .child(theme.row_title("New board"))
-                        .child(self.field_row("Name", making.name.clone(), cx))
-                        .child(self.field_row("Key", making.key.clone(), cx))
-                        // Only on an error: a standing hint would caption two
-                        // labelled fields, and any example would name another
-                        // board.
-                        .children(making.error.clone().map(|why| {
-                            div()
-                                .text_style(TextStyle::Caption)
-                                .text_color(theme.danger)
-                                .child(why)
-                        }))
-                        .child(
-                            div()
-                                .mt(px(4.))
-                                .flex()
-                                .flex_row()
-                                .justify_end()
-                                .gap(px(8.))
-                                .child(
-                                    theme
-                                        .button("Cancel", ButtonStyle::Ghost, None)
-                                        .id("new-board-cancel")
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.dismiss_new_board(&DismissBoard, window, cx)
-                                        })),
-                                )
-                                .child(
-                                    theme
-                                        .button("Create", ButtonStyle::Prominent, None)
-                                        .id("new-board-create")
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.make_board(&CommitBoard, window, cx)
-                                        })),
-                                ),
-                        ),
-                )
-                .into_any_element(),
-        )
-    }
-
-    /// A labelled field, on the identity panel's measure.
-    fn field_row(&self, label: &str, field: Entity<TextField>, cx: &Context<Self>) -> AnyElement {
-        let theme = Theme::of(cx).clone();
-        div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(8.))
-            .child(
-                div()
-                    .flex_none()
-                    .w(px(LABEL_WIDTH))
-                    .text_style(TextStyle::Caption)
-                    .text_color(theme.text_muted)
-                    .child(label.to_owned()),
+        Some(dialog(
+            "new-board-dialog",
+            &theme,
+            window,
+            [
+                popover::dialog_title(&theme, "New board").into_any_element(),
+                form::row(&theme, "Name", making.name.clone()),
+                form::row(&theme, "Key", making.key.clone()),
+            ]
+            .into_iter()
+            // Only on an error: a standing hint would caption two labelled
+            // fields, and any example would name another board.
+            .chain(
+                making
+                    .error
+                    .clone()
+                    .map(|why| form::error(&theme, why).into_any_element()),
             )
-            .child(div().flex_1().min_w_0().child(field))
-            .into_any_element()
+            .chain([answers(
+                &theme,
+                "new-board",
+                Some(Box::new(cx.listener(|this, _, window, cx| {
+                    this.dismiss_new_board(&DismissBoard, window, cx)
+                }))),
+                "Create",
+                Box::new(
+                    cx.listener(|this, _, window, cx| this.make_board(&CommitBoard, window, cx)),
+                ),
+            )
+            .into_any_element()]),
+            cx.listener(|this, _, window, cx| this.dismiss_new_board(&DismissBoard, window, cx)),
+        ))
     }
 }

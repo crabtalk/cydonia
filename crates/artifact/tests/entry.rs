@@ -1,6 +1,7 @@
 mod common;
 
 use common::Scratch;
+use cydonia_artifact::kind::Kind;
 use cydonia_artifact::{
     entry::{self, Registry},
     project::Project as _,
@@ -10,21 +11,21 @@ use cydonia_artifact::{
 fn numbers_survive_reopen_rename_and_deletion_without_reuse() {
     let scratch = Scratch::new("entry-lifecycle");
     let mut registry = Registry::open(scratch.path()).unwrap();
-    let article = registry.number("article", "same").unwrap();
-    let table = registry.number("table", "same").unwrap();
+    let article = registry.number(Kind::Article, "same").unwrap();
+    let table = registry.number(Kind::Table, "same").unwrap();
     assert_eq!((article, table), (1, 2));
-    registry.rename("table", "same", "renamed").unwrap();
+    registry.rename(Kind::Table, "same", "renamed").unwrap();
     drop(registry);
     let mut registry = Registry::open(scratch.path()).unwrap();
-    assert_eq!(registry.number("table", "renamed").unwrap(), table);
+    assert_eq!(registry.number(Kind::Table, "renamed").unwrap(), table);
     assert_eq!(
-        registry.resolve("article", article).unwrap().as_deref(),
+        registry.resolve(Kind::Article, article).unwrap().as_deref(),
         Some("same")
     );
-    assert_eq!(registry.resolve("board", article).unwrap(), None);
-    registry.remove("table", "renamed").unwrap();
-    assert_eq!(registry.resolve("table", table).unwrap(), None);
-    assert!(registry.number("table", "renamed").unwrap() > table);
+    assert_eq!(registry.resolve(Kind::Board, article).unwrap(), None);
+    registry.remove(Kind::Table, "renamed").unwrap();
+    assert_eq!(registry.resolve(Kind::Table, table).unwrap(), None);
+    assert!(registry.number(Kind::Table, "renamed").unwrap() > table);
 }
 
 #[test]
@@ -39,8 +40,8 @@ fn concurrent_connections_allocate_unique_and_consistent_numbers() {
                 scope.spawn(move || {
                     barrier.wait();
                     let mut registry = Registry::open(root).unwrap();
-                    let shared = registry.number("article", "shared").unwrap();
-                    let own = registry.number("board", &ix.to_string()).unwrap();
+                    let shared = registry.number(Kind::Article, "shared").unwrap();
+                    let own = registry.number(Kind::Board, &ix.to_string()).unwrap();
                     (shared, own)
                 })
             })
@@ -83,14 +84,6 @@ fn legacy_content_gets_stable_numbers_and_empty_projects_stay_empty() {
 }
 
 #[test]
-fn numeric_titles_are_not_short_references() {
-    assert_eq!(entry::reference("12"), None);
-    assert_eq!(entry::reference("#12"), Some(12));
-    assert_eq!(entry::reference("#0"), None);
-    assert_eq!(entry::reference("#-1"), None);
-}
-
-#[test]
 fn archived_sessions_are_discoverable_and_readable() {
     let scratch = Scratch::new("entry-session");
     let root = scratch.store().init().unwrap().join("sessions");
@@ -99,7 +92,7 @@ fn archived_sessions_are_discoverable_and_readable() {
     let catalog = entry::list(scratch.path()).unwrap();
     assert_eq!(catalog.len(), 1);
     let session = &catalog[0];
-    assert_eq!(session.kind, "session");
+    assert_eq!(session.kind, Kind::Session);
     assert_eq!(session.title, "Saved chat");
     assert!(session.archived);
     assert_eq!(scratch.store().sessions()[0].number, Some(session.number));
@@ -112,7 +105,7 @@ fn archived_sessions_are_discoverable_and_readable() {
     assert_eq!(
         Registry::open(scratch.path())
             .unwrap()
-            .resolve("session", session.number)
+            .resolve(Kind::Session, session.number)
             .unwrap(),
         None
     );

@@ -122,10 +122,7 @@ fn rewrite(change: impl FnOnce(&mut Stored)) -> Result<()> {
     if before == after {
         return Ok(());
     }
-    std::fs::create_dir_all(path.parent().expect("settings directory"))?;
-    let temporary = path.with_extension("json.tmp");
-    std::fs::write(&temporary, after)?;
-    std::fs::rename(temporary, path)?;
+    artifact::fs::save(&path, after)?;
     Ok(())
 }
 

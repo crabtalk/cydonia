@@ -164,16 +164,8 @@ impl Cydonia {
 
     /// The right panel of the open project at `path`.
     fn project_panel(&mut self, path: &Path, cx: &mut Context<Self>) -> Option<Entity<Panel>> {
-        let settled = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-        let project = self
-            .workspace
-            .read(cx)
-            .projects
-            .iter()
-            .find(|open| {
-                open.path == path || open.path.canonicalize().is_ok_and(|held| held == settled)
-            })
-            .map(|open| open.path.clone())?;
+        let workspace = self.workspace.read(cx);
+        let project = workspace.projects[workspace.project_at(path)?].path.clone();
         let cwd = if self
             .workspace
             .read(cx)

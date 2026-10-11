@@ -1,6 +1,7 @@
 //! The in-memory backend: seeded from a `.cydonia/` layout, and answering the
 //! trait the way the filesystem backend does.
 
+use cydonia_artifact::kind::Kind;
 use cydonia_artifact::{
     article::properties::Properties,
     entry,
@@ -107,10 +108,10 @@ fn writes_land_and_removals_retire_numbers() {
     let article = store.create_article("x").unwrap();
     store.write_article(&article.id, "y").unwrap();
     assert_eq!(store.read_article(&article.id).unwrap(), "y");
-    let number = store.number("article", &article.id).unwrap();
+    let number = store.number(Kind::Article, &article.id).unwrap();
     store.remove_article(&article.id).unwrap();
-    assert_eq!(store.resolve("article", number).unwrap(), None);
-    assert_ne!(store.number("article", &article.id).unwrap(), number);
+    assert_eq!(store.resolve(Kind::Article, number).unwrap(), None);
+    assert_ne!(store.number(Kind::Article, &article.id).unwrap(), number);
 
     assert!(store.remove_board("nope").is_err());
     assert!(store.read_article("nope").is_err());
@@ -120,12 +121,12 @@ fn writes_land_and_removals_retire_numbers() {
 #[test]
 fn a_number_resolves_only_under_its_own_kind() {
     let store = memory::Project::new();
-    let number = store.number("board", "a").unwrap();
+    let number = store.number(Kind::Board, "a").unwrap();
     assert_eq!(
-        store.resolve("board", number).unwrap().as_deref(),
+        store.resolve(Kind::Board, number).unwrap().as_deref(),
         Some("a")
     );
-    assert_eq!(store.resolve("article", number).unwrap(), None);
+    assert_eq!(store.resolve(Kind::Article, number).unwrap(), None);
 }
 
 #[test]

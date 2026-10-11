@@ -277,6 +277,20 @@ impl Board {
 
     // ── cards ────────────────────────────────────────────────────
 
+    /// Whether `key`, as written, is this board's. Keys match
+    /// case-insensitively.
+    pub fn keyed(&self, key: &str) -> bool {
+        !self.key.is_empty() && self.key.eq_ignore_ascii_case(key)
+    }
+
+    /// The card numbered `handle` on this board.
+    pub fn card_at(&self, handle: u64) -> Option<&Card> {
+        self.columns
+            .iter()
+            .flat_map(|column| column.cards.iter())
+            .find(|card| card.handle == Some(handle))
+    }
+
     pub fn card(&self, id: &str) -> Option<&Card> {
         self.columns
             .iter()
@@ -452,13 +466,8 @@ impl Board {
 /// ids are minted from, so `-2` settles the tie — as a session's file name
 /// does.
 fn mint(taken: &mut HashSet<String>) -> String {
-    let stamp = id::mint();
-    let mut fresh = stamp.clone();
-    let mut n = 2;
-    while !taken.insert(fresh.clone()) {
-        fresh = format!("{stamp}-{n}");
-        n += 1;
-    }
+    let fresh = id::suffixed(&id::mint(), |id| taken.contains(id));
+    taken.insert(fresh.clone());
     fresh
 }
 

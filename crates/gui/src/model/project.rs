@@ -15,6 +15,7 @@ use crate::{
     },
 };
 use artifact::board::Board;
+use artifact::kind::Kind;
 use artifact::project::Project as _;
 use bezel::gpui::Context;
 use std::{
@@ -25,6 +26,15 @@ use std::{
 /// How many rows the table pane reads at once. The count beside them is the
 /// table's own, so a window that does not reach the end says so.
 const PAGE: i64 = 200;
+
+/// What every entry has, whatever its kind. `touched` is in milliseconds.
+pub struct Facts {
+    pub showing: Showing,
+    pub label: String,
+    pub number: Option<u64>,
+    pub touched: u128,
+    pub archived: bool,
+}
 
 pub struct Project {
     pub path: PathBuf,
@@ -67,6 +77,16 @@ pub struct Project {
 }
 
 impl Project {
+    /// The entry of `kind` this project has selected.
+    pub fn selected(&self, kind: Kind) -> Option<Showing> {
+        Some(match kind {
+            Kind::Session => Showing::Session(self.active?),
+            Kind::Board => Showing::Board(self.boards.get(self.board?)?.id.clone()),
+            Kind::Article => Showing::Article(self.articles.get(self.article?)?.id.clone()),
+            Kind::Table => Showing::Table(self.tables.get(self.table?)?.key.clone()),
+        })
+    }
+
     pub fn new(path: PathBuf) -> Self {
         let mut this = Self {
             boards: store::open(&path).boards(),
@@ -243,15 +263,11 @@ impl Project {
             .as_ref()
             .and_then(|data| data.list().ok())
             .unwrap_or_default();
-        self.table = match open.and_then(|key| self.position(&key)) {
+        self.table = match open.and_then(|key| self.table_ix(&key)) {
             found @ Some(_) => found,
             None => self.table.filter(|ix| *ix < self.tables.len()),
         };
         self.reload_page();
-    }
-
-    fn position(&self, key: &str) -> Option<usize> {
-        self.tables.iter().position(|table| table.key == key)
     }
 
     /// Read the open table's rows.
@@ -315,6 +331,68 @@ impl Project {
     }
 
     /// Where the entry `showing` names is listed among its kind.
+    /// What the entry `showing` names carries, whatever its kind.
+    pub fn facts(&self, showing: &Showing) -> Option<Facts> {
+        Some(self.facts_at(showing.kind(), self.ix_of(showing)?))
+    }
+
+    /// Every entry of `kind`, in list order.
+    pub fn every(&self, kind: Kind) -> impl Iterator<Item = Facts> + '_ {
+        let len = match kind {
+            Kind::Session => self.sessions.len(),
+            Kind::Board => self.boards.len(),
+            Kind::Article => self.articles.len(),
+            Kind::Table => self.tables.len(),
+        };
+        (0..len).map(move |ix| self.facts_at(kind, ix))
+    }
+
+    /// The facts of the `ix`th entry of `kind`. Panics past the end.
+    pub fn facts_at(&self, kind: Kind, ix: usize) -> Facts {
+        match kind {
+            Kind::Session => {
+                let chat = &self.sessions[ix];
+                Facts {
+                    showing: Showing::Session(chat.id),
+                    label: chat.label(),
+                    number: chat.number,
+                    touched: chat.touched(),
+                    archived: chat.closed,
+                }
+            }
+            Kind::Board => {
+                let board = &self.boards[ix];
+                Facts {
+                    showing: Showing::Board(board.id.clone()),
+                    label: board.label().to_owned(),
+                    number: board.number,
+                    touched: board.touched,
+                    archived: board.archived,
+                }
+            }
+            Kind::Article => {
+                let article = &self.articles[ix];
+                Facts {
+                    showing: Showing::Article(article.id.clone()),
+                    label: article.label().to_owned(),
+                    number: article.number,
+                    touched: article.touched,
+                    archived: article.archived,
+                }
+            }
+            Kind::Table => {
+                let table = &self.tables[ix];
+                Facts {
+                    showing: Showing::Table(table.key.clone()),
+                    label: table.name.clone(),
+                    number: table.number,
+                    touched: table.touched_ms(),
+                    archived: table.archived,
+                }
+            }
+        }
+    }
+
     pub fn ix_of(&self, showing: &Showing) -> Option<usize> {
         match showing {
             Showing::Session(id) => self.sessions.iter().position(|chat| chat.id == *id),

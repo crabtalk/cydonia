@@ -21,6 +21,7 @@ use crate::view::{
     },
     root::Cydonia,
 };
+use artifact::reference;
 use artifact::space::Member;
 use bezel::{
     gpui::{
@@ -349,26 +350,19 @@ impl Cydonia {
         if passage.is_empty() {
             return None;
         }
-        let line = |offset: usize| source[..offset].matches('\n').count() as u64 + 1;
-        let first = line(from + (source[from..to].len() - source[from..to].trim_start().len()));
-        let last = line(from + source[from..to].trim_end().len());
+        let start = from + (source[from..to].len() - source[from..to].trim_start().len());
+        let lines = artifact::article::anchor::span_of(
+            &source,
+            start..from + source[from..to].trim_end().len(),
+        );
         let workspace = self.workspace.read(cx);
         let chip = article.number.and_then(|number| {
-            let project = workspace.projects.iter().find(|project| {
-                project
-                    .articles
-                    .iter()
-                    .any(|held| held.path == article.path)
-            })?;
-            let name = project.path.file_name()?.to_string_lossy();
-            let lines = artifact::reference::Span {
-                from: first,
-                to: last,
-            };
-            let reference = format!("{name}#{number}:{lines}");
+            let project = &workspace.projects[workspace.article_at(&article.path)?.0];
+            let name = reference::project_name(&project.path)?;
+            let within = Some(reference::Within::Span(lines));
             Some(composer::mention_chip(
-                &format!("#{number}:{lines}"),
-                &crate::view::entry_link::link(&reference),
+                &reference::Reference::entry(None, number, within).to_string(),
+                &reference::Reference::entry(Some(&name), number, within).link(),
             ))
         });
         let quoted = match chip {
@@ -713,12 +707,7 @@ impl Cydonia {
                 })
             })
             .collect();
-        let id = SharedString::from("ribbon-turn-card");
-        Some(popover::anchored_menu_below(
-            id.clone(),
-            self.menu_card(id, rows, window, cx),
-            None,
-        ))
+        Some(self.menu_below(SharedString::from("ribbon-turn-card"), rows, window, cx))
     }
 }
 

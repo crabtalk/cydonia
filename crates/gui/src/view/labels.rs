@@ -3,10 +3,15 @@
 
 use crate::view::{component::menu::Menu, root::Cydonia, sidebar::Row};
 use bezel::{
-    gpui::{AnyElement, App, Context, Entity, Pixels, Point, Subscription, Window, prelude::*, px},
+    gpui::{
+        AnyElement, App, Context, Div, Entity, Pixels, Point, Stateful, Subscription, Window, div,
+        prelude::*, px,
+    },
+    theme::{TextStyle, Theme, Typeset},
     ui::{
-        multi_select::{Check, Choice, MultiSelect, MultiSelectEvent},
+        multi_select::{self, Check, Choice, MultiSelect, MultiSelectEvent},
         popover,
+        widgets::Content as _,
     },
 };
 
@@ -65,6 +70,45 @@ impl Cydonia {
             select,
             _events: events,
         });
+    }
+
+    /// `labels` as chips in `trigger`, which a press opens the picker from.
+    /// With none, a faint "Add label" shows while `group` is hovered.
+    pub(crate) fn label_chips(
+        &self,
+        trigger: Stateful<Div>,
+        target: Target,
+        labels: &[String],
+        group: &'static str,
+        cx: &Context<Self>,
+    ) -> Stateful<Div> {
+        let theme = Theme::of(cx).clone();
+        let chips = trigger
+            .cursor_pointer()
+            .on_click(cx.listener({
+                let target = target.clone();
+                move |this, _, window, cx| {
+                    cx.stop_propagation();
+                    this.toggle_labels(target.clone(), None, window, cx);
+                }
+            }))
+            .children(
+                labels
+                    .iter()
+                    .map(|label| theme.chip(label.clone(), multi_select::tint(&theme, label))),
+            )
+            .when(labels.is_empty(), |chips| {
+                chips.child(
+                    div()
+                        .invisible()
+                        .group_hover(group, |el| el.visible())
+                        .text_style(TextStyle::Callout)
+                        .text_color(theme.text_faint)
+                        .child("Add label"),
+                )
+            })
+            .children(self.label_picker(&target));
+        self.menu_press(chips, Menu::Labels(target), cx)
     }
 
     /// The picker, anchored under its trigger, while `target`'s is open.
@@ -153,18 +197,7 @@ impl Cydonia {
                 let Some(at) = workspace.project_at(&project) else {
                     continue;
                 };
-                let Some(held) = workspace.labels_of(at, &showing) else {
-                    continue;
-                };
-                let mut labels: Vec<String> = held
-                    .iter()
-                    .filter(|label| *label != name)
-                    .cloned()
-                    .collect();
-                if on {
-                    labels.push(name.to_owned());
-                }
-                workspace.set_labels(at, &showing, labels, cx);
+                workspace.swap_label(at, &showing, name, on.then(|| name.to_owned()), cx);
             }
         });
     }

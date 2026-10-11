@@ -9,11 +9,11 @@ use crate::{
             transcript::{MARK_AWAY, MARK_READING, MARK_VISIBLE},
         },
         entry_link::SCHEME,
+        kit::{stamp, text::grouped},
         labels::Target,
         leaf::Pane,
         root::{Cydonia, NewArticle},
         sidebar::{self, Row},
-        stamp,
     },
 };
 use artifact::space::Member;
@@ -31,9 +31,9 @@ use bezel::{
         icons,
         input::TextField,
         menu::{Item, Segment},
-        multi_select, popover,
+        popover,
         tooltip::Tooltip,
-        widgets::{ButtonStyle, Buttons as _, Content as _, Status as _},
+        widgets::{ButtonStyle, Buttons as _, Status as _},
     },
 };
 use editor::AppExt as _;
@@ -286,17 +286,9 @@ const META_GROUP: &str = "article-meta";
 
 /// `n` words, as a reader counts them out.
 fn word_count(n: usize) -> String {
-    let digits = n.to_string();
-    let mut grouped = String::new();
-    for (ix, digit) in digits.chars().enumerate() {
-        if ix > 0 && (digits.len() - ix).is_multiple_of(3) {
-            grouped.push(',');
-        }
-        grouped.push(digit);
-    }
     match n {
         1 => "1 word".to_owned(),
-        _ => format!("{grouped} words"),
+        _ => format!("{} words", grouped(n as u64)),
     }
 }
 
@@ -911,11 +903,7 @@ impl Cydonia {
                 }),
             );
             let row = |comment: &artifact::article::comments::Comment| {
-                let quote = comment
-                    .quote
-                    .split_whitespace()
-                    .collect::<Vec<_>>()
-                    .join(" ");
+                let quote = artifact::text::one_line(&comment.quote);
                 let note = comment.note.lines().next().unwrap_or_default().to_owned();
                 let icon = match comment.resolved {
                     true => icons::glyph::Check,
@@ -1307,32 +1295,8 @@ impl Cydonia {
             .flex_row()
             .flex_wrap()
             .items_center()
-            .gap(px(4.))
-            .cursor_pointer()
-            .on_click(cx.listener({
-                let target = target.clone();
-                move |this, _, window, cx| {
-                    cx.stop_propagation();
-                    this.toggle_labels(target.clone(), None, window, cx);
-                }
-            }))
-            .children(
-                labels
-                    .iter()
-                    .map(|label| theme.chip(label.clone(), multi_select::tint(&theme, label))),
-            )
-            .when(labels.is_empty(), |chips| {
-                chips.child(
-                    div()
-                        .invisible()
-                        .group_hover(META_GROUP, |el| el.visible())
-                        .text_style(TextStyle::Callout)
-                        .text_color(theme.text_faint)
-                        .child("Add label"),
-                )
-            })
-            .children(self.label_picker(&target));
-        let chips = self.menu_press(chips, Menu::Labels(target), cx);
+            .gap(px(4.));
+        let chips = self.label_chips(chips, target, &labels, META_GROUP, cx);
         let about = div()
             .id("article-about")
             .flex_none()
@@ -1599,11 +1563,7 @@ impl Note {
         cx: &mut App,
     ) -> gpui::Stateful<Div> {
         let id = comment.id;
-        let quote = comment
-            .quote
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ");
+        let quote = artifact::text::one_line(&comment.quote);
         let note = match open {
             true => div()
                 .id(("comment-note", id))

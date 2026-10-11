@@ -105,23 +105,22 @@ impl Workspace {
     /// The labels the project at `project` carries, with how many of its
     /// entries carry each, in name order.
     pub fn project_label_counts(&self, project: usize) -> BTreeMap<String, usize> {
-        let mut counts = BTreeMap::new();
-        for (at, showing) in self.labelled() {
-            if at != project {
-                continue;
-            }
-            for label in self.labels_of(at, &showing).unwrap_or_default() {
-                *counts.entry(label.clone()).or_default() += 1;
-            }
-        }
-        counts
+        self.counted(Some(project))
     }
 
     /// Every label carried in any open project, with how many entries carry
     /// it, in name order.
     pub fn label_counts(&self) -> BTreeMap<String, usize> {
+        self.counted(None)
+    }
+
+    /// The labels carried in `project`, or in every open project for none.
+    fn counted(&self, project: Option<usize>) -> BTreeMap<String, usize> {
         let mut counts = BTreeMap::new();
         for (at, showing) in self.labelled() {
+            if project.is_some_and(|project| project != at) {
+                continue;
+            }
             for label in self.labels_of(at, &showing).unwrap_or_default() {
                 *counts.entry(label.clone()).or_default() += 1;
             }
@@ -153,16 +152,30 @@ impl Workspace {
             let Some(held) = self.labels_of(at, &showing) else {
                 continue;
             };
-            if !held.iter().any(|label| label == from) {
-                continue;
+            if held.iter().any(|label| label == from) {
+                self.swap_label(at, &showing, from, to.clone(), cx);
             }
-            let labels = held
-                .iter()
-                .filter(|label| *label != from)
-                .cloned()
-                .chain(to.clone())
-                .collect();
-            self.set_labels(at, &showing, labels, cx);
         }
+    }
+
+    /// Take `from` off one entry and put `to` on in its place.
+    pub fn swap_label(
+        &mut self,
+        project: usize,
+        showing: &Showing,
+        from: &str,
+        to: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(held) = self.labels_of(project, showing) else {
+            return;
+        };
+        let labels = held
+            .iter()
+            .filter(|label| *label != from)
+            .cloned()
+            .chain(to)
+            .collect();
+        self.set_labels(project, showing, labels, cx);
     }
 }

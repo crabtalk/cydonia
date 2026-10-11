@@ -13,6 +13,7 @@ pub mod fs;
 pub mod layout;
 pub mod memory;
 
+use crate::kind::Kind;
 use crate::{
     article::{Article, comments::Comments, properties::Properties},
     board::Board,
@@ -150,12 +151,12 @@ pub trait Project {
 
     /// The project-wide number an entry is referred to by (`#12`), issued on
     /// first ask. Every client of one project must get the same answer.
-    fn number(&self, kind: &str, id: &str) -> Result<u64>;
+    fn number(&self, kind: Kind, id: &str) -> Result<u64>;
 
     /// The id a number was issued to, or `None` for one never issued or
     /// retired.
-    fn resolve(&self, kind: &str, number: u64) -> Result<Option<String>>;
+    fn resolve(&self, kind: Kind, number: u64) -> Result<Option<String>>;
 
     /// Retire an entry's number. It is never issued again.
-    fn retire(&self, kind: &str, id: &str) -> Result<()>;
+    fn retire(&self, kind: Kind, id: &str) -> Result<()>;
 }

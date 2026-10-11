@@ -67,6 +67,76 @@ impl std::fmt::Display for Span {
 /// The scheme an entry link is written behind.
 pub const SCHEME: &str = "cydonia://";
 
+impl<'a> Reference<'a> {
+    /// Entry `number` of `project`, or of the project it is written in.
+    pub fn entry(project: Option<&'a str>, number: u64, within: Option<Within<'a>>) -> Self {
+        Self {
+            project,
+            target: Target::Entry { number, within },
+        }
+    }
+
+    /// The reference behind [`SCHEME`]: `cydonia://foo#43`.
+    pub fn link(&self) -> String {
+        format!("{SCHEME}{self}")
+    }
+}
+
+/// Written the way [`parse`] reads it.
+impl std::fmt::Display for Reference<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(project) = self.project {
+            write!(f, "{project}#")?;
+        }
+        match self.target {
+            Target::Entry { number, within } => {
+                if self.project.is_none() {
+                    f.write_str("#")?;
+                }
+                write!(f, "{number}")?;
+                match within {
+                    Some(Within::Span(span)) => write!(f, ":{span}"),
+                    Some(Within::Heading(anchor)) => write!(f, "#{anchor}"),
+                    None => Ok(()),
+                }
+            }
+            Target::Card { key, handle } => write!(f, "{key}-{handle}"),
+        }
+    }
+}
+
+/// Refuses a part `kind` does not have: turns are a session's, lines and
+/// headings an article's. `named` is the reference as written.
+pub fn fits(
+    named: &str,
+    kind: crate::kind::Kind,
+    within: Option<Within<'_>>,
+) -> Result<(), String> {
+    use crate::kind::Kind;
+    match (within, kind) {
+        (None, _)
+        | (Some(Within::Span(_)), Kind::Session | Kind::Article)
+        | (Some(Within::Heading(_)), Kind::Article) => Ok(()),
+        (Some(Within::Heading(_)), Kind::Session) => Err(format!(
+            "{named} names a heading, which only an article has"
+        )),
+        (Some(_), kind) => Err(format!(
+            "{named} names part of a {kind}, and only an article's lines or a session's turns can be named"
+        )),
+    }
+}
+
+/// The name a project goes by in a reference: its directory's.
+pub fn project_name(path: &std::path::Path) -> Option<std::borrow::Cow<'_, str>> {
+    path.file_name().map(|name| name.to_string_lossy())
+}
+
+/// Whether `name`, as written before a `#`, names the project at `path`.
+/// Compared exactly.
+pub fn names(path: &std::path::Path, name: &str) -> bool {
+    path.file_name().is_some_and(|last| last == name)
+}
+
 /// Read one reference, or nothing for text that is not one. Surrounding
 /// whitespace is not trimmed.
 pub fn parse(text: &str) -> Option<Reference<'_>> {

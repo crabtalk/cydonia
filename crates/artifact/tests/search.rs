@@ -3,8 +3,9 @@ mod common;
 use common::Scratch;
 use cydonia_artifact::{
     board::Board,
+    kind::Kind,
     project::Project as _,
-    search::{self, Block, Kind, Match, Query},
+    search::{self, Block, Match, Query},
     session::record::Record,
 };
 use std::sync::mpsc;

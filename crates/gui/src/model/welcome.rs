@@ -8,6 +8,7 @@
 
 use crate::model::state::State;
 use crate::model::{settings, state};
+use artifact::kind::Kind;
 use artifact::project::fs;
 use std::{
     io::{self, Write as _},
@@ -106,7 +107,7 @@ pub fn seed(state: &mut State) {
 /// The entry a welcome project at `root` opens on.
 pub fn landing(root: &Path) -> state::Entry {
     state::Entry {
-        kind: state::Kind::Article,
+        kind: Kind::Article,
         id: fs::Project::new(root)
             .cydonia()
             .join(LANDING)

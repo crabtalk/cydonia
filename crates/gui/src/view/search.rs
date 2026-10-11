@@ -17,6 +17,7 @@
 //! are as of its last write. Opening a hit in an entry's body puts the query in
 //! its pane's find bar — see [`crate::view::find`].
 
+use crate::view::kit::icon::kind_icon;
 use crate::{
     model::workspace::Showing,
     view::{
@@ -28,8 +29,9 @@ use crate::{
     },
 };
 use artifact::{
+    kind::Kind,
     project::fs,
-    search::{self, Block, Kind, Query},
+    search::{self, Block, Query},
 };
 use bezel::{
     gpui::{
@@ -39,7 +41,7 @@ use bezel::{
     },
     theme::{TextStyle, Theme, Typeset as _},
     ui::{
-        icons::{self, Icon},
+        icons,
         input::{FieldEvent, TextField},
         popover,
         widgets::Buttons as _,
@@ -588,11 +590,10 @@ impl Cydonia {
             .into_iter()
             .filter_map(|ix| {
                 let carded = &cards[ix];
-                let project = workspace.projects.iter().find(|open| {
-                    open.path
-                        .file_name()
-                        .is_some_and(|name| name.to_string_lossy() == carded.project)
-                })?;
+                let project = workspace
+                    .projects
+                    .iter()
+                    .find(|open| artifact::reference::names(&open.path, &carded.project))?;
                 Some(Hit {
                     row: Row::Entry {
                         project: project.path.clone(),
@@ -600,7 +601,7 @@ impl Cydonia {
                     },
                     snippet: None,
                     card: Some(HitCard {
-                        reference: format!("{}#{}", carded.project, carded.handle),
+                        reference: carded.reference(),
                         handle: carded.handle.clone(),
                         title: crate::view::board::card_title(&carded.card.text),
                     }),
@@ -1007,7 +1008,7 @@ impl Cydonia {
         let id = *id;
         let theme = Theme::of(cx).clone();
         let body = self.workspace.update(cx, |workspace, cx| {
-            crate::view::entry_link::load_history(workspace, id);
+            workspace.load_history(id);
             let chat = workspace.session(id)?;
             let count = artifact::session::chat::turns(&chat.items).len();
             let from = count.saturating_sub(crate::view::entry_link::PREVIEW_TURNS);
@@ -1350,16 +1351,6 @@ const FILTERS: [(Option<Filter>, &str); 5] = [
     (Some(Filter::Kind(Kind::Board)), "Boards"),
     (Some(Filter::Kind(Kind::Article)), "Articles"),
 ];
-
-/// The mark an entry of `kind` wears wherever it is listed or linked.
-pub(crate) fn kind_icon(kind: Kind) -> Icon {
-    match kind {
-        Kind::Session => icons::social::MessageCircle.into(),
-        Kind::Board => icons::development::SquareKanban.into(),
-        Kind::Article => icons::files::FileText.into(),
-        Kind::Table => icons::files::Table2.into(),
-    }
-}
 
 fn kind_of(row: &Row) -> Option<Kind> {
     match row {

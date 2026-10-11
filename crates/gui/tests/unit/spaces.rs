@@ -10,6 +10,7 @@ use super::*;
 use crate::model::spaces as store;
 use crate::model::workspace::Showing;
 use crate::model::{settings::Settings, state};
+use artifact::kind::Kind;
 use artifact::space::{Member, Side};
 use gpui::AppContext as _;
 
@@ -171,11 +172,7 @@ fn a_member_in_a_shut_project_resolves_to_nothing(cx: &mut gpui::TestAppContext)
     let (workspace, a, _) = two_boards(&scratch, cx);
 
     workspace.update(cx, |workspace, cx| {
-        let elsewhere = Member::new(
-            scratch.project("two"),
-            artifact::space::Kind::Board,
-            a.id.clone(),
-        );
+        let elsewhere = Member::new(scratch.project("two"), Kind::Board, a.id.clone());
         assert!(workspace.showing_of(&elsewhere).is_none());
         // The same id in a project that *is* open still resolves.
         assert!(workspace.showing_of(&a).is_some());

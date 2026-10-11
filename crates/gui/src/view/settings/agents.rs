@@ -4,10 +4,10 @@
 use crate::{
     agent::{self, Listing},
     model::settings,
-    view::{menubar, settings::SettingsWindow},
+    view::{kit::dialog::answers, menubar, settings::SettingsWindow},
 };
 use bezel::{
-    gpui::{AnyElement, Context, Focusable as _, SharedString, div, prelude::*, px},
+    gpui::{AnyElement, Context, Focusable as _, SharedString, Window, div, prelude::*, px},
     motion::{Fade, Painter},
     theme::{TextStyle, Theme, Typeset},
     ui::{
@@ -254,7 +254,11 @@ impl SettingsWindow {
     /// It states what is about to be fetched and what will be able to run, and
     /// makes no claim about whether the agent is safe: the registry lists
     /// clients, it does not vet them, and cydonia has read none of their code.
-    pub(super) fn trust_dialog(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub(super) fn trust_dialog(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let ix = self.trusting?;
         let listing = self.listings.as_ref()?.get(ix)?;
         let theme = Theme::of(cx).clone();
@@ -323,118 +327,85 @@ impl SettingsWindow {
                 .on_click(move |_, _, cx| cx.open_url(&url))
                 .into_any_element()
         };
-        Some(
-            div()
-                .id("trust-scrim")
-                .absolute()
-                .inset_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .bg(theme.scrim())
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.trusting = None;
-                    cx.notify();
-                }))
+        let dismiss = |this: &mut Self, cx: &mut Context<Self>| {
+            this.trusting = None;
+            cx.notify();
+        };
+        let card = popover::dialog_card(&theme)
+            .w(px(DIALOG_WIDTH))
+            .gap(px(14.))
+                // The row it came from, restated: the same mark, the
+                // same name and the same tag, so the dialog reads as
+                // that row opened rather than as a page of its own.
                 .child(
                     div()
-                        .id("trust-dialog")
-                        .w(px(DIALOG_WIDTH))
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(8.))
+                        .children(listing.icon.clone().map(|icon| theme.row_icon(icon)))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .child(theme.row_title(agent.name.clone())),
+                        )
+                        .child(theme.badge(format!("v{}", agent.version))),
+                )
+                .child(
+                    div()
+                        .text_style(TextStyle::Subheadline)
+                        .text_color(theme.text_muted)
+                        .child("Listed in the ACP registry, which cydonia does not review."),
+                )
+                .child(
+                    theme
+                        .group_box()
+                        .p(px(12.))
                         .flex()
                         .flex_col()
-                        .gap(px(14.))
-                        .p(px(20.))
-                        .rounded(px(Theme::panel_radius()))
-                        .border_1()
-                        .border_color(theme.border)
-                        .bg(theme.surface)
-                        .on_click(|_, _, cx| cx.stop_propagation())
-                        // The row it came from, restated: the same mark, the
-                        // same name and the same tag, so the dialog reads as
-                        // that row opened rather than as a page of its own.
+                        .gap(px(8.))
+                        .children(publisher.map(|url| {
+                            row("Publisher", address(trimmed(&url), url))
+                        }))
+                        .child(row(kind, address(named(&fetching), fetching.to_string())))
+                        .children(integrity.map(|(copy, loud)| {
+                            row(
+                                "Integrity",
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .text_style(TextStyle::Subheadline)
+                                    .text_color(match loud {
+                                        true => theme.warning,
+                                        false => theme.text_muted,
+                                    })
+                                    .child(copy)
+                                    .into_any_element(),
+                            )
+                        })),
+                )
+                .child(
+                    div()
+                        .text_style(TextStyle::Subheadline)
+                        .text_color(theme.text_muted)
                         .child(
-                            div()
-                                .flex()
-                                .flex_row()
-                                .items_center()
-                                .gap(px(8.))
-                                .children(listing.icon.clone().map(|icon| theme.row_icon(icon)))
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .child(theme.row_title(agent.name.clone())),
-                                )
-                                .child(theme.badge(format!("v{}", agent.version))),
-                        )
-                        .child(
-                            div()
-                                .text_style(TextStyle::Subheadline)
-                                .text_color(theme.text_muted)
-                                .child("Listed in the ACP registry, which cydonia does not review."),
-                        )
-                        .child(
-                            theme
-                                .group_box()
-                                .p(px(12.))
-                                .flex()
-                                .flex_col()
-                                .gap(px(8.))
-                                .children(publisher.map(|url| {
-                                    row("Publisher", address(trimmed(&url), url))
-                                }))
-                                .child(row(kind, address(named(&fetching), fetching.to_string())))
-                                .children(integrity.map(|(copy, loud)| {
-                                    row(
-                                        "Integrity",
-                                        div()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .text_style(TextStyle::Subheadline)
-                                            .text_color(match loud {
-                                                true => theme.warning,
-                                                false => theme.text_muted,
-                                            })
-                                            .child(copy)
-                                            .into_any_element(),
-                                    )
-                                })),
-                        )
-                        .child(
-                            div()
-                                .text_style(TextStyle::Subheadline)
-                                .text_color(theme.text_muted)
-                                .child(
-                                    "It runs when you open a session on it, and reads and writes the project you point it at.",
-                                ),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .flex_row()
-                                .justify_end()
-                                .gap(px(8.))
-                                .child(
-                                    theme
-                                        .button("Cancel", ButtonStyle::Ghost, None)
-                                        .id("trust-cancel")
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.trusting = None;
-                                            cx.notify();
-                                        })),
-                                )
-                                .child(
-                                    theme
-                                        .button("Install", ButtonStyle::Prominent, None)
-                                        .id("trust-install")
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.agreed(ix, cx)
-                                        })),
-                                ),
+                            "It runs when you open a session on it, and reads and writes the project you point it at.",
                         ),
                 )
-                .into_any_element(),
-        )
+            .child(answers(
+                &theme,
+                "trust",
+                Some(Box::new(cx.listener(move |this, _, _, cx| dismiss(this, cx)))),
+                "Install",
+                Box::new(cx.listener(move |this, _, _, cx| this.agreed(ix, cx))),
+            ));
+        Some(popover::modal(
+            "trust-dialog",
+            window.viewport_size(),
+            card.into_any_element(),
+            cx.listener(move |this, _, _, cx| dismiss(this, cx)),
+        ))
     }
 
     /// One agent: its mark and name, what it is, and the one thing you can do

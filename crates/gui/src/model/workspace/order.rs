@@ -12,7 +12,6 @@
 
 use super::{Showing, Workspace};
 use crate::model::state;
-use artifact::space::Kind as MemberKind;
 use bezel::gpui::Context;
 
 impl Workspace {
@@ -22,14 +21,8 @@ impl Workspace {
     /// session that has had no turn has no name to write.
     pub fn entry_of(&self, project: usize, showing: Showing) -> Option<state::Entry> {
         let member = self.member_of(project, showing)?;
-        let kind = match member.kind {
-            MemberKind::Session => state::Kind::Session,
-            MemberKind::Board => state::Kind::Board,
-            MemberKind::Article => state::Kind::Article,
-            MemberKind::Table => state::Kind::Table,
-        };
         Some(state::Entry {
-            kind,
+            kind: member.kind,
             id: member.id,
         })
     }

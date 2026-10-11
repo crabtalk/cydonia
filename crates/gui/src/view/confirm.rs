@@ -4,6 +4,7 @@
 use crate::{
     model::workspace::Showing,
     view::{
+        kit::dialog::{answers, dialog},
         root::Cydonia,
         sidebar::{Group, Row},
     },
@@ -11,7 +12,7 @@ use crate::{
 use bezel::{
     gpui::{AnyElement, App, Context, Focusable as _, Window, div, prelude::*, px},
     theme::{TextStyle, Theme, Typeset},
-    ui::widgets::{ButtonStyle, Buttons, Scaffolding as _},
+    ui::popover,
 };
 
 /// What a pending delete is aimed at.
@@ -288,90 +289,58 @@ impl Cydonia {
         }
     }
 
-    /// The question, over a scrim that takes the press dismissing it — the
-    /// same shape as the settings window's dialog.
-    pub(crate) fn confirm_delete(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    /// The question, over a scrim that takes the press dismissing it.
+    pub(crate) fn confirm_delete(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let confirming = self.confirming.as_ref()?;
         let theme = Theme::of(cx).clone();
         let doomed = confirming.doomed.clone();
-        Some(
-            div()
-                .id("delete-scrim")
-                // Whatever is under the scrim takes no pointer, the wheel
-                // included.
-                .occlude()
-                .absolute()
-                .inset_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .bg(theme.scrim())
-                .child(bezel::ui::cover::cover())
-                .on_click(cx.listener(|this, _, _, cx| this.dismiss_delete(cx)))
-                .child(
-                    div()
-                        .id("delete-dialog")
-                        .w(px(360.))
-                        .flex()
-                        .flex_col()
-                        .gap(px(8.))
-                        .p(px(20.))
-                        .rounded(px(Theme::panel_radius()))
-                        .border_1()
-                        .border_color(theme.border)
-                        .bg(theme.surface)
-                        // The press that answers must not reach the scrim.
-                        .on_click(|_, _, cx| cx.stop_propagation())
-                        .child(theme.row_title(format!("Delete {}?", confirming.label)))
-                        // Quoted rather than spoken: the mono face says this
-                        // is a thing on disk, not a turn of phrase.
-                        .children(confirming.goes.clone().map(|goes| {
-                            div()
-                                .px(px(8.))
-                                .py(px(5.))
-                                .rounded(px(Theme::control_radius()))
-                                .border_1()
-                                .border_color(theme.border)
-                                .bg(theme.surface_raised)
-                                .text_style(TextStyle::Subheadline)
-                                .font_family(theme.font_mono.clone())
-                                .text_color(theme.text_muted)
-                                .child(goes)
-                        }))
-                        .child(
-                            div()
-                                .text_style(TextStyle::Subheadline)
-                                .text_color(theme.text_muted)
-                                .child(confirming.note.clone()),
-                        )
-                        .child(
-                            div()
-                                .mt(px(4.))
-                                .flex()
-                                .flex_row()
-                                .justify_end()
-                                .gap(px(8.))
-                                .child(
-                                    theme
-                                        .button("Cancel", ButtonStyle::Ghost, None)
-                                        .id("delete-cancel")
-                                        .on_click(
-                                            cx.listener(|this, _, _, cx| this.dismiss_delete(cx)),
-                                        ),
-                                )
-                                .child(
-                                    theme
-                                        .button("Delete", ButtonStyle::Prominent, None)
-                                        .id("delete-confirm")
-                                        .on_click(cx.listener(move |this, _, window, cx| {
-                                            this.confirming = None;
-                                            this.delete_doomed(&doomed, window, cx);
-                                        })),
-                                ),
-                        ),
+        Some(dialog(
+            "delete-dialog",
+            &theme,
+            window,
+            [
+                popover::dialog_title(&theme, format!("Delete {}?", confirming.label))
+                    .into_any_element(),
+            ]
+            .into_iter()
+            // Quoted rather than spoken: the mono face says this is a thing on
+            // disk, not a turn of phrase.
+            .chain(confirming.goes.clone().map(|goes| {
+                div()
+                    .px(px(8.))
+                    .py(px(5.))
+                    .rounded(px(Theme::control_radius()))
+                    .border_1()
+                    .border_color(theme.border)
+                    .bg(theme.surface_raised)
+                    .text_style(TextStyle::Subheadline)
+                    .font_family(theme.font_mono.clone())
+                    .text_color(theme.text_muted)
+                    .child(goes)
+                    .into_any_element()
+            }))
+            .chain([
+                popover::dialog_body(&theme, confirming.note.clone()).into_any_element(),
+                answers(
+                    &theme,
+                    "delete",
+                    Some(Box::new(
+                        cx.listener(|this, _, _, cx| this.dismiss_delete(cx)),
+                    )),
+                    "Delete",
+                    Box::new(cx.listener(move |this, _, window, cx| {
+                        this.confirming = None;
+                        this.delete_doomed(&doomed, window, cx);
+                    })),
                 )
                 .into_any_element(),
-        )
+            ]),
+            cx.listener(|this, _, _, cx| this.dismiss_delete(cx)),
+        ))
     }
 
     pub(crate) fn dismiss_delete(&mut self, cx: &mut Context<Self>) {

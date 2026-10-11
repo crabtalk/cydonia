@@ -13,10 +13,7 @@ use crate::view::{
     leaf::Pane,
     root::Cydonia,
 };
-use artifact::{
-    search::Query,
-    space::{Kind, Member},
-};
+use artifact::{kind::Kind, search::Query, space::Member};
 use bezel::{
     gpui::{
         self, AnyElement, App, Context, Entity, KeyBinding, SharedString, Window, actions, div,

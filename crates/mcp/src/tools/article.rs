@@ -18,9 +18,10 @@ use crate::{
 };
 use artifact::{
     article::{self, anchor, comments::Comment, properties::Properties},
+    kind::Kind,
     project::{Project as _, fs},
     reference::{Span, Within},
-    search::{self, Block, Kind, Query},
+    search::{self, Block, Query},
     stamp,
 };
 use serde_json::{Value, json};
@@ -516,9 +517,11 @@ fn add(args: Args<'_>) -> Outcome {
         .save_properties(&made.id, &titled)
         .map_err(|e| Trouble::Refused(format!("the article cannot be named — {e}")))?;
     let id = made.id;
-    let content = article::content(&article::dir(project).join(&id));
+    let content = store
+        .article_file(&id)
+        .map_err(|e| Trouble::Refused(e.to_string()))?;
     let number = store
-        .number("article", &id)
+        .number(Kind::Article, &id)
         .map_err(|e| Trouble::Refused(e.to_string()))?;
     Ok(
         Answer::said(format!("#{number} {title} written")).with(json!({
@@ -807,7 +810,7 @@ fn move_article(args: Args<'_>) -> Outcome {
             })
         })?;
         let id = article::id_of(&arrived);
-        let number = artifact::entry::number(to, "article", &id)
+        let number = artifact::entry::number(to, Kind::Article, &id)
             .map_err(|e| Trouble::Refused(e.to_string()))?;
         spoken.push(format!("{label} as #{number}"));
         landed.push(json!({
@@ -831,13 +834,15 @@ fn articles(project: &Path) -> Vec<Held> {
     store
         .articles()
         .into_iter()
-        .map(|found| Held {
-            number: store.number("article", &found.id).ok(),
-            content: article::content(&article::dir(project).join(&found.id)),
-            id: found.id,
-            title: found.title,
-            archived: found.archived,
-            touched: found.touched,
+        .filter_map(|found| {
+            Some(Held {
+                number: store.number(Kind::Article, &found.id).ok(),
+                content: store.article_file(&found.id).ok()?,
+                id: found.id,
+                title: found.title,
+                archived: found.archived,
+                touched: found.touched,
+            })
         })
         .collect()
 }
@@ -891,30 +896,7 @@ pub(crate) fn excerpt(
     within: Within<'_>,
     named: &str,
 ) -> Result<(std::ops::Range<usize>, Span), Trouble> {
-    let range = match within {
-        Within::Span(span) => anchor::lines(markdown, span).ok_or_else(|| {
-            Trouble::Refused(format!(
-                "{named} starts past the article's last line, {}",
-                markdown.lines().count()
-            ))
-        })?,
-        Within::Heading(name) => match anchor::section(markdown, name) {
-            Some((_, range)) => range,
-            None => {
-                let anchors = anchor::headings(markdown)
-                    .into_iter()
-                    .map(|heading| heading.anchor)
-                    .collect::<Vec<_>>();
-                return Err(Trouble::Refused(match anchors.is_empty() {
-                    true => format!("{named} names a heading, and the article has none"),
-                    false => format!(
-                        "{named} names no heading — the article's are {}",
-                        anchors.join(", ")
-                    ),
-                }));
-            }
-        },
-    };
+    let (range, _) = anchor::excerpt(markdown, within, named).map_err(Trouble::Refused)?;
     Ok((range.clone(), anchor::span_of(markdown, range)))
 }
 
@@ -940,12 +922,5 @@ fn listing(held: &[Held]) -> String {
 }
 
 fn titles(held: &[Held]) -> String {
-    match held.is_empty() {
-        true => "none at all".to_owned(),
-        false => held
-            .iter()
-            .map(|article| article.label().to_owned())
-            .collect::<Vec<_>>()
-            .join(", "),
-    }
+    super::listing(held.iter().map(|article| article.label().to_owned()))
 }

@@ -170,11 +170,7 @@ fn refresh(file: &std::path::Path, etag_file: &std::path::Path) -> Result<()> {
         .limit(32 * 1024 * 1024)
         .read_to_string()?;
     Prices::parse(&body).context("the price list is not the shape this build reads")?;
-    let dir = file.parent().context("price cache has no directory")?;
-    std::fs::create_dir_all(dir)?;
-    let part = file.with_extension("part");
-    std::fs::write(&part, &body)?;
-    std::fs::rename(&part, file)?;
+    artifact::fs::save(file, &body)?;
     match etag {
         Some(etag) => std::fs::write(etag_file, etag)?,
         None => {

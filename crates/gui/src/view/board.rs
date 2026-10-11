@@ -32,7 +32,6 @@ use bezel::{
         icons,
         input::{self, Shape, TextField},
         menu::Item,
-        popover,
         scroll::{self, Axes, FollowState, Scroller},
         tooltip::Tooltip,
         widgets::Buttons,
@@ -1299,11 +1298,11 @@ impl Cydonia {
             Item::action("Delete").with_icon(icons::files::Trash),
             move |this, _, cx| this.ask_delete_card(&held, &doomed, cx),
         ));
-        let id = SharedString::from(format!("card-menu-card-{card}"));
-        Some(popover::anchored_menu_below(
-            id.clone(),
-            self.menu_card(id, rows, window, cx),
-            None,
+        Some(self.menu_below(
+            SharedString::from(format!("card-menu-card-{card}")),
+            rows,
+            window,
+            cx,
         ))
     }
 
@@ -3501,11 +3500,11 @@ impl Cydonia {
         rows.push(menu::row(drop, move |this, _, cx| {
             this.ask_delete_column(&on_board, &dropped, cx)
         }));
-        let card = SharedString::from(format!("lane-menu-{id}"));
-        Some(popover::anchored_menu_below(
-            card.clone(),
-            self.menu_card(card, rows, window, cx),
-            None,
+        Some(self.menu_below(
+            SharedString::from(format!("lane-menu-{id}")),
+            rows,
+            window,
+            cx,
         ))
     }
 

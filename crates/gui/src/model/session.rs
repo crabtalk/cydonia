@@ -26,6 +26,7 @@ use crate::{
 };
 #[cfg(feature = "desktop")]
 use anyhow::anyhow;
+use artifact::kind::Kind;
 use artifact::project::Project as _;
 #[cfg(feature = "desktop")]
 use artifact::session::chat::ToolStatus;
@@ -470,7 +471,7 @@ impl ChatSession {
             self.number = self
                 .record
                 .as_deref()
-                .and_then(|id| self.store().number("session", id).ok());
+                .and_then(|id| self.store().number(Kind::Session, id).ok());
         }
         self.record.as_deref()
     }
@@ -680,13 +681,8 @@ impl ChatSession {
                 .iter()
                 .filter(|item| matches!(item, ChatItem::User(_)))
                 .count();
-            self.sent_at.insert(
-                self.items.len(),
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs(),
-            );
+            self.sent_at
+                .insert(self.items.len(), artifact::stamp::seconds());
             self.items.push(ChatItem::User(content));
             self.items
                 .push(ChatItem::Agent(STAND_IN[turn % STAND_IN.len()].to_owned()));
@@ -707,13 +703,8 @@ impl ChatSession {
                 at: SystemTime::now(),
                 used: self.usage.map_or(0, |usage| usage.used),
             });
-            self.sent_at.insert(
-                self.items.len(),
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs(),
-            );
+            self.sent_at
+                .insert(self.items.len(), artifact::stamp::seconds());
             self.items.push(ChatItem::User(content));
             self.streaming = true;
             // Before the answer, not just after it: what you said is not the

@@ -16,3 +16,11 @@
 pub fn mint() -> String {
     crate::stamp::now().to_string()
 }
+
+/// `base`, or the first of `base-2`, `base-3`… that `taken` does not hold.
+pub fn suffixed(base: &str, mut taken: impl FnMut(&str) -> bool) -> String {
+    std::iter::once(base.to_owned())
+        .chain((2..).map(|n| format!("{base}-{n}")))
+        .find(|id| !taken(id))
+        .expect("the suffixes do not run out")
+}

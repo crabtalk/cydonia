@@ -92,7 +92,7 @@ pub fn project_of(args: &Args<'_>, reference: &Reference<'_>) -> Result<PathBuf,
     let open = rail::open();
     let mut named = open
         .iter()
-        .filter(|path| path.file_name().is_some_and(|last| last == name));
+        .filter(|path| artifact::reference::names(path, name));
     match (named.next(), named.next()) {
         (Some(one), None) => Ok(one.clone()),
         (Some(_), Some(_)) => Err(Trouble::Refused(format!(
@@ -110,6 +110,20 @@ pub fn project_of(args: &Args<'_>, reference: &Reference<'_>) -> Result<PathBuf,
     }
 }
 
+/// Entry `number` of the project at `project`. `named` is the reference as
+/// written, for the refusal.
+pub(crate) fn entry_numbered(
+    project: &Path,
+    number: u64,
+    named: &str,
+) -> Result<artifact::entry::Entry, Trouble> {
+    artifact::entry::list(project)
+        .map_err(|e| Trouble::Refused(e.to_string()))?
+        .into_iter()
+        .find(|entry| entry.number == number)
+        .ok_or_else(|| Trouble::Refused(format!("no entry {named} in this project")))
+}
+
 /// The entry number `needle` names in `project`, and the part of it named
 /// after the number, or nothing when `needle` is not an entry reference. A
 /// reference naming another project is refused.
@@ -125,7 +139,7 @@ pub(crate) fn part_in<'a>(
         return Ok(None);
     };
     if let Some(name) = named
-        && project.file_name().is_none_or(|last| last != name)
+        && !artifact::reference::names(project, name)
     {
         return Err(Trouble::Refused(format!(
             "{needle} is in project {name}, not {} — pass that project",
@@ -199,6 +213,11 @@ pub(crate) fn many(schema: &mut Value, arg: Arg) {
     });
 }
 
+/// Offer `arg` as an optional property of JSON type `kind`.
+pub(crate) fn optional(schema: &mut Value, arg: Arg, kind: &str) {
+    schema["properties"][arg.name] = json!({ "type": kind, "description": arg.about });
+}
+
 /// An object schema over required strings. Tools can add optional fields.
 ///
 /// `bound` is whether the caller already has a project, in which case the
@@ -224,4 +243,13 @@ pub(crate) fn fields(bound: bool, args: &[Arg]) -> Value {
         "properties": properties,
         "required": required,
     })
+}
+
+/// `names` joined for a refusal to list, or `none at all`.
+pub(crate) fn listing(names: impl Iterator<Item = String>) -> String {
+    let names: Vec<String> = names.collect();
+    match names.is_empty() {
+        true => "none at all".to_owned(),
+        false => names.join(", "),
+    }
 }

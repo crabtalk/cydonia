@@ -8,12 +8,14 @@
 //! Without the `desktop` feature there is one window, and this is drawn inside
 //! it — see [`embed`].
 
+#[cfg(not(target_os = "linux"))]
+use crate::view::kit::dialog::{answers, dialog};
 #[cfg(feature = "desktop")]
 use crate::{agent::Listing, model::update, view::root::traffic_lights};
 use crate::{model::workspace::Workspace, view::root::HEADER_HEIGHT};
 use bezel::ui::scroll as scrollbars;
 #[cfg(not(target_os = "linux"))]
-use bezel::{gpui::Focusable as _, ui::widgets::ButtonStyle};
+use bezel::{gpui::Focusable as _, ui::popover};
 use bezel::{
     gpui::{
         AnyElement, App, Context, ElementId, Entity, Render, SharedString, Window, div, prelude::*,
@@ -24,7 +26,7 @@ use bezel::{
     ui::{
         icons,
         input::{Shape, TextField},
-        widgets::{Buttons, Content, Controls, Layout, Scaffolding},
+        widgets::{Content, Controls, Layout, Scaffolding},
     },
 };
 #[cfg(feature = "desktop")]
@@ -524,35 +526,19 @@ impl SettingsWindow {
         theme
             .card_row(switch.first)
             .children(switch.glyph.map(|glyph| {
-                div()
-                    .flex_none()
-                    .size(px(18.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(
-                        icons::icon(glyph)
-                            .size(px(16.))
-                            .flex_none()
-                            .text_color(theme.text_muted),
-                    )
+                lead().child(
+                    icons::icon(glyph)
+                        .size(px(16.))
+                        .flex_none()
+                        .text_color(theme.text_muted),
+                )
             }))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(theme.row_title(switch.title))
-                    .child(
-                        div()
-                            .mt(px(4.))
-                            .when(switch.truncate, |el| el.truncate())
-                            .text_style(TextStyle::Subheadline)
-                            .text_color(theme.text_muted)
-                            .child(switch.blurb),
-                    ),
-            )
+            .child(labelled(
+                &theme,
+                switch.title,
+                switch.blurb,
+                switch.truncate,
+            ))
             .children(switch.badge.map(|label| theme.badge(label)))
             .child(
                 div()
@@ -568,9 +554,48 @@ impl SettingsWindow {
     }
 }
 
-/// How wide a [`Field`]'s dialog stands over the settings body.
-#[cfg(not(target_os = "linux"))]
-const DIALOG_WIDTH: f32 = 320.;
+/// A row's title over a line of explanation, filling the row's free width.
+/// `truncate` holds the line to one.
+pub(super) fn labelled(
+    theme: &Theme,
+    title: impl Into<SharedString>,
+    blurb: impl IntoElement,
+    truncate: bool,
+) -> bezel::gpui::Div {
+    div()
+        .flex_1()
+        .min_w_0()
+        .flex()
+        .flex_col()
+        .child(theme.row_title(title))
+        .child(
+            div()
+                .mt(px(4.))
+                .when(truncate, |el| el.truncate())
+                .text_style(TextStyle::Subheadline)
+                .text_color(theme.text_muted)
+                .child(blurb),
+        )
+}
+
+/// A group's label over the column it heads; the caller adds its group box.
+pub(super) fn group(theme: &Theme, label: impl Into<SharedString>) -> bezel::gpui::Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(LABEL_GAP))
+        .child(theme.field_label(label))
+}
+
+/// The 18px column down a row's left that holds its mark.
+pub(super) fn lead() -> bezel::gpui::Div {
+    div()
+        .flex_none()
+        .size(px(18.))
+        .flex()
+        .items_center()
+        .justify_center()
+}
 
 /// A value typed into a dialog rather than switched on its row.
 #[cfg(not(target_os = "linux"))]
@@ -630,73 +655,35 @@ impl SettingsWindow {
     }
 
     /// The open field's dialog, over a scrim that takes the press that
-    /// dismisses it. Rendered by the window, so it sits above the scrolling
-    /// body.
-    fn field_dialog(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    /// dismisses it.
+    fn field_dialog(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let (field, input) = self.editing.clone()?;
         let theme = Theme::of(cx).clone();
-        Some(
-            div()
-                .id("field-scrim")
-                .absolute()
-                .inset_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .bg(theme.scrim())
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.editing = None;
-                    cx.notify();
-                }))
-                .child(
-                    div()
-                        .id("field-dialog")
-                        .w(px(DIALOG_WIDTH))
-                        .flex()
-                        .flex_col()
-                        .gap(px(LABEL_GAP))
-                        .p(px(20.))
-                        .rounded(px(Theme::panel_radius()))
-                        .border_1()
-                        .border_color(theme.border)
-                        .bg(theme.surface)
-                        // The press that opens a field must not reach the scrim.
-                        .on_click(|_, _, cx| cx.stop_propagation())
-                        .child(theme.row_title(field.title()))
-                        .child(
-                            div()
-                                .text_style(TextStyle::Subheadline)
-                                .text_color(theme.text_muted)
-                                .child(field.note()),
-                        )
-                        .child(input)
-                        .child(
-                            div()
-                                .flex()
-                                .flex_row()
-                                .justify_end()
-                                .gap(px(8.))
-                                .child(
-                                    theme
-                                        .button("Cancel", ButtonStyle::Ghost, None)
-                                        .id("field-cancel")
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.editing = None;
-                                            cx.notify();
-                                        })),
-                                )
-                                .child(
-                                    theme
-                                        .button("Save", ButtonStyle::Prominent, None)
-                                        .id("field-save")
-                                        .on_click(
-                                            cx.listener(|this, _, _, cx| this.save_field(cx)),
-                                        ),
-                                ),
-                        ),
+        Some(dialog(
+            "field-dialog",
+            &theme,
+            window,
+            [
+                popover::dialog_title(&theme, field.title()).into_any_element(),
+                popover::dialog_body(&theme, field.note()).into_any_element(),
+                input.into_any_element(),
+                answers(
+                    &theme,
+                    "field",
+                    Some(Box::new(cx.listener(|this, _, _, cx| {
+                        this.editing = None;
+                        cx.notify();
+                    }))),
+                    "Save",
+                    Box::new(cx.listener(|this, _, _, cx| this.save_field(cx))),
                 )
                 .into_any_element(),
-        )
+            ],
+            cx.listener(|this, _, _, cx| {
+                this.editing = None;
+                cx.notify();
+            }),
+        ))
     }
 }
 
@@ -912,9 +899,9 @@ impl Render for SettingsWindow {
                     }),
             )
             .children(strip)
-            .children(self.trust_dialog(cx));
+            .children(self.trust_dialog(window, cx));
         #[cfg(not(target_os = "linux"))]
-        let root = root.children(self.field_dialog(cx));
+        let root = root.children(self.field_dialog(window, cx));
         #[cfg(feature = "desktop")]
         return bezel::ui::window::frame(root, window, cx);
         #[cfg(not(feature = "desktop"))]

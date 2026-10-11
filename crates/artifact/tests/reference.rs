@@ -57,6 +57,32 @@ fn every_form_in_the_spec_parses() {
     );
 }
 
+#[test]
+fn every_form_writes_back_as_it_parses() {
+    for written in [
+        "#43",
+        "#43:5",
+        "#43:5-7",
+        "DEV-12",
+        "foo#43",
+        "foo#43:5-7",
+        "foo#DEV-12",
+        "#12#setup",
+        "foo#12#set-up_2",
+    ] {
+        assert_eq!(parse(written).unwrap().to_string(), written);
+    }
+    assert_eq!(parse("foo#43:5-7").unwrap().link(), "cydonia://foo#43:5-7");
+}
+
+#[test]
+fn numeric_titles_are_not_references() {
+    assert_eq!(parse("12"), None);
+    assert_eq!(parse("#0"), None);
+    assert_eq!(parse("#-1"), None);
+    assert_eq!(parse("#+5"), None);
+}
+
 /// A key may end in a digit, so a handle splits at its last dash.
 #[test]
 fn a_handle_splits_at_its_last_dash() {

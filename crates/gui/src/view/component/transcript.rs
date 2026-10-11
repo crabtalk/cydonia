@@ -8,11 +8,17 @@
 
 use crate::{
     model::{session::ChatSession, workspace::Workspace},
-    view::{find, root},
+    view::{
+        find,
+        kit::text::{elapsed, tokens},
+        root,
+    },
 };
 use artifact::{
+    reference,
     search::Query,
     session::chat::{ChatItem, ToolStatus},
+    text::{clip, one_line},
 };
 
 use bezel::{
@@ -377,14 +383,15 @@ impl State {
 /// Nothing for a session without a number yet.
 pub(crate) fn turn_link(chat: &ChatSession, from: usize, to: usize) -> Option<String> {
     let number = chat.number?;
-    let name = chat.cwd.file_name()?.to_string_lossy();
-    let turns = artifact::reference::Span {
+    let name = reference::project_name(&chat.cwd)?;
+    let turns = reference::Span {
         from: from.min(to) as u64,
         to: from.max(to) as u64,
     };
-    Some(crate::view::entry_link::link(&format!(
-        "{name}#{number}:{turns}"
-    )))
+    Some(
+        reference::Reference::entry(Some(&name), number, Some(reference::Within::Span(turns)))
+            .link(),
+    )
 }
 
 /// Text available for selection and copying.
@@ -1141,7 +1148,7 @@ fn rail<V: 'static>(
                     // nothing to name itself with.
                     let asked = match chat.items.get(turn.range.start) {
                         Some(ChatItem::User(text)) => {
-                            Some(SharedString::from(clipped(text, ASKED_MAX)))
+                            Some(SharedString::from(clip(text, ASKED_MAX)))
                         }
                         _ => None,
                     }
@@ -1662,20 +1669,6 @@ pub fn title(label: &str) -> (SharedString, Option<SharedString>, Option<SharedS
     )
 }
 
-/// `text` with every run of whitespace — newlines included — as one space.
-fn one_line(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-/// The same, cut to `max` characters and ellipsized.
-fn clipped(text: &str, max: usize) -> String {
-    let line = one_line(text);
-    match line.char_indices().nth(max) {
-        Some((at, _)) => format!("{}…", line[..at].trim_end()),
-        None => line,
-    }
-}
-
 /// One tool call, and what it printed.
 fn tool(chat: &ChatSession, ix: usize, first: bool, cx: &mut Context<Workspace>) -> AnyElement {
     let theme = Theme::of(cx).clone();
@@ -1908,31 +1901,13 @@ fn asked_hash(question: &str) -> usize {
     hash.finish() as usize
 }
 
-/// A turn's age, in the coarsest unit that still says something.
-fn since(elapsed: Duration) -> String {
-    let secs = elapsed.as_secs();
-    match secs < 60 {
-        true => format!("{secs}s"),
-        false => format!("{}m {}s", secs / 60, secs % 60),
-    }
-}
-
-/// Tokens, thinned to the digits that carry: `840`, `4.2k`, `128k`.
-fn tokens(spent: u64) -> String {
-    match spent {
-        n if n < 1_000 => n.to_string(),
-        n if n < 100_000 => format!("{:.1}k", n as f64 / 1_000.),
-        n => format!("{}k", n / 1_000),
-    }
-}
-
 /// What the turn has cost so far, quieter than the word it follows. Absent
 /// until there is something to say — a turn that has not been running a whole
 /// second yet is not news.
 fn spend(chat: &ChatSession, theme: &Theme) -> Option<AnyElement> {
     let mut parts = Vec::new();
     if let Some(elapsed) = chat.elapsed().filter(|elapsed| elapsed.as_secs() > 0) {
-        parts.push(since(elapsed));
+        parts.push(self::elapsed(elapsed));
     }
     // Only once it is worth a number. A turn opens on nothing spent, and
     // `0 tokens` is a fact about the clock rather than about the turn.

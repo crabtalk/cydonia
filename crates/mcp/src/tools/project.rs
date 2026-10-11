@@ -5,6 +5,7 @@ use crate::{
     tool::{Answer, Arg, Args, Outcome, Tool, Trouble},
     tools::{PROJECT, entry_of, fields, held, many, root},
 };
+use artifact::kind::Kind;
 use artifact::{
     project::{Project as _, fs},
     reference::Within,
@@ -57,15 +58,8 @@ pub static TOOLS: [Tool; 5] = [
         description: "Set the labels an article, board or saved chat carries. Names are lowercased, \
             with spaces as -, and shared across projects. Tables carry no labels.",
         schema: |bound| {
-            let mut schema = fields(bound, &[PROJECT, ENTRY]);
-            schema["properties"][LABELS.name] = json!({
-                "anyOf": [
-                    { "type": "string" },
-                    { "type": "array", "items": { "type": "string" } }
-                ],
-                "description": LABELS.about,
-            });
-            schema["required"] = json!([ENTRY.name, LABELS.name]);
+            let mut schema = fields(bound, &[PROJECT, ENTRY, LABELS]);
+            many(&mut schema, LABELS);
             schema
         },
         writes: true,
@@ -225,44 +219,27 @@ fn entries(args: Args<'_>) -> Outcome {
 
 fn label_entry(args: Args<'_>) -> Outcome {
     let named = args.text(ENTRY)?;
-    let wrong = || {
-        Trouble::Invalid(format!(
-            "{} is required, as a string or a list of strings",
-            LABELS.name
-        ))
-    };
-    let labels = match args.value(LABELS) {
-        Some(serde_json::Value::String(one)) => vec![one.as_str()],
-        Some(serde_json::Value::Array(many)) => many
-            .iter()
-            .map(|value| value.as_str().ok_or_else(wrong))
-            .collect::<Result<_, _>>()?,
-        _ => return Err(wrong()),
-    };
-    let labels = artifact::label::normalize_all(labels);
+    // An empty list is an answer here: it takes every label off.
+    let labels = artifact::label::normalize_all(args.any_list(LABELS)?);
     let (project, number, within) = entry_of(&args, named)?;
     if within.is_some() {
         return Err(Trouble::Invalid(format!(
             "{named} names part of an entry, and labels go on the whole of one"
         )));
     }
-    let entries = artifact::entry::list(&project).map_err(|e| Trouble::Refused(e.to_string()))?;
-    let entry = entries
-        .into_iter()
-        .find(|entry| entry.number == number)
-        .ok_or_else(|| Trouble::Refused(format!("no entry {named} in this project")))?;
+    let entry = super::entry_numbered(&project, number, named)?;
     let store = fs::Project::new(&project);
     let refused =
         |e: &dyn std::fmt::Display| Trouble::Refused(format!("{named} cannot be written — {e}"));
     match entry.kind {
-        "article" => {
+        Kind::Article => {
             let mut properties = store.properties(&entry.id);
             properties.labels = labels.clone();
             store
                 .save_properties(&entry.id, &properties)
                 .map_err(|e| refused(&e))?;
         }
-        "board" => {
+        Kind::Board => {
             let mut board = store
                 .board(&entry.id)
                 .ok_or_else(|| Trouble::Refused(format!("{named} no longer exists")))?;
@@ -271,11 +248,11 @@ fn label_entry(args: Args<'_>) -> Outcome {
         }
         // An open project's sessions are the app's to write: a file written
         // under it would be overwritten by the app's next save.
-        "session" if rail::is_open(&project) => rail::ask(Change::Label {
+        Kind::Session if rail::is_open(&project) => rail::ask(Change::Label {
             session: entry.id.clone(),
             labels: labels.clone(),
         })?,
-        "session" => {
+        Kind::Session => {
             let mut record = store
                 .session(&entry.id)
                 .ok_or_else(|| Trouble::Refused(format!("{named} no longer exists")))?;
@@ -299,20 +276,12 @@ fn read_entry(args: Args<'_>) -> Outcome {
     let named = args.text(ENTRY)?;
     let (project, number, within) = entry_of(&args, named)?;
     let project = project.as_path();
-    let entries = artifact::entry::list(project).map_err(|e| Trouble::Refused(e.to_string()))?;
-    let entry = entries
-        .into_iter()
-        .find(|entry| entry.number == number)
-        .ok_or_else(|| Trouble::Refused(format!("no entry {named} in this project")))?;
-    if within.is_some() && entry.kind != "article" {
-        return Err(match (entry.kind, within) {
-            ("session", Some(Within::Span(_))) => {
-                Trouble::Invalid(format!("{named} names turns — read them with session_read"))
-            }
-            (kind, _) => Trouble::Invalid(format!(
-                "{named} names part of a {kind}, and only an article's lines or a session's turns can be named"
-            )),
-        });
+    let entry = super::entry_numbered(project, number, named)?;
+    artifact::reference::fits(named, entry.kind, within).map_err(Trouble::Invalid)?;
+    if let (Kind::Session, Some(Within::Span(_))) = (entry.kind, within) {
+        return Err(Trouble::Invalid(format!(
+            "{named} names turns — read them with session_read"
+        )));
     }
     let content =
         artifact::entry::read(project, &entry).map_err(|e| Trouble::Refused(e.to_string()))?;

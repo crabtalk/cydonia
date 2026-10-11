@@ -4,9 +4,9 @@
 use super::{Part, card, entry, passage};
 use crate::data::{ColType, Column, Data};
 use crate::model::{article::Disk, project::Project, workspace::Showing};
+use artifact::kind::Kind;
 use artifact::project::{Project as _, fs};
 use artifact::reference::{Span, Within};
-use artifact::search::Kind;
 use std::rc::Rc;
 
 const TEXT: &str = "# Guide\n\nIntro.\n\n## Set up\n\nStep one.\n\n- a\n- b\n\n## Use\n\nGo.\n";

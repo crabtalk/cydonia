@@ -11,6 +11,7 @@ use bezel::{
     ui::{
         icons::Icon,
         menu::{self, Hit, Item},
+        popover,
         widgets::{ButtonStyle, Buttons},
     },
 };
@@ -257,6 +258,18 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         self.menu_panel(id, rows, window, cx).into_any_element()
+    }
+
+    /// [`Self::menu_card`], hung below the element it is a child of.
+    pub(crate) fn menu_below(
+        &self,
+        id: impl Into<SharedString>,
+        rows: Vec<(Item, Act)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let id = id.into();
+        popover::anchored_menu_below(id.clone(), self.menu_card(id, rows, window, cx), None)
     }
 
     /// [`Cydonia::menu_card`] before it is erased, for a menu that sizes its

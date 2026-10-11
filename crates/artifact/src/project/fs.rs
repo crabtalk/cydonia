@@ -16,8 +16,8 @@ use crate::{
     article::{self, Article, comments::Comments, properties::Properties},
     board::{self, Board, key},
     document, id,
+    kind::Kind,
     session::record::Record,
-    space::Kind,
     stamp,
 };
 use anyhow::Result;
@@ -456,7 +456,7 @@ impl Project {
     }
 
     /// The `content.md` of an article that is here.
-    fn article_file(&self, id: &str) -> Result<PathBuf> {
+    pub fn article_file(&self, id: &str) -> Result<PathBuf> {
         let content = article::content(&article::dir(&self.root).join(component(id)?));
         anyhow::ensure!(content.is_file(), "no article {id}");
         Ok(content)
@@ -490,7 +490,7 @@ impl super::Project for Project {
         let body = std::fs::read_to_string(self.session_file(id)).ok()?;
         let mut record: Record = serde_json::from_str(&body).ok()?;
         record.id = id.to_owned();
-        record.number = self.number("session", id).ok();
+        record.number = self.number(Kind::Session, id).ok();
         Some(record)
     }
 
@@ -501,7 +501,7 @@ impl super::Project for Project {
             self.migrate_flat(&flat);
         }
         let mut board = self.read_board_dir(&self.board_dir(id))?;
-        board.number = self.number("board", id).ok();
+        board.number = self.number(Kind::Board, id).ok();
         Some(board)
     }
 
@@ -530,7 +530,7 @@ impl super::Project for Project {
         // itself and every re-read would report a change nobody made. The
         // write costs one watch event, which finds nothing left to mint.
         for board in &mut boards {
-            board.number = self.number("board", &board.id).ok();
+            board.number = self.number(Kind::Board, &board.id).ok();
             let keyed = board.key.is_empty();
             if keyed {
                 board.key = key::derive(&board.name, &keys);
@@ -549,19 +549,12 @@ impl super::Project for Project {
         std::fs::create_dir_all(&dir)?;
         let mut board = Board::new(free_board(&dir, stamp::now()), name);
         board.created = stamp::named(&board.id);
-        board.key = match key::normalize(key) {
-            Some(key) => key,
-            // Nothing given, so it is derived from the name — against what the
-            // project's other boards are already keyed, so it is clear of
-            // them. Reading them is also what settles any key they are still
-            // missing.
-            None => {
-                let taken: HashSet<String> =
-                    self.boards().into_iter().map(|board| board.key).collect();
-                key::derive(&board.name, &taken)
-            }
-        };
-        board.number = self.number("board", &board.id).ok();
+        // Reading the other boards is also what settles any key they are
+        // still missing.
+        board.key = key::or_derived(key, &board.name, || {
+            self.boards().into_iter().map(|board| board.key).collect()
+        });
+        board.number = self.number(Kind::Board, &board.id).ok();
         self.save_board(&mut board)?;
         Ok(board)
     }
@@ -572,7 +565,7 @@ impl super::Project for Project {
 
     fn remove_board(&self, id: &str) -> Result<()> {
         std::fs::remove_dir_all(self.board_dir(component(id)?))?;
-        self.retire("board", id)
+        self.retire(Kind::Board, id)
     }
 
     fn sessions(&self) -> Vec<Record> {
@@ -590,7 +583,7 @@ impl super::Project for Project {
                 if record.id.is_empty() {
                     record.id = stem(&path);
                 }
-                record.number = self.number("session", &record.id).ok();
+                record.number = self.number(Kind::Session, &record.id).ok();
                 Some(record)
             })
             .collect();
@@ -605,15 +598,9 @@ impl super::Project for Project {
     fn create_session(&self) -> Result<String> {
         let dir = self.init()?.join(SESSIONS);
         std::fs::create_dir_all(&dir)?;
-        let stamp = stamp::fresh();
-        let mut id = stamp.to_string();
-        for n in 2.. {
-            if !dir.join(format!("{id}.json")).exists() {
-                break;
-            }
-            id = format!("{stamp}-{n}");
-        }
-        Ok(id)
+        Ok(id::suffixed(&stamp::fresh().to_string(), |id| {
+            dir.join(format!("{id}.json")).exists()
+        }))
     }
 
     fn save_session(&self, record: &Record) -> Result<()> {
@@ -624,7 +611,7 @@ impl super::Project for Project {
 
     fn remove_session(&self, id: &str) -> Result<()> {
         std::fs::remove_file(self.session_file(id))?;
-        self.retire("session", id)
+        self.retire(Kind::Session, id)
     }
 
     fn articles(&self) -> Vec<Article> {
@@ -738,21 +725,21 @@ impl super::Project for Project {
         }
     }
 
-    fn number(&self, kind: &str, id: &str) -> Result<u64> {
+    fn number(&self, kind: Kind, id: &str) -> Result<u64> {
         #[cfg(feature = "sqlite")]
         return entry::Registry::open(&self.root)?.number(kind, id);
         #[cfg(not(feature = "sqlite"))]
         no_numbers(kind, id)
     }
 
-    fn resolve(&self, kind: &str, number: u64) -> Result<Option<String>> {
+    fn resolve(&self, kind: Kind, number: u64) -> Result<Option<String>> {
         #[cfg(feature = "sqlite")]
         return entry::Registry::open(&self.root)?.resolve(kind, number);
         #[cfg(not(feature = "sqlite"))]
         no_numbers(kind, &number.to_string())
     }
 
-    fn retire(&self, kind: &str, id: &str) -> Result<()> {
+    fn retire(&self, kind: Kind, id: &str) -> Result<()> {
         #[cfg(feature = "sqlite")]
         return entry::Registry::open(&self.root)?.remove(kind, id);
         #[cfg(not(feature = "sqlite"))]
@@ -768,7 +755,7 @@ fn stem(path: &Path) -> String {
 }
 
 #[cfg(not(feature = "sqlite"))]
-fn no_numbers<T>(kind: &str, id: &str) -> Result<T> {
+fn no_numbers<T>(kind: Kind, id: &str) -> Result<T> {
     anyhow::bail!("no number for {kind} {id}: built without the sqlite feature")
 }
 
@@ -849,10 +836,9 @@ fn card_version(text: &str, properties: &str) -> String {
 
 /// A board id no directory or flat file under `dir` is using.
 fn free_board(dir: &Path, stamp: u128) -> String {
-    (stamp..)
-        .map(|stamp| stamp.to_string())
-        .find(|id| !dir.join(id).exists() && !dir.join(format!("{id}.toml")).exists())
-        .unwrap_or_else(|| stamp.to_string())
+    stamp::free(stamp, |id| {
+        dir.join(id).exists() || dir.join(format!("{id}.toml")).exists()
+    })
 }
 
 /// A board written whole into one TOML file, its cards inline: the layout

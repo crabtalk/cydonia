@@ -93,3 +93,24 @@ pub struct Table {
     /// The agent that made it, by the name `settings.toml` gives it.
     pub author: Option<String>,
 }
+
+impl Table {
+    /// [`Table::created_at`] in the milliseconds every other stamp is kept in.
+    pub fn created_ms(&self) -> u128 {
+        seconds_to_ms(self.created_at)
+    }
+
+    /// When it was last written in, or made, in milliseconds.
+    pub fn touched_ms(&self) -> u128 {
+        seconds_to_ms(self.updated_at.unwrap_or(self.created_at))
+    }
+}
+
+fn seconds_to_ms(seconds: i64) -> u128 {
+    seconds.max(0) as u128 * 1000
+}
+
+/// `ident` as an SQL identifier: in double quotes, its own doubled.
+pub fn quote(ident: &str) -> String {
+    format!("\"{}\"", ident.replace('"', "\"\""))
+}

@@ -8,12 +8,12 @@
 
 use crate::{
     model::{watch, workspace::Resident},
-    view::settings::{self, SettingsWindow, Switch},
+    view::settings::{self, SettingsWindow, Switch, group, labelled},
 };
 use bezel::{
     gpui::{AnyElement, Context, div, prelude::*, px},
     theme::{TextStyle, Theme, Typeset},
-    ui::widgets::Scaffolding,
+    ui::widgets::{Controls, Scaffolding},
 };
 
 /// The watch delays the row offers, named for what they buy rather than for
@@ -77,55 +77,29 @@ impl SettingsWindow {
         let ms = watch::bounce(self.workspace.read(cx).settings.watch_bounce).as_millis();
         theme
             .card_row(false)
+            .child(labelled(
+                &theme,
+                "Watch delay",
+                format!("Changes on disk show after {ms} ms of quiet."),
+                false,
+            ))
             .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(theme.row_title("Watch delay"))
-                    .child(
-                        div()
-                            .mt(px(4.))
-                            .text_style(TextStyle::Subheadline)
-                            .text_color(theme.text_muted)
-                            .child(format!("Changes on disk show after {ms} ms of quiet.")),
-                    ),
-            )
-            .child(
-                div()
-                    .flex_none()
-                    .flex()
-                    .flex_row()
-                    .gap(px(2.))
-                    .p(px(2.))
-                    .rounded(px(Theme::button_radius()))
-                    .border_1()
-                    .border_color(theme.border)
-                    .children(BOUNCES.into_iter().map(|(value, label)| {
-                        let selected = u128::from(value) == ms;
-                        div()
-                            .id(("watch-bounce", value as usize))
-                            .px(px(10.))
-                            .py(px(4.))
-                            .rounded(px(Theme::control_radius()))
-                            .text_style(TextStyle::Callout)
-                            .cursor_pointer()
-                            .when(selected, |el| {
-                                el.bg(theme.element_active).text_color(theme.text)
-                            })
-                            .when(!selected, |el| {
-                                el.text_color(theme.text_muted)
-                                    .hover(|el| el.bg(theme.element_hover))
-                            })
-                            .child(label)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.workspace.update(cx, |workspace, cx| {
-                                    workspace.set_watch_bounce(value, cx)
-                                });
-                                cx.notify();
-                            }))
-                    })),
+                theme
+                    .segmented(
+                        "watch-bounce",
+                        BOUNCES.map(|(_, label)| label),
+                        BOUNCES
+                            .iter()
+                            .position(|(value, _)| u128::from(*value) == ms)
+                            .unwrap_or(usize::MAX),
+                        cx.listener(|this, ix: &usize, _, cx| {
+                            this.workspace.update(cx, |workspace, cx| {
+                                workspace.set_watch_bounce(BOUNCES[*ix].0, cx)
+                            });
+                            cx.notify();
+                        }),
+                    )
+                    .flex_none(),
             )
     }
 
@@ -140,11 +114,7 @@ impl SettingsWindow {
             sessions,
             items,
         } = self.workspace.read(cx).resident();
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(settings::LABEL_GAP))
-            .child(theme.field_label("Resident"))
+        group(&theme, "Resident")
             .child(
                 theme
                     .group_box()
@@ -184,21 +154,7 @@ impl SettingsWindow {
         let theme = Theme::of(cx).clone();
         theme
             .card_row(first)
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(theme.row_title(title))
-                    .child(
-                        div()
-                            .mt(px(4.))
-                            .text_style(TextStyle::Subheadline)
-                            .text_color(theme.text_muted)
-                            .child(note),
-                    ),
-            )
+            .child(labelled(&theme, title, note, false))
             .child(
                 div()
                     .flex_none()

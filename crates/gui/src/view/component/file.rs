@@ -550,10 +550,10 @@ impl FileView {
             root_name,
             relative.display().to_string().replace('/', "  ›  ")
         );
-        let markdown = self
-            .path
-            .extension()
-            .is_some_and(|ext| ext == "md" || ext == "markdown");
+        let markdown = matches!(
+            self.language,
+            Some(crate::model::language::Language::Markdown)
+        );
         let bar = super::status::bar(&theme)
             .child(super::status::path(&self.path, breadcrumb))
             .when(markdown && self.ready, |row| {
@@ -820,10 +820,10 @@ impl Render for FileView {
                 cx,
             );
         });
-        let markdown = self
-            .path
-            .extension()
-            .is_some_and(|ext| ext == "md" || ext == "markdown");
+        let markdown = matches!(
+            self.language,
+            Some(crate::model::language::Language::Markdown)
+        );
         let preview_doc = (markdown && self.preview && self.ready).then(|| {
             Rc::new(markdown::parse_with(
                 self.field.read(cx).content(),

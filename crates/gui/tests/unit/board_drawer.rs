@@ -1,5 +1,6 @@
 use super::*;
 use crate::model::{project::Project, settings::Settings, state};
+use artifact::kind::Kind;
 use artifact::project::{Project as _, fs};
 use bezel::gpui::{Modifiers, MouseButton, TestAppContext, VisualTestContext, point, size};
 use bezel::ui::AppExt as _;
@@ -70,7 +71,7 @@ fn open(
             .clone(),
     ];
     store.save_board(&mut board).unwrap();
-    let member = Member::new(&scratch.0, artifact::space::Kind::Board, board.id.clone());
+    let member = Member::new(&scratch.0, Kind::Board, board.id.clone());
     cx.update(|cx| {
         Theme::install(bezel::theme::Appearance::Dark, cx);
         input::init(cx);

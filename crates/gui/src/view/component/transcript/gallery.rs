@@ -10,17 +10,7 @@ use bezel::{
 use std::{cell::Cell, path::Path, rc::Rc, sync::Arc};
 
 pub(crate) fn document(text: &str) -> (markdown::Doc, Vec<String>) {
-    let mut doc = markdown::parse(text);
-    let mut images = Vec::new();
-    doc.blocks.retain(|block| {
-        if let markdown::BlockKind::Image { url, .. } = &block.kind {
-            images.push(url.clone());
-            false
-        } else {
-            true
-        }
-    });
-    (doc, images)
+    crate::model::media::lift_pictures(text, |_| true)
 }
 
 /// Where an image URL in a message points: a `file:` URL or a path against

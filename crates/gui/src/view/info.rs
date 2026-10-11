@@ -1,27 +1,23 @@
 //! A board's identity panel: its name and the key its handles carry, edited in
 //! one place because one is derived from the other.
 
-use crate::view::root::Cydonia;
+use crate::view::{
+    kit::{dialog::answers, form},
+    root::Cydonia,
+};
 use bezel::{
     gpui::{
-        self, AnyElement, App, Context, Entity, Focusable as _, KeyBinding, SharedString, Window,
-        actions, div, prelude::*, px,
+        self, AnyElement, Context, Entity, Focusable as _, KeyBinding, SharedString, Window,
+        actions, prelude::*, px,
     },
-    theme::{TextStyle, Theme, Typeset},
-    ui::{
-        input::TextField,
-        popover,
-        widgets::{ButtonStyle, Buttons},
-    },
+    theme::Theme,
+    ui::{input::TextField, popover},
 };
 
 actions!(cydonia_header, [CommitInfo, DismissInfo]);
 
 /// Claimed on the panel's fields, so `enter` files it.
 const INFO_CONTEXT: &str = "CydoniaBoardInfo";
-
-/// How wide the labels run, so the two fields start on one edge.
-const LABEL_WIDTH: f32 = 34.;
 
 pub fn bindings() -> Vec<KeyBinding> {
     vec![
@@ -43,17 +39,6 @@ pub(crate) struct BoardInfo {
     /// What was wrong last time. Keeps the panel open: a taken key is a thing
     /// to fix, not to be told about afterwards.
     pub error: Option<SharedString>,
-}
-
-/// One of the panel's fields, holding what is there now.
-fn seed(content: String, placeholder: &'static str, cx: &mut App) -> Entity<TextField> {
-    let field = cx.new(|cx| {
-        TextField::new(cx)
-            .with_key_context(INFO_CONTEXT)
-            .with_placeholder(placeholder)
-    });
-    field.update(cx, |field, cx| field.set_content(content, cx));
-    field
 }
 
 impl Cydonia {
@@ -90,8 +75,8 @@ impl Cydonia {
             cx.notify();
             return;
         };
-        let name = seed(name, "name this board…", cx);
-        let key = seed(key, "KEY", cx);
+        let name = form::field(INFO_CONTEXT, name, "name this board…", cx);
+        let key = form::field(INFO_CONTEXT, key, "KEY", cx);
         window.focus(&name.read(cx).focus_handle(cx), cx);
         self.info = Some(BoardInfo {
             board: board.to_owned(),
@@ -139,39 +124,22 @@ impl Cydonia {
             .flex()
             .flex_col()
             .gap(px(10.))
-            .child(self.info_row("Name", info.name.clone(), cx))
-            .child(self.info_row("Key", info.key.clone(), cx))
+            .child(form::row(&theme, "Name", info.name.clone()))
+            .child(form::row(&theme, "Key", info.key.clone()))
             // Only on an error: a standing hint would caption two labelled
             // fields, and any example would name another board.
-            .children(info.error.clone().map(|why| {
-                div()
-                    .text_style(TextStyle::Caption)
-                    .text_color(theme.danger)
-                    .child(why)
-            }))
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .justify_end()
-                    .gap(px(8.))
-                    .child(
-                        theme
-                            .button("Cancel", ButtonStyle::Ghost, None)
-                            .id("info-cancel")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.dismiss_info(&DismissInfo, window, cx)
-                            })),
-                    )
-                    .child(
-                        theme
-                            .button("Save", ButtonStyle::Prominent, None)
-                            .id("info-save")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.commit_info(&CommitInfo, window, cx)
-                            })),
-                    ),
-            )
+            .children(info.error.clone().map(|why| form::error(&theme, why)))
+            .child(answers(
+                &theme,
+                "info",
+                Some(Box::new(cx.listener(|this, _, window, cx| {
+                    this.dismiss_info(&DismissInfo, window, cx)
+                }))),
+                "Save",
+                Box::new(
+                    cx.listener(|this, _, window, cx| this.commit_info(&CommitInfo, window, cx)),
+                ),
+            ))
             // Pressing away discards: nothing is filed until Save. The press is
             // spent on the dismissal and reaches nothing behind the panel — the
             // rule [`popover::dismiss_on_out`] states.
@@ -185,24 +153,5 @@ impl Cydonia {
             card,
             None,
         ))
-    }
-
-    fn info_row(&self, label: &str, field: Entity<TextField>, cx: &Context<Self>) -> AnyElement {
-        let theme = Theme::of(cx).clone();
-        div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(8.))
-            .child(
-                div()
-                    .flex_none()
-                    .w(px(LABEL_WIDTH))
-                    .text_style(TextStyle::Caption)
-                    .text_color(theme.text_muted)
-                    .child(label.to_owned()),
-            )
-            .child(div().flex_1().min_w_0().child(field))
-            .into_any_element()
     }
 }

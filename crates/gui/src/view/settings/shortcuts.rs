@@ -17,7 +17,7 @@ use crate::{
     model::{settings::Shortcuts, workspace::Workspace},
     view::{
         keymap::{self, Command, Menu},
-        settings::{self, SettingsWindow, Switch},
+        settings::{self, SettingsWindow, Switch, group, labelled},
     },
 };
 use bezel::{
@@ -72,19 +72,11 @@ impl SettingsWindow {
             .flex_col()
             .gap(px(settings::GROUP_GAP))
             .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(settings::LABEL_GAP))
-                    .child(theme.field_label("System"))
+                group(&theme, "System")
                     .child(theme.group_box().child(self.activate_row(cx))),
             )
             .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(settings::LABEL_GAP))
-                    .child(theme.field_label("Text editing"))
+                group(&theme, "Text editing")
                     .child(theme.group_box().child(self.switch_row(
                         Switch::new(
                             "emacs-shortcuts",
@@ -102,11 +94,7 @@ impl SettingsWindow {
                     ))),
             )
             .children(Menu::ALL.into_iter().map(|menu| {
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(settings::LABEL_GAP))
-                    .child(theme.field_label(menu.title()))
+                group(&theme, menu.title())
                     .child(
                         theme.group_box().children(
                             Command::ALL
@@ -150,25 +138,14 @@ impl SettingsWindow {
         };
         theme
             .card_row(true)
-            .child(
+            .child(labelled(
+                &theme,
+                "Activate cydonia",
                 div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(theme.row_title("Activate cydonia"))
-                    .child(
-                        div()
-                            .mt(px(4.))
-                            .text_style(TextStyle::Subheadline)
-                            .text_color(if refused.is_some() {
-                                theme.danger
-                            } else {
-                                theme.text_muted
-                            })
-                            .child(blurb),
-                    ),
-            )
+                    .when(refused.is_some(), |el| el.text_color(theme.danger))
+                    .child(blurb),
+                false,
+            ))
             .children(
                 held.is_some()
                     .then(|| self.clear_button(Target::Activate, cx)),

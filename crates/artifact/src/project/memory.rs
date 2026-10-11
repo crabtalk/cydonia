@@ -6,6 +6,7 @@
 //! Tables (`data.db`) are not part of it. Article covers are not carried: an
 //! [`Article`] from here has no cover.
 
+use crate::kind::Kind;
 use crate::{
     article::{
         Article,
@@ -35,9 +36,9 @@ struct State {
     sessions: BTreeMap<String, Record>,
     articles: BTreeMap<String, Held>,
     /// `(kind, id)` to the number issued to it.
-    numbers: HashMap<(String, String), u64>,
+    numbers: HashMap<(Kind, String), u64>,
     /// Every number issued, with the id it is on, or `None` once retired.
-    issued: BTreeMap<u64, (String, Option<String>)>,
+    issued: BTreeMap<u64, (Kind, Option<String>)>,
 }
 
 #[derive(Default)]
@@ -148,14 +149,13 @@ impl Project {
 }
 
 impl State {
-    fn number(&mut self, kind: &str, id: &str) -> u64 {
-        let key = (kind.to_owned(), id.to_owned());
+    fn number(&mut self, kind: Kind, id: &str) -> u64 {
+        let key = (kind, id.to_owned());
         if let Some(number) = self.numbers.get(&key) {
             return *number;
         }
         let number = self.issued.keys().next_back().map_or(1, |last| last + 1);
-        self.issued
-            .insert(number, (kind.to_owned(), Some(id.to_owned())));
+        self.issued.insert(number, (kind, Some(id.to_owned())));
         self.numbers.insert(key, number);
         number
     }
@@ -168,8 +168,8 @@ impl State {
             .to_string()
     }
 
-    fn retire(&mut self, kind: &str, id: &str) {
-        if let Some(number) = self.numbers.remove(&(kind.to_owned(), id.to_owned()))
+    fn retire(&mut self, kind: Kind, id: &str) {
+        if let Some(number) = self.numbers.remove(&(kind, id.to_owned()))
             && let Some(entry) = self.issued.get_mut(&number)
         {
             entry.1 = None;
@@ -203,7 +203,7 @@ impl super::Project for Project {
         let mut boards: Vec<Board> = ids
             .into_iter()
             .map(|id| {
-                let number = state.number("board", &id);
+                let number = state.number(Kind::Board, &id);
                 let mut board = state.boards[&id].clone();
                 board.number = Some(number);
                 board.version = Some(state.version(&id));
@@ -217,7 +217,7 @@ impl super::Project for Project {
     fn board(&self, id: &str) -> Option<Board> {
         let mut state = self.state();
         let mut board = state.boards.get(id)?.clone();
-        board.number = Some(state.number("board", id));
+        board.number = Some(state.number(Kind::Board, id));
         board.version = Some(state.version(id));
         Some(board)
     }
@@ -226,19 +226,15 @@ impl super::Project for Project {
         let mut state = self.state();
         let mut board = Board::new(id::mint(), name);
         board.created = stamp::named(&board.id);
-        board.key = match key::normalize(key) {
-            Some(key) => key,
-            None => {
-                let taken: HashSet<String> = state
-                    .boards
-                    .values()
-                    .map(|board| board.key.clone())
-                    .collect();
-                key::derive(&board.name, &taken)
-            }
-        };
+        board.key = key::or_derived(key, &board.name, || {
+            state
+                .boards
+                .values()
+                .map(|board| board.key.clone())
+                .collect()
+        });
         board.touched = stamp::now();
-        board.number = Some(state.number("board", &board.id));
+        board.number = Some(state.number(Kind::Board, &board.id));
         board.version = Some(state.version(&board.id));
         state.boards.insert(board.id.clone(), board.clone());
         Ok(board)
@@ -264,7 +260,7 @@ impl super::Project for Project {
             .boards
             .remove(id)
             .ok_or_else(|| anyhow!("no board {id}"))?;
-        state.retire("board", id);
+        state.retire(Kind::Board, id);
         Ok(())
     }
 
@@ -274,7 +270,7 @@ impl super::Project for Project {
         let mut found: Vec<Record> = ids
             .into_iter()
             .map(|id| {
-                let number = state.number("session", &id);
+                let number = state.number(Kind::Session, &id);
                 let mut record = state.sessions[&id].clone();
                 record.number = Some(number);
                 record
@@ -287,7 +283,7 @@ impl super::Project for Project {
     fn session(&self, id: &str) -> Option<Record> {
         let mut state = self.state();
         let mut record = state.sessions.get(id)?.clone();
-        record.number = Some(state.number("session", id));
+        record.number = Some(state.number(Kind::Session, id));
         Some(record)
     }
 
@@ -308,7 +304,7 @@ impl super::Project for Project {
             .sessions
             .remove(id)
             .ok_or_else(|| anyhow!("no session {id}"))?;
-        state.retire("session", id);
+        state.retire(Kind::Session, id);
         Ok(())
     }
 
@@ -330,10 +326,7 @@ impl super::Project for Project {
 
     fn create_article(&self, markdown: &str) -> Result<Article> {
         let mut state = self.state();
-        let id = (stamp::now()..)
-            .map(|stamp| stamp.to_string())
-            .find(|id| !state.articles.contains_key(id))
-            .unwrap_or_else(id::mint);
+        let id = stamp::free(stamp::now(), |id| state.articles.contains_key(id));
         let held = Held {
             markdown: markdown.to_owned(),
             touched: stamp::now(),
@@ -395,7 +388,7 @@ impl super::Project for Project {
             .articles
             .remove(id)
             .ok_or_else(|| anyhow!("no article {id}"))?;
-        state.retire("article", id);
+        state.retire(Kind::Article, id);
         Ok(())
     }
 
@@ -421,20 +414,20 @@ impl super::Project for Project {
         Ok(())
     }
 
-    fn number(&self, kind: &str, id: &str) -> Result<u64> {
+    fn number(&self, kind: Kind, id: &str) -> Result<u64> {
         Ok(self.state().number(kind, id))
     }
 
-    fn resolve(&self, kind: &str, number: u64) -> Result<Option<String>> {
+    fn resolve(&self, kind: Kind, number: u64) -> Result<Option<String>> {
         Ok(self
             .state()
             .issued
             .get(&number)
-            .filter(|(issued, _)| issued == kind)
+            .filter(|(issued, _)| *issued == kind)
             .and_then(|(_, id)| id.clone()))
     }
 
-    fn retire(&self, kind: &str, id: &str) -> Result<()> {
+    fn retire(&self, kind: Kind, id: &str) -> Result<()> {
         self.state().retire(kind, id);
         Ok(())
     }

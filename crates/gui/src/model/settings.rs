@@ -1057,6 +1057,19 @@ pub fn dir() -> Result<PathBuf> {
     artifact::backup::config_dir()
 }
 
+/// What the TOML file at `path` holds, or the default for one that is missing
+/// or does not read.
+pub(crate) fn read_toml<T: serde::de::DeserializeOwned + Default>(path: Option<PathBuf>) -> T {
+    path.and_then(|path| std::fs::read_to_string(path).ok())
+        .and_then(|body| toml::from_str(&body).ok())
+        .unwrap_or_default()
+}
+
+/// `value` as TOML at `path`, written whole — see [`artifact::fs::save`].
+pub(crate) fn write_toml(path: &std::path::Path, value: &impl Serialize) -> Result<()> {
+    Ok(artifact::fs::save(path, toml::to_string_pretty(value)?)?)
+}
+
 /// `~/.config/cydonia/settings.toml`.
 pub(crate) fn path() -> Result<PathBuf> {
     Ok(dir()?.join(FILE))

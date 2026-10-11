@@ -18,6 +18,7 @@
 
 #[cfg(feature = "http")]
 use crate::tool::Trouble;
+use artifact::kind::Kind;
 use std::{
     path::{Path, PathBuf},
     sync::RwLock,
@@ -75,9 +76,8 @@ impl Agent {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Shown {
     pub project: PathBuf,
-    /// `article`, `board` or `table`, as [`artifact::entry::Entry::kind`]
-    /// spells it.
-    pub kind: &'static str,
+    /// Never [`Kind::Session`].
+    pub kind: Kind,
     pub id: String,
     /// Whether it is the pane with the focus. Always set on a lone entry.
     pub focused: bool,

@@ -5,14 +5,14 @@ use crate::{
     model::settings::SEARCH_ENGINES,
     view::{
         component::browser,
-        settings::{self, SettingsWindow, Switch},
+        settings::{self, SettingsWindow, Switch, labelled},
     },
 };
 use ::browser::{DataStore, Usage};
 use bezel::{
     gpui::{AnyElement, Context, Task, div, prelude::*, px},
     theme::{TextStyle, Theme, Typeset},
-    ui::widgets::{ButtonStyle, Buttons, Scaffolding},
+    ui::widgets::{ButtonStyle, Buttons, Controls, Scaffolding},
 };
 
 #[derive(Default)]
@@ -49,55 +49,6 @@ impl SettingsWindow {
             .into_any_element()
     }
 
-    /// A segmented control: `(label, selected)` per segment, `pick` called
-    /// with the index pressed.
-    pub(super) fn segments(
-        &self,
-        id: &'static str,
-        segments: Vec<(&'static str, bool)>,
-        cx: &mut Context<Self>,
-        pick: impl Fn(&mut Self, usize, &mut Context<Self>) + Clone + 'static,
-    ) -> AnyElement {
-        let theme = Theme::of(cx).clone();
-        div()
-            .flex_none()
-            .flex()
-            .flex_row()
-            .gap(px(2.))
-            .p(px(2.))
-            .rounded(px(Theme::button_radius()))
-            .border_1()
-            .border_color(theme.border)
-            .children(
-                segments
-                    .into_iter()
-                    .enumerate()
-                    .map(|(ix, (label, selected))| {
-                        let pick = pick.clone();
-                        div()
-                            .id((id, ix))
-                            .px(px(10.))
-                            .py(px(4.))
-                            .rounded(px(Theme::control_radius()))
-                            .text_style(TextStyle::Callout)
-                            .cursor_pointer()
-                            .when(selected, |el| {
-                                el.bg(theme.element_active).text_color(theme.text)
-                            })
-                            .when(!selected, |el| {
-                                el.text_color(theme.text_muted)
-                                    .hover(|el| el.bg(theme.element_hover))
-                            })
-                            .child(label)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                pick(this, ix, cx);
-                                cx.notify();
-                            }))
-                    }),
-            )
-            .into_any_element()
-    }
-
     /// The engines as segments. A template set by hand in `settings.toml`
     /// lights none, and the line under the title shows it.
     fn engine_row(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -109,37 +60,30 @@ impl SettingsWindow {
             .map(|(name, _)| format!("Searches go to {name}."));
         theme
             .card_row(false)
+            .child(labelled(
+                &theme,
+                "Search engine",
+                named.unwrap_or_else(|| format!("Searches go to {search}")),
+                true,
+            ))
             .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(theme.row_title("Search engine"))
-                    .child(
-                        div()
-                            .mt(px(4.))
-                            .truncate()
-                            .text_style(TextStyle::Subheadline)
-                            .text_color(theme.text_muted)
-                            .child(named.unwrap_or_else(|| format!("Searches go to {search}"))),
-                    ),
-            )
-            .child(
-                self.segments(
-                    "search-engine",
-                    SEARCH_ENGINES
-                        .iter()
-                        .map(|(name, template)| (*name, *template == search))
-                        .collect(),
-                    cx,
-                    |this, ix, cx| {
-                        let template = SEARCH_ENGINES[ix].1.to_owned();
-                        this.workspace.update(cx, |workspace, cx| {
-                            workspace.set_browser_search(template, cx)
-                        });
-                    },
-                ),
+                theme
+                    .segmented(
+                        "search-engine",
+                        SEARCH_ENGINES.map(|(name, _)| name),
+                        SEARCH_ENGINES
+                            .iter()
+                            .position(|(_, template)| *template == search)
+                            .unwrap_or(usize::MAX),
+                        cx.listener(|this, ix: &usize, _, cx| {
+                            let template = SEARCH_ENGINES[*ix].1.to_owned();
+                            this.workspace.update(cx, |workspace, cx| {
+                                workspace.set_browser_search(template, cx)
+                            });
+                            cx.notify();
+                        }),
+                    )
+                    .flex_none(),
             )
             .into_any_element()
     }
@@ -150,22 +94,7 @@ impl SettingsWindow {
         let current = home.clone();
         theme
             .card_row(false)
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(theme.row_title("Home page"))
-                    .child(
-                        div()
-                            .mt(px(4.))
-                            .truncate()
-                            .text_style(TextStyle::Subheadline)
-                            .text_color(theme.text_muted)
-                            .child(home),
-                    ),
-            )
+            .child(labelled(&theme, "Home page", home, true))
             .child(
                 theme
                     .ghost("browser-home")
@@ -237,25 +166,15 @@ impl SettingsWindow {
         let current = blocked.clone();
         theme
             .card_row(false)
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(theme.row_title("Sites agents may not use"))
-                    .child(
-                        div()
-                            .mt(px(4.))
-                            .truncate()
-                            .text_style(TextStyle::Subheadline)
-                            .text_color(theme.text_muted)
-                            .child(match blocked.is_empty() {
-                                true => "None.".to_owned(),
-                                false => blocked,
-                            }),
-                    ),
-            )
+            .child(labelled(
+                &theme,
+                "Sites agents may not use",
+                match blocked.is_empty() {
+                    true => "None.".to_owned(),
+                    false => blocked,
+                },
+                true,
+            ))
             .child(
                 theme
                     .ghost("browser-blocked")
@@ -344,21 +263,7 @@ impl SettingsWindow {
         };
         theme
             .card_row(false)
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(theme.row_title("Browsing data"))
-                    .child(
-                        div()
-                            .mt(px(4.))
-                            .text_style(TextStyle::Subheadline)
-                            .text_color(theme.text_muted)
-                            .child(note),
-                    ),
-            )
+            .child(labelled(&theme, "Browsing data", note, false))
             .child(
                 theme
                     .button(

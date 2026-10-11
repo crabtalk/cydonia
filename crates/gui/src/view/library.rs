@@ -11,11 +11,12 @@ use crate::{
     view::{
         component::menu::{self, Menu},
         confirm::Doomed,
+        kit::{icon::kind_icon, stamp},
         root::Cydonia,
         sidebar::{self, Row},
-        stamp,
     },
 };
+use artifact::kind::Kind;
 use bezel::{
     gpui::{
         self, AnyElement, App, Context, Div, Entity, Pixels, SharedString, Stateful,
@@ -69,13 +70,17 @@ impl Tab {
         }
     }
 
-    fn icon(self) -> Icon {
+    fn kind(self) -> Kind {
         match self {
-            Self::Articles => icons::files::FileText.into(),
-            Self::Boards => icons::development::SquareKanban.into(),
-            Self::Tables => icons::files::Table2.into(),
-            Self::Sessions => icons::social::MessageCircle.into(),
+            Self::Articles => Kind::Article,
+            Self::Boards => Kind::Board,
+            Self::Tables => Kind::Table,
+            Self::Sessions => Kind::Session,
         }
+    }
+
+    fn icon(self) -> Icon {
+        kind_icon(self.kind())
     }
 
     /// Whether the kind this tab lists is switched on.
@@ -103,15 +108,9 @@ impl Tab {
 
     /// `n` of what this tab lists, as a count reads: `1 article`, `3 boards`.
     fn count(self, n: usize, archived: bool) -> String {
-        let noun = match (self, n) {
-            (Self::Articles, 1) => "article",
-            (Self::Articles, _) => "articles",
-            (Self::Boards, 1) => "board",
-            (Self::Boards, _) => "boards",
-            (Self::Tables, 1) => "table",
-            (Self::Tables, _) => "tables",
-            (Self::Sessions, 1) => "session",
-            (Self::Sessions, _) => "sessions",
+        let noun = match n {
+            1 => self.kind().key().to_owned(),
+            _ => format!("{}s", self.kind().key()),
         };
         match archived {
             true => format!("{n} archived {noun}"),
@@ -456,18 +455,16 @@ impl Cydonia {
                     }
                 }
                 Tab::Tables => {
-                    // The store keeps seconds; every other stamp is milliseconds.
-                    let ms = |seconds: i64| seconds.max(0) as u128 * 1000;
                     for table in &open.tables {
                         if let Some(mut listing) = entry(
                             Showing::Table(table.key.clone()),
                             table.name.clone(),
                             number(table.number),
-                            ms(table.updated_at.unwrap_or(table.created_at)),
+                            table.touched_ms(),
                             table.archived,
                         ) {
                             listing.number = table.number;
-                            listing.created = Some(ms(table.created_at));
+                            listing.created = Some(table.created_ms());
                             out.push(listing);
                         }
                     }
@@ -719,16 +716,9 @@ impl Cydonia {
         };
         let workspace = self.workspace.read(cx);
         let open = &workspace.projects[workspace.project_at(project)?];
-        let number = match showing {
-            Showing::Session(id) => open.session(*id)?.number,
-            Showing::Article(id) => open.articles.get(open.article_ix(id)?)?.number,
-            Showing::Board(id) => open.boards.get(open.board_ix(id)?)?.number,
-            Showing::Table(key) => open.tables.iter().find(|table| &table.key == key)?.number,
-        }?;
-        Some(format!(
-            "{}#{number}",
-            project.file_name()?.to_string_lossy()
-        ))
+        let number = open.facts(showing)?.number?;
+        let name = artifact::reference::project_name(project)?;
+        Some(artifact::reference::Reference::entry(Some(&name), number, None).to_string())
     }
 
     // ── chrome ───────────────────────────────────────────────────
@@ -1099,12 +1089,7 @@ impl Cydonia {
                 move |this, _, cx| this.library_project(Some(path.clone()), cx),
             )
         }));
-        let id = SharedString::from("library-project-menu");
-        Some(popover::anchored_menu_below(
-            id.clone(),
-            self.menu_card(id, rows, window, cx),
-            None,
-        ))
+        Some(self.menu_below(SharedString::from("library-project-menu"), rows, window, cx))
     }
 
     /// The projects a selection's articles can move into.
@@ -1125,12 +1110,7 @@ impl Cydonia {
                 )
             })
             .collect();
-        let id = SharedString::from("library-move-menu");
-        Some(popover::anchored_menu_below(
-            id.clone(),
-            self.menu_card(id, rows, window, cx),
-            None,
-        ))
+        Some(self.menu_below(SharedString::from("library-move-menu"), rows, window, cx))
     }
 
     /// The agents a session in an open project runs on, to list one's alone.
@@ -1161,12 +1141,7 @@ impl Cydonia {
                 move |this, _, cx| this.library_agent(Some(name.clone()), cx),
             )
         }));
-        let id = SharedString::from("library-agent-menu");
-        Some(popover::anchored_menu_below(
-            id.clone(),
-            self.menu_card(id, rows, window, cx),
-            None,
-        ))
+        Some(self.menu_below(SharedString::from("library-agent-menu"), rows, window, cx))
     }
 
     fn status_menu(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -1183,12 +1158,7 @@ impl Cydonia {
                 )
             })
             .collect();
-        let id = SharedString::from("library-status-menu");
-        Some(popover::anchored_menu_below(
-            id.clone(),
-            self.menu_card(id, rows, window, cx),
-            None,
-        ))
+        Some(self.menu_below(SharedString::from("library-status-menu"), rows, window, cx))
     }
 
     /// The listings as rows under one heading.

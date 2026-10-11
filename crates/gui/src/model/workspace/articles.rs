@@ -4,6 +4,7 @@
 //! `use super::*`: these methods work on the same struct and reach the same
 //! names as the rest of it.
 use super::*;
+use artifact::kind::Kind;
 
 impl Workspace {
     /// A fresh document in the active project, opened as it lands — an empty
@@ -34,6 +35,14 @@ impl Workspace {
         cx.notify();
     }
 
+    /// The article a file names, and the project it is open in.
+    pub fn article_at(&self, path: &Path) -> Option<(usize, &Article)> {
+        self.projects.iter().enumerate().find_map(|(ix, open)| {
+            let article = open.articles.iter().find(|article| article.path == path)?;
+            Some((ix, article))
+        })
+    }
+
     /// The article a file names, wherever it is open — what the sidebar
     /// addresses one by, since an index moves when a neighbour is made.
     pub fn article_at_mut(&mut self, path: &Path) -> Option<&mut Article> {
@@ -61,7 +70,7 @@ impl Workspace {
             .to_string_lossy()
             .into_owned();
         self.active = Some(project);
-        self.remember(project, state::Kind::Article, id, cx);
+        self.remember(project, Kind::Article, id, cx);
         cx.notify();
     }
 

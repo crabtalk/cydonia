@@ -14,7 +14,7 @@
 //! The tree nests: children are a `Vec`, so a third pane alongside two others
 //! joins their split rather than nesting inside one of them.
 
-use crate::{id, stamp};
+use crate::{id, kind::Kind, stamp};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
@@ -640,20 +640,6 @@ impl<T: Clone + PartialEq> Node<T> {
         self.remove(entry);
         self.insert(target, entry, side)
     }
-}
-
-/// Which of a project's things a pane is on.
-///
-/// Its own rather than the app's `state::Kind`: nothing in this crate knows
-/// what a window shows, and a space read by anything outside cydonia needs to
-/// know what it is naming.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Kind {
-    Session,
-    Board,
-    Article,
-    Table,
 }
 
 /// One entry a pane is on: which project it is in, and which of that project's

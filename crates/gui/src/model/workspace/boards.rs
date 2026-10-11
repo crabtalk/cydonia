@@ -4,6 +4,7 @@
 //! `use super::*`: these methods work on the same struct and reach the same
 //! names as the rest of it.
 use super::*;
+use artifact::kind::Kind;
 use artifact::project::{Project as _, Stale};
 
 impl Workspace {
@@ -70,8 +71,6 @@ impl Workspace {
         if !self.settings.features.boards {
             return Err("Boards are switched off.".to_owned());
         }
-        let key = artifact::board::key::normalize(key)
-            .ok_or("A key needs at least one letter or digit.".to_owned())?;
         // Read before the project is taken: the seed is the workspace's and the
         // borrow below is over the whole of it.
         let view = self.board_view;
@@ -79,11 +78,9 @@ impl Workspace {
             .projects
             .get_mut(project)
             .ok_or("That project is not open.".to_owned())?;
-        // The same reach as [`Self::edit_board`]: a handle is heard by an agent
-        // running in this project, so that is as far as it has to carry.
-        if open.boards.iter().any(|board| board.key == key) {
-            return Err(format!("{key} is another board's key here."));
-        }
+        // A handle is heard by an agent running in this project, so that is as
+        // far as a key has to be unique.
+        let key = artifact::board::key::claim(key, &open.boards, None)?;
         let mut board = open
             .store()
             .create_board(name.trim(), &key)
@@ -114,7 +111,7 @@ impl Workspace {
         open.board = Some(ix);
         let id = open.boards[ix].id.clone();
         self.active = Some(project);
-        self.remember(project, state::Kind::Board, id, cx);
+        self.remember(project, Kind::Board, id, cx);
         cx.notify();
     }
 
@@ -150,8 +147,6 @@ impl Workspace {
         key: &str,
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
-        let key = artifact::board::key::normalize(key)
-            .ok_or("A key needs at least one letter or digit.".to_owned())?;
         let Some(open) = self
             .projects
             .iter_mut()
@@ -159,15 +154,7 @@ impl Workspace {
         else {
             return Ok(());
         };
-        // Among this project's boards and no further: a handle is heard by an
-        // agent running in this project, so that is as far as it has to carry.
-        if open
-            .boards
-            .iter()
-            .any(|board| board.id != id && board.key == key)
-        {
-            return Err(format!("{key} is another board's key here."));
-        }
+        let key = artifact::board::key::claim(key, &open.boards, Some(id))?;
         let name = name.trim().to_owned();
         self.with_board(id, |board| {
             board.name = name.clone();

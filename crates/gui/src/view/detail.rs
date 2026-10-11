@@ -11,6 +11,7 @@ use crate::{
             menu::{self, Menu},
             ribbon, transcript,
         },
+        kit::new::{self, New},
         leaf::Pane,
         root::{self, Cydonia, NewArticle, NewBoard, NewSession, NewTable},
         section::Section,
@@ -673,23 +674,10 @@ impl Cydonia {
         if !workspace.settings.features.threads() {
             return None;
         }
-        match on {
-            Some(entry) => match workspace.showing_of(entry)? {
-                (project, Showing::Article(id)) => workspace.projects[project]
-                    .articles
-                    .iter()
-                    .find(|article| article.id == id)
-                    .map(|article| article.path.clone()),
-                _ => None,
-            },
-            None => {
-                if self.showing(cx) != Some(Pane::Article) {
-                    return None;
-                }
-                let project = workspace.active_project()?;
-                Some(project.articles.get(project.article?)?.path.clone())
-            }
+        if on.is_none() && self.showing(cx) != Some(Pane::Article) {
+            return None;
         }
+        Some(workspace.article_of(on)?.path.clone())
     }
 
     /// What a press in the composer under the article at `path` asks for. The
@@ -741,11 +729,8 @@ impl Cydonia {
         // The article's own measure, not the session's: the article's page and
         // outline keep clear of it.
         let height = workspace
-            .projects
-            .iter()
-            .flat_map(|project| &project.articles)
-            .find(|article| article.path == path)
-            .map(|article| article.composer.clone());
+            .article_at(&path)
+            .map(|(_, article)| article.composer.clone());
         let composer = self.leaf_of(on).composer.clone();
         Some(
             self.footer_band(session, composer, on.cloned(), height, cx)
@@ -1206,29 +1191,23 @@ impl Cydonia {
         let Some(ix) = workspace.active else {
             return self.no_project(cx);
         };
-        let features = &workspace.settings.features;
-        let (sessions, boards, tables) = (features.sessions, features.boards, features.tables);
         let name = workspace
             .projects
             .get(ix)
             .map(|project| shown_path(&project.path))
             .unwrap_or_default();
-        let agents: Vec<(String, Option<Icon>)> = workspace
-            .settings
-            .agents
-            .iter()
-            .map(|entry| (entry.name.clone(), workspace.agent_icon(&entry.name)))
-            .collect();
+        let offered = new::offered(workspace);
         let mut rows: Vec<AnyElement> = Vec::new();
         // One row, and a panel of agents under it once there is a choice to
         // make: a bare "New session" opens on whichever agent is first, and
         // nothing on this screen would say which.
-        if sessions && agents.len() > 1 {
-            let picks: Vec<_> = agents
+        let session = New::Session(None);
+        if offered.sessions && offered.agents.len() > 1 {
+            let picks: Vec<_> = offered
+                .agents
                 .into_iter()
                 .enumerate()
                 .map(|(at, (name, icon))| {
-                    let icon = icon.unwrap_or_else(|| icons::social::MessageCircle.into());
                     menu::row(
                         Item::action(name).with_icon(icon),
                         move |this, window, cx| this.pick_agent(at, window, cx),
@@ -1237,8 +1216,8 @@ impl Cydonia {
                 .collect();
             let trigger = self.make_row(
                 "session",
-                "New session",
-                icons::social::MessageCirclePlus,
+                session.label(),
+                session.icon(),
                 keys::shortcut(&NewSession, window),
                 cx,
                 move |this, at, _, cx| this.toggle_menu_at(Menu::Launch, at, cx),
@@ -1255,12 +1234,12 @@ impl Cydonia {
                     }))
                     .into_any_element(),
             );
-        } else if sessions {
+        } else if offered.sessions {
             rows.push(
                 self.make_row(
                     "session",
-                    "New session",
-                    icons::social::MessageCirclePlus,
+                    session.label(),
+                    session.icon(),
                     keys::shortcut(&NewSession, window),
                     cx,
                     move |this, _, window, cx| this.new_session_action(&NewSession, window, cx),
@@ -1268,39 +1247,26 @@ impl Cydonia {
                 .into_any_element(),
             );
         }
-        if boards {
+        for kind in offered.kinds {
+            let (id, chord) = match kind {
+                New::Board => ("board", keys::shortcut(&NewBoard, window)),
+                New::Article => ("article", keys::shortcut(&NewArticle, window)),
+                New::Table => ("table", keys::shortcut(&NewTable, window)),
+                New::Session(_) => continue,
+            };
             rows.push(
                 self.make_row(
-                    "board",
-                    "New board",
-                    icons::development::SquareKanban,
-                    keys::shortcut(&NewBoard, window),
+                    id,
+                    kind.label(),
+                    kind.icon(),
+                    chord,
                     cx,
-                    move |this, _, window, cx| this.ask_new_board(ix, window, cx),
-                )
-                .into_any_element(),
-            );
-        }
-        rows.push(
-            self.make_row(
-                "article",
-                "New article",
-                icons::files::FilePlus,
-                keys::shortcut(&NewArticle, window),
-                cx,
-                move |this, _, window, cx| this.new_article(ix, window, cx),
-            )
-            .into_any_element(),
-        );
-        if tables {
-            rows.push(
-                self.make_row(
-                    "table",
-                    "New table",
-                    icons::files::Table2,
-                    keys::shortcut(&NewTable, window),
-                    cx,
-                    move |this, _, window, cx| this.new_table(ix, window, cx),
+                    move |this, _, window, cx| match kind {
+                        New::Board => this.ask_new_board(ix, window, cx),
+                        New::Article => this.new_article(ix, window, cx),
+                        New::Table => this.new_table(ix, window, cx),
+                        New::Session(_) => {}
+                    },
                 )
                 .into_any_element(),
             );

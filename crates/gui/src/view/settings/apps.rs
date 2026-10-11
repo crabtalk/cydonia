@@ -5,7 +5,7 @@ use crate::{
     model::settings::Opens,
     view::{
         component::file::external::{self, Application},
-        settings::{self, SettingsWindow},
+        settings::{SettingsWindow, group, labelled, lead},
     },
 };
 use bezel::{
@@ -106,20 +106,14 @@ impl SettingsWindow {
     /// applications — ✓ on the default, an eye for the `▾` menu.
     pub(super) fn apps_group(&self, cx: &Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        let mut group = theme.group_box();
+        let mut rows = theme.group_box();
         for (ix, opens) in Opens::ALL.into_iter().enumerate() {
-            group = group.child(self.opener_head(ix == 0, opens, &theme, cx));
+            rows = rows.child(self.opener_head(ix == 0, opens, &theme, cx));
             if self.apps.open == Some(opens) {
-                group = group.child(self.opener_list(opens, &theme, cx));
+                rows = rows.child(self.opener_list(opens, &theme, cx));
             }
         }
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(settings::LABEL_GAP))
-            .child(theme.field_label("Open with"))
-            .child(group)
-            .into_any_element()
+        group(&theme, "Open with").child(rows).into_any_element()
     }
 
     fn opener_head(
@@ -158,22 +152,7 @@ impl SettingsWindow {
                         .text_color(theme.text_muted),
                 ),
             )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(theme.row_title(title(opens)))
-                    .child(
-                        div()
-                            .mt(px(4.))
-                            .truncate()
-                            .text_style(TextStyle::Subheadline)
-                            .text_color(theme.text_muted)
-                            .child(blurb(opens)),
-                    ),
-            )
+            .child(labelled(theme, title(opens), blurb(opens), true))
             .child(
                 div()
                     .flex_none()
@@ -337,17 +316,6 @@ impl SettingsWindow {
             }))
             .into_any_element()
     }
-}
-
-/// The glyph column a settings row leads with, so rows under a head line up
-/// with its title.
-fn lead() -> bezel::gpui::Div {
-    div()
-        .flex_none()
-        .size(px(18.))
-        .flex()
-        .items_center()
-        .justify_center()
 }
 
 fn default_icon(theme: &Theme) -> AnyElement {

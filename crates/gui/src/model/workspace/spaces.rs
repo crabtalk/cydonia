@@ -13,7 +13,10 @@
 //! second entry onto the one already open — see [`Workspace::arrange`].
 use super::*;
 use crate::model::spaces as store;
-use artifact::space::{Kind as MemberKind, Member, Side, Space};
+use artifact::{
+    kind::Kind,
+    space::{Member, Side, Space},
+};
 
 /// What a pane shows, resolved from the member a space names: an entry of
 /// one project, by the id it has there.
@@ -26,6 +29,17 @@ pub enum Showing {
     Article(String),
     /// A table's key.
     Table(String),
+}
+
+impl Showing {
+    pub fn kind(&self) -> Kind {
+        match self {
+            Self::Session(_) => Kind::Session,
+            Self::Board(_) => Kind::Board,
+            Self::Article(_) => Kind::Article,
+            Self::Table(_) => Kind::Table,
+        }
+    }
 }
 
 impl Workspace {
@@ -431,19 +445,19 @@ impl Workspace {
             return false;
         };
         match member.kind {
-            MemberKind::Session => open
+            Kind::Session => open
                 .sessions
                 .iter()
                 .any(|chat| chat.closed && chat.record.as_deref() == Some(member.id.as_str())),
-            MemberKind::Board => open
+            Kind::Board => open
                 .boards
                 .iter()
                 .any(|board| board.archived && board.id == member.id),
-            MemberKind::Article => open
+            Kind::Article => open
                 .articles
                 .iter()
                 .any(|article| article.archived && article.path.to_string_lossy() == member.id),
-            MemberKind::Table => open
+            Kind::Table => open
                 .tables
                 .iter()
                 .any(|table| table.archived && table.key == member.id),
@@ -512,29 +526,21 @@ impl Workspace {
             let path = open.path.clone();
             for chat in &open.sessions {
                 if let Some(record) = chat.record.clone() {
-                    live.push(Member::new(path.clone(), MemberKind::Session, record));
+                    live.push(Member::new(path.clone(), Kind::Session, record));
                 }
             }
             for board in &open.boards {
-                live.push(Member::new(
-                    path.clone(),
-                    MemberKind::Board,
-                    board.id.clone(),
-                ));
+                live.push(Member::new(path.clone(), Kind::Board, board.id.clone()));
             }
             for article in &open.articles {
                 live.push(Member::new(
                     path.clone(),
-                    MemberKind::Article,
+                    Kind::Article,
                     article.path.to_string_lossy().into_owned(),
                 ));
             }
             for table in &open.tables {
-                live.push(Member::new(
-                    path.clone(),
-                    MemberKind::Table,
-                    table.key.clone(),
-                ));
+                live.push(Member::new(path.clone(), Kind::Table, table.key.clone()));
             }
         }
         let open: Vec<PathBuf> = self.projects.iter().map(|open| open.path.clone()).collect();
@@ -561,22 +567,22 @@ impl Workspace {
             .position(|open| open.path == member.project)?;
         let open = self.projects.get(at)?;
         let showing = match member.kind {
-            MemberKind::Session => open
+            Kind::Session => open
                 .sessions
                 .iter()
                 .find(|chat| chat.record.as_deref() == Some(member.id.as_str()))
                 .map(|chat| Showing::Session(chat.id))?,
-            MemberKind::Board => open
+            Kind::Board => open
                 .boards
                 .iter()
                 .find(|board| board.id == member.id)
                 .map(|board| Showing::Board(board.id.clone()))?,
-            MemberKind::Article => open
+            Kind::Article => open
                 .articles
                 .iter()
                 .find(|article| article.path.to_string_lossy() == member.id)
                 .map(|article| Showing::Article(article.id.clone()))?,
-            MemberKind::Table => open
+            Kind::Table => open
                 .tables
                 .iter()
                 .find(|table| table.key == member.id)
@@ -594,18 +600,16 @@ impl Workspace {
         let open = self.projects.get(project)?;
         let path = open.path.clone();
         Some(match showing {
-            Showing::Session(id) => Member::new(
-                path,
-                MemberKind::Session,
-                open.session(id)?.filed()?.to_owned(),
-            ),
+            Showing::Session(id) => {
+                Member::new(path, Kind::Session, open.session(id)?.filed()?.to_owned())
+            }
             Showing::Board(id) => {
                 open.board_ix(&id)?;
-                Member::new(path, MemberKind::Board, id)
+                Member::new(path, Kind::Board, id)
             }
             Showing::Article(id) => Member::new(
                 path,
-                MemberKind::Article,
+                Kind::Article,
                 open.articles[open.article_ix(&id)?]
                     .path
                     .to_string_lossy()
@@ -613,7 +617,7 @@ impl Workspace {
             ),
             Showing::Table(key) => {
                 open.table_ix(&key)?;
-                Member::new(path, MemberKind::Table, key)
+                Member::new(path, Kind::Table, key)
             }
         })
     }

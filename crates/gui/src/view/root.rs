@@ -36,6 +36,7 @@ use crate::{
     },
 };
 use anyhow::Result;
+use artifact::kind::Kind;
 use artifact::space::Member;
 use bezel::{
     gpui::{
@@ -657,12 +658,8 @@ impl Cydonia {
     /// window.
     /// Hand the tools what is on screen — see [`mcp::rail::shown`].
     fn publish_shown(&self, cx: &App) {
-        let kind = |kind: artifact::space::Kind| match kind {
-            artifact::space::Kind::Session => None,
-            artifact::space::Kind::Board => Some("board"),
-            artifact::space::Kind::Article => Some("article"),
-            artifact::space::Kind::Table => Some("table"),
-        };
+        // A session is the chat the tools are talking in, not a thing shown.
+        let kind = |kind: Kind| (kind != Kind::Session).then_some(kind);
         let shown = if self.leaves.iter().any(|leaf| leaf.entry.is_some()) {
             self.leaves
                 .iter()
@@ -682,15 +679,9 @@ impl Cydonia {
             workspace
                 .landed()
                 .and_then(|(project, entry)| {
-                    let kind = match entry.kind {
-                        crate::model::state::Kind::Session => None,
-                        crate::model::state::Kind::Board => Some("board"),
-                        crate::model::state::Kind::Article => Some("article"),
-                        crate::model::state::Kind::Table => Some("table"),
-                    }?;
                     Some(mcp::rail::Shown {
                         project: project.to_path_buf(),
-                        kind,
+                        kind: kind(entry.kind)?,
                         id: entry.id.clone(),
                         focused: true,
                     })
@@ -704,7 +695,7 @@ impl Cydonia {
             .map(|mut entry| {
                 // The window names an article by its `content.md`; the tools
                 // name it by its id.
-                if entry.kind == "article" {
+                if entry.kind == Kind::Article {
                     entry.id = artifact::article::id_of(&entry.project.join(&entry.id));
                 }
                 // A lone entry beside a focused chat is still the one in front.
@@ -857,12 +848,7 @@ impl Cydonia {
             return;
         };
         if moved {
-            self.leaf_mut().pane = match showing {
-                Showing::Session(_) => Pane::Chat,
-                Showing::Board(_) => Pane::Board,
-                Showing::Article(_) => Pane::Article,
-                Showing::Table(_) => Pane::Table,
-            };
+            self.leaf_mut().pane = Pane::of(showing.kind());
             self.workspace.update(cx, |workspace, cx| {
                 workspace.select_showing(project, showing.clone(), cx);
             });
@@ -1569,12 +1555,7 @@ impl Cydonia {
         if let Some(entry) = &self.leaf().entry
             && let Some((_, showing)) = self.workspace.read(cx).showing_of(entry)
         {
-            return Some(match showing {
-                Showing::Session(_) => Pane::Chat,
-                Showing::Board(_) => Pane::Board,
-                Showing::Article(_) => Pane::Article,
-                Showing::Table(_) => Pane::Table,
-            });
+            return Some(Pane::of(showing.kind()));
         }
         if self.has_pane(self.leaf().pane, cx) {
             return Some(self.leaf().pane);
@@ -1738,11 +1719,11 @@ impl Render for Cydonia {
             )
             // Over every column and every floating control: nothing behind it
             // is answerable while it is asking.
-            .children(self.confirm_delete(cx))
+            .children(self.confirm_delete(window, cx))
             .children(self.search_palette(window, cx))
             .children(self.settings_sheet(cx))
-            .children(self.desktop_only_notice(cx))
-            .children(self.new_board_dialog(cx));
+            .children(self.desktop_only_notice(window, cx))
+            .children(self.new_board_dialog(window, cx));
         let surface = self.dock.surface("dock", root).on_drop({
             let this = cx.entity().downgrade();
             move |event, window, cx| {

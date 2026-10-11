@@ -10,15 +10,13 @@
 //! settings window are one to a window however many panes it holds, and they
 //! stay on the root.
 
-use crate::{
-    model::state,
-    view::{
-        board::{self, Editing},
-        component::{composer::Composer, ribbon::Ribbon},
-        drawer::Drawer,
-        table,
-    },
+use crate::view::{
+    board::{self, Editing},
+    component::{composer::Composer, ribbon::Ribbon},
+    drawer::Drawer,
+    table,
 };
+use artifact::kind::Kind;
 use bezel::{
     gpui::{Entity, FocusHandle},
     ui::input::TextField,
@@ -35,15 +33,25 @@ pub enum Pane {
 }
 
 impl Pane {
+    /// The kind of entry this pane reads.
+    pub(crate) fn kind(self) -> Kind {
+        match self {
+            Self::Chat => Kind::Session,
+            Self::Board => Kind::Board,
+            Self::Article => Kind::Article,
+            Self::Table => Kind::Table,
+        }
+    }
+
     /// The pane a remembered entry is read in — see
     /// [`crate::model::workspace::Workspace::landing`].
     ///
-    pub(crate) fn of(kind: state::Kind) -> Self {
+    pub(crate) fn of(kind: Kind) -> Self {
         match kind {
-            state::Kind::Session => Self::Chat,
-            state::Kind::Board => Self::Board,
-            state::Kind::Article => Self::Article,
-            state::Kind::Table => Self::Table,
+            Kind::Session => Self::Chat,
+            Kind::Board => Self::Board,
+            Kind::Article => Self::Article,
+            Kind::Table => Self::Table,
         }
     }
 }

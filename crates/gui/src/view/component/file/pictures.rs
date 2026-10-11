@@ -21,10 +21,6 @@ use std::{
     time::SystemTime,
 };
 
-/// The most a picture fetched off the web may weigh.
-#[cfg(feature = "desktop")]
-const FETCH_LIMIT: u64 = 25 * 1024 * 1024;
-
 /// Where a picture fetched off the web is kept.
 #[derive(Clone, PartialEq)]
 pub(crate) enum Assets {
@@ -262,7 +258,6 @@ fn stamp(path: &Path) -> Option<Stamp> {
 fn fetch(url: &str, assets: &Assets) -> anyhow::Result<PathBuf> {
     use anyhow::Context as _;
     use artifact::project::fs::Project;
-    use std::time::Duration;
 
     let dir = match assets {
         Assets::Project(root) => {
@@ -272,18 +267,8 @@ fn fetch(url: &str, assets: &Assets) -> anyhow::Result<PathBuf> {
         }
         Assets::Dir(dir) => dir.clone(),
     };
-    let agent = ureq::Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(30)))
-        .build()
-        .new_agent();
-    let bytes = agent
-        .get(url)
-        .call()?
-        .body_mut()
-        .with_config()
-        .limit(FETCH_LIMIT)
-        .read_to_vec()?;
-    let format = image::guess_format(&bytes).context("Not a picture")?;
+    let bytes = crate::model::media::download(url)?;
+    let format = image::guess_format(&bytes)?;
     let extension = format.extensions_str().first().copied().unwrap_or("png");
     crate::model::media::store(&dir, &bytes, extension).context("Could not save the picture")
 }

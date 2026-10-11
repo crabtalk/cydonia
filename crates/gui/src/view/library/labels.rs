@@ -5,9 +5,9 @@ use super::ROW_GROUP;
 use crate::view::{component::menu::Menu, labels::Target, root::Cydonia, sidebar::Row};
 use bezel::{
     gpui::{AnyElement, Context, Div, SharedString, Stateful, div, prelude::*, px},
-    theme::{TextStyle, Theme, Typeset},
+    theme::Theme,
     ui::{
-        multi_select, table,
+        table,
         widgets::{ButtonStyle, Buttons, Content},
     },
 };
@@ -22,7 +22,6 @@ impl Cydonia {
         ix: usize,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let theme = Theme::of(cx).clone();
         let Some(labels) = labels else {
             return div().into_any_element();
         };
@@ -36,32 +35,8 @@ impl Cydonia {
             .flex_row()
             .items_center()
             .gap(px(4.))
-            .overflow_hidden()
-            .cursor_pointer()
-            .on_click(cx.listener({
-                let target = target.clone();
-                move |this, _, window, cx| {
-                    cx.stop_propagation();
-                    this.toggle_labels(target.clone(), None, window, cx);
-                }
-            }))
-            .children(
-                labels
-                    .iter()
-                    .map(|label| theme.chip(label.clone(), multi_select::tint(&theme, label))),
-            )
-            .when(labels.is_empty(), |cell| {
-                cell.child(
-                    div()
-                        .invisible()
-                        .group_hover(ROW_GROUP, |el| el.visible())
-                        .text_style(TextStyle::Callout)
-                        .text_color(theme.text_faint)
-                        .child("Add label"),
-                )
-            })
-            .children(self.label_picker(&target));
-        self.menu_press(cell, Menu::Labels(target), cx)
+            .overflow_hidden();
+        self.label_chips(cell, target, labels, ROW_GROUP, cx)
             .into_any_element()
     }
 

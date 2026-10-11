@@ -96,13 +96,10 @@ pub fn create(name: &str, over: artifact::space::Member) -> Option<Space> {
 /// orders on.
 #[cfg(feature = "desktop")]
 pub fn save(space: &mut Space) {
-    let (Some(path), Ok(body)) = (file(&space.id), toml::to_string_pretty(&*space)) else {
+    let Some(path) = file(&space.id) else {
         return;
     };
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    if std::fs::write(&path, body).is_ok() {
+    if settings::write_toml(&path, &*space).is_ok() {
         space.touched = stamp::now();
     }
 }

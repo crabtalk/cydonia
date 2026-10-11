@@ -17,11 +17,13 @@ use crate::{
             transcript,
         },
         keymap::{self, Command},
+        kit::new::{self, New},
         leaf::Pane,
         root::{self, CommitName, Cydonia, DismissName, NewSession, OpenProject},
     },
 };
 use artifact::board::View;
+use artifact::kind::Kind;
 use artifact::space::Member;
 use bezel::ui::scroll as scrollbars;
 #[cfg(feature = "desktop")]
@@ -165,14 +167,8 @@ fn on_disk(path: PathBuf) -> [(Item, menu::Act); 2] {
     let copied = path.to_string_lossy().into_owned();
     [
         menu::row(
-            Item::action(if cfg!(target_os = "macos") {
-                "Reveal in Finder"
-            } else if cfg!(windows) {
-                "Show in Explorer"
-            } else {
-                "Open in File Manager"
-            })
-            .with_icon(icons::files::FolderOpen),
+            Item::action(crate::view::component::file::external::REVEAL)
+                .with_icon(icons::files::FolderOpen),
             move |this, _, cx| this.reveal_path(path.clone(), cx),
         ),
         menu::row(
@@ -1077,40 +1073,20 @@ impl Cydonia {
             project: open.path.clone(),
             showing,
         };
-        // An article's thread is reached from its article.
-        let sessions = open
-            .sessions
-            .iter()
-            .filter(|chat| chat.article.is_none())
-            .map(|chat| Ranked {
-                archived: chat.closed,
-                touched: chat.touched(),
-                name: folded(&chat.label()),
-                row: row(Showing::Session(chat.id)),
-            });
-        let boards = open.boards.iter().map(|board| Ranked {
-            archived: board.archived,
-            touched: board.touched,
-            name: folded(board.label()),
-            row: row(Showing::Board(board.id.clone())),
-        });
-        let articles = open.articles.iter().map(|article| Ranked {
-            archived: article.archived,
-            touched: article.touched,
-            name: folded(article.label()),
-            row: row(Showing::Article(article.id.clone())),
-        });
-        let tables = open.tables.iter().map(|table| Ranked {
-            archived: table.archived,
-            // The store keeps seconds; every other stamp here is milliseconds.
-            touched: table.updated_at.unwrap_or(table.created_at).max(0) as u128 * 1000,
-            name: folded(&table.name),
-            row: row(Showing::Table(table.key.clone())),
-        });
-        let mut entries: Vec<Ranked> = sessions
-            .chain(boards)
-            .chain(articles)
-            .chain(tables)
+        let mut entries: Vec<Ranked> = Kind::ALL
+            .into_iter()
+            .flat_map(|kind| open.every(kind))
+            // An article's thread is reached from its article.
+            .filter(|facts| match facts.showing {
+                Showing::Session(id) => open.session(id).is_none_or(|chat| chat.article.is_none()),
+                _ => true,
+            })
+            .map(|facts| Ranked {
+                archived: facts.archived,
+                touched: facts.touched,
+                name: folded(&facts.label),
+                row: row(facts.showing),
+            })
             .collect();
         let sort = workspace.sort_of(project);
         // Archived entries sink and pinned ones rise, whatever the list is
@@ -1593,13 +1569,9 @@ impl Cydonia {
                     .to_owned(),
                 Row::Entry { showing, .. } => {
                     let (project, ix) = self.located(row, cx)?;
-                    let open = &workspace.projects[project];
-                    match showing {
-                        Showing::Session(_) => open.sessions[ix].label(),
-                        Showing::Board(_) => open.boards[ix].label().to_owned(),
-                        Showing::Article(_) => open.articles[ix].label().to_owned(),
-                        Showing::Table(_) => open.tables[ix].name.clone(),
-                    }
+                    workspace.projects[project]
+                        .facts_at(showing.kind(), ix)
+                        .label
                 }
             })
         };
@@ -1933,65 +1905,25 @@ impl Cydonia {
         }
         let workspace = self.workspace.read(cx);
         let ix = workspace.project_at(path)?;
-        let features = &workspace.settings.features;
-        let (sessions, boards, tables) = (features.sessions, features.boards, features.tables);
-        let agents: Vec<(String, Option<Icon>)> = workspace
-            .settings
-            .agents
-            .iter()
-            .map(|entry| (entry.name.clone(), workspace.agent_icon(&entry.name)))
-            .collect();
-        let mut rows = Vec::new();
-        if sessions && agents.len() > 1 {
-            let picks = agents
-                .into_iter()
-                .enumerate()
-                .map(|(at, (name, icon))| {
-                    let icon = icon.unwrap_or_else(|| icons::social::MessageCircle.into());
-                    menu::row(
-                        Item::action(name).with_icon(icon),
-                        move |this, window, cx| {
-                            this.select_project(ix, cx);
-                            this.pick_agent(at, window, cx);
-                        },
-                    )
-                })
-                .collect();
-            rows.push(menu::submenu(
-                "New session",
-                icons::social::MessageCirclePlus,
-                picks,
-            ));
-        } else if sessions {
-            rows.push(menu::row(
-                Item::action("New session").with_icon(icons::social::MessageCirclePlus),
-                move |this, window, cx| {
+        let rows = new::rows(new::offered(workspace), |kind| {
+            Box::new(move |this, window, cx| match kind {
+                New::Session(at) => {
                     this.select_project(ix, cx);
-                    this.new_session_action(&NewSession, window, cx);
-                },
-            ));
-        }
-        if boards {
-            rows.push(menu::row(
-                Item::action("New board").with_icon(icons::development::SquareKanban),
-                move |this, window, cx| this.ask_new_board(ix, window, cx),
-            ));
-        }
-        rows.push(menu::row(
-            Item::action("New article").with_icon(icons::files::FilePlus),
-            move |this, window, cx| this.new_article(ix, window, cx),
-        ));
-        if tables {
-            rows.push(menu::row(
-                Item::action("New table").with_icon(icons::files::Table2),
-                move |this, window, cx| this.new_table(ix, window, cx),
-            ));
-        }
-        let id = SharedString::from(format!("add-menu-{ix}"));
-        Some(popover::anchored_menu_below(
-            id.clone(),
-            self.menu_card(id, rows, window, cx),
-            None,
+                    match at {
+                        Some(at) => this.pick_agent(at, window, cx),
+                        None => this.new_session_action(&NewSession, window, cx),
+                    }
+                }
+                New::Board => this.ask_new_board(ix, window, cx),
+                New::Article => this.new_article(ix, window, cx),
+                New::Table => this.new_table(ix, window, cx),
+            })
+        });
+        Some(self.menu_below(
+            SharedString::from(format!("add-menu-{ix}")),
+            rows,
+            window,
+            cx,
         ))
     }
 
@@ -2108,16 +2040,11 @@ impl Cydonia {
             self.desktop_only("Showing it in the file manager", cx);
             return;
         }
-        cx.background_executor()
-            .spawn(async move {
-                let _ = crate::view::component::file::external::show(&path);
-            })
-            .detach();
+        crate::view::component::file::external::reveal(path, cx);
     }
 
     /// Where an entry row is on disk, for a backend that is the disk.
     fn place_of(&self, entry: &Row, cx: &App) -> Option<PathBuf> {
-        use artifact::space::Kind;
         let (project, _) = self.located(entry, cx)?;
         let open = &self.workspace.read(cx).projects[project];
         let (kind, id) = match showing_of(entry)? {
@@ -2369,13 +2296,9 @@ impl Cydonia {
         let Some((project, ix)) = self.located(row, cx) else {
             return false;
         };
-        let open = &self.workspace.read(cx).projects[project];
-        match showing {
-            Showing::Session(_) => open.sessions[ix].closed,
-            Showing::Board(_) => open.boards[ix].archived,
-            Showing::Article(_) => open.articles[ix].archived,
-            Showing::Table(_) => open.tables[ix].archived,
-        }
+        self.workspace.read(cx).projects[project]
+            .facts_at(showing.kind(), ix)
+            .archived
     }
 
     /// Whether an entry is held at the top of its project's list.

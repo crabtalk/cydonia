@@ -5,6 +5,7 @@
 //! names as the rest of it.
 use super::*;
 use crate::model::session_preferences;
+use artifact::kind::Kind;
 use artifact::project::Project as _;
 
 impl Workspace {
@@ -35,8 +36,8 @@ impl Workspace {
     pub fn reference_of_session(&self, id: u64) -> Option<String> {
         let project = &self.projects[self.project_of(id)?];
         let number = project.session(id)?.number?;
-        let name = project.path.file_name()?.to_string_lossy();
-        Some(format!("{name}#{number}"))
+        let name = artifact::reference::project_name(&project.path)?;
+        Some(artifact::reference::Reference::entry(Some(&name), number, None).to_string())
     }
 
     /// [`Self::new_session`] behind whatever the window shows.
@@ -71,7 +72,7 @@ impl Workspace {
         if front {
             project.active = Some(id);
         }
-        self.prune_archived_for(Some(state::Kind::Session), cx);
+        self.prune_archived_for(Some(Kind::Session), cx);
         cx.notify();
         Some(id)
     }
@@ -102,7 +103,7 @@ impl Workspace {
     pub fn retain_active_session(&mut self, id: u64, cx: &mut Context<Self>) -> Option<String> {
         let ix = self.project_of(id)?;
         let record = self.retain_session(id, cx)?;
-        self.note_landing(ix, state::Kind::Session, record.clone(), cx);
+        self.note_landing(ix, Kind::Session, record.clone(), cx);
         cx.notify();
         Some(record)
     }
@@ -129,22 +130,13 @@ impl Workspace {
 
     /// See [`ChatSession::rewind`].
     pub fn rewind_session(&mut self, id: u64, at: usize, cx: &mut Context<Self>) -> Option<String> {
-        let text = self
-            .projects
-            .iter_mut()
-            .find_map(|project| project.session_mut(id))?
-            .rewind(at, cx)?;
+        let text = self.session_mut(id)?.rewind(at, cx)?;
         cx.notify();
         Some(text)
     }
 
     pub fn set_draft(&mut self, id: u64, draft: String, cx: &mut Context<Self>) {
-        if !self
-            .projects
-            .iter_mut()
-            .find_map(|project| project.session_mut(id))
-            .is_some_and(|chat| chat.load_history())
-        {
+        if !self.load_history(id) {
             return;
         }
         if self.session(id).is_none_or(|chat| chat.draft == draft) {
@@ -189,10 +181,10 @@ impl Workspace {
             .session(id)
             .and_then(|chat| chat.filed().map(str::to_owned))
         {
-            self.note_landing(ix, state::Kind::Session, record, cx);
+            self.note_landing(ix, Kind::Session, record, cx);
         }
         self.wake_session(id, cx);
-        self.prune_archived_for(Some(state::Kind::Session), cx);
+        self.prune_archived_for(Some(Kind::Session), cx);
         cx.notify();
     }
 
@@ -212,9 +204,7 @@ impl Workspace {
             return;
         }
         let found = self
-            .projects
-            .iter_mut()
-            .find_map(|project| project.session_mut(id))
+            .session_mut(id)
             .filter(|chat| chat.idle() && chat.resumable() && !chat.closed);
         if let Some(chat) = found {
             chat.resume(cx);
@@ -272,21 +262,13 @@ impl Workspace {
     /// Send to a session, starting an agent for it when it has none — typing
     /// into a session read back from disk is what picks it up again.
     pub fn send(&mut self, id: u64, content: String, cx: &mut Context<Self>) {
-        if !self
-            .projects
-            .iter_mut()
-            .find_map(|project| project.session_mut(id))
-            .is_some_and(|chat| chat.load_history())
-        {
+        if !self.load_history(id) {
             return;
         }
         // Read before `chat` borrows the projects. This is the second place an
         // agent process starts, so it is the second half of the gate.
         let enabled = self.settings.features.sessions;
-        let found = self
-            .projects
-            .iter_mut()
-            .find_map(|project| project.session_mut(id));
+        let found = self.session_mut(id);
         let Some(chat) = found else {
             return;
         };
@@ -308,7 +290,7 @@ impl Workspace {
         chat.send(content);
         let record = chat.filed().map(str::to_owned);
         if let (Some(record), Some(ix)) = (record, self.project_of(id)) {
-            self.note_landing(ix, state::Kind::Session, record, cx);
+            self.note_landing(ix, Kind::Session, record, cx);
         }
         cx.notify();
     }
@@ -367,13 +349,8 @@ impl Workspace {
         if !self.settings.features.threads() {
             return None;
         }
-        self.projects.iter().enumerate().find_map(|(ix, project)| {
-            let article = project
-                .articles
-                .iter()
-                .find(|article| article.path == path)?;
-            Some((ix, article.id.clone()))
-        })
+        self.article_at(path)
+            .map(|(ix, article)| (ix, article.id.clone()))
     }
 
     /// Send to the session filed under `record`, where one is held.
@@ -491,6 +468,18 @@ impl Workspace {
         self.projects.iter().find_map(|project| project.session(id))
     }
 
+    pub fn session_mut(&mut self, id: u64) -> Option<&mut ChatSession> {
+        self.projects
+            .iter_mut()
+            .find_map(|project| project.session_mut(id))
+    }
+
+    /// Read session `id`'s turns back off disk, where they were left unloaded.
+    /// `false` for no such session, or turns that would not read.
+    pub fn load_history(&mut self, id: u64) -> bool {
+        self.session_mut(id).is_some_and(|chat| chat.load_history())
+    }
+
     /// The session filed under this id, wherever it is — how a card finds the
     /// agent it was handed to after a launch that renumbered every session.
     /// [`ChatSession::id`] is minted per launch and means nothing on disk;
@@ -505,11 +494,7 @@ impl Workspace {
     /// The id a session is filed under, minted if it has none — what a
     /// dispatched card writes down.
     pub fn mint_record(&mut self, id: u64) -> Option<String> {
-        self.projects
-            .iter_mut()
-            .find_map(|project| project.session_mut(id))?
-            .mint_record()
-            .map(str::to_owned)
+        self.session_mut(id)?.mint_record().map(str::to_owned)
     }
 
     /// Run `f` on the session (when it still exists) and repaint.
@@ -519,10 +504,7 @@ impl Workspace {
         cx: &mut Context<Self>,
         f: impl FnOnce(&mut ChatSession),
     ) {
-        let found = self
-            .projects
-            .iter_mut()
-            .find_map(|project| project.session_mut(id));
+        let found = self.session_mut(id);
         if let Some(chat) = found {
             f(chat);
             cx.notify();

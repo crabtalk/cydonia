@@ -98,12 +98,17 @@ impl ForkOrigin {
 }
 
 impl Record {
+    /// What it is called: the name given it, else its title.
+    pub fn label(&self) -> &str {
+        self.name.as_deref().unwrap_or(&self.title)
+    }
+
     /// Copy history before a user message and leave that message as an editable draft.
     pub fn fork_at(&self, before: usize) -> Option<Self> {
         let ChatItem::User(draft) = self.items.get(before)? else {
             return None;
         };
-        let title = self.name.as_ref().unwrap_or(&self.title).clone();
+        let title = self.label().to_owned();
         Some(Self {
             id: String::new(),
             number: None,
@@ -119,10 +124,7 @@ impl Record {
                 }
             ),
             name: None,
-            updated: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
+            updated: crate::stamp::seconds(),
             closed: false,
             labels: self.labels.clone(),
             fork: Some(ForkOrigin::new(self.id.clone(), title)),

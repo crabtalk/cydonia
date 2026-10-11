@@ -8,12 +8,17 @@ use crate::{
         Showing, Workspace,
         references::{self, Part},
     },
-    view::{board::card_title, entry_link::link, search::kind_icon, sidebar::Row},
+    view::{
+        board::card_title,
+        entry_link::link,
+        kit::{icon::kind_icon, text::untitled},
+        sidebar::Row,
+    },
 };
 use artifact::{
     board::{Board, Card},
-    reference::{self, Prefix},
-    search::Kind,
+    kind::Kind,
+    reference::{self, Prefix, Reference},
 };
 use bezel::gpui::{App, Global, SharedString};
 use bezel::ui::icons::Icon;
@@ -68,11 +73,11 @@ pub(crate) fn read(workspace: &Workspace) -> Linkables {
     let active = workspace.active_project().map(|project| &project.path);
     let mut held = Vec::new();
     for project in &workspace.projects {
-        let Some(name) = project.path.file_name().map(|name| name.to_string_lossy()) else {
+        let Some(name) = reference::project_name(&project.path) else {
             continue;
         };
         let active = active == Some(&project.path);
-        let reference = |number: u64| format!("{name}#{number}");
+        let reference = |number: u64| Reference::entry(Some(&name), number, None).to_string();
         let shown = |number: u64| match active {
             true => format!("#{number}"),
             false => reference(number),
@@ -161,13 +166,6 @@ pub(crate) fn read(workspace: &Workspace) -> Linkables {
     Linkables(held)
 }
 
-fn untitled(title: &str, fallback: &str) -> String {
-    match title.trim() {
-        "" => fallback.to_owned(),
-        title => title.to_owned(),
-    }
-}
-
 /// The mention source cydonia installs: the cards a handle names, then the
 /// entries — see [`rank`] — then the cards whose text holds the query — see
 /// [`rank_cards`].
@@ -214,11 +212,18 @@ pub(crate) struct Carded<'a> {
 /// Every open project's cards `@` can link, in board and column order.
 /// Read per query rather than kept in [`Linkables`]: that is rebuilt on
 /// every workspace change, and a project's cards run to hundreds.
+impl Carded<'_> {
+    /// `foo#DEV-12`.
+    pub(crate) fn reference(&self) -> String {
+        format!("{}#{}", self.project, self.handle)
+    }
+}
+
 pub(crate) fn carded(workspace: &Workspace) -> Vec<Carded<'_>> {
     let active = workspace.active_project().map(|project| &project.path);
     let mut cards = Vec::new();
     for project in &workspace.projects {
-        let Some(name) = project.path.file_name().map(|name| name.to_string_lossy()) else {
+        let Some(name) = reference::project_name(&project.path) else {
             continue;
         };
         for board in &project.boards {
@@ -317,11 +322,7 @@ pub(crate) fn card_chip_title(text: &str) -> String {
         Some(markdown::BlockKind::Heading { text: heading, .. })
             if !heading.text.trim().is_empty() =>
         {
-            heading
-                .text
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ")
+            artifact::text::one_line(&heading.text)
         }
         _ => short_card_title(text),
     }
@@ -340,7 +341,7 @@ fn card_mention(carded: &Carded) -> Mention {
             short_card_title(&carded.card.text),
             untitled(&carded.board.name, "Untitled board")
         ))),
-        url: link(&format!("{}#{}", carded.project, carded.handle)),
+        url: link(&carded.reference()),
     }
 }
 

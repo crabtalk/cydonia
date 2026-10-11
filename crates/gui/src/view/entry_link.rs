@@ -22,12 +22,13 @@ use crate::{
             transcript,
         },
         detail::{Pointing, composer_agents},
+        kit::{icon::kind_icon, text::untitled},
         root::Cydonia,
-        search::{Linked, kind_icon},
+        search::Linked,
         sidebar::Row,
     },
 };
-use artifact::{reference::Span, search::Kind};
+use artifact::{kind::Kind, reference::Span};
 use bezel::{
     gpui::{
         self, AnyElement, App, Context, MouseButton, SharedString, Window, div, prelude::*, px,
@@ -44,7 +45,7 @@ use markdown::{
     render::{Editing, fence_band, fence_panel},
 };
 
-pub(crate) const SCHEME: &str = "cydonia://";
+pub(crate) use artifact::reference::SCHEME;
 /// The transcript's box. It scrolls inside; the article does not grow with
 /// the conversation.
 const TRANSCRIPT_HEIGHT: f32 = 320.;
@@ -238,19 +239,6 @@ pub(crate) fn slash_items() -> Vec<SlashItem> {
         action: SlashAction::Run(Rc::new(existing)),
     }));
     items
-}
-
-/// The open project a reference names by its directory's name, and the
-/// active one for a reference naming none.
-/// Read a session's turns back off disk, where they were left unloaded.
-pub(crate) fn load_history(workspace: &mut crate::model::workspace::Workspace, id: u64) {
-    if let Some(chat) = workspace
-        .projects
-        .iter_mut()
-        .find_map(|project| project.session_mut(id))
-    {
-        chat.load_history();
-    }
 }
 
 /// An entry a reference resolved to.
@@ -694,28 +682,14 @@ impl Cydonia {
             .unwrap_or_default();
         fence_band(&theme)
             .gap(px(8.))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .text_ellipsis()
-                    .text_style(TextStyle::Subheadline)
-                    .text_color(theme.text)
-                    .child(match title.trim() {
-                        "" => "Untitled session".to_owned(),
-                        title => title.to_owned(),
-                    }),
-            )
-            .child(
-                div()
-                    .flex_none()
-                    .text_style(TextStyle::Caption)
-                    .text_color(theme.text_faint)
-                    .child(match streaming {
-                        true => format!("{agent} · #{number} · working"),
-                        false => format!("{agent} · #{number}"),
-                    }),
-            )
+            .children(session_label(
+                &theme,
+                &title,
+                match streaming {
+                    true => format!("{agent} · #{number} · working"),
+                    false => format!("{agent} · #{number}"),
+                },
+            ))
             .child(
                 theme
                     .icon_button(icons::layout::Maximize, ButtonStyle::Ghost, None)
@@ -866,28 +840,14 @@ impl Cydonia {
                     .size(px(14.))
                     .text_color(theme.text_muted),
             )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .text_ellipsis()
-                    .text_style(TextStyle::Subheadline)
-                    .text_color(theme.text)
-                    .child(match title.trim() {
-                        "" => "Untitled session".to_owned(),
-                        title => title.to_owned(),
-                    }),
-            )
-            .child(
-                div()
-                    .flex_none()
-                    .text_style(TextStyle::Caption)
-                    .text_color(theme.text_faint)
-                    .child(match note {
-                        Some(note) => format!("{agent} · #{number} · {range} · {note}"),
-                        None => format!("{agent} · #{number} · {range}"),
-                    }),
-            )
+            .children(session_label(
+                &theme,
+                &title,
+                match note {
+                    Some(note) => format!("{agent} · #{number} · {range} · {note}"),
+                    None => format!("{agent} · #{number} · {range}"),
+                },
+            ))
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.select_session(id, window, cx);
                 if let Some(chat) = this.workspace.read(cx).session(id) {
@@ -916,7 +876,7 @@ impl Cydonia {
         let from = turns.from.saturating_sub(1) as usize;
         let to = turns.to as usize;
         let body = self.workspace.update(cx, |workspace, cx| {
-            load_history(workspace, id);
+            workspace.load_history(id);
             let chat = workspace.session(id)?;
             Some(transcript::excerpt(chat, from, to, window, cx))
         });
@@ -1046,4 +1006,24 @@ pub(crate) fn live(
         .flex_col()
         .children(transcript)
         .into_any_element()
+}
+
+/// A session band's title, then its `agent · #n` caption.
+fn session_label(theme: &Theme, title: &str, caption: String) -> [AnyElement; 2] {
+    [
+        div()
+            .flex_1()
+            .min_w_0()
+            .text_ellipsis()
+            .text_style(TextStyle::Subheadline)
+            .text_color(theme.text)
+            .child(untitled(title, "Untitled session"))
+            .into_any_element(),
+        div()
+            .flex_none()
+            .text_style(TextStyle::Caption)
+            .text_color(theme.text_faint)
+            .child(caption)
+            .into_any_element(),
+    ]
 }

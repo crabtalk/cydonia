@@ -6,9 +6,10 @@ use crate::{
     tools::{PROJECT, fields, project_of, root},
 };
 use artifact::{
+    kind::Kind,
     project::{Project as _, fs},
     reference::{self, Reference, Span, Target, Within},
-    search::{self, Block, Kind, Query},
+    search::{self, Block, Query},
     session::{
         chat::{self, ChatItem, ToolStatus},
         record::Record,
@@ -92,7 +93,9 @@ pub static TOOLS: [Tool; 4] = [
         reference (#43), or start a new session on a named agent with the message as its first \
         prompt. Fire and forget: nothing is waited for or answered back.",
         schema: |bound| {
-            let mut schema = fields(bound, &[PROJECT, SESSION, AGENT, MESSAGE]);
+            let mut schema = fields(bound, &[PROJECT, MESSAGE]);
+            super::optional(&mut schema, SESSION, "string");
+            super::optional(&mut schema, AGENT, "string");
             let agents = rail::agents();
             if !agents.is_empty() {
                 schema["properties"][AGENT.name] = json!({
@@ -101,10 +104,6 @@ pub static TOOLS: [Tool; 4] = [
                     "description": format!("{} Configured: {}.", AGENT.about, listed(&agents)),
                 });
             }
-            schema["required"] = json!(match bound {
-                true => vec![MESSAGE.name],
-                false => vec![PROJECT.name, MESSAGE.name],
-            });
             schema
         },
         writes: true,
@@ -118,10 +117,8 @@ pub static TOOLS: [Tool; 4] = [
             answer. Reads archived sessions too. Without turns, the last 3.",
         schema: |bound| {
             let mut schema = fields(bound, &[PROJECT, READ]);
-            schema["properties"][TURNS.name] =
-                json!({ "type": "string", "description": TURNS.about });
-            schema["properties"][FULL.name] =
-                json!({ "type": "boolean", "description": FULL.about });
+            super::optional(&mut schema, TURNS, "string");
+            super::optional(&mut schema, FULL, "boolean");
             schema
         },
         writes: false,
@@ -150,9 +147,7 @@ pub static TOOLS: [Tool; 4] = [
             themselves, unless replace_user_title is set because they asked for this rename.",
         schema: |bound| {
             let mut schema = fields(bound, &[TITLE]);
-            schema["properties"][REPLACE.name] =
-                json!({ "type": "boolean", "description": REPLACE.about });
-            schema["required"] = json!([TITLE.name]);
+            super::optional(&mut schema, REPLACE, "boolean");
             schema
         },
         writes: true,
@@ -184,12 +179,8 @@ fn send(args: Args<'_>) -> Outcome {
     };
     let number = super::number_in(project, named)?
         .ok_or_else(|| Trouble::Invalid("session must be a reference such as #43".to_owned()))?;
-    let entry = artifact::entry::list(project)
-        .map_err(|e| Trouble::Refused(e.to_string()))?
-        .into_iter()
-        .find(|entry| entry.number == number)
-        .ok_or_else(|| Trouble::Refused(format!("no entry {named} in this project")))?;
-    if entry.kind != "session" {
+    let entry = super::entry_numbered(project, number, named)?;
+    if entry.kind != Kind::Session {
         return Err(Trouble::Refused(format!(
             "{named} is a {}, not a session",
             entry.kind
@@ -244,9 +235,20 @@ pub(crate) fn turn_link(args: &Args<'_>) -> Option<String> {
     let (at, record) = (args.at()?, args.session()?);
     let store = fs::Project::new(at);
     let turn = chat::turns(&store.session(record)?.items).len();
-    let number = store.number("session", record).ok()?;
-    let project = at.file_name()?.to_string_lossy();
-    (turn > 0).then(|| format!("cydonia://{project}#{number}:{turn}"))
+    let number = store.number(Kind::Session, record).ok()?;
+    let project = reference::project_name(at)?;
+    let turn = turn as u64;
+    (turn > 0).then(|| {
+        Reference::entry(
+            Some(&project),
+            number,
+            Some(Within::Span(Span {
+                from: turn,
+                to: turn,
+            })),
+        )
+        .link()
+    })
 }
 
 /// A new session on `agent`, seeded with `message`.
@@ -320,21 +322,17 @@ fn found(args: &Args<'_>, named: &str) -> Result<Found, Trouble> {
             "{named} is a card, not a session"
         )));
     };
+    reference::fits(named, Kind::Session, within).map_err(Trouble::Invalid)?;
     let turns = match within {
-        None => None,
         Some(Within::Span(turns)) => Some(turns),
-        Some(Within::Heading(_)) => {
-            return Err(Trouble::Invalid(format!(
-                "{named} names a heading, which only an article has"
-            )));
-        }
+        _ => None,
     };
     let project = project_of(args, &reference)?;
     // Resolved through the registry alone: listing the project's entries would
     // parse every session file to find one.
     let store = fs::Project::new(&project);
     let id = store
-        .resolve("session", number)
+        .resolve(Kind::Session, number)
         .map_err(|e| Trouble::Refused(e.to_string()))?
         .ok_or_else(|| Trouble::Refused(format!("no session #{number} in this project")))?;
     let record = store
@@ -342,7 +340,7 @@ fn found(args: &Args<'_>, named: &str) -> Result<Found, Trouble> {
         .ok_or_else(|| Trouble::Refused(format!("session #{number} cannot be read")))?;
     Ok(Found {
         number,
-        title: record.name.clone().unwrap_or_else(|| record.title.clone()),
+        title: record.label().to_owned(),
         record,
         turns,
     })
@@ -494,7 +492,7 @@ fn search(args: Args<'_>) -> Outcome {
         Searched::All(store) => lines
             .into_iter()
             .filter_map(|(id, at)| {
-                let number = store.number("session", &id).ok()?;
+                let number = store.number(Kind::Session, &id).ok()?;
                 let record = store.session(&id)?;
                 Some((number, record, at))
             })
@@ -505,11 +503,11 @@ fn search(args: Args<'_>) -> Outcome {
     let mut more = false;
     let project = fs::Project::new(root(&args)?);
     'sessions: for (number, record, at) in sessions {
-        let named = record.name.as_deref().unwrap_or(&record.title);
+        let named = record.label();
         let title = match record
             .article
             .as_deref()
-            .and_then(|article| project.number("article", article).ok())
+            .and_then(|article| project.number(Kind::Article, article).ok())
         {
             Some(article) => format!("{named} · under #{article}"),
             None => named.to_owned(),
@@ -561,9 +559,5 @@ enum Searched {
 }
 
 pub(crate) fn snippet(line: &str) -> String {
-    let line = line.trim();
-    match line.char_indices().nth(SNIPPET) {
-        Some((cut, _)) => format!("{}…", &line[..cut]),
-        None => line.to_owned(),
-    }
+    artifact::text::clip(line, SNIPPET)
 }
