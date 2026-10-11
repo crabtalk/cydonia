@@ -214,7 +214,7 @@ pub(crate) struct Carded<'a> {
 /// Every open project's cards `@` can link, in board and column order.
 /// Read per query rather than kept in [`Linkables`]: that is rebuilt on
 /// every workspace change, and a project's cards run to hundreds.
-fn carded(workspace: &Workspace) -> Vec<Carded<'_>> {
+pub(crate) fn carded(workspace: &Workspace) -> Vec<Carded<'_>> {
     let active = workspace.active_project().map(|project| &project.path);
     let mut cards = Vec::new();
     for project in &workspace.projects {
@@ -303,6 +303,28 @@ pub(crate) fn short_card_title(text: &str) -> String {
         _ => head,
     };
     format!("{}…", head.trim_end_matches([',', ';', ':', '.', ' ']))
+}
+
+/// What a card's chip paints ahead of its handle: the heading the card opens
+/// with, whole, and otherwise its title cut short — see [`short_card_title`].
+pub(crate) fn card_chip_title(text: &str) -> String {
+    let doc = markdown::parse(text);
+    let opening = doc
+        .blocks
+        .iter()
+        .find(|block| !matches!(block.kind, markdown::BlockKind::Rule));
+    match opening.map(|block| &block.kind) {
+        Some(markdown::BlockKind::Heading { text: heading, .. })
+            if !heading.text.trim().is_empty() =>
+        {
+            heading
+                .text
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+        }
+        _ => short_card_title(text),
+    }
 }
 
 fn card_mention(carded: &Carded) -> Mention {
@@ -502,7 +524,7 @@ fn by_prefix(
 
 /// What a chip linking an entry paints: its title, and its kind's mark. A
 /// run of a session's turns adds the run, and part of an article the lines or
-/// the heading. A card paints its handle alone. A link naming no entry
+/// the heading. A card paints its title — see [`card_chip_title`] — and handle. A link naming no entry
 /// paints the reference and the app's mark.
 pub(crate) fn preview(url: &str, cx: &App) -> Option<Preview> {
     let reference = url.strip_prefix(crate::view::entry_link::SCHEME)?;
@@ -524,7 +546,7 @@ pub(crate) fn preview(url: &str, cx: &App) -> Option<Preview> {
         Some(Part::Turns(turns)) if turns.from == turns.to => format!("{title} · turn {turns}"),
         Some(Part::Turns(turns)) => format!("{title} · turns {turns}"),
         Some(Part::Passage(passage)) => format!("{title} · {}", passage.label),
-        Some(Part::Card(card)) => card.handle,
+        Some(Part::Card(card)) => format!("{} · {}", card_chip_title(&card.text), card.handle),
         None => title,
     };
     Some(Preview {

@@ -8,8 +8,9 @@
 //! `s:`, `a:` or `b:`, that kind's entries alone. A label's prefix, `l:` and
 //! the label, after it or alone, lists the entries carrying that label.
 //!
-//! A query lists the entries `@` would for it first — see
-//! [`crate::view::mention::rank`] — then the ones it is found in.
+//! A query lists the cards and entries `@` would name for it first — see
+//! [`crate::view::mention::rank_cards`] and [`crate::view::mention::rank`] —
+//! then the ones it is found in. A card opens in the drawer, as its chip does.
 //!
 //! An empty query lists what was touched last. A query is searched off disk on
 //! a background thread — see [`artifact::search::disk`] — so an entry's hits
@@ -114,6 +115,17 @@ pub(crate) struct Hit {
     /// Where the query was found, when it was found in the entry's body: the
     /// line holding it, and where in the line.
     snippet: Option<(String, Range<usize>)>,
+    /// A card on the board `row` names.
+    card: Option<HitCard>,
+}
+
+#[derive(Clone)]
+struct HitCard {
+    /// `project#DEV-12`.
+    reference: String,
+    /// `DEV-12`.
+    handle: String,
+    title: String,
 }
 
 /// A row as the palette lists it: a command, then the entries.
@@ -500,7 +512,11 @@ impl Cydonia {
                 let ranked: Vec<Hit> = this
                     .ranked_hits(found, cx)
                     .into_iter()
-                    .filter(|hit| !hits.iter().any(|held| held.row == hit.row))
+                    .filter(|hit| {
+                        !hits
+                            .iter()
+                            .any(|held| held.card.is_none() && held.row == hit.row)
+                    })
                     .filter(|hit| {
                         label
                             .as_ref()
@@ -527,7 +543,11 @@ impl Cydonia {
     fn recent_hits(&self, cx: &App) -> Vec<Hit> {
         self.recent_rows(cx)
             .into_iter()
-            .map(|row| Hit { row, snippet: None })
+            .map(|row| Hit {
+                row,
+                snippet: None,
+                card: None,
+            })
             .collect()
     }
 
@@ -548,11 +568,43 @@ impl Cydonia {
         let Some(Linkables(held)) = cx.try_global::<Linkables>() else {
             return Vec::new();
         };
-        mention::rank(self.search.field.read(cx).content(), held)
+        let entries = mention::rank(self.search.field.read(cx).content(), held)
             .into_iter()
             .map(|ix| Hit {
                 row: held[ix].row.clone(),
                 snippet: None,
+                card: None,
+            });
+        self.card_hits(cx).into_iter().chain(entries).collect()
+    }
+
+    /// The cards the field's query names by handle — see
+    /// [`mention::rank_cards`].
+    fn card_hits(&self, cx: &App) -> Vec<Hit> {
+        let workspace = self.workspace.read(cx);
+        let cards = mention::carded(workspace);
+        let (named, _) = mention::rank_cards(self.search.field.read(cx).content(), &cards);
+        named
+            .into_iter()
+            .filter_map(|ix| {
+                let carded = &cards[ix];
+                let project = workspace.projects.iter().find(|open| {
+                    open.path
+                        .file_name()
+                        .is_some_and(|name| name.to_string_lossy() == carded.project)
+                })?;
+                Some(Hit {
+                    row: Row::Entry {
+                        project: project.path.clone(),
+                        showing: Showing::Board(carded.board.id.clone()),
+                    },
+                    snippet: None,
+                    card: Some(HitCard {
+                        reference: format!("{}#{}", carded.project, carded.handle),
+                        handle: carded.handle.clone(),
+                        title: crate::view::board::card_title(&carded.card.text),
+                    }),
+                })
             })
             .collect()
     }
@@ -596,6 +648,7 @@ impl Cydonia {
                     Hit {
                         row,
                         snippet: found.snippet,
+                        card: None,
                     },
                 ))
             })
@@ -665,6 +718,11 @@ impl Cydonia {
         }
         let query = self.search.field.read(cx).content().clone();
         self.dismiss_search(&DismissSearch, window, cx);
+        if let Some(card) = &hit.card {
+            self.open_reference(&card.reference, window, cx);
+            cx.notify();
+            return;
+        }
         self.open_row(&hit.row, window, cx);
         if hit.snippet.is_some() {
             let field = self.leaf().find_field.clone();
@@ -1154,7 +1212,10 @@ impl Cydonia {
                 .map(|open| open.name())
         });
         let icon = kind_icon(kind_of(&hit.row).unwrap_or(Kind::Article));
-        let title = self.label_of_row(&hit.row, cx);
+        let title = match &hit.card {
+            Some(card) => format!("{} · {}", card.handle, card.title),
+            None => self.label_of_row(&hit.row, cx),
+        };
         let selected = ix == self.search.selected;
         let snippet = hit.snippet.as_ref().map(|(line, at)| {
             let (text, at) = clipped(line, at.clone());

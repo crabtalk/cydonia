@@ -150,7 +150,8 @@ shown. Spelled like a web link's forms:
 
 - An ordinary link stays a text link.
 - `"chip"` paints inline as the entry's mark and title; a board card's chip
-  as the mark and its handle alone.
+  as the mark, the heading the card opens with or else its opening text cut
+  short, and its handle.
 - `"embed"` alone on a line is a card of the entry. A session's card is its
   transcript, read only; `cydonia://cydonia#43:5-7` shows turns 5 to 7 alone.
   `cydonia://cydonia#12:5-7` shows lines 5 to 7 of article #12, and

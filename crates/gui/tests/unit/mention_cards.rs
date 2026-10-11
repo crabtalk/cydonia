@@ -82,3 +82,17 @@ fn a_long_card_title_is_cut_at_a_word() {
     let word = "x".repeat(60);
     assert_eq!(short_card_title(&word), format!("{}…", "x".repeat(48)));
 }
+
+#[test]
+fn a_card_opening_with_a_heading_is_chipped_by_the_whole_heading() {
+    let heading = "# Board card editor misses article features and more besides\n\nBody.";
+    assert_eq!(
+        card_chip_title(heading),
+        "Board card editor misses article features and more besides"
+    );
+    let plain = "one file per card: the board file and one document directory per card";
+    assert_eq!(
+        card_chip_title(plain),
+        "one file per card: the board file and one…"
+    );
+}
