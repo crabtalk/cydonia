@@ -4,6 +4,7 @@
 	"type": "module",
 	"scripts": {
 		"og": "node scripts/generate-og.mjs",
+		"figures": "node scripts/generate-figures.mjs",
 		"dev": "vite dev",
 		"build": "vite build",
 		"preview": "vite preview",

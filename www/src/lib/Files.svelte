@@ -138,6 +138,7 @@
 		grid-template-columns: 264px minmax(0, 1fr);
 		margin: 32px 0 0;
 		border: 1px solid var(--line);
+		background: var(--bg);
 		overflow: hidden;
 		font-family: var(--mono);
 		font-size: 13px;
@@ -280,7 +281,6 @@
 	.view {
 		min-width: 0;
 		margin: 0;
-		background: var(--bg);
 	}
 
 	figcaption {

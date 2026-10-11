@@ -4,7 +4,7 @@
 	import Media from '$lib/Media.svelte';
 	import Brand from '$lib/Brand.svelte';
 	import Files from '$lib/Files.svelte';
-	import Frame from '$lib/Frame.svelte';
+	import Figure from '$lib/Figure.svelte';
 	import { base } from '$app/paths';
 	import { releasePath, day, latest, media, releases } from '$lib/changelog.js';
 	import { agents, repo, site, tagline as description } from '$lib/meta.js';
@@ -17,47 +17,28 @@
 	const featureMedia = media(pinned ?? releases.find((release) => media(release)) ?? latest);
 	const acp = 'https://agentclientprotocol.com';
 
-	// Off until there are real screenshots to put in the frames — three empty
-	// boxes in a row read as an unfinished page. Flip to true to bring it back.
-	const showcase = false;
-
 	const scenes = [
 		{
 			id: 'open',
+			figure: 'cabinet',
 			title: 'Open a directory',
 			body: 'Any folder becomes a project. What you write lands in <code>.cydonia/</code> inside it, gitignored.'
 		},
 		{
 			id: 'write',
+			figure: 'typewriter',
 			title: 'Write it down',
 			body: 'Articles with covers and highlighted code. Boards and tables when a thought wants columns.'
 		},
 		{
 			id: 'hand',
+			figure: 'rover',
 			title: 'Hand it over',
 			body: 'Any agent that speaks <a href="' +
 				acp +
 				'">ACP</a> works in the project. Its edits land in the window you were writing in.'
 		}
 	];
-
-	// The outline follows the reel: whichever scene owns the middle of the
-	// viewport is the one it marks.
-	let active = $state(0);
-	let nodes = $state([]);
-
-	$effect(() => {
-		const observer = new IntersectionObserver(
-			(entries) => {
-				for (const entry of entries) {
-					if (entry.isIntersecting) active = nodes.indexOf(entry.target);
-				}
-			},
-			{ rootMargin: '-45% 0px -45% 0px' }
-		);
-		for (const node of nodes) if (node) observer.observe(node);
-		return () => observer.disconnect();
-	});
 
 	const jsonLd = {
 		'@context': 'https://schema.org',
@@ -136,30 +117,24 @@
 	</figure>
 </section>
 
-{#if showcase}
-	<section class="scenes">
-		<nav class="outline">
-			<ol>
-				{#each scenes as scene, i (scene.id)}
-					<li class:current={active === i}>
-						<a href="#{scene.id}">{scene.title}</a>
-					</li>
-				{/each}
-			</ol>
-		</nav>
-
-		<div class="reel">
+<section class="scenes">
+	<div class="sheet">
+		<div class="title-block" aria-hidden="true">
+			<span>Cydonia · how it works</span>
+		</div>
+		<div class="cells">
 			{#each scenes as scene, i (scene.id)}
-				<article id={scene.id} bind:this={nodes[i]}>
+				<article id={scene.id}>
+					<span class="fig" aria-hidden="true">Fig {i + 1}</span>
+					<Figure name={scene.figure} />
 					<h2>{scene.title}</h2>
 					<!-- eslint-disable-next-line svelte/no-at-html-tags -->
 					<p>{@html scene.body}</p>
-					<Frame ratio="16 / 10" />
 				</article>
 			{/each}
 		</div>
-	</section>
-{/if}
+	</div>
+</section>
 
 <section class="own">
 	<h2>The work outlives the session</h2>
@@ -194,11 +169,16 @@
 		padding: 0 var(--gutter);
 	}
 
+	/* The space between two sections is the lower one's top padding. No section
+	   pads its own bottom, apart from the last, which ends the page. */
+	section + section {
+		padding-top: clamp(80px, 11vw, 144px);
+	}
+
 	.hero {
 		display: grid;
 		gap: 40px;
 		padding-top: 72px;
-		padding-bottom: 88px;
 	}
 
 	.say {
@@ -258,7 +238,7 @@
 		color: var(--muted);
 	}
 
-	.reel a {
+	.scenes :global(a) {
 		text-decoration: underline;
 		text-underline-offset: 3px;
 		text-decoration-color: var(--line-strong);
@@ -329,71 +309,50 @@
 		text-underline-offset: 3px;
 	}
 
-	.scenes {
-		display: grid;
-		grid-template-columns: 190px minmax(0, 1fr);
-		gap: 56px;
-		padding-bottom: 96px;
+	/* A drawing sheet: one ruled box, a title block along the top, one cell
+	   per figure. Figures fill their solids with the sheet's own colour. */
+	.sheet {
+		--figure-paper: var(--panel);
+		border: 1px solid var(--line);
+		background: var(--panel);
 	}
 
-	/* Stays put while the reel moves past it, so the rule on its left reads as
-	   the spine of this whole stretch of the page. */
-	.outline {
-		position: sticky;
-		top: 96px;
-		align-self: start;
-	}
-
-	.outline ol {
-		display: grid;
-		gap: 14px;
-		margin: 0;
-		padding: 4px 0 4px 18px;
-		border-left: 1px solid var(--line);
-		list-style: none;
-	}
-
-	.outline li {
-		position: relative;
-		font-size: 14.5px;
-	}
-
-	.outline a {
+	.title-block {
+		padding: 10px 16px;
+		border-bottom: 1px solid var(--line);
+		background: var(--panel);
+		font: 11px/1.4 var(--mono);
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
 		color: var(--faint);
 	}
 
-	@media (hover: hover) {
-		.outline a:hover {
-			color: var(--muted);
-			text-decoration: none;
-		}
-	}
-
-	.outline .current a {
-		color: var(--text);
-	}
-
-	/* The marker sits on the rule itself, so the active scene is named on the
-	   line rather than beside it. */
-	.outline .current::before {
-		content: '';
-		position: absolute;
-		left: -19px;
-		top: 7px;
-		width: 1px;
-		height: 14px;
-		background: var(--text);
-	}
-
-	.reel {
+	.cells {
 		display: grid;
-		gap: 88px;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+	}
+
+	.cells article {
+		position: relative;
+		padding: 40px 28px 28px;
+	}
+
+	.cells article + article {
+		border-left: 1px solid var(--line);
+	}
+
+	.fig {
+		position: absolute;
+		top: 12px;
+		left: 16px;
+		font: 11px/1.4 var(--mono);
+		color: var(--faint);
 	}
 
 	/* Browsers without scroll-driven animations show the scenes as they are. */
 	@media (prefers-reduced-motion: no-preference) {
 		@supports (animation-timeline: view()) {
-			.reel article {
+			.scenes article {
 				animation: reveal linear both;
 				animation-timeline: view();
 				animation-range: entry 0% entry 40%;
@@ -407,25 +366,16 @@
 		}
 	}
 
-	.reel h2 {
-		margin: 0 0 10px;
-		font-size: clamp(22px, 2.6vw, 28px);
+	.scenes h2 {
+		margin: 20px 0 8px;
+		font-size: 20px;
 		font-weight: 600;
 		letter-spacing: -0.03em;
 	}
 
-	.reel p {
-		max-width: 52ch;
-		margin: 0 0 24px;
+	.scenes p {
+		margin: 0;
 		color: var(--muted);
-	}
-
-	/* The section between the hero and the download had no top padding at all,
-	   so it read as a continuation of the hero rather than its own stretch of
-	   page. Scales with the viewport instead of needing a breakpoint. */
-	.own {
-		padding-top: clamp(80px, 11vw, 144px);
-		padding-bottom: clamp(80px, 11vw, 144px);
 	}
 
 	.own h2 {
@@ -492,25 +442,22 @@
 	}
 
 	@media (max-width: 940px) {
-		.hero,
-		.scenes {
+		.hero {
 			grid-template-columns: minmax(0, 1fr);
 			gap: 36px;
 		}
 
+		.cells {
+			grid-template-columns: minmax(0, 1fr);
+		}
+
+		.cells article + article {
+			border-left: 0;
+			border-top: 1px solid var(--line);
+		}
+
 		.hero {
 			padding-top: 48px;
-			padding-bottom: 56px;
-		}
-
-		/* No room for a rail beside the reel, and a sticky bar over it would
-		   cover the thing it indexes. */
-		.outline {
-			display: none;
-		}
-
-		.reel {
-			gap: 64px;
 		}
 
 	}
