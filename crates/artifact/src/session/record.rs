@@ -56,6 +56,11 @@ pub struct Record {
     pub labels: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fork: Option<ForkOrigin>,
+    /// The article this session was opened under, by id. It moves to another
+    /// project with the article and is removed with it — see
+    /// [`crate::article::move_to`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub article: Option<String>,
     /// Items before this index have not reached the agent's session yet, and
     /// go to it as history with the next prompt. Cleared by the first turn
     /// that finishes.
@@ -121,6 +126,7 @@ impl Record {
             closed: false,
             labels: self.labels.clone(),
             fork: Some(ForkOrigin::new(self.id.clone(), title)),
+            article: None,
             replay: Some(before),
             draft: draft.clone(),
             items: self.items[..before].to_vec(),

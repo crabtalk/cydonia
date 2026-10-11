@@ -487,6 +487,10 @@ pub struct Cydonia {
     /// session's id — see [`Cydonia::session_transcript`].
     pub(crate) session_cards:
         std::collections::HashMap<u64, Entity<super::component::composer::Composer>>,
+    /// The thread each article's composer opens, by the article's file — see
+    /// [`super::thread`].
+    pub(crate) threads:
+        std::collections::HashMap<std::path::PathBuf, Entity<super::thread::ThreadView>>,
     /// The pane the last press came down in: `None` for the one a window with
     /// no space open shows. Where a link opens — see
     /// [`Cydonia::open_reference`].
@@ -623,6 +627,9 @@ impl Cydonia {
                     && !matches!(event, ComposerEvent::Draft(..))
                 {
                     this.focus_pane(&on, window, cx);
+                }
+                if let Some(path) = this.thread_article(on.as_ref(), cx) {
+                    return this.thread_event(&path, event, window, cx);
                 }
                 let session = this.workspace.read(cx).active_id();
                 this.composer_event(session, event, window, cx);
@@ -972,7 +979,13 @@ impl Cydonia {
             let previous = this.leaf().composer.read(cx).session();
             this.sync_composer(cx);
             let current = this.leaf().composer.read(cx).session();
-            if current.is_some() && current != previous {
+            // An article's composer takes the focus only from a press into it.
+            if current.is_some()
+                && current != previous
+                && this
+                    .thread_article(this.leaf().entry.as_ref(), cx)
+                    .is_none()
+            {
                 window.focus(&this.composer_focus_handle(cx), cx);
             }
         })
@@ -1036,6 +1049,7 @@ impl Cydonia {
             card_docs: Default::default(),
             history: Default::default(),
             session_cards: Default::default(),
+            threads: Default::default(),
             pressed_pane: None,
             #[cfg(feature = "desktop")]
             settings_window: None,

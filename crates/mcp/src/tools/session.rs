@@ -503,8 +503,17 @@ fn search(args: Args<'_>) -> Outcome {
     sessions.sort_by_key(|(number, ..)| *number);
     let mut hits = Vec::new();
     let mut more = false;
+    let project = fs::Project::new(root(&args)?);
     'sessions: for (number, record, at) in sessions {
-        let title = record.name.as_deref().unwrap_or(&record.title);
+        let named = record.name.as_deref().unwrap_or(&record.title);
+        let title = match record
+            .article
+            .as_deref()
+            .and_then(|article| project.number("article", article).ok())
+        {
+            Some(article) => format!("{named} · under #{article}"),
+            None => named.to_owned(),
+        };
         for (turn, items) in chat::turns(&record.items).into_iter().enumerate() {
             let Some(line) = at.range(items).next().map(|(_, line)| line) else {
                 continue;

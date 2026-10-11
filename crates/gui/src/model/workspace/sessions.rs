@@ -237,29 +237,36 @@ impl Workspace {
         let records = self.projects[ix].store().sessions();
         let _ = session_preferences::keep_sessions(&path, records.iter().map(|r| r.id.as_str()));
         for stored in records {
-            let id = self.next_id;
-            self.next_id += 1;
-            let entry = super::named(
-                &self.settings.agents,
-                stored.agent_id.as_deref(),
-                &stored.agent,
-            )
-            .cloned()
-            // Nothing on this machine answers to it. The placeholder is a
-            // name to show and no command to start, which is what
-            // `Workspace::reachable` reads as stranded — and it keeps the
-            // id, so the record is written back as findable as it arrived.
-            .unwrap_or_else(|| settings::Agent {
-                name: stored.agent.clone(),
-                id: stored.agent_id.clone(),
-                command: String::new(),
-                args: Vec::new(),
-                env: Default::default(),
-            });
-            let mut chat = ChatSession::restore(id, path.clone(), entry, stored);
-            chat.unload_history();
-            self.projects[ix].sessions.push(chat);
+            self.restore_record(ix, stored);
         }
+    }
+
+    /// Hold one filed session in the project at `ix`, idle, its transcript
+    /// left on disk.
+    pub(super) fn restore_record(&mut self, ix: usize, stored: artifact::session::record::Record) {
+        let path = self.projects[ix].path.clone();
+        let id = self.next_id;
+        self.next_id += 1;
+        let entry = super::named(
+            &self.settings.agents,
+            stored.agent_id.as_deref(),
+            &stored.agent,
+        )
+        .cloned()
+        // Nothing on this machine answers to it. The placeholder is a
+        // name to show and no command to start, which is what
+        // `Workspace::reachable` reads as stranded — and it keeps the
+        // id, so the record is written back as findable as it arrived.
+        .unwrap_or_else(|| settings::Agent {
+            name: stored.agent.clone(),
+            id: stored.agent_id.clone(),
+            command: String::new(),
+            args: Vec::new(),
+            env: Default::default(),
+        });
+        let mut chat = ChatSession::restore(id, path.clone(), entry, stored);
+        chat.unload_history();
+        self.projects[ix].sessions.push(chat);
     }
 
     /// Send to a session, starting an agent for it when it has none — typing
@@ -304,6 +311,69 @@ impl Workspace {
             self.note_landing(ix, state::Kind::Session, record, cx);
         }
         cx.notify();
+    }
+
+    /// The session the article at `path` shows: the newest opened under it, or
+    /// a new one on the preferred agent. Nothing while article threads are
+    /// off.
+    pub fn article_session(&mut self, path: &Path, cx: &mut Context<Self>) -> Option<u64> {
+        self.article_thread(path)
+            .or_else(|| self.new_article_session(path, cx))
+    }
+
+    /// The newest session opened under the article at `path`, opening none.
+    /// Nothing while article threads are off.
+    pub fn article_thread(&self, path: &Path) -> Option<u64> {
+        let (ix, article) = self.thread_article(path)?;
+        self.projects[ix]
+            .sessions
+            .iter()
+            .filter(|chat| chat.article.as_deref() == Some(article.as_str()))
+            .max_by_key(|chat| chat.touched())
+            .map(|chat| chat.id)
+    }
+
+    /// Open another session under the article at `path` on the preferred
+    /// agent, which the article shows from then on — see
+    /// [`Self::article_thread`].
+    pub fn new_article_session(&mut self, path: &Path, cx: &mut Context<Self>) -> Option<u64> {
+        let (ix, article) = self.thread_article(path)?;
+        let entry = self.preferred_agent()?;
+        let id = self.next_id;
+        self.next_id += 1;
+        let cwd = self.projects[ix].path.clone();
+        let chat = ChatSession::connect_article(id, entry, cwd, article, cx);
+        self.projects[ix].sessions.push(chat);
+        cx.notify();
+        Some(id)
+    }
+
+    /// Whether the composer under the article at `path` has anywhere to send:
+    /// its session is [`Self::reachable_session`], or it has none yet and
+    /// there is an agent to open one on.
+    pub fn thread_reachable(&self, path: &Path) -> bool {
+        if self.thread_article(path).is_none() {
+            return false;
+        }
+        match self.article_thread(path).and_then(|id| self.session(id)) {
+            Some(chat) => self.reachable_session(chat),
+            None => self.preferred_agent().is_some(),
+        }
+    }
+
+    /// The project holding the article at `path`, and the article's id, while
+    /// article threads are on.
+    fn thread_article(&self, path: &Path) -> Option<(usize, String)> {
+        if !self.settings.features.threads() {
+            return None;
+        }
+        self.projects.iter().enumerate().find_map(|(ix, project)| {
+            let article = project
+                .articles
+                .iter()
+                .find(|article| article.path == path)?;
+            Some((ix, article.id.clone()))
+        })
     }
 
     /// Send to the session filed under `record`, where one is held.
@@ -542,9 +612,12 @@ impl Workspace {
     /// agent was uninstalled out from under a conversation, and taking the
     /// composer away mid-turn would strand it.
     pub fn reachable(&self) -> bool {
-        let Some(chat) = self.active_session() else {
-            return false;
-        };
+        self.active_session()
+            .is_some_and(|chat| self.reachable_session(chat))
+    }
+
+    /// [`Self::reachable`] for `chat`, in front or not.
+    pub fn reachable_session(&self, chat: &ChatSession) -> bool {
         chat.live() || (chat.resumable() && self.agent_for(&chat.entry).is_some())
     }
 }

@@ -21,7 +21,7 @@ pub mod properties;
 
 #[cfg(feature = "sqlite")]
 use crate::entry;
-use crate::project::fs;
+use crate::project::{Project as _, fs};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use url::Url;
@@ -107,7 +107,9 @@ pub fn free(dir: &Path, stamp: u128) -> PathBuf {
 /// those pictures are copied and the document rewritten — see [`carry_assets`].
 ///
 /// The `#number` does not come along: the source tombstones its own, and the
-/// destination issues one on the next read.
+/// destination issues one on the next read. The same for each of its
+/// sessions, which move into the destination's `sessions/` — see
+/// [`crate::session::record::Record::article`].
 pub fn move_to(content: &Path, to: &Path) -> std::io::Result<PathBuf> {
     let missing =
         |what: &str| std::io::Error::new(std::io::ErrorKind::InvalidInput, what.to_owned());
@@ -126,13 +128,35 @@ pub fn move_to(content: &Path, to: &Path) -> std::io::Result<PathBuf> {
     let arrived = self::content(&landing);
     repoint(&arrived, from_dir, &landing);
     carry_assets(&arrived, from, to);
+    carry_sessions(&id, from, &id_of(&arrived), to)?;
     #[cfg(feature = "sqlite")]
     let _ = entry::Registry::open(from).and_then(|registry| registry.remove("article", &id));
     Ok(arrived)
 }
 
+/// Move the sessions of article `id` in `from` to `to`, as sessions of the
+/// article `landed` there. Each keeps its id where `to` has it free.
+fn carry_sessions(id: &str, from: &Path, landed: &str, to: &Path) -> std::io::Result<()> {
+    let (source, target) = (fs::Project::new(from), fs::Project::new(to));
+    let failed = |e: anyhow::Error| std::io::Error::other(e.to_string());
+    for mut record in source.sessions() {
+        if record.article.as_deref() != Some(id) {
+            continue;
+        }
+        let old = record.id.clone();
+        let fresh = target.create_session().map_err(failed)?;
+        if target.session(&old).is_some() {
+            record.id = fresh;
+        }
+        record.article = Some(landed.to_owned());
+        target.save_session(&record).map_err(failed)?;
+        let _ = source.remove_session(&old);
+    }
+    Ok(())
+}
+
 /// Take an article off the disk: the directory is the article, cover and
-/// properties included.
+/// properties included, and its sessions go with it.
 ///
 /// The number it was issued goes with it — a reference that outlived the thing
 /// it named would be read back as an article nobody can open. Best effort on
@@ -145,6 +169,14 @@ pub fn remove(content: &Path) -> std::io::Result<()> {
     let id = id_of(content);
     let project = project_of(content).map(Path::to_path_buf);
     std::fs::remove_dir_all(dir)?;
+    if let Some(project) = &project {
+        let store = fs::Project::new(project);
+        for record in store.sessions() {
+            if record.article.as_deref() == Some(id.as_str()) {
+                let _ = store.remove_session(&record.id);
+            }
+        }
+    }
     #[cfg(feature = "sqlite")]
     if let Some(project) = project {
         let _ =

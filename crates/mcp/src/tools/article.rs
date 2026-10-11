@@ -128,7 +128,7 @@ pub static TOOLS: [Tool; 13] = [
     },
     Tool {
         name: "article_read",
-        description: "Read one article's markdown, or part of it: #12:5-7 reads lines 5 to 7, and #12#setup the section under the heading whose anchor is setup (GitHub's: lowercased, punctuation dropped, spaces as -). A part answers its line numbers. The result includes two directories, relative to the project directory: assets_path, this article's own media directory, which holds its body images and its cover; and article_path, the article's folder. Filesystem access is needed to place a file in either.",
+        description: "Read one article's markdown, or part of it: #12:5-7 reads lines 5 to 7, and #12#setup the section under the heading whose anchor is setup (GitHub's: lowercased, punctuation dropped, spaces as -). A part answers its line numbers. sessions are the numbers of the sessions opened under the article, newest first; read one with session_read. The result includes two directories, relative to the project directory: assets_path, this article's own media directory, which holds its body images and its cover; and article_path, the article's folder. Filesystem access is needed to place a file in either.",
         schema: |bound| fields(bound, &[PROJECT, ARTICLE]),
         writes: false,
         deletes: false,
@@ -364,10 +364,18 @@ fn read(args: Args<'_>) -> Outcome {
             (text[range].to_owned(), Some(lines))
         }
     };
+    let mut opened: Vec<_> = fs::Project::new(project)
+        .sessions()
+        .into_iter()
+        .filter(|record| record.article.as_deref() == Some(found.id.as_str()))
+        .collect();
+    opened.sort_by_key(|record| std::cmp::Reverse(record.updated));
+    let sessions: Vec<_> = opened.iter().filter_map(|record| record.number).collect();
     Ok(Answer::said(text).with(json!({
         "id": found.id,
         "number": found.number,
         "title": found.title,
+        "sessions": sessions,
         "lines": lines.map(|lines| json!({ "from": lines.from, "to": lines.to })),
         "assets_path": within(project, &article::assets(&found.content)),
         "article_path": within(project, found.content.parent().unwrap_or(project)),

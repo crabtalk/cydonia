@@ -18,6 +18,7 @@ use crate::{
 };
 use artifact::space::Member;
 use bezel::ui::scroll as scrollbars;
+use bezel::ui::surface::Surfaced as _;
 use bezel::{
     gpui::{
         self, AnyElement, App, Context, CursorStyle, Div, Entity, Focusable as _, KeyBinding,
@@ -301,6 +302,9 @@ fn word_count(n: usize) -> String {
 
 /// How far the editor sits below the top of the band it is set in.
 const PAGE_TOP: f32 = 20.;
+
+/// How tall an open comment's note grows before it scrolls.
+const NOTE_MAX_HEIGHT: f32 = 320.;
 
 /// Called with the comment under a press on the page, or `None` for a press on
 /// none.
@@ -689,6 +693,14 @@ impl Cydonia {
         let path = article.path.clone();
         let reading = article.reading.clone();
         let scroll = article.scroll.clone();
+        // What the composer under the article covers of the pane's foot.
+        let covered = match self
+            .thread_article(on, cx)
+            .is_some_and(|path| self.workspace.read(cx).thread_reachable(&path))
+        {
+            true => f32::from(article.composer.get()) + crate::view::root::COMPOSER_BOTTOM,
+            false => 0.,
+        };
         let document = div()
             .id("article")
             .on_action(cx.listener(Self::leave_title))
@@ -711,13 +723,16 @@ impl Cydonia {
             .flex_col()
             .child(self.header(cover, field, wide, cx))
             .children(self.meta_line(project, at, wide, cx))
-            .child(page(
-                &editor,
-                wide,
-                source_offset,
-                self.margin(project, at, &editor, cx),
-                Some(self.on_page_press(path.clone())),
-            ));
+            .child(
+                page(
+                    &editor,
+                    wide,
+                    source_offset,
+                    self.margin(project, at, &editor, cx),
+                    Some(self.on_page_press(path.clone())),
+                )
+                .pb(px(covered)),
+            );
         Some(
             div()
                 .flex_1()
@@ -755,7 +770,19 @@ impl Cydonia {
                         ))
                         .children(self.search_pill(on, cx))
                         .children(self.comments_list(project, at, &editor, &path, window, cx))
-                        .children(self.outline(&editor, &path, reading, scroll, window, cx)),
+                        .children(
+                            self.outline(&editor, &path, reading, scroll, window, cx)
+                                // Held over the composer under the article.
+                                .map(|outline| {
+                                    div()
+                                        .absolute()
+                                        .top_0()
+                                        .left_0()
+                                        .right_0()
+                                        .bottom(px(covered))
+                                        .child(outline)
+                                }),
+                        ),
                 )
                 // Last, and floated over the document from where the
                 // selection ends — the bar is chrome the page runs under.
@@ -1493,11 +1520,19 @@ impl Note {
                         .id(("comment", id))
                         .occlude()
                         .w_full()
-                        .pl(px(10.))
-                        .border_l_2()
-                        .border_color(rule)
                         .cursor_pointer()
-                        .child(self.body(comment, open, &theme, window, cx)),
+                        .child(
+                            popover::popover_card(&theme)
+                                .w_full()
+                                .child(
+                                    div()
+                                        .pl(px(10.))
+                                        .border_l_2()
+                                        .border_color(rule)
+                                        .child(self.body(comment, open, &theme, window, cx)),
+                                )
+                                .surface(&theme, crate::view::component::composer::SURFACE),
+                        ),
                     id,
                 )
                 .on_click(self.toggle(id))
@@ -1513,8 +1548,11 @@ impl Note {
                         .occlude()
                         .w(px(NOTE_WIDTH))
                         .child(
+                            // The card is contents only; its fill is the
+                            // surface's.
                             popover::popover_card(&theme)
-                                .child(self.body(comment, true, &theme, window, cx)),
+                                .child(self.body(comment, true, &theme, window, cx))
+                                .surface(&theme, crate::view::component::composer::SURFACE),
                         ),
                     id,
                 )
@@ -1568,13 +1606,18 @@ impl Note {
             .join(" ");
         let note = match open {
             true => div()
+                .id(("comment-note", id))
+                .max_h(px(NOTE_MAX_HEIGHT))
+                .map(|el| scrollbars::scrolls(el, scrollbars::Axes::Vertical))
                 .text_style(TextStyle::Callout)
-                .child(markdown::markdown(&comment.note, window, cx)),
+                .child(markdown::markdown(&comment.note, window, cx))
+                .into_any_element(),
             false => div()
                 .text_style(TextStyle::Callout)
                 .text_color(theme.text_muted)
                 .line_clamp(3)
-                .child(comment.note.clone()),
+                .child(comment.note.clone())
+                .into_any_element(),
         };
         div()
             .flex()

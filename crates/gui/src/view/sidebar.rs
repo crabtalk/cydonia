@@ -1077,12 +1077,17 @@ impl Cydonia {
             project: open.path.clone(),
             showing,
         };
-        let sessions = open.sessions.iter().map(|chat| Ranked {
-            archived: chat.closed,
-            touched: chat.touched(),
-            name: folded(&chat.label()),
-            row: row(Showing::Session(chat.id)),
-        });
+        // An article's thread is reached from its article.
+        let sessions = open
+            .sessions
+            .iter()
+            .filter(|chat| chat.article.is_none())
+            .map(|chat| Ranked {
+                archived: chat.closed,
+                touched: chat.touched(),
+                name: folded(&chat.label()),
+                row: row(Showing::Session(chat.id)),
+            });
         let boards = open.boards.iter().map(|board| Ranked {
             archived: board.archived,
             touched: board.touched,

@@ -492,3 +492,51 @@ fn a_comment_is_filed_beside_the_article_and_follows_an_edit() {
     assert_eq!(&text[comment.range()], "Two line");
     assert_eq!(comment.note, "Why two?");
 }
+
+/// An article answers the sessions opened under it, and the entry list
+/// names the article each is under.
+#[test]
+fn an_article_names_its_sessions() {
+    use artifact::project::Project as _;
+    let scratch = Scratch::new("article-sessions");
+    let server = scratch.server();
+    let made = server
+        .call(
+            "article_add",
+            json!({ "project": scratch.path(), "title": "Notes", "text": "Body" }),
+            None,
+        )
+        .unwrap_or_else(|_| panic!("article creation failed"));
+    let id = made.data.unwrap()["id"].as_str().unwrap().to_owned();
+    let none = structured(server.call(
+        "article_read",
+        json!({ "project": scratch.path(), "article": "Notes" }),
+        None,
+    ));
+    assert_eq!(none["sessions"], json!([]));
+
+    let store = artifact::project::fs::Project::new(scratch.path());
+    let filed = store.create_session().unwrap();
+    let record: artifact::session::record::Record = serde_json::from_value(json!({
+        "id": filed, "article": id, "agent": "claude", "title": "", "name": null,
+        "updated": 1, "items": [{"User": "why?"}]
+    }))
+    .unwrap();
+    store.save_session(&record).unwrap();
+
+    let read = structured(server.call(
+        "article_read",
+        json!({ "project": scratch.path(), "article": "Notes" }),
+        None,
+    ));
+    let number = read["sessions"][0].as_u64().expect("the session's number");
+    let listed = said(server.call(
+        "project_entries",
+        json!({ "project": scratch.path() }),
+        None,
+    ));
+    assert!(
+        listed.contains(&format!("#{number} [session]")) && listed.contains("under #1"),
+        "{listed}"
+    );
+}

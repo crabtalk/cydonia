@@ -593,6 +593,9 @@ pub enum Drawn<'a> {
     /// as rows. Scrolled by the list given, without the rail; by the
     /// session's own where none is.
     Nested(Option<&'a bezel::ui::list::VariableList<usize>>),
+    /// [`Self::Nested`] inside a composer, with nothing floating over its
+    /// foot.
+    Attached(&'a bezel::ui::list::VariableList<usize>),
 }
 
 /// The transcript of one session, rendered from the model that owns it —
@@ -611,9 +614,10 @@ pub fn render(
     let id = chat.id;
     chat.transcript.find.replace(find);
     let turns = turns(&chat.items);
-    let nested = matches!(drawn, Drawn::Nested(_));
+    let nested = matches!(drawn, Drawn::Nested(_) | Drawn::Attached(_));
+    let attached = matches!(drawn, Drawn::Attached(_));
     let (list, own) = match drawn {
-        Drawn::Nested(Some(list)) => (list.clone(), false),
+        Drawn::Nested(Some(list)) | Drawn::Attached(list) => (list.clone(), false),
         Drawn::Pane | Drawn::Nested(None) => (chat.transcript.list.clone(), true),
     };
     let keys = keys(&turns);
@@ -646,12 +650,16 @@ pub fn render(
             list.focus_item(index, chat.transcript.focus.borrow().get(&item).cloned());
         }
     }
-    let footer_height = chat
-        .transcript
-        .footer_height
-        .get()
-        .max(px(root::composer_height()))
-        + px(root::COMPOSER_BOTTOM);
+    let footer_height = match attached {
+        true => px(0.),
+        false => {
+            chat.transcript
+                .footer_height
+                .get()
+                .max(px(root::composer_height()))
+                + px(root::COMPOSER_BOTTOM)
+        }
+    };
     list.set_end_inset(footer_height);
     let workspace = cx.entity().downgrade();
     let visible_workspace = workspace.clone();

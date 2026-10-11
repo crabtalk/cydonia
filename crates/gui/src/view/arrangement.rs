@@ -252,7 +252,9 @@ impl Cydonia {
                 // sees one landing here.
                 .map(|leaf| {
                     self.session_footer(Some(id), leaf.composer.clone(), Some(front.clone()), cx)
+                        .into_any_element()
                 }),
+            Some((_, Showing::Article(_))) => self.thread_footer(Some(&front), cx),
             _ => None,
         };
         let session = match &showing {

@@ -98,6 +98,7 @@ fn record(id: &str) -> Record {
         closed: false,
         labels: Vec::new(),
         fork: None,
+        article: None,
         replay: None,
         draft: String::new(),
         items: Vec::new(),

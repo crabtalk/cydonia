@@ -812,9 +812,19 @@ pub struct Features {
     pub sessions: bool,
     pub boards: bool,
     pub tables: bool,
+    /// A session under each article, asked about its passages. Nothing of it
+    /// shows while [`Features::sessions`] is off.
+    pub article_threads: bool,
     /// `[features.panel]`: the right panel's tabs. A table, so it follows
     /// every bare key above.
     pub panel: PanelTabs,
+}
+
+impl Features {
+    /// Whether articles carry a session of their own: on, and sessions on.
+    pub fn threads(&self) -> bool {
+        self.sessions && self.article_threads
+    }
 }
 
 impl Default for Features {
@@ -823,6 +833,7 @@ impl Default for Features {
             sessions: true,
             boards: true,
             tables: false,
+            article_threads: true,
             panel: PanelTabs::default(),
         }
     }
@@ -855,6 +866,7 @@ pub enum Feature {
     Sessions,
     Boards,
     Tables,
+    ArticleThreads,
     Review,
     Files,
     Browser,
@@ -863,7 +875,12 @@ pub enum Feature {
 impl Feature {
     /// The order the Features section lists them in. Sessions first: it is the
     /// one that decides whether anything runs on this machine.
-    pub const ALL: [Self; 3] = [Self::Sessions, Self::Boards, Self::Tables];
+    pub const ALL: [Self; 4] = [
+        Self::Sessions,
+        Self::ArticleThreads,
+        Self::Boards,
+        Self::Tables,
+    ];
 
     /// The right panel's tabs, listed as a group of their own.
     pub const PANEL: [Self; 3] = [Self::Review, Self::Files, Self::Browser];
@@ -875,6 +892,7 @@ impl Feature {
             Self::Sessions => "sessions",
             Self::Boards => "boards",
             Self::Tables => "tables",
+            Self::ArticleThreads => "article_threads",
             Self::Review => "review",
             Self::Files => "files",
             Self::Browser => "browser",
@@ -895,6 +913,7 @@ impl Feature {
             Self::Sessions => features.sessions,
             Self::Boards => features.boards,
             Self::Tables => features.tables,
+            Self::ArticleThreads => features.article_threads,
             Self::Review => features.panel.review,
             Self::Files => features.panel.files,
             Self::Browser => features.panel.browser,
@@ -906,6 +925,7 @@ impl Feature {
             Self::Sessions => features.sessions = on,
             Self::Boards => features.boards = on,
             Self::Tables => features.tables = on,
+            Self::ArticleThreads => features.article_threads = on,
             Self::Review => features.panel.review = on,
             Self::Files => features.panel.files = on,
             Self::Browser => features.panel.browser = on,

@@ -100,11 +100,30 @@ impl Workspace {
         };
         article.write(cx);
         let content = article.path.clone();
-        if artifact::article::move_to(&content, &target).is_err() {
+        let id = article.id.clone();
+        let Ok(arrived) = artifact::article::move_to(&content, &target) else {
             return;
+        };
+        // Its sessions went with it, and are held where it landed.
+        self.drop_article_sessions(from, &id);
+        let landed = artifact::article::id_of(&arrived);
+        let carried = artifact::project::Project::sessions(&self.projects[to].store());
+        for stored in carried {
+            if stored.article.as_deref() == Some(landed.as_str()) {
+                self.restore_record(to, stored);
+            }
         }
         self.reload_project(&source, cx);
         self.reload_project(&target, cx);
+    }
+
+    /// Let go of the sessions opened under article `id` in the project at
+    /// `project`.
+    fn drop_article_sessions(&mut self, project: usize, id: &str) {
+        if let Some(open) = self.projects.get_mut(project) {
+            open.sessions
+                .retain(|chat| chat.article.as_deref() != Some(id));
+        }
     }
 
     /// Drop the article: the file goes with it.
@@ -115,7 +134,11 @@ impl Workspace {
         if ix >= project.articles.len() {
             return;
         }
-        project.articles.remove(ix).remove();
+        let gone = project.articles.remove(ix);
+        gone.remove();
+        project
+            .sessions
+            .retain(|chat| chat.article.as_deref() != Some(gone.id.as_str()));
         project.article = project
             .article
             .filter(|open| *open != ix)

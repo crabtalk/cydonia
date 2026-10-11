@@ -33,6 +33,7 @@ pub mod settings;
 pub mod sidebar;
 pub mod stamp;
 pub mod table;
+pub mod thread;
 
 #[cfg(test)]
 #[path = "../../tests/unit/clipboard.rs"]

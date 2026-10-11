@@ -1,7 +1,7 @@
 //! The features section: the surfaces a project can hold, and which of them
 //! this install shows.
 //!
-//! Sessions and boards default to on; tables are opt-in. The right panel's
+//! Sessions, article threads and boards default to on; tables are opt-in. The right panel's
 //! Review and Files tabs are a group of their own, both on by default. With
 //! Files on, the apps its files and pictures open in follow.
 
@@ -36,6 +36,12 @@ fn copy(
             "Sessions",
             "Runs an agent — a package this machine downloads and executes.",
             None,
+        ),
+        Feature::ArticleThreads => (
+            icons::text::TextQuote,
+            "Article threads",
+            "A session under each article: ask about a passage, and the answer stays with the article. Needs sessions.",
+            Some("Preview"),
         ),
         Feature::Boards => (
             icons::development::SquareKanban,

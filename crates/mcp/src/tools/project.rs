@@ -202,10 +202,14 @@ fn entries(args: Args<'_>) -> Outcome {
             .iter()
             .map(|entry| {
                 format!(
-                    "#{} [{}] {}{}{}",
+                    "#{} [{}] {}{}{}{}",
                     entry.number,
                     entry.kind,
                     entry.title,
+                    match entry.article {
+                        Some(article) => format!(" · under #{article}"),
+                        None => String::new(),
+                    },
                     match entry.labels.is_empty() {
                         true => String::new(),
                         false => format!(" · labels: {}", entry.labels.join(", ")),

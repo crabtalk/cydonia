@@ -4,8 +4,13 @@ use std::path::Path;
 #[test]
 fn all_delivery_modes_include_the_shared_workspace_instructions() {
     for available in [false, true] {
-        let session =
-            prompts::session_context(Path::new("/projects/my project"), None, available, &[]);
+        let session = prompts::session_context(
+            Path::new("/projects/my project"),
+            None,
+            None,
+            available,
+            &[],
+        );
         assert!(session.contains(prompts::workspace()));
         assert!(session.contains("/projects/my project"));
         for bound in [false, true] {
@@ -16,11 +21,11 @@ fn all_delivery_modes_include_the_shared_workspace_instructions() {
 
 #[test]
 fn catalog_delivery_never_embeds_full_resource_content() {
-    let session = prompts::session_context(Path::new("/project"), None, true, &[]);
+    let session = prompts::session_context(Path::new("/project"), None, None, true, &[]);
     let tools = prompts::tool_context(true, &[]);
     assert!(session.contains(&prompts::resource_catalog(&[])));
     assert!(tools.contains(&prompts::resource_catalog(&[])));
-    let unavailable = prompts::session_context(Path::new("/project"), None, false, &[]);
+    let unavailable = prompts::session_context(Path::new("/project"), None, None, false, &[]);
     for skill in resources::list() {
         assert!(!session.contains(skill.content));
         assert!(!tools.contains(skill.content));
@@ -48,7 +53,7 @@ fn tool_context_distinguishes_project_binding() {
 #[test]
 fn callers_with_tools_are_told_to_tag_and_untag_cards() {
     for context in [
-        prompts::session_context(Path::new("/project"), None, true, &[]),
+        prompts::session_context(Path::new("/project"), None, None, true, &[]),
         prompts::tool_context(true, &[]),
         prompts::tool_context(false, &[]),
     ] {
@@ -67,7 +72,7 @@ fn callers_with_tools_are_told_to_tag_and_untag_cards() {
         );
     }
     // Nothing is said to a caller with no tools to say it about.
-    let unavailable = prompts::session_context(Path::new("/project"), None, false, &[]);
+    let unavailable = prompts::session_context(Path::new("/project"), None, None, false, &[]);
     assert!(!unavailable.contains("board_set_card_status"));
 }
 
@@ -81,8 +86,17 @@ fn hidden_resources_leave_the_catalog() {
 
 #[test]
 fn a_numbered_session_is_named_in_its_context() {
-    let named = prompts::session_context(Path::new("/project"), Some(43), true, &[]);
+    let named = prompts::session_context(Path::new("/project"), Some(43), None, true, &[]);
     assert!(named.contains("Current session: #43"));
-    let unnamed = prompts::session_context(Path::new("/project"), None, true, &[]);
+    let unnamed = prompts::session_context(Path::new("/project"), None, None, true, &[]);
     assert!(!unnamed.contains("Current session"));
+}
+
+#[test]
+fn an_article_session_names_its_article() {
+    let under = prompts::session_context(Path::new("/project"), Some(43), Some("1791"), true, &[]);
+    assert!(under.contains("Current article: 1791"));
+    assert!(under.contains("article_comment"));
+    let loose = prompts::session_context(Path::new("/project"), Some(43), None, true, &[]);
+    assert!(!loose.contains("Current article"));
 }

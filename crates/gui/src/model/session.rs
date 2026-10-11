@@ -200,6 +200,8 @@ pub struct ChatSession {
     written: bool,
     /// Whether the user archived it. Typing into it clears this.
     pub closed: bool,
+    /// The article it was opened under, by id — see [`Record::article`].
+    pub article: Option<String>,
     /// Its labels, normalised — see [`artifact::label`].
     pub labels: Vec<String>,
     pub streaming: bool,
@@ -277,6 +279,7 @@ impl ChatSession {
             written: false,
             number: None,
             closed: false,
+            article: None,
             labels: Vec::new(),
             streaming: false,
             last_activity: Instant::now(),
@@ -286,6 +289,20 @@ impl ChatSession {
             transcript: transcript::State::default(),
             _pump: pump,
         }
+    }
+
+    /// [`Self::connect`] under the article `article` — see
+    /// [`Record::article`].
+    pub fn connect_article(
+        id: u64,
+        entry: settings::Agent,
+        cwd: PathBuf,
+        article: String,
+        cx: &mut Context<Workspace>,
+    ) -> Self {
+        let mut chat = Self::connect(id, entry, cwd, None, cx);
+        chat.article = Some(article);
+        chat
     }
 
     /// A session read back from disk. It starts idle — a launch must not spawn
@@ -322,6 +339,7 @@ impl ChatSession {
             written: true,
             number: record.number,
             closed: record.closed,
+            article: record.article,
             labels: record.labels,
             streaming: false,
             last_activity: Instant::now(),
@@ -417,6 +435,7 @@ impl ChatSession {
             labels: self.labels.clone(),
             items: self.items.clone(),
             fork: self.fork.clone(),
+            article: self.article.clone(),
             replay: self.replay,
             draft: self.draft.clone(),
             sent_at: self.sent_at.clone(),
@@ -680,7 +699,7 @@ impl ChatSession {
                 self.queue.push_front(content);
                 return;
             };
-            session.prompt(&content, self.number);
+            session.prompt(&content, self.number, self.article.as_deref());
             self.last_activity = Instant::now();
             self.turn_started = Some(self.last_activity);
             self.tool_started.clear();

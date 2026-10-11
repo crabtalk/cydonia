@@ -10,11 +10,15 @@
 //! block is called, and whether code here means a fence — and because the
 //! editor cannot know that this app has spent `cmd-b` elsewhere.
 //!
-//! What it offers: bold, italic, strikethrough, code, a highlight
-//! (`==text==`, [`editor::HIGHLIGHT_MARK`]) and a link.
+//! What it offers: Ask and Explain while the article has a composer under it,
+//! then bold, italic, strikethrough, code, a highlight (`==text==`,
+//! [`editor::HIGHLIGHT_MARK`]) and a link.
 
 use crate::view::{
-    component::menu::{self, Menu},
+    component::{
+        composer,
+        menu::{self, Menu},
+    },
     root::Cydonia,
 };
 use artifact::space::Member;
@@ -38,17 +42,25 @@ use editor::{Editor, Formatting, Mode};
 use markdown::{BlockKind, Mark};
 use std::path::Path;
 
-actions!(cydonia_ribbon, [ConfirmLink, DismissLink]);
+actions!(
+    cydonia_ribbon,
+    [ConfirmLink, DismissLink, ConfirmAsk, DismissAsk]
+);
 
 /// Claimed on the ribbon's URL field, so `enter` files the link and `escape`
 /// drops it. Everywhere else those two stay a newline and nothing.
 pub const LINK_CONTEXT: &str = "CydoniaArticleLink";
 
+/// Claimed on the ribbon's question field, the same way.
+pub const ASK_CONTEXT: &str = "CydoniaArticleAsk";
+
 pub fn bindings() -> Vec<KeyBinding> {
-    let ctx = Some(LINK_CONTEXT);
+    let (link, ask) = (Some(LINK_CONTEXT), Some(ASK_CONTEXT));
     vec![
-        KeyBinding::new("enter", ConfirmLink, ctx),
-        KeyBinding::new("escape", DismissLink, ctx),
+        KeyBinding::new("enter", ConfirmLink, link),
+        KeyBinding::new("escape", DismissLink, link),
+        KeyBinding::new("enter", ConfirmAsk, ask),
+        KeyBinding::new("escape", DismissAsk, ask),
     ]
 }
 
@@ -58,6 +70,9 @@ const GAP: f32 = 8.;
 /// A button's box. Square for the marks, and the height every other thing in
 /// the bar takes so the row has one line to sit on.
 const BUTTON: f32 = 26.;
+
+/// The most of a passage Explain's question quotes, in characters.
+const QUESTION_QUOTE: usize = 60;
 
 /// How wide the URL field runs. Wide enough for a link worth reading and no
 /// wider: the bar is anchored to a word, and one that outgrew the column would
@@ -76,6 +91,10 @@ pub(crate) struct Ribbon {
     /// made where the bar is drawn would be a new entity every frame, and a
     /// new entity every frame is a field that cannot be typed into.
     pub(crate) field: Entity<TextField>,
+    /// Whether the question field is up, over a run being asked about.
+    pub(crate) asking: bool,
+    /// That field, built once like the URL field.
+    pub(crate) question: Entity<TextField>,
 }
 
 impl Ribbon {
@@ -86,10 +105,18 @@ impl Ribbon {
                 .with_key_context(LINK_CONTEXT)
                 .with_placeholder("Paste a link…")
         });
+        let question = cx.new(|cx| {
+            TextField::new(cx)
+                .with_frame(false)
+                .with_key_context(ASK_CONTEXT)
+                .with_placeholder("Ask about this passage…")
+        });
         Self {
             selecting: false,
             linking: None,
             field,
+            asking: false,
+            question,
         }
     }
 }
@@ -221,6 +248,9 @@ impl Cydonia {
                 .update(cx, |field, cx| field.clear(cx));
             cx.notify();
         }
+        if std::mem::take(&mut self.leaf_mut().ribbon.asking) {
+            cx.notify();
+        }
         self.set_selecting(false, cx);
     }
 
@@ -302,6 +332,135 @@ impl Cydonia {
         cx.notify();
     }
 
+    /// The selection as the article's markdown spells it with a chip linking
+    /// the lines it is on under it, where the article has a number; and the
+    /// passage alone.
+    fn quoted_selection(&self, cx: &Context<Self>) -> Option<(String, String)> {
+        let article = self.pane_doc(cx)?;
+        let editor = article.editor.as_ref()?.read(cx);
+        let (start, end) = editor.selection().ordered();
+        let (source, at) = markdown::serialize_at_many(
+            editor.doc(),
+            &[start, end],
+            &crate::view::article::marks(),
+        );
+        let (from, to) = (at[0]?, at[1]?);
+        let passage = source.get(from..to)?.trim();
+        if passage.is_empty() {
+            return None;
+        }
+        let line = |offset: usize| source[..offset].matches('\n').count() as u64 + 1;
+        let first = line(from + (source[from..to].len() - source[from..to].trim_start().len()));
+        let last = line(from + source[from..to].trim_end().len());
+        let workspace = self.workspace.read(cx);
+        let chip = article.number.and_then(|number| {
+            let project = workspace.projects.iter().find(|project| {
+                project
+                    .articles
+                    .iter()
+                    .any(|held| held.path == article.path)
+            })?;
+            let name = project.path.file_name()?.to_string_lossy();
+            let lines = artifact::reference::Span {
+                from: first,
+                to: last,
+            };
+            let reference = format!("{name}#{number}:{lines}");
+            Some(composer::mention_chip(
+                &format!("#{number}:{lines}"),
+                &crate::view::entry_link::link(&reference),
+            ))
+        });
+        let quoted = match chip {
+            Some(chip) => format!("{passage}\n\n{chip}"),
+            None => passage.to_owned(),
+        };
+        Some((quoted, passage.to_owned()))
+    }
+
+    /// Send the selection to the article's session with `question` under it.
+    /// The selection collapses: the bar over it has done its work.
+    fn send_about(&mut self, question: &str, cx: &mut Context<Self>) {
+        let on = self.leaf().entry.clone();
+        let (Some(path), Some((quoted, _))) = (
+            self.thread_article(on.as_ref(), cx),
+            self.quoted_selection(cx),
+        ) else {
+            return;
+        };
+        let text = format!("{}\n\n{question}", composer::blockquote(&quoted));
+        self.workspace.update(cx, |workspace, cx| {
+            if let Some(id) = workspace.article_session(&path, cx) {
+                workspace.send(id, text, cx);
+            }
+        });
+        if let Some(editor) = self.open_editor(cx) {
+            editor.update(cx, |editor, cx| {
+                let (_, end) = editor.selection().ordered();
+                editor.select(markdown::Selection::at(end), cx);
+            });
+        }
+    }
+
+    /// Ask for the selection to be explained, under the passage's opening:
+    /// `Explain “…”`.
+    fn explain(&mut self, cx: &mut Context<Self>) {
+        let Some((_, passage)) = self.quoted_selection(cx) else {
+            return;
+        };
+        let line = passage.lines().next().unwrap_or_default().trim();
+        let mut shown: String = line.chars().take(QUESTION_QUOTE).collect();
+        if shown.len() < passage.len() {
+            shown.push('…');
+        }
+        self.send_about(&format!("Explain “{shown}”"), cx);
+    }
+
+    /// Put the question field up in the bar's place.
+    fn open_ask(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.leaf()
+            .ribbon
+            .question
+            .update(cx, |field, cx| field.clear(cx));
+        self.leaf_mut().ribbon.asking = true;
+        window.focus(&self.leaf().ribbon.question.read(cx).focus_handle(cx), cx);
+        cx.notify();
+    }
+
+    /// Send what was typed about the selection, and give the caret back to
+    /// the document. An empty field sends nothing.
+    fn confirm_ask(&mut self, _: &ConfirmAsk, window: &mut Window, cx: &mut Context<Self>) {
+        if !std::mem::take(&mut self.leaf_mut().ribbon.asking) {
+            return;
+        }
+        let question = self
+            .leaf()
+            .ribbon
+            .question
+            .read(cx)
+            .content()
+            .trim()
+            .to_string();
+        if !question.is_empty() {
+            self.send_about(&question, cx);
+        }
+        if let Some(editor) = self.open_editor(cx) {
+            window.focus(&editor.focus_handle(cx), cx);
+        }
+        cx.notify();
+    }
+
+    /// Drop the question field and leave the run as it was.
+    fn dismiss_ask(&mut self, _: &DismissAsk, window: &mut Window, cx: &mut Context<Self>) {
+        if !std::mem::take(&mut self.leaf_mut().ribbon.asking) {
+            return;
+        }
+        if let Some(editor) = self.open_editor(cx) {
+            window.focus(&editor.focus_handle(cx), cx);
+        }
+        cx.notify();
+    }
+
     /// The open document's editing surface, or nothing where no article is
     /// open — every one of the bar's acts asks for it.
     fn open_editor(&self, cx: &Context<Self>) -> Option<Entity<Editor>> {
@@ -343,11 +502,15 @@ impl Cydonia {
         // Writing a link takes the focus off the document, and the bar is what
         // is holding the field it went to.
         let linking = self.leaf().ribbon.linking.is_some();
-        if !linking && !editor.focus_handle(cx).contains_focused(window, cx) {
+        let asking = self.leaf().ribbon.asking;
+        if !linking && !asking && !editor.focus_handle(cx).contains_focused(window, cx) {
             return None;
         }
         let at = perch(port, head)?;
 
+        let threads = self
+            .thread_article(on, cx)
+            .is_some_and(|path| self.workspace.read(cx).thread_reachable(&path));
         let theme = Theme::of(cx).clone();
         let card = popover::popover_card(&theme)
             .flex()
@@ -355,10 +518,42 @@ impl Cydonia {
             .items_center()
             .gap(px(2.))
             .on_action(cx.listener(Self::confirm_link))
-            .on_action(cx.listener(Self::dismiss_link));
-        let card = match linking {
-            true => card.child(self.link_field(&theme, cx)),
-            false => card
+            .on_action(cx.listener(Self::dismiss_link))
+            .on_action(cx.listener(Self::confirm_ask))
+            .on_action(cx.listener(Self::dismiss_ask));
+        let card = match (linking, asking && threads) {
+            // A press elsewhere files the URL typed, the way the rename field
+            // has it, and drops a question.
+            (true, _) => card.child(self.inline_field(
+                self.leaf().ribbon.field.clone(),
+                &theme,
+                cx,
+                |this, window, cx| this.confirm_link(&ConfirmLink, window, cx),
+            )),
+            (false, true) => card.child(self.inline_field(
+                self.leaf().ribbon.question.clone(),
+                &theme,
+                cx,
+                |this, window, cx| this.dismiss_ask(&DismissAsk, window, cx),
+            )),
+            (false, false) => card
+                .when(threads, |card| {
+                    card.child(self.selection_action(
+                        "Ask",
+                        icons::glyph::MessageCircleQuestionMark,
+                        &theme,
+                        cx,
+                        |this, window, cx| this.open_ask(window, cx),
+                    ))
+                    .child(self.selection_action(
+                        "Explain",
+                        icons::glyph::Lightbulb,
+                        &theme,
+                        cx,
+                        |this, _, cx| this.explain(cx),
+                    ))
+                    .child(divider(&theme))
+                })
                 .child(self.turn_trigger(&formatting, &theme, window, cx))
                 .child(divider(&theme))
                 .children(
@@ -440,9 +635,16 @@ impl Cydonia {
             }))
     }
 
-    /// The URL field, in the bar's own box rather than a panel under it: the
-    /// bar is already anchored to the words the link is about.
-    fn link_field(&self, theme: &Theme, cx: &Context<Self>) -> impl IntoElement + use<> {
+    /// A field in the bar's own box rather than a panel under it: the bar is
+    /// already anchored to the words it is about. `out` is what a press
+    /// anywhere else does.
+    fn inline_field(
+        &self,
+        field: Entity<TextField>,
+        theme: &Theme,
+        cx: &Context<Self>,
+        out: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+    ) -> AnyElement {
         div()
             .w(px(FIELD_WIDTH))
             .h(px(BUTTON))
@@ -451,12 +653,9 @@ impl Cydonia {
             .items_center()
             .text_style(TextStyle::Callout)
             .text_color(theme.text)
-            // Pressing anywhere else is finishing, the way the rename field
-            // has it: the URL typed is the URL meant. `escape` discards.
-            .on_mouse_down_out(cx.listener(|this, _, window, cx| {
-                this.confirm_link(&ConfirmLink, window, cx);
-            }))
-            .child(self.leaf().ribbon.field.clone())
+            .on_mouse_down_out(cx.listener(move |this, _, window, cx| out(this, window, cx)))
+            .child(field)
+            .into_any_element()
     }
 
     /// What the caret's block is called, and the menu of what it could be.

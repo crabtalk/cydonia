@@ -481,7 +481,7 @@ impl Cydonia {
     }
 
     /// One of the bar's actions, as a word beside its mark.
-    fn selection_action(
+    pub(crate) fn selection_action(
         &self,
         label: &'static str,
         glyph: &'static [u8],
@@ -594,36 +594,163 @@ impl Cydonia {
         let workspace = self.workspace.read(cx);
         let arranged = workspace.active_space().is_some();
         let agents = composer_agents(workspace);
-        // The session each pane is on: its own where a space put it there,
-        // and whatever the project is on for the single pane.
-        let on: Vec<Option<u64>> = self
+        // The agent an article's first send opens its session on.
+        let first = workspace.preferred_agent().and_then(|entry| {
+            agents
+                .iter()
+                .position(|agent| agent.name.as_ref() == entry.name)
+        });
+        let articles: Vec<Option<PathBuf>> = self
             .leaves
             .iter()
-            .map(|leaf| match &leaf.entry {
-                Some(entry) => workspace
-                    .showing_of(entry)
-                    .and_then(|(_, showing)| match showing {
-                        Showing::Session(id) => Some(id),
-                        _ => None,
-                    }),
-                None => workspace.active_id(),
+            .map(|leaf| self.thread_article(leaf.entry.as_ref(), cx))
+            .collect();
+        // The session each pane is on: its own where a space put it there,
+        // and whatever the project is on for the single pane. A pane showing
+        // an article is on the article's.
+        let pointed: Vec<Pointing> = self
+            .leaves
+            .iter()
+            .zip(&articles)
+            .map(|(leaf, article)| {
+                if let Some(path) = article {
+                    let id = workspace.article_thread(path);
+                    return Pointing::of(id.and_then(|id| workspace.session(id)), &agents)
+                        .under_article(first);
+                }
+                let id = match &leaf.entry {
+                    Some(entry) => {
+                        workspace
+                            .showing_of(entry)
+                            .and_then(|(_, showing)| match showing {
+                                Showing::Session(id) => Some(id),
+                                _ => None,
+                            })
+                    }
+                    None => workspace.active_id(),
+                };
+                Pointing::of(id.and_then(|id| workspace.session(id)), &agents)
             })
             .collect();
         // Read out before writing: the composers are updated through `cx`,
         // which the workspace is borrowed from.
-        let pointed: Vec<_> = on
-            .into_iter()
-            .map(|id| Pointing::of(id.and_then(|id| workspace.session(id)), &agents))
-            .collect();
         let tabs = workspace.settings.features.panel;
-        for (leaf, point) in self.leaves.iter().zip(pointed) {
+        let threads: Vec<Option<gpui::AnyView>> = articles
+            .into_iter()
+            .map(|article| article.map(|path| self.thread_view(path, cx).into()))
+            .collect();
+        for ((leaf, point), thread) in self.leaves.iter().zip(pointed).zip(threads) {
             leaf.composer.update(cx, |composer, cx| {
                 composer.set_tools(!arranged, cx);
                 composer.set_panel_tabs(tabs, cx);
+                composer.set_thread(thread, cx);
                 point.apply(composer, cx);
             });
         }
         self.sync_session_cards(cx);
+    }
+
+    /// The thread the composer under the article at `path` opens.
+    fn thread_view(
+        &mut self,
+        path: PathBuf,
+        cx: &mut Context<Self>,
+    ) -> gpui::Entity<crate::view::thread::ThreadView> {
+        if let Some(view) = self.threads.get(&path) {
+            return view.clone();
+        }
+        let (workspace, root) = (self.workspace.clone(), cx.entity().downgrade());
+        let view =
+            cx.new(|cx| crate::view::thread::ThreadView::new(workspace, root, path.clone(), cx));
+        self.threads.insert(path, view.clone());
+        view
+    }
+
+    /// The article the pane `on` shows, while article threads are on: what
+    /// its composer sends to. `None` is the single pane.
+    pub(crate) fn thread_article(&self, on: Option<&Member>, cx: &App) -> Option<PathBuf> {
+        let workspace = self.workspace.read(cx);
+        if !workspace.settings.features.threads() {
+            return None;
+        }
+        match on {
+            Some(entry) => match workspace.showing_of(entry)? {
+                (project, Showing::Article(id)) => workspace.projects[project]
+                    .articles
+                    .iter()
+                    .find(|article| article.id == id)
+                    .map(|article| article.path.clone()),
+                _ => None,
+            },
+            None => {
+                if self.showing(cx) != Some(Pane::Article) {
+                    return None;
+                }
+                let project = workspace.active_project()?;
+                Some(project.articles.get(project.article?)?.path.clone())
+            }
+        }
+    }
+
+    /// What a press in the composer under the article at `path` asks for. The
+    /// first send opens the article's session.
+    pub(crate) fn thread_event(
+        &mut self,
+        path: &Path,
+        event: &composer::ComposerEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let session = match event {
+            composer::ComposerEvent::Submit(..) => self
+                .workspace
+                .update(cx, |workspace, cx| workspace.article_session(path, cx)),
+            _ => self.workspace.read(cx).article_thread(path),
+        };
+        self.composer_event(session, event, window, cx);
+    }
+
+    /// Open another session under the article at `path`, once the one it
+    /// shows has been said something in.
+    pub(crate) fn new_thread(&mut self, path: &Path, cx: &mut Context<Self>) {
+        self.workspace.update(cx, |workspace, cx| {
+            let said = workspace
+                .article_thread(path)
+                .and_then(|id| workspace.session(id))
+                .is_some_and(|chat| !chat.unsaid());
+            if said {
+                workspace.new_article_session(path, cx);
+            }
+        });
+    }
+
+    /// The composer under the article the pane `on` shows, pointed at the
+    /// article's session. Nothing while article threads are off, or with
+    /// nowhere to send.
+    pub(crate) fn thread_footer(
+        &self,
+        on: Option<&Member>,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let path = self.thread_article(on, cx)?;
+        let workspace = self.workspace.read(cx);
+        if !workspace.thread_reachable(&path) {
+            return None;
+        }
+        let session = workspace.article_thread(&path);
+        // The article's own measure, not the session's: the article's page and
+        // outline keep clear of it.
+        let height = workspace
+            .projects
+            .iter()
+            .flat_map(|project| &project.articles)
+            .find(|article| article.path == path)
+            .map(|article| article.composer.clone());
+        let composer = self.leaf_of(on).composer.clone();
+        Some(
+            self.footer_band(session, composer, on.cloned(), height, cx)
+                .into_any_element(),
+        )
     }
 
     pub(crate) fn detail(
@@ -757,6 +884,10 @@ impl Cydonia {
                     ),
                 },
             );
+        let main = main.children(match showing == Some(Pane::Article) && !arranged {
+            true => self.thread_footer(None, cx),
+            false => None,
+        });
         // The lone pane's drawer, under the band like the pane's body.
         let drawer = match arranged {
             true => Vec::new(),
@@ -965,6 +1096,16 @@ impl Pointing {
             switches: live.map(switches).unwrap_or_default(),
             usage: live.and_then(|chat| chat.usage),
         }
+    }
+
+    /// Pointed at an article's session. With none opened yet, the mark is
+    /// `first`, the agent the first send opens one on.
+    pub(crate) fn under_article(mut self, first: Option<usize>) -> Self {
+        self.placeholder = "Ask about this article…".to_owned();
+        if self.session.is_none() {
+            self.current = first;
+        }
+        self
     }
 
     pub(crate) fn apply(
@@ -1390,6 +1531,18 @@ impl Cydonia {
         let height = session
             .and_then(|id| self.workspace.read(cx).session(id))
             .map(|chat| chat.transcript.footer_height.clone());
+        self.footer_band(session, composer, press, height, cx)
+    }
+
+    /// [`Self::session_footer`], measured into `height`.
+    pub(crate) fn footer_band(
+        &self,
+        session: Option<u64>,
+        composer: gpui::Entity<composer::Composer>,
+        press: Option<Member>,
+        height: Option<std::rc::Rc<std::cell::Cell<Pixels>>>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         footer(
             div()
                 .flex()

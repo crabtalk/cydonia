@@ -141,6 +141,9 @@ pub struct Article {
     pub hovered_comment: Option<u64>,
     /// Where the margin's notes are gliding, held across frames.
     pub margin: Rc<RefCell<Glide>>,
+    /// How tall the composer under it stood last frame — see
+    /// [`crate::view::detail::footer`].
+    pub composer: Rc<std::cell::Cell<bezel::gpui::Pixels>>,
     /// The newest comment id read from the file. One there above it was filed
     /// since, and a write here keeps it.
     known_comment: u64,
@@ -175,6 +178,7 @@ impl Article {
             active_comment: None,
             hovered_comment: None,
             margin: Rc::default(),
+            composer: Rc::default(),
             known_comment: 0,
         }
     }

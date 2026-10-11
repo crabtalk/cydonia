@@ -28,7 +28,7 @@ use bezel::{
         popover,
         surface::{self, Surfaced as _},
         tooltip::Tooltip,
-        widgets::Controls as _,
+        widgets::{Controls as _, Layout as _},
     },
 };
 use editor::Mention;
@@ -187,7 +187,7 @@ fn set_to(name: &str, value: Option<SharedString>) -> SharedString {
 ///
 /// Every line marked, blank ones included — a blockquote broken by an unmarked
 /// blank line is two blockquotes with the rest of the passage between them.
-fn blockquote(quote: &str) -> String {
+pub(crate) fn blockquote(quote: &str) -> String {
     quote
         .lines()
         .map(|line| match line.trim().is_empty() {
@@ -246,7 +246,7 @@ fn mention_chips(text: &str, cx: &App) -> Vec<Chip> {
 }
 
 /// `label` linking `url` as a chip, in the Markdown an article writes for one.
-fn mention_chip(label: &str, url: &str) -> String {
+pub(crate) fn mention_chip(label: &str, url: &str) -> String {
     let chip = markdown::Text {
         text: label.to_owned(),
         marks: vec![markdown::MarkSpan {
@@ -261,6 +261,34 @@ fn mention_chip(label: &str, url: &str) -> String {
         blocks: vec![markdown::Block::new(markdown::BlockKind::Paragraph(chip))],
     };
     markdown::serialize(&doc).trim_end().to_owned()
+}
+
+/// A round button beside the pill, the agent mark's size: the tools button,
+/// and the chevron in its place. Its glyph and its surface are the caller's.
+fn side_button(id: &'static str, theme: &Theme) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .debug_selector(move || id.into())
+        .flex_none()
+        .size(px(root::composer_height()))
+        .rounded_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .cursor_pointer()
+        .hover(|s| s.bg(theme.element_hover))
+}
+
+/// `row` ruled off from the field under it, the rule running through the
+/// pill's padding while its content keeps the pill's inset.
+fn ruled_off(row: gpui::Div, theme: &Theme, right_inset: f32) -> gpui::Div {
+    row.ml(px(-12.))
+        .mr(px(-right_inset))
+        .pl(px(12.))
+        .pr(px(right_inset))
+        .pb(px(6.))
+        .border_b_1()
+        .border_color(theme.border.opacity(0.7))
 }
 
 pub struct Composer {
@@ -293,6 +321,10 @@ pub struct Composer {
     /// of them open the window's own panels, which a space divides the room
     /// for — see [`crate::view::arrangement`].
     tools: bool,
+    /// A conversation drawn in the pill over the field, opened by the chevron
+    /// in the tools' place: an article's thread.
+    thread: Option<gpui::AnyView>,
+    thread_open: bool,
     /// Whether there is a field to type into. Off, the composer is the turn's
     /// activity alone, with Stop while one runs.
     input: bool,
@@ -374,6 +406,8 @@ impl Composer {
             streaming: false,
             last_asked: None,
             tools: true,
+            thread: None,
+            thread_open: false,
             input: true,
             activity: None,
             activity_open: false,
@@ -477,6 +511,18 @@ impl Composer {
             self.tools = tools;
             cx.notify();
         }
+    }
+
+    /// The conversation the chevron opens over the field. Another one, or
+    /// none, closes it.
+    pub fn set_thread(&mut self, thread: Option<gpui::AnyView>, cx: &mut Context<Self>) {
+        let id = |thread: &Option<gpui::AnyView>| thread.as_ref().map(gpui::AnyView::entity_id);
+        if id(&self.thread) == id(&thread) {
+            return;
+        }
+        self.thread = thread;
+        self.thread_open = false;
+        cx.notify();
     }
 
     pub fn set_input(&mut self, input: bool, cx: &mut Context<Self>) {
@@ -818,6 +864,8 @@ impl Composer {
         }
         self.field.update(cx, |field, cx| field.clear(cx));
         self.completing = None;
+        // What was sent is answered in the thread.
+        self.thread_open |= self.thread.is_some();
         cx.emit(ComposerEvent::Submit(
             content.to_string(),
             std::mem::take(&mut self.attachments),
@@ -847,8 +895,8 @@ impl Composer {
     }
 
     /// Escape backs out of whatever is happening, outermost first: the agent
-    /// menu, then the picker, and the turn in flight once there is nothing
-    /// left to close.
+    /// menu, then the picker, then the thread, and the turn in flight once
+    /// there is nothing left to close.
     fn command_dismiss(&mut self, _: &CommandDismiss, _: &mut Window, cx: &mut Context<Self>) {
         if self.preview.take().is_some() {
             // The open picture is the outermost thing there is.
@@ -858,7 +906,11 @@ impl Composer {
             // A submenu shuts before the menu holding it — one press, one level.
         } else if self.menu || self.picking.is_some() {
             self.close_menu();
-        } else if self.completing.take().is_none() {
+        } else if self.completing.take().is_some() {
+            // The picker shuts.
+        } else if self.thread_open {
+            self.thread_open = false;
+        } else {
             cx.emit(ComposerEvent::Cancel);
         }
         cx.notify();
@@ -1351,15 +1403,7 @@ impl Composer {
     }
 
     fn tools(&self, theme: &Theme, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let button = div()
-            .id("composer-tools")
-            .size(px(root::composer_height()))
-            .rounded_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .cursor_pointer()
-            .hover(|s| s.bg(theme.element_hover))
+        let button = side_button("composer-tools", theme)
             .tooltip(|window, cx| Tooltip::text("Session tools", window, cx))
             .on_click(cx.listener(|this, _, _, cx| {
                 this.tools_menu = !this.tools_menu;
@@ -1447,6 +1491,34 @@ impl Composer {
             .into_any_element()
     }
 
+    /// The chevron opening the thread over the field, in the tools button's
+    /// place and cut the same.
+    fn thread_button(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        let open = self.thread_open;
+        side_button("composer-thread", theme)
+            .tooltip(move |window, cx| {
+                Tooltip::text(if open { "Hide chat" } else { "Show chat" }, window, cx)
+            })
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.thread_open = !this.thread_open;
+                cx.notify();
+            }))
+            .child(theme.disclosure(open))
+            .surface(theme, SURFACE)
+            .into_any_element()
+    }
+
+    /// The open thread, ruled off from what is under it through the capsule's
+    /// padding, as the activity row is.
+    fn thread_panel(&self, theme: &Theme, right_inset: f32) -> Option<AnyElement> {
+        let thread = self.thread.clone().filter(|_| self.thread_open)?;
+        Some(
+            ruled_off(div(), theme, right_inset)
+                .child(thread)
+                .into_any_element(),
+        )
+    }
+
     /// The turn's activity alone, and Stop while it runs: the composer with
     /// no field. Nothing between turns.
     fn status(&mut self, cx: &mut Context<Self>) -> AnyElement {
@@ -1527,6 +1599,7 @@ impl Composer {
                                     .flex()
                                     .flex_col()
                                     .gap(px(root::COMPOSER_INSET))
+                                    .children(self.thread_panel(&theme, right_inset))
                                     .children(self.activity_row(&theme, true, right_inset, cx))
                                     .children(tray)
                                     .child(
@@ -1550,7 +1623,10 @@ impl Composer {
                             )
                             .children(picker),
                     )
-                    .children(self.tools.then(|| self.tools(&theme, window, cx))),
+                    .children(match self.thread.is_some() {
+                        true => Some(self.thread_button(&theme, cx)),
+                        false => self.tools.then(|| self.tools(&theme, window, cx)),
+                    }),
             )
             .children(self.lightbox(window, cx))
             .into_any_element()
