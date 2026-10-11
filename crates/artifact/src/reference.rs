@@ -111,18 +111,19 @@ pub fn fits(
     named: &str,
     kind: crate::kind::Kind,
     within: Option<Within<'_>>,
-) -> Result<(), String> {
-    use crate::kind::Kind;
+) -> Result<(), crate::error::Error> {
+    use crate::{error::Error, kind::Kind};
     match (within, kind) {
         (None, _)
         | (Some(Within::Span(_)), Kind::Session | Kind::Article)
         | (Some(Within::Heading(_)), Kind::Article) => Ok(()),
-        (Some(Within::Heading(_)), Kind::Session) => Err(format!(
-            "{named} names a heading, which only an article has"
-        )),
-        (Some(_), kind) => Err(format!(
-            "{named} names part of a {kind}, and only an article's lines or a session's turns can be named"
-        )),
+        (Some(Within::Heading(_)), Kind::Session) => Err(Error::HeadingNotHeld {
+            named: named.to_owned(),
+        }),
+        (Some(_), kind) => Err(Error::PartNotHeld {
+            named: named.to_owned(),
+            kind,
+        }),
     }
 }
 

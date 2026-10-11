@@ -133,38 +133,30 @@ pub fn span_of(markdown: &str, range: Range<usize>) -> Span {
     }
 }
 
-/// The bytes `within` names, and the heading it names if it names one. A span
-/// starting past the last line, or a heading the markdown lacks, is refused in
-/// words; `named` is the reference as written.
+/// The bytes `within` names, and the heading it names if it names one.
+/// `named` is the reference as written.
 pub fn excerpt(
     markdown: &str,
     within: Within<'_>,
     named: &str,
-) -> Result<(Range<usize>, Option<Heading>), String> {
+) -> Result<(Range<usize>, Option<Heading>), crate::error::Error> {
+    use crate::error::Error;
     match within {
         Within::Span(span) => lines(markdown, span)
             .map(|range| (range, None))
-            .ok_or_else(|| {
-                format!(
-                    "{named} starts past the article's last line, {}",
-                    markdown.lines().count()
-                )
+            .ok_or_else(|| Error::PastLastLine {
+                named: named.to_owned(),
+                lines: markdown.lines().count(),
             }),
         Within::Heading(name) => match section(markdown, name) {
             Some((heading, range)) => Ok((range, Some(heading))),
-            None => {
-                let anchors = headings(markdown)
+            None => Err(Error::NoHeading {
+                named: named.to_owned(),
+                anchors: headings(markdown)
                     .into_iter()
                     .map(|heading| heading.anchor)
-                    .collect::<Vec<_>>();
-                Err(match anchors.is_empty() {
-                    true => format!("{named} names a heading, and the article has none"),
-                    false => format!(
-                        "{named} names no heading — the article's are {}",
-                        anchors.join(", ")
-                    ),
-                })
-            }
+                    .collect(),
+            }),
         },
     }
 }

@@ -27,13 +27,18 @@ pub fn normalize(raw: &str) -> Option<String> {
 
 /// `written`, normalized, where none of `boards` but `own` holds it — the key
 /// a board may take or be renamed to. Refused in words.
-pub fn claim(written: &str, boards: &[super::Board], own: Option<&str>) -> Result<String, String> {
-    let key = normalize(written).ok_or("A key needs at least one letter or digit.")?;
+pub fn claim(
+    written: &str,
+    boards: &[super::Board],
+    own: Option<&str>,
+) -> Result<String, crate::error::Error> {
+    use crate::error::Error;
+    let key = normalize(written).ok_or(Error::KeyEmpty)?;
     match boards
         .iter()
         .any(|board| Some(board.id.as_str()) != own && board.key == key)
     {
-        true => Err(format!("{key} is another board's key here.")),
+        true => Err(Error::KeyTaken { key }),
         false => Ok(key),
     }
 }

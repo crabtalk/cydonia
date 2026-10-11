@@ -90,6 +90,20 @@ pub enum Trouble {
     Refused(String),
 }
 
+impl From<artifact::error::Error> for Trouble {
+    fn from(error: artifact::error::Error) -> Self {
+        use artifact::error::Error;
+        match error {
+            // The reference names a part this entry cannot have: the call is
+            // wrong, not the project.
+            Error::HeadingNotHeld { .. } | Error::PartNotHeld { .. } => {
+                Self::Invalid(error.to_string())
+            }
+            _ => Self::Refused(error.to_string()),
+        }
+    }
+}
+
 /// The `arguments` object of a `tools/call`, and the project the caller is
 /// working in when it has one.
 ///

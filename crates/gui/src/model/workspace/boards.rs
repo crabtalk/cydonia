@@ -4,6 +4,7 @@
 //! `use super::*`: these methods work on the same struct and reach the same
 //! names as the rest of it.
 use super::*;
+use artifact::error::{Act, Error};
 use artifact::kind::Kind;
 use artifact::project::{Project as _, Stale};
 
@@ -80,11 +81,12 @@ impl Workspace {
             .ok_or("That project is not open.".to_owned())?;
         // A handle is heard by an agent running in this project, so that is as
         // far as a key has to be unique.
-        let key = artifact::board::key::claim(key, &open.boards, None)?;
+        let key =
+            artifact::board::key::claim(key, &open.boards, None).map_err(|e| e.to_string())?;
         let mut board = open
             .store()
             .create_board(name.trim(), &key)
-            .map_err(|e| format!("The board could not be written — {e}."))?;
+            .map_err(|e| Error::failed(name.trim(), Act::Written, e).to_string())?;
         // What the app is set to, written into the board as it is made — see
         // [`artifact::board::Board::view`]. From here the board answers for
         // itself, and the setting moving does not move it.
@@ -154,7 +156,8 @@ impl Workspace {
         else {
             return Ok(());
         };
-        let key = artifact::board::key::claim(key, &open.boards, Some(id))?;
+        let key =
+            artifact::board::key::claim(key, &open.boards, Some(id)).map_err(|e| e.to_string())?;
         let name = name.trim().to_owned();
         self.with_board(id, |board| {
             board.name = name.clone();

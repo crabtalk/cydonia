@@ -3,6 +3,7 @@
 
 use super::{Showing, Workspace};
 use crate::model::{article::Disk, project::Project};
+use artifact::error::Error;
 use artifact::{
     article::anchor,
     kind::Kind,
@@ -77,16 +78,24 @@ impl Workspace {
             return Err(format!("{text} is not a reference"));
         };
         let Some(project) = self.named_project(reference.project) else {
-            return Err(format!("No open project for {text}"));
+            return Err(Error::NoProjectNamed {
+                name: reference.project.unwrap_or_default().to_owned(),
+                open: self.projects.iter().map(|open| open.path.clone()).collect(),
+            }
+            .to_string());
         };
         let (number, within) = match reference.target {
             Target::Entry { number, within } => (number, within),
             Target::Card { key, handle } => return card(project, key, handle, text),
         };
         let Some((kind, showing, title)) = entry(project, number) else {
-            return Err(format!("Nothing is {text}"));
+            return Err(Error::NotFound {
+                what: "entry",
+                named: text.to_owned(),
+            }
+            .to_string());
         };
-        reference::fits(text, kind, within)?;
+        reference::fits(text, kind, within).map_err(|e| e.to_string())?;
         let part = match (within, &showing) {
             (None, _) => None,
             (Some(Within::Span(turns)), Showing::Session(_)) => Some(Part::Turns(turns)),
@@ -171,10 +180,18 @@ fn entry(project: &Project, number: u64) -> Option<(Kind, Showing, String)> {
 /// is the reference, for the refusal.
 fn card(project: &Project, key: &str, handle: u64, text: &str) -> Result<Resolved, String> {
     let Some(board) = project.boards.iter().find(|board| board.keyed(key)) else {
-        return Err(format!("No board has the key {key}"));
+        return Err(Error::NotFound {
+            what: "board",
+            named: key.to_owned(),
+        }
+        .to_string());
     };
     let Some(found) = board.card_at(handle) else {
-        return Err(format!("Nothing is {text}"));
+        return Err(Error::NotFound {
+            what: "card",
+            named: text.to_owned(),
+        }
+        .to_string());
     };
     let Some(number) = board.number else {
         return Err(format!("{text} is on a board with no number"));
@@ -198,7 +215,7 @@ fn card(project: &Project, key: &str, handle: u64, text: &str) -> Result<Resolve
 /// The blocks of `disk` a span of lines or a heading names. `text` is the
 /// reference, for the refusal.
 fn passage(disk: Rc<Disk>, within: Within<'_>, text: &str) -> Result<Passage, String> {
-    let (bytes, heading) = anchor::excerpt(&disk.text, within, text)?;
+    let (bytes, heading) = anchor::excerpt(&disk.text, within, text).map_err(|e| e.to_string())?;
     let label = match (heading, within) {
         (Some(heading), _) => heading.text,
         (None, Within::Span(span)) if span.from == span.to => format!("line {span}"),

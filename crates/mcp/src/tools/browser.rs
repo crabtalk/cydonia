@@ -169,13 +169,7 @@ fn element(args: &Args<'_>) -> Result<usize, Trouble> {
 }
 
 fn ask(args: &Args<'_>, tab: Option<u64>, act: Act) -> Outcome {
-    let project = root(args)?.to_path_buf();
-    if !rail::is_open(&project) {
-        return Err(Trouble::Refused(format!(
-            "cydonia does not have {} open, so it has no browser there",
-            project.display()
-        )));
-    }
+    let project = super::on_the_rail(root(args)?)?.to_path_buf();
     rail::browse(project, tab, act).map(Answer::said)
 }
 

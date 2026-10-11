@@ -22,6 +22,7 @@ pub mod backup;
 pub mod board;
 pub mod document;
 pub mod entry;
+pub mod error;
 pub mod fs;
 pub mod id;
 pub mod kind;

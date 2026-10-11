@@ -24,6 +24,7 @@ use crate::{
     rail,
     tool::{Arg, Args, Trouble},
 };
+use artifact::error::{Act, Error};
 use artifact::reference::{Reference, Target, Within};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -67,16 +68,11 @@ pub(crate) fn on_the_rail(path: &Path) -> Result<&Path, Trouble> {
     if rail::is_open(path) {
         return Ok(path);
     }
-    Err(Trouble::Refused(match held() {
-        None => format!(
-            "cydonia has no project open, so {} is not one to work in",
-            path.display()
-        ),
-        Some(open) => format!(
-            "cydonia does not have {} open — it has {open}",
-            path.display()
-        ),
-    }))
+    Err(Error::ProjectClosed {
+        path: path.to_path_buf(),
+        open: rail::open(),
+    }
+    .into())
 }
 
 /// The project a reference names: the one written before its `#`, else the
@@ -103,10 +99,11 @@ pub fn project_of(args: &Args<'_>, reference: &Reference<'_>) -> Result<PathBuf,
                 .collect::<Vec<_>>()
                 .join(", ")
         ))),
-        (None, _) => Err(Trouble::Refused(match held() {
-            None => format!("no open project is named {name}, and cydonia has none open"),
-            Some(open) => format!("no open project is named {name} — cydonia has {open}"),
-        })),
+        (None, _) => Err(Error::NoProjectNamed {
+            name: name.to_owned(),
+            open,
+        }
+        .into()),
     }
 }
 
@@ -118,10 +115,16 @@ pub(crate) fn entry_numbered(
     named: &str,
 ) -> Result<artifact::entry::Entry, Trouble> {
     artifact::entry::list(project)
-        .map_err(|e| Trouble::Refused(e.to_string()))?
+        .map_err(|e| Error::failed("this project's entries", Act::Read, e))?
         .into_iter()
         .find(|entry| entry.number == number)
-        .ok_or_else(|| Trouble::Refused(format!("no entry {named} in this project")))
+        .ok_or_else(|| {
+            Error::NotFound {
+                what: "entry",
+                named: named.to_owned(),
+            }
+            .into()
+        })
 }
 
 /// The entry number `needle` names in `project`, and the part of it named

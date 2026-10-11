@@ -16,6 +16,7 @@ use crate::{
     tool::{Answer, Arg, Args, Outcome, Tool, Trouble},
     tools::{PROJECT, fields, many, on_the_rail, root, session},
 };
+use artifact::error::{Act, Error};
 use artifact::{
     article::{self, anchor, comments::Comment, properties::Properties},
     kind::Kind,
@@ -357,7 +358,7 @@ fn read(args: Args<'_>) -> Outcome {
     let (found, part) = located(project, named)?;
     let text = fs::Project::new(project)
         .read_article(&found.id)
-        .map_err(|e| Trouble::Refused(format!("{} cannot be read — {e}", found.label())))?;
+        .map_err(|e| Error::failed(found.label(), Act::Read, e))?;
     let (text, lines) = match part {
         None => (text, None),
         Some(part) => {
@@ -389,7 +390,7 @@ fn highlights(args: Args<'_>) -> Outcome {
     let found = locate(project, args.text(ARTICLE)?)?;
     let text = fs::Project::new(project)
         .read_article(&found.id)
-        .map_err(|e| Trouble::Refused(format!("{} cannot be read — {e}", found.label())))?;
+        .map_err(|e| Error::failed(found.label(), Act::Read, e))?;
     let found_marks = marked(&text);
     if found_marks.is_empty() {
         return Ok(Answer::said(format!("{} has no highlights", found.label())));
@@ -508,14 +509,14 @@ fn add(args: Args<'_>) -> Outcome {
     let store = fs::Project::new(project);
     let made = store
         .create_article(text)
-        .map_err(|e| Trouble::Refused(format!("the article cannot be written — {e}")))?;
+        .map_err(|e| Error::failed("the article", Act::Written, e))?;
     let titled = Properties {
         title: title.to_owned(),
         ..Properties::default()
     };
     store
         .save_properties(&made.id, &titled)
-        .map_err(|e| Trouble::Refused(format!("the article cannot be named — {e}")))?;
+        .map_err(|e| Error::failed("the article", Act::Named, e))?;
     let id = made.id;
     let content = store
         .article_file(&id)
@@ -552,7 +553,7 @@ fn set_cover(args: Args<'_>) -> Outcome {
     let Some(source) = args.maybe(COVER) else {
         if let Some(old) = previous {
             std::fs::remove_file(&old).map_err(|e| {
-                Trouble::Refused(format!("{} cannot be uncovered — {e}", found.label()))
+                Error::failed(format!("{}'s cover", found.label()), Act::Deleted, e)
             })?;
         }
         return Ok(Answer::said(format!("{} has no cover now", found.label())));
@@ -582,7 +583,7 @@ fn set_cover(args: Args<'_>) -> Outcome {
     }
     std::fs::create_dir_all(article::assets(&found.content))
         .and_then(|()| std::fs::copy(&source, &to))
-        .map_err(|e| Trouble::Refused(format!("the cover cannot be written — {e}")))?;
+        .map_err(|e| Error::failed("the cover", Act::Written, e))?;
     if let Some(old) = previous.filter(|old| *old != to) {
         let _ = std::fs::remove_file(old);
     }
@@ -600,7 +601,7 @@ fn rewrite(args: Args<'_>) -> Outcome {
     let text = args.text(MARKDOWN_NOW)?;
     fs::Project::new(project)
         .write_article(&found.id, text)
-        .map_err(|e| Trouble::Refused(format!("{} cannot be written — {e}", found.label())))?;
+        .map_err(|e| Error::failed(found.label(), Act::Written, e))?;
     Ok(Answer::said(format!("{} rewritten", found.label())))
 }
 
@@ -615,7 +616,7 @@ fn edit(args: Args<'_>) -> Outcome {
     let found = locate(project, args.text(ARTICLE)?)?;
     let text = fs::Project::new(project)
         .read_article(&found.id)
-        .map_err(|e| Trouble::Refused(format!("{} cannot be read — {e}", found.label())))?;
+        .map_err(|e| Error::failed(found.label(), Act::Read, e))?;
     let count = text.matches(old).count();
     if count == 0 {
         return Err(Trouble::Refused(
@@ -631,7 +632,7 @@ fn edit(args: Args<'_>) -> Outcome {
     let edited = text.replacen(old, new, count);
     fs::Project::new(project)
         .write_article(&found.id, &edited)
-        .map_err(|e| Trouble::Refused(format!("{} cannot be written — {e}", found.label())))?;
+        .map_err(|e| Error::failed(found.label(), Act::Written, e))?;
     Ok(
         Answer::said(format!("{} edited: {count} replacement(s)", found.label()))
             .with(json!({ "id": found.id, "replacements": count })),
@@ -649,7 +650,7 @@ fn comment(args: Args<'_>) -> Outcome {
     let store = fs::Project::new(project);
     let text = store
         .read_article(&found.id)
-        .map_err(|e| Trouble::Refused(format!("{} cannot be read — {e}", found.label())))?;
+        .map_err(|e| Error::failed(found.label(), Act::Read, e))?;
     let start = match text
         .match_indices(quote)
         .map(|(at, _)| at)
@@ -681,7 +682,7 @@ fn comment(args: Args<'_>) -> Outcome {
     ));
     store
         .save_comments(&found.id, &held)
-        .map_err(|e| Trouble::Refused(format!("{} cannot be written — {e}", found.label())))?;
+        .map_err(|e| Error::failed(found.label(), Act::Written, e))?;
     Ok(Answer::said(format!("{} has a new comment", found.label()))
         .with(json!({ "id": found.id, "comment": id })))
 }
@@ -695,7 +696,7 @@ fn rename(args: Args<'_>) -> Outcome {
     held.title = title.to_owned();
     store
         .save_properties(&found.id, &held)
-        .map_err(|e| Trouble::Refused(format!("{} cannot be renamed — {e}", found.label())))?;
+        .map_err(|e| Error::failed(found.label(), Act::Renamed, e))?;
     Ok(Answer::said(format!("{} is now {title}", found.label())))
 }
 
@@ -711,7 +712,7 @@ fn archive(args: Args<'_>) -> Outcome {
         held.archived = archived;
         store
             .save_properties(&found.id, &held)
-            .map_err(|e| Trouble::Refused(format!("{} cannot be written — {e}", found.label())))?;
+            .map_err(|e| Error::failed(found.label(), Act::Written, e))?;
         said.push(found.label().to_owned());
     }
     let what = match archived {
@@ -736,9 +737,7 @@ fn remove(args: Args<'_>) -> Outcome {
     for article in &found {
         fs::Project::new(root)
             .remove_article(&article.id)
-            .map_err(|e| {
-                Trouble::Refused(format!("{} cannot be deleted — {e}", article.label()))
-            })?;
+            .map_err(|e| Error::failed(article.label(), Act::Deleted, e))?;
         gone.push(article.label().to_owned());
     }
     Ok(Answer::said(format!("{} deleted", gone.join(", "))))
@@ -801,12 +800,10 @@ fn move_article(args: Args<'_>) -> Outcome {
     for held in &found {
         let label = held.label().to_owned();
         let arrived = article::move_to(&held.content, to).map_err(|e| {
+            let error = Error::failed(label.clone(), Act::Moved, e);
             Trouble::Refused(match spoken.is_empty() {
-                true => format!("{label} cannot be moved — {e}"),
-                false => format!(
-                    "{label} cannot be moved — {e}. {} had already landed",
-                    spoken.join(", ")
-                ),
+                true => error.to_string(),
+                false => format!("{error}\n{} had already landed", spoken.join(", ")),
             })
         })?;
         let id = article::id_of(&arrived);
@@ -866,7 +863,13 @@ fn located<'a>(project: &Path, needle: &'a str) -> Result<(Held, Option<Within<'
             .iter()
             .position(|article| article.number == Some(number))
             .map(|at| (held.swap_remove(at), within))
-            .ok_or_else(|| Trouble::Refused(format!("no article {needle} in this project")));
+            .ok_or_else(|| {
+                Error::NotFound {
+                    what: "article",
+                    named: needle.to_owned(),
+                }
+                .into()
+            });
     }
     if let Some(at) = held.iter().position(|article| article.id == needle) {
         return Ok((held.swap_remove(at), None));
@@ -896,7 +899,7 @@ pub(crate) fn excerpt(
     within: Within<'_>,
     named: &str,
 ) -> Result<(std::ops::Range<usize>, Span), Trouble> {
-    let (range, _) = anchor::excerpt(markdown, within, named).map_err(Trouble::Refused)?;
+    let (range, _) = anchor::excerpt(markdown, within, named)?;
     Ok((range.clone(), anchor::span_of(markdown, range)))
 }
 

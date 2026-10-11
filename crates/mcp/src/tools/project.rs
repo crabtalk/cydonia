@@ -5,6 +5,7 @@ use crate::{
     tool::{Answer, Arg, Args, Outcome, Tool, Trouble},
     tools::{PROJECT, entry_of, fields, held, many, root},
 };
+use artifact::error::{Act, Error};
 use artifact::kind::Kind;
 use artifact::{
     project::{Project as _, fs},
@@ -106,7 +107,7 @@ fn open(args: Args<'_>) -> Outcome {
             )));
         }
         std::fs::create_dir_all(&path)
-            .map_err(|e| Trouble::Refused(format!("{} cannot be made — {e}", path.display())))?;
+            .map_err(|e| Error::failed(path.display().to_string(), Act::Made, e))?;
     }
     let path = settled(path);
     // What the app itself does with a project already on the rail — see
@@ -229,22 +230,22 @@ fn label_entry(args: Args<'_>) -> Outcome {
     }
     let entry = super::entry_numbered(&project, number, named)?;
     let store = fs::Project::new(&project);
-    let refused =
-        |e: &dyn std::fmt::Display| Trouble::Refused(format!("{named} cannot be written — {e}"));
+    let refused = |e: anyhow::Error| Error::failed(named, Act::Written, e);
+    let gone = || Error::Gone {
+        named: named.to_owned(),
+    };
     match entry.kind {
         Kind::Article => {
             let mut properties = store.properties(&entry.id);
             properties.labels = labels.clone();
             store
                 .save_properties(&entry.id, &properties)
-                .map_err(|e| refused(&e))?;
+                .map_err(refused)?;
         }
         Kind::Board => {
-            let mut board = store
-                .board(&entry.id)
-                .ok_or_else(|| Trouble::Refused(format!("{named} no longer exists")))?;
+            let mut board = store.board(&entry.id).ok_or_else(gone)?;
             board.labels = labels.clone();
-            store.save_board(&mut board).map_err(|e| refused(&e))?;
+            store.save_board(&mut board).map_err(refused)?;
         }
         // An open project's sessions are the app's to write: a file written
         // under it would be overwritten by the app's next save.
@@ -253,11 +254,9 @@ fn label_entry(args: Args<'_>) -> Outcome {
             labels: labels.clone(),
         })?,
         Kind::Session => {
-            let mut record = store
-                .session(&entry.id)
-                .ok_or_else(|| Trouble::Refused(format!("{named} no longer exists")))?;
+            let mut record = store.session(&entry.id).ok_or_else(gone)?;
             record.labels = labels.clone();
-            store.save_session(&record).map_err(|e| refused(&e))?;
+            store.save_session(&record).map_err(refused)?;
         }
         kind => {
             return Err(Trouble::Refused(format!(
@@ -277,7 +276,7 @@ fn read_entry(args: Args<'_>) -> Outcome {
     let (project, number, within) = entry_of(&args, named)?;
     let project = project.as_path();
     let entry = super::entry_numbered(project, number, named)?;
-    artifact::reference::fits(named, entry.kind, within).map_err(Trouble::Invalid)?;
+    artifact::reference::fits(named, entry.kind, within)?;
     if let (Kind::Session, Some(Within::Span(_))) = (entry.kind, within) {
         return Err(Trouble::Invalid(format!(
             "{named} names turns — read them with session_read"

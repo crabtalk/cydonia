@@ -5,6 +5,7 @@ use crate::{
     tool::{Answer, Arg, Args, Outcome, Tool, Trouble},
     tools::{PROJECT, fields, project_of, root},
 };
+use artifact::error::{Act, Error};
 use artifact::{
     kind::Kind,
     project::{Project as _, fs},
@@ -163,12 +164,7 @@ fn send(args: Args<'_>) -> Outcome {
         return Err(Trouble::Refused("message is empty".to_owned()));
     }
     // Sessions run in the app, and only for projects on the rail.
-    if !rail::is_open(project) {
-        return Err(Trouble::Refused(format!(
-            "cydonia does not have {} open, so no session there can be sent to",
-            project.display()
-        )));
-    }
+    super::on_the_rail(project)?;
     let signed = match sender(&args) {
         Some(from) => format!("from {from}\n\n{message}"),
         None => message.to_owned(),
@@ -322,7 +318,7 @@ fn found(args: &Args<'_>, named: &str) -> Result<Found, Trouble> {
             "{named} is a card, not a session"
         )));
     };
-    reference::fits(named, Kind::Session, within).map_err(Trouble::Invalid)?;
+    reference::fits(named, Kind::Session, within)?;
     let turns = match within {
         Some(Within::Span(turns)) => Some(turns),
         _ => None,
@@ -333,11 +329,14 @@ fn found(args: &Args<'_>, named: &str) -> Result<Found, Trouble> {
     let store = fs::Project::new(&project);
     let id = store
         .resolve(Kind::Session, number)
-        .map_err(|e| Trouble::Refused(e.to_string()))?
-        .ok_or_else(|| Trouble::Refused(format!("no session #{number} in this project")))?;
-    let record = store
-        .session(&id)
-        .ok_or_else(|| Trouble::Refused(format!("session #{number} cannot be read")))?;
+        .map_err(|e| Error::failed("this project's entries", Act::Read, e))?
+        .ok_or_else(|| Error::NotFound {
+            what: "session",
+            named: format!("#{number}"),
+        })?;
+    let record = store.session(&id).ok_or_else(|| Error::Gone {
+        named: format!("session #{number}"),
+    })?;
     Ok(Found {
         number,
         title: record.label().to_owned(),

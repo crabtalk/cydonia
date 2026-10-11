@@ -21,6 +21,7 @@ use crate::{
     tool::{Answer, Arg, Args, Outcome, Tool, Trouble},
     tools::{PROJECT, fields, many, on_the_rail, root},
 };
+use artifact::error::{Act, Error};
 use artifact::{
     board::Board,
     project::{Project, fs},
@@ -333,11 +334,8 @@ fn add(args: Args<'_>) -> Outcome {
     if name.is_empty() {
         return Err(Trouble::Refused("A board needs a name.".into()));
     }
-    let key = artifact::board::key::claim(args.text(KEY)?, &project.boards(), None)
-        .map_err(Trouble::Refused)?;
-    let board = project
-        .create_board(name, &key)
-        .map_err(|e| Trouble::Refused(format!("The board could not be written — {e}.")))?;
+    let key = artifact::board::key::claim(args.text(KEY)?, &project.boards(), None)?;
+    let board = project.create_board(name, &key).map_err(unwritten)?;
     Ok(Answer::said(outline(&board)).with(shape(&board)))
 }
 
@@ -353,10 +351,11 @@ fn rename(args: Args<'_>) -> Outcome {
         return Err(Trouble::Refused("A board needs a name.".into()));
     }
     let key = match args.maybe(KEY_NOW) {
-        Some(given) => Some(
-            artifact::board::key::claim(given, &project.boards(), Some(&board.id))
-                .map_err(Trouble::Refused)?,
-        ),
+        Some(given) => Some(artifact::board::key::claim(
+            given,
+            &project.boards(),
+            Some(&board.id),
+        )?),
         None => None,
     };
     let was = match board.name.is_empty() {
@@ -895,7 +894,13 @@ fn board(project: &fs::Project, needle: &str) -> Result<Board, Trouble> {
             .iter()
             .position(|board| board.number == Some(number))
             .map(|at| boards.swap_remove(at))
-            .ok_or_else(|| Trouble::Refused(format!("no board {needle} in this project")));
+            .ok_or_else(|| {
+                Error::NotFound {
+                    what: "board",
+                    named: needle.to_owned(),
+                }
+                .into()
+            });
     }
     let found = boards
         .iter()
@@ -1135,6 +1140,6 @@ fn columns(board: &Board) -> String {
 }
 
 /// A write the backend refused, as the answer the agent reads.
-fn unwritten(error: impl std::fmt::Display) -> Trouble {
-    Trouble::Refused(format!("The board could not be written — {error}."))
+fn unwritten(error: impl Into<anyhow::Error>) -> Trouble {
+    Error::failed("the board", Act::Written, error).into()
 }

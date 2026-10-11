@@ -11,6 +11,7 @@ keywords = ["mcp", "agents", "tools", "cydonia"]
 categories = ["development-tools"]
 
 [dependencies]
+anyhow.workspace = true
 artifact.workspace = true
 axum = { workspace = true, optional = true }
 serde.workspace = true
