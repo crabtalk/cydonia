@@ -11,7 +11,7 @@ use crate::view::{
         dialog::{answers, dialog},
         form,
     },
-    root::Cydonia,
+    window::root::Cydonia,
 };
 use artifact::board::{self, key};
 use artifact::space::Member;

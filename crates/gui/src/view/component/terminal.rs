@@ -1112,11 +1112,11 @@ impl Render for TerminalPanel {
                     this.add(window, cx);
                 }),
             )
-            .on_action(
-                cx.listener(|this, _: &crate::view::menubar::CloseWindow, window, cx| {
+            .on_action(cx.listener(
+                |this, _: &crate::view::window::menubar::CloseWindow, window, cx| {
                     this.close(this.active(), window, cx);
-                }),
-            )
+                },
+            ))
             .on_action(cx.listener(|this, _: &super::panel::CloseTab, window, cx| {
                 this.close(this.active(), window, cx);
             }))
@@ -1126,7 +1126,7 @@ impl Render for TerminalPanel {
             .on_action(cx.listener(|this, _: &super::panel::PrevTab, window, cx| {
                 this.cycle(-1, window, cx);
             }))
-            .bg(crate::view::root::content_bg(&theme))
+            .bg(crate::view::window::root::content_bg(&theme))
             .child(
                 div()
                     .h(px(40.))
@@ -1210,7 +1210,7 @@ impl Render for TerminalPanel {
                             .tooltip(|window, cx| Tooltip::text("Hide terminal panel", window, cx))
                             .on_click(|_, window, cx| {
                                 window.dispatch_action(
-                                    Box::new(crate::view::root::ToggleTerminal),
+                                    Box::new(crate::view::window::root::ToggleTerminal),
                                     cx,
                                 )
                             })

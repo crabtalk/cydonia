@@ -11,7 +11,7 @@ use crate::{
         session::{Command, Usage},
         settings::PanelTabs,
     },
-    view::{mention, root},
+    view::{kit::link::mention, window::root},
 };
 use bezel::ui::scroll as scrollbars;
 use bezel::{
@@ -314,7 +314,7 @@ pub struct Composer {
     last_asked: Option<String>,
     /// Whether the session tools are on offer. Off beside a space: all three
     /// of them open the window's own panels, which a space divides the room
-    /// for — see [`crate::view::arrangement`].
+    /// for — see [`crate::view::pane::arrangement`].
     tools: bool,
     /// A conversation drawn in the pill over the field, opened by the chevron
     /// in the tools' place: an article's thread.

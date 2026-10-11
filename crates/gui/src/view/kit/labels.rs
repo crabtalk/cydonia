@@ -1,7 +1,7 @@
 //! The label picker: one entry's labels, the library's filter, or its
 //! selection's, opened from whichever trigger names it.
 
-use crate::view::{component::menu::Menu, root::Cydonia, sidebar::Row};
+use crate::view::{component::menu::Menu, sidebar::Row, window::root::Cydonia};
 use bezel::{
     gpui::{
         AnyElement, App, Context, Div, Entity, Pixels, Point, Stateful, Subscription, Window, div,

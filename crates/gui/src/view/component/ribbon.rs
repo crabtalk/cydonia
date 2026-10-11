@@ -19,7 +19,7 @@ use crate::view::{
         composer,
         menu::{self, Menu},
     },
-    root::Cydonia,
+    window::root::Cydonia,
 };
 use artifact::reference;
 use artifact::space::Member;

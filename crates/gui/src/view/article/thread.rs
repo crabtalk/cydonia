@@ -3,7 +3,7 @@
 
 use crate::{
     model::workspace::Workspace,
-    view::{component::transcript, root::Cydonia},
+    view::{component::transcript, window::root::Cydonia},
 };
 use bezel::motion::{Fade, Painter};
 use bezel::{
@@ -91,11 +91,11 @@ impl Render for ThreadView {
                     }),
             );
         let body = match id {
-            Some(id) => crate::view::entry_link::live(
+            Some(id) => crate::view::kit::link::live(
                 &self.workspace,
                 self.root.clone(),
                 id,
-                crate::view::root::COMPOSER_COLUMN,
+                crate::view::window::root::COMPOSER_COLUMN,
                 transcript::Drawn::Attached(&self.list),
                 window,
                 cx,

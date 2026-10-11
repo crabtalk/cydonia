@@ -59,7 +59,7 @@ fn arranged_session_measures_its_own_composer(cx: &mut gpui::TestAppContext) {
             let workspace = view.0.read(cx).workspace.read(cx);
             assert!(
                 workspace.session(2).unwrap().transcript.footer_height.get()
-                    > px(crate::view::root::composer_height())
+                    > px(crate::view::window::root::composer_height())
             );
             assert_eq!(
                 workspace.session(1).unwrap().transcript.footer_height.get(),

@@ -77,7 +77,7 @@ fn open(
         input::init(cx);
         editor::init(cx);
         cx.bind_keys(bindings());
-        cx.bind_keys(crate::view::drawer::bindings());
+        cx.bind_keys(crate::view::pane::drawer::bindings());
     });
     let window = cx.add_window(|window, cx| {
         let root =

@@ -12,7 +12,7 @@
 //! nothing at all — see [`SettingsWindow::record`].
 
 #[cfg(feature = "desktop")]
-use crate::view::hotkey;
+use crate::view::keymap::hotkey;
 use crate::{
     model::{settings::Shortcuts, workspace::Workspace},
     view::{

@@ -7,8 +7,8 @@ use crate::{
     data::ColType,
     view::{
         component::menu::{self, Menu},
-        root::{Cydonia, NewTable},
         sidebar::{self, Renaming, Row},
+        window::root::{Cydonia, NewTable},
     },
 };
 use artifact::kind::Kind;

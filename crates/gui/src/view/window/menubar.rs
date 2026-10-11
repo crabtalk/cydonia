@@ -29,7 +29,7 @@ use crate::{
     view::{
         article::{ToggleOutline, TogglePlainText},
         keymap,
-        root::{
+        window::root::{
             CloseProject, Cydonia, NewArticle, NewBoard, NewSession, NewSessionNext,
             NewSessionWith, NewTable, NextEntry, OpenProject, OpenSettings, PrevEntry,
             ToggleChanges, ToggleSidebar, ToggleTerminal,
@@ -201,8 +201,8 @@ fn menus(cx: &App) -> Vec<Menu> {
             MenuItem::action("Toggle Sidebar", ToggleSidebar),
             MenuItem::action("Toggle Terminal", ToggleTerminal),
             MenuItem::action("Toggle Right Panel", ToggleChanges),
-            MenuItem::action("Open Files", crate::view::root::OpenFiles),
-            MenuItem::action("Open Review", crate::view::root::OpenReview),
+            MenuItem::action("Open Files", crate::view::window::root::OpenFiles),
+            MenuItem::action("Open Review", crate::view::window::root::OpenReview),
             MenuItem::separator(),
             // No chord drawn beside either: ⌃⇥ and ⇧⌃⇥ are what step between
             // entries, and gpui has no macOS equivalent for `tab` — an item
@@ -212,8 +212,8 @@ fn menus(cx: &App) -> Vec<Menu> {
             MenuItem::action("Next Entry", NextEntry),
             MenuItem::action("Previous Entry", PrevEntry),
             MenuItem::separator(),
-            MenuItem::action("Back", crate::view::root::GoBack),
-            MenuItem::action("Forward", crate::view::root::GoForward),
+            MenuItem::action("Back", crate::view::window::root::GoBack),
+            MenuItem::action("Forward", crate::view::window::root::GoForward),
             MenuItem::separator(),
             // Here rather than left to the pane's own `···`, because ⌘E is the
             // editor's inline code and only a key equivalent on the bar takes
@@ -222,8 +222,8 @@ fn menus(cx: &App) -> Vec<Menu> {
             MenuItem::action("Plain Text", TogglePlainText),
             MenuItem::action("Outline", ToggleOutline),
             MenuItem::action("Find", crate::view::board::FindCard),
-            MenuItem::action("Find Next", crate::view::find::FindNext),
-            MenuItem::action("Find Previous", crate::view::find::FindPrev),
+            MenuItem::action("Find Next", crate::view::pane::find::FindNext),
+            MenuItem::action("Find Previous", crate::view::pane::find::FindPrev),
             MenuItem::action("Search", crate::view::search::ToggleSearch),
             MenuItem::separator(),
             MenuItem::action("Enter Full Screen", ToggleFullScreen),
@@ -351,17 +351,17 @@ impl Cydonia {
             })
             .when(review, |root| {
                 root.on_action(cx.listener(
-                    |this, _: &crate::view::root::OpenReview, window, cx| {
+                    |this, _: &crate::view::window::root::OpenReview, window, cx| {
                         this.show_changes(window, cx)
                     },
                 ))
             })
             .when(files, |root| {
-                root.on_action(
-                    cx.listener(|this, _: &crate::view::root::OpenFiles, window, cx| {
+                root.on_action(cx.listener(
+                    |this, _: &crate::view::window::root::OpenFiles, window, cx| {
                         this.toggle_files(window, cx)
-                    }),
-                )
+                    },
+                ))
             })
             // Pane-specific commands grey themselves everywhere else.
             .when(showing == Some(Kind::Article), |root| {

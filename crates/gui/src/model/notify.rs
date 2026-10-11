@@ -10,7 +10,7 @@
 //! build running outside an app bundle — `cargo run` — has no identity to post
 //! under, so nothing arrives. Nothing here treats any of that as an error.
 
-use crate::{model::session::ChatSession, view::root::Cydonia};
+use crate::{model::session::ChatSession, view::window::root::Cydonia};
 use bezel::gpui::{App, SharedString, SystemNotification};
 
 /// The prefix a session's notification is tagged with. The tag is the session,

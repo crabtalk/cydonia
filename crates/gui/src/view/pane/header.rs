@@ -8,10 +8,10 @@
 
 use crate::model::workspace::Showing;
 use crate::view::{
-    chrome,
     component::{menu::Menu, panel::changes_toggle},
-    root::{self, Cydonia},
     sidebar::{Renaming, Row},
+    window::chrome,
+    window::root::{self, Cydonia},
 };
 use artifact::kind::Kind;
 use bezel::{

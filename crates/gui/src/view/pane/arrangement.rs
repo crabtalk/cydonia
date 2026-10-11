@@ -7,15 +7,15 @@
 use crate::{
     model::workspace::Showing,
     view::{
-        chrome,
         component::{
             divider,
             menu::{self, Menu},
             panel::changes_toggle,
         },
         kit::new::{self, New},
-        root::{Cydonia, NewSession},
         sidebar::{Dragged, Row},
+        window::chrome,
+        window::root::{Cydonia, NewSession},
     },
 };
 use artifact::kind::Kind;
@@ -261,7 +261,7 @@ impl Cydonia {
             // With the context but without this, a pane claims chords that
             // never reach it: an action runs through the focused element's
             // ancestors, and a pane showing a board holds nothing that takes
-            // the focus — see [`crate::view::leaf::Leaf::focus`].
+            // the focus — see [`crate::view::pane::leaf::Leaf::focus`].
             // The front's leaf, not the pane's own name: the body, the
             // composer and [`Cydonia::focus_pane`] all answer for the tab in
             // front, and a pane tracking a handle nothing focuses reads as
@@ -326,7 +326,7 @@ impl Cydonia {
             );
         // By the tab in front: that is what a drop joins or divides.
         self.dock
-            .pane(front, px(crate::view::root::HEADER_HEIGHT), pane)
+            .pane(front, px(crate::view::window::root::HEADER_HEIGHT), pane)
             .into_any_element()
     }
 
@@ -469,7 +469,7 @@ impl Cydonia {
         match self.lone_member(cx) {
             Some(on) => self
                 .dock
-                .pane(on, px(crate::view::root::HEADER_HEIGHT), column)
+                .pane(on, px(crate::view::window::root::HEADER_HEIGHT), column)
                 .into_any_element(),
             None => column,
         }
@@ -591,13 +591,13 @@ impl Cydonia {
         let right = last && chrome::has(CaptionSide::Right, window, cx);
         let lead = match (first, self.sidebar_open) {
             _ if left => 0.,
-            (true, true) => crate::view::root::HEADER_INSET,
-            (true, false) => crate::view::root::toolbar_inset(window, cx),
+            (true, true) => crate::view::window::root::HEADER_INSET,
+            (true, false) => crate::view::window::root::toolbar_inset(window, cx),
             (false, _) => TAB_INSET,
         };
         let hovered = key.clone();
         let owner = cx.entity().downgrade();
-        crate::view::root::band()
+        crate::view::window::root::band()
             .id(SharedString::from(format!("pane-bar-{key}")))
             .group("pane-bar")
             .relative()
@@ -660,7 +660,7 @@ impl Cydonia {
             // the inset off it that they keep off the sidebar's edge.
             .children(fold.then(|| {
                 self.fold_controls(cx)
-                    .mr(px(crate::view::root::HEADER_INSET - BAR_GAP))
+                    .mr(px(crate::view::window::root::HEADER_INSET - BAR_GAP))
                     .into_any_element()
             }))
             // The tabs in a strip of their own, which scrolls sideways once
@@ -1261,7 +1261,7 @@ fn seam_id(path: &[usize], at: usize) -> usize {
 }
 
 #[cfg(test)]
-#[path = "../../tests/unit/open_entries.rs"]
+#[path = "../../../tests/unit/open_entries.rs"]
 mod open_entry_tests;
 
 /// The pane at a tree's top right: the last of a row, the first of a column.
@@ -1277,5 +1277,5 @@ fn top_right(node: &Node<Member>) -> Option<Member> {
 }
 
 #[cfg(test)]
-#[path = "../../tests/unit/pane_footer.rs"]
+#[path = "../../../tests/unit/pane_footer.rs"]
 mod pane_footer_tests;

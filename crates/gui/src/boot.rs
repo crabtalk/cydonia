@@ -42,9 +42,9 @@ pub fn init(settings: &Settings, cx: &mut App) {
     workspace::apply_wrap_code(look.wrap_code, cx);
     cx.set_source_style(article::source_style);
     cx.set_marks(article::marks());
-    markdown::AppExt::set_link_card(cx, crate::view::entry_link::card);
-    markdown::AppExt::set_link_hover(cx, crate::view::entry_link::hover);
-    editor::AppExt::set_mention_source(cx, '@', crate::view::mention::source);
+    markdown::AppExt::set_link_card(cx, crate::view::kit::link::card);
+    markdown::AppExt::set_link_hover(cx, crate::view::kit::link::hover);
+    editor::AppExt::set_mention_source(cx, '@', crate::view::kit::link::mention::source);
     article::set_highlight(look.highlight);
     cx.set_mark_paint(article::mark_paint);
     article::set_search(look.search);
@@ -64,8 +64,8 @@ pub fn init(settings: &Settings, cx: &mut App) {
     crate::model::link::init(cx);
     // Without the web fetch, cydonia's own links are the only ones described.
     #[cfg(not(feature = "desktop"))]
-    cx.set_link_preview(crate::view::mention::preview);
-    cx.set_link_handler(crate::view::entry_link::open_link);
+    cx.set_link_preview(crate::view::kit::link::mention::preview);
+    cx.set_link_handler(crate::view::kit::link::open_link);
     // Every chord in the app, bezel's included — see
     // [`crate::view::keymap`]. One call rather than an `init` per
     // surface, because the reader can move some of them and moving one

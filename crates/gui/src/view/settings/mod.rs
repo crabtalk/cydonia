@@ -11,8 +11,8 @@
 #[cfg(not(target_os = "linux"))]
 use crate::view::kit::dialog::{answers, dialog};
 #[cfg(feature = "desktop")]
-use crate::{agent::Listing, model::update, view::root::traffic_lights};
-use crate::{model::workspace::Workspace, view::root::HEADER_HEIGHT};
+use crate::{agent::Listing, model::update, view::window::root::traffic_lights};
+use crate::{model::workspace::Workspace, view::window::root::HEADER_HEIGHT};
 use bezel::ui::scroll as scrollbars;
 #[cfg(not(target_os = "linux"))]
 use bezel::{gpui::Focusable as _, ui::popover};
@@ -81,7 +81,7 @@ const CONTENT_WIDTH: f32 = 640.;
 #[cfg(feature = "desktop")]
 const WINDOW_SIZE: (f32, f32) = (900., 620.);
 
-pub use super::section::Section;
+pub use super::window::section::Section;
 
 impl Section {
     /// Whether this section carries its own scroller, leaving the page still.
@@ -217,7 +217,7 @@ struct CustomColor {
 
 pub struct SettingsWindow {
     workspace: Entity<Workspace>,
-    /// The press on the window's [`crate::view::chrome::grip`].
+    /// The press on the window's [`crate::view::window::chrome::grip`].
     drag: bezel::ui::titlebar::DragState,
     section: Section,
     /// The catalog, once it has been fetched. `None` while it is in flight —
@@ -316,12 +316,12 @@ pub fn open(
             // Opaque on purpose — see the module note. The root paints the
             // page's own background, so where the window frames itself the
             // surface is transparent and only the frame's band shows through.
-            window_background: match crate::view::chrome::decorations() {
+            window_background: match crate::view::window::chrome::decorations() {
                 Some(_) => WindowBackgroundAppearance::Transparent,
                 None => WindowBackgroundAppearance::Opaque,
             },
             app_id: Some("cydonia".into()),
-            window_decorations: crate::view::chrome::decorations(),
+            window_decorations: crate::view::window::chrome::decorations(),
             app_owns_titlebar_drag: true,
             ..Default::default()
         },
@@ -331,7 +331,7 @@ pub fn open(
             // onto every window on each appearance switch, which is what keeps
             // the main window's frost alive and would frost this one with it.
             appearance::keep_background(window, cx);
-            crate::view::lights::fit(window, cx);
+            crate::view::window::lights::fit(window, cx);
             cx.new(|cx| SettingsWindow::new(workspace, section, cx))
         },
     )
@@ -785,7 +785,7 @@ impl SettingsWindow {
 
 impl Render for SettingsWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        use crate::view::chrome;
+        use crate::view::window::chrome;
         use bezel::ui::titlebar::CaptionSide;
         let theme = Theme::of(cx).clone();
         let owns_scroll = self.section.owns_scroll();

@@ -126,7 +126,7 @@ fn workspace_search_keeps_results_beyond_the_palette_limit(cx: &mut gpui::TestAp
             });
             this.leaf_mut().pane = artifact::kind::Kind::Article;
             let matches =
-                crate::view::find::hits(editor.read(cx).doc(), this.applied_query().unwrap());
+                crate::view::pane::find::hits(editor.read(cx).doc(), this.applied_query().unwrap());
             assert_eq!(matches.len(), 2);
             editor.update(cx, |editor, cx| editor.select(matches[1], cx));
             this.leaf_mut().find_at = 1;

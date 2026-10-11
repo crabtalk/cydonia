@@ -3,7 +3,7 @@
 //! header asks rather than assumes. A button's frame need not be square:
 //! gpui places it by its full height.
 
-use crate::view::root::TRAFFIC_LIGHT_INSET;
+use crate::view::window::root::TRAFFIC_LIGHT_INSET;
 use bezel::gpui::{App, Global, Window};
 
 /// One light's frame and the distance between two lights' left edges.
@@ -44,7 +44,7 @@ pub fn fit(window: &mut Window, cx: &mut App) {
     // gpui has the setter on macOS only.
     #[cfg(target_os = "macos")]
     {
-        use crate::view::root::HEADER_HEIGHT;
+        use crate::view::window::root::HEADER_HEIGHT;
         use bezel::gpui::{point, px};
         window.set_traffic_light_position(point(
             px(TRAFFIC_LIGHT_INSET),

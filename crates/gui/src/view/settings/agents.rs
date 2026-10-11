@@ -4,7 +4,7 @@
 use crate::{
     agent::{self, Listing},
     model::settings,
-    view::{kit::dialog::answers, menubar, settings::SettingsWindow},
+    view::{kit::dialog::answers, settings::SettingsWindow, window::menubar},
 };
 use bezel::{
     gpui::{AnyElement, Context, Focusable as _, SharedString, Window, div, prelude::*, px},

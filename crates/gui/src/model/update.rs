@@ -21,7 +21,7 @@
 //! What makes any of this cheap is that quitting is already survivable:
 //! `workspace::save` writes on every change and sessions are on disk and
 //! resumable, so a restart here is the same door as ⌘Q — which is the argument
-//! [`crate::view::menubar`] already makes for closing the window.
+//! [`crate::view::window::menubar`] already makes for closing the window.
 //!
 //! What a release is and how it is swapped in is per platform: a dmg on macOS
 //! (`update/macos.rs`), the tarball on Linux (`update/linux.rs`), the installer

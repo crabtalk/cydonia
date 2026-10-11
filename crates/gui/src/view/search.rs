@@ -9,23 +9,23 @@
 //! the label, after it or alone, lists the entries carrying that label.
 //!
 //! A query lists the cards and entries `@` would name for it first — see
-//! [`crate::view::mention::rank_cards`] and [`crate::view::mention::rank`] —
+//! [`crate::view::kit::link::mention::rank_cards`] and [`crate::view::kit::link::mention::rank`] —
 //! then the ones it is found in. A card opens in the drawer, as its chip does.
 //!
 //! An empty query lists what was touched last. A query is searched off disk on
 //! a background thread — see [`artifact::search::disk`] — so an entry's hits
 //! are as of its last write. Opening a hit in an entry's body puts the query in
-//! its pane's find bar — see [`crate::view::find`].
+//! its pane's find bar — see [`crate::view::pane::find`].
 
 use crate::view::kit::icon::kind_icon;
 use crate::{
     model::workspace::Showing,
     view::{
         keymap::{self, Command},
-        mention::{self, Linkables},
-        menubar,
-        root::Cydonia,
+        kit::link::mention::{self, Linkables},
         sidebar::{self, Row},
+        window::menubar,
+        window::root::Cydonia,
     },
 };
 use artifact::{
@@ -994,7 +994,7 @@ impl Cydonia {
             workspace.load_history(id);
             let chat = workspace.session(id)?;
             let count = artifact::session::chat::turns(&chat.items).len();
-            let from = count.saturating_sub(crate::view::entry_link::PREVIEW_TURNS);
+            let from = count.saturating_sub(crate::view::kit::link::PREVIEW_TURNS);
             Some(crate::view::component::transcript::excerpt(
                 chat, from, count, window, cx,
             ))

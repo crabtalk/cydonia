@@ -1,7 +1,7 @@
 //! One pane's own state: what it is showing, and everything the showing of it
 //! needs.
 //!
-//! Split out of [`crate::view::root::Cydonia`], which held all of this when a
+//! Split out of [`crate::view::window::root::Cydonia`], which held all of this when a
 //! window showed one entry at a time. A second pane is a second composer and a
 //! second board scroll — one of each on the root is what makes two panes
 //! impossible, not the drawing.
@@ -13,7 +13,7 @@
 use crate::view::{
     board::{self, Editing},
     component::{composer::Composer, ribbon::Ribbon},
-    drawer::Drawer,
+    pane::drawer::Drawer,
     table,
 };
 use artifact::kind::Kind;
@@ -46,16 +46,16 @@ pub struct Leaf {
     /// Whether a session has been asked for with no agent to open one on.
     ///
     /// The chat pane then stands over the notice — see
-    /// [`crate::view::root::Cydonia::no_agent`] — rather than a ⌘N throwing the
+    /// [`crate::view::window::root::Cydonia::no_agent`] — rather than a ⌘N throwing the
     /// settings window up in front of a window that has said nothing about
     /// why. Runtime only, and read through
-    /// [`crate::view::root::Cydonia::has_pane`], which drops it the moment an
+    /// [`crate::view::window::root::Cydonia::has_pane`], which drops it the moment an
     /// agent is there: a flag left set behind an install would keep an empty
     /// pane on offer.
     pub(crate) asked_session: bool,
     pub(crate) editing: Option<Editing>,
     /// What the pane's drawer holds, while it is up — see
-    /// [`crate::view::drawer`].
+    /// [`crate::view::pane::drawer`].
     pub(crate) drawer: Option<Drawer>,
     pub(crate) card_drafts: Vec<board::CardDraft>,
     pub(crate) card_field: Entity<TextField>,
@@ -64,11 +64,11 @@ pub struct Leaf {
     /// The bar stands whenever the query does: a board narrowed with nothing on
     /// screen saying so is a board quietly missing cards, and a drag that lands
     /// in a lane it cannot see is worse. Closing it is what clears the query —
-    /// see [`crate::view::root::Cydonia::dismiss_find`].
+    /// see [`crate::view::window::root::Cydonia::dismiss_find`].
     pub(crate) find_field: Entity<TextField>,
     pub(crate) finding: bool,
     /// Which find hit an article or a transcript is on, counted from the
-    /// first — see [`crate::view::find`].
+    /// first — see [`crate::view::pane::find`].
     pub(crate) find_at: usize,
     /// Whether an article's or a transcript's find reads its field as a
     /// regular expression.

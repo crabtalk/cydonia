@@ -22,8 +22,8 @@ use crate::{
     model::workspace::Showing,
     view::{
         library::Shelf,
-        root::{Cydonia, GoBack, GoForward},
         sidebar::Row,
+        window::root::{Cydonia, GoBack, GoForward},
     },
 };
 

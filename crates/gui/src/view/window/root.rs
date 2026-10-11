@@ -1,9 +1,9 @@
 //! Root view: the window's grid, the state the chrome owns, and the frame
 //! the sidebar and the chat column are hung in.
 
-use crate::view::lights::{self, Lights};
 #[cfg(not(feature = "desktop"))]
 use crate::view::settings::{self, SettingsWindow};
+use crate::view::window::lights::{self, Lights};
 #[cfg(feature = "desktop")]
 use crate::{
     model::update,
@@ -21,18 +21,20 @@ use crate::{
     },
     view::{
         board,
+        board::create,
+        board::info,
         component::{
             composer::{Composer, ComposerEvent},
             menu::Menu,
             meter,
             ribbon::Ribbon,
         },
-        confirm, create, info,
-        leaf::Leaf,
-        menubar::CloseWindow,
-        section::Section,
+        pane::confirm,
+        pane::leaf::Leaf,
         sidebar::{Dragged, Renaming, Row},
         table,
+        window::menubar::CloseWindow,
+        window::section::Section,
     },
 };
 use anyhow::Result;
@@ -271,7 +273,7 @@ pub fn bindings() -> Vec<KeyBinding> {
             KeyBinding::new(
                 "secondary-c",
                 CopySelection,
-                Some(super::keymap::platform(
+                Some(crate::view::keymap::platform(
                     "Cydonia",
                     "Cydonia && !CydoniaTerminal",
                 )),
@@ -352,14 +354,14 @@ pub fn open(settings: Settings, state: State, cx: &mut App) -> Result<WindowHand
             // Glass needs a blurred window background to blur into. A window
             // that frames itself opens transparent, or its frame band is
             // filled; bezel's reapply keeps it so on each appearance switch.
-            window_background: match super::chrome::decorations() {
+            window_background: match crate::view::window::chrome::decorations() {
                 Some(_) => bezel::gpui::WindowBackgroundAppearance::Transparent,
                 None => Theme::of(cx).window_background_appearance(),
             },
             window_background_blur: Theme::of(cx).window_blur.into(),
             window_min_size: Some(size(px(600.), px(320.))),
             app_id: Some("cydonia".into()),
-            window_decorations: super::chrome::decorations(),
+            window_decorations: crate::view::window::chrome::decorations(),
             app_owns_titlebar_drag: true,
             ..Default::default()
         },
@@ -454,7 +456,7 @@ pub struct Cydonia {
     pub(crate) changes_for: Option<std::path::PathBuf>,
     pub(crate) changes_shown: std::collections::HashMap<std::path::PathBuf, bool>,
     /// The share of the row the right-hand panel was dragged to, and `None`
-    /// for one nobody has dragged. See [`super::detail::panel_width`].
+    /// for one nobody has dragged. See [`crate::view::detail::panel_width`].
     pub(crate) changes_share: Option<f32>,
     /// The pending write of a width being dragged — dropped and replaced by
     /// each move, so only a drag that stopped reaches the disk. See
@@ -467,31 +469,33 @@ pub struct Cydonia {
     /// gets there first.
     window_frame: Option<crate::model::state::Frame>,
     /// How tall the bottom panel was dragged, and `None` for one nobody has
-    /// dragged. See [`super::detail::panel_height`].
+    /// dragged. See [`crate::view::detail::panel_height`].
     pub(crate) terminal_height: Option<f32>,
-    pub(crate) changes: Option<Entity<super::component::panel::Panel>>,
-    /// The press on a [`super::chrome::grip`], shared by every band in the
+    pub(crate) changes: Option<Entity<crate::view::component::panel::Panel>>,
+    /// The press on a [`crate::view::window::chrome::grip`], shared by every band in the
     /// window that carries one.
     pub(crate) drag: bezel::ui::titlebar::DragState,
     pub(crate) right_panels:
-        std::collections::HashMap<std::path::PathBuf, Entity<super::component::panel::Panel>>,
+        std::collections::HashMap<std::path::PathBuf, Entity<crate::view::component::panel::Panel>>,
     /// The right panel while the library is up — see [`Cydonia::library_panel`].
-    pub(crate) library_panel: Option<Entity<super::component::panel::Panel>>,
+    pub(crate) library_panel: Option<Entity<crate::view::component::panel::Panel>>,
     /// The buffer each card's orb paints into, by card id — see
     /// [`board::Marks`].
     pub(crate) card_marks: board::Marks,
     /// What each card's text parses to, by card id — see [`board::Docs`].
     pub(crate) card_docs: board::Docs,
-    /// The entries the window has been on — see [`super::history`].
-    pub(crate) history: super::history::History,
+    /// The entries the window has been on — see [`crate::view::window::history`].
+    pub(crate) history: crate::view::window::history::History,
     /// The composer each session drawn in a drawer types into, by the
     /// session's id — see [`Cydonia::session_transcript`].
     pub(crate) session_cards:
-        std::collections::HashMap<u64, Entity<super::component::composer::Composer>>,
+        std::collections::HashMap<u64, Entity<crate::view::component::composer::Composer>>,
     /// The thread each article's composer opens, by the article's file — see
-    /// [`super::thread`].
-    pub(crate) threads:
-        std::collections::HashMap<std::path::PathBuf, Entity<super::thread::ThreadView>>,
+    /// [`crate::view::article::thread`].
+    pub(crate) threads: std::collections::HashMap<
+        std::path::PathBuf,
+        Entity<crate::view::article::thread::ThreadView>,
+    >,
     /// The pane the last press came down in: `None` for the one a window with
     /// no space open shows. Where a link opens — see
     /// [`Cydonia::open_reference`].
@@ -532,10 +536,10 @@ pub struct Cydonia {
     /// [`Cydonia::close_pane`]. Runtime only, for the same reason `fronts` is.
     pub(crate) tab_history: Vec<Member>,
     /// The library, while it stands over the panes — see
-    /// [`super::library`].
-    pub(crate) library: Option<super::library::Library>,
-    /// The label picker, while one is open — see [`super::labels`].
-    pub(crate) picker: Option<super::labels::Picker>,
+    /// [`crate::view::library`].
+    pub(crate) library: Option<crate::view::library::Library>,
+    /// The label picker, while one is open — see [`crate::view::kit::labels`].
+    pub(crate) picker: Option<crate::view::kit::labels::Picker>,
     /// The board identity panel, while it is open — see [`header::BoardInfo`].
     pub(crate) info: Option<info::BoardInfo>,
     /// The board that has been asked for and not yet made — see
@@ -1043,7 +1047,7 @@ impl Cydonia {
                         .upgrade()
                         .map(|this| this.read(cx).label_of_dragged(item, cx))
                         .unwrap_or_default();
-                    super::sidebar::ghost(label.into(), Theme::of(cx))
+                    crate::view::sidebar::ghost(label.into(), Theme::of(cx))
                 }
             }),
             sidebar_sort: drag::Domain::with_ghost(Painter::of(cx), {

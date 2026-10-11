@@ -610,7 +610,7 @@ impl FileView {
 
     fn open_external(&mut self, target: external::Target, cx: &mut Context<Self>) {
         if cfg!(not(feature = "desktop")) {
-            cx.emit(crate::view::desktop::DesktopOnly(
+            cx.emit(crate::view::window::desktop::DesktopOnly(
                 "Opening a file in another app",
             ));
             return;
@@ -807,7 +807,7 @@ impl Focusable for FileView {
     }
 }
 
-impl gpui::EventEmitter<crate::view::desktop::DesktopOnly> for FileView {}
+impl gpui::EventEmitter<crate::view::window::desktop::DesktopOnly> for FileView {}
 
 impl Render for FileView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

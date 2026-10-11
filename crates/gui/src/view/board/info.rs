@@ -3,7 +3,7 @@
 
 use crate::view::{
     kit::{dialog::answers, form},
-    root::Cydonia,
+    window::root::Cydonia,
 };
 use bezel::{
     gpui::{

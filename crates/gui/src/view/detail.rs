@@ -12,8 +12,8 @@ use crate::{
             ribbon, transcript,
         },
         kit::new::{self, New},
-        root::{self, Cydonia, NewArticle, NewBoard, NewSession, NewTable},
-        section::Section,
+        window::root::{self, Cydonia, NewArticle, NewBoard, NewSession, NewTable},
+        window::section::Section,
     },
 };
 use artifact::kind::Kind;
@@ -656,13 +656,14 @@ impl Cydonia {
         &mut self,
         path: PathBuf,
         cx: &mut Context<Self>,
-    ) -> gpui::Entity<crate::view::thread::ThreadView> {
+    ) -> gpui::Entity<crate::view::article::thread::ThreadView> {
         if let Some(view) = self.threads.get(&path) {
             return view.clone();
         }
         let (workspace, root) = (self.workspace.clone(), cx.entity().downgrade());
-        let view =
-            cx.new(|cx| crate::view::thread::ThreadView::new(workspace, root, path.clone(), cx));
+        let view = cx.new(|cx| {
+            crate::view::article::thread::ThreadView::new(workspace, root, path.clone(), cx)
+        });
         self.threads.insert(path, view.clone());
         view
     }

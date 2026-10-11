@@ -1,6 +1,9 @@
 //! The board pane: lanes of cards or a list of them, and the one field that
 //! writes them.
 
+pub mod create;
+pub mod info;
+
 use crate::{
     model::session::ChatSession,
     view::{
@@ -8,10 +11,10 @@ use crate::{
             menu::{self, Menu},
             transcript,
         },
-        drawer::{Drawer, Face, Peek},
-        leaf::Leaf,
-        root::{Cydonia, NewBoard},
+        pane::drawer::{Drawer, Face, Peek},
+        pane::leaf::Leaf,
         sidebar::Renaming,
+        window::root::{Cydonia, NewBoard},
     },
 };
 use artifact::kind::Kind;
@@ -229,7 +232,9 @@ fn card_body(
     cx: &mut App,
 ) -> AnyElement {
     let washes = query
-        .map(|query| crate::view::find::annotations(&crate::view::find::hits(doc, query), None))
+        .map(|query| {
+            crate::view::pane::find::annotations(&crate::view::pane::find::hits(doc, query), None)
+        })
         .unwrap_or_default();
     markdown::render_with(
         doc,
@@ -1185,7 +1190,7 @@ impl Cydonia {
 
     /// Drop a lane. Offered only while it is empty — see
     /// [`artifact::board::Board::remove_column`] — and asked about first, in
-    /// [`crate::view::confirm`].
+    /// [`crate::view::pane::confirm`].
     pub(crate) fn drop_column(&mut self, board: &str, id: &str, cx: &mut Context<Self>) {
         self.commit(cx);
         let (board, id) = (board.to_owned(), id.to_owned());

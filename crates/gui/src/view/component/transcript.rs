@@ -9,9 +9,9 @@
 use crate::{
     model::{session::ChatSession, workspace::Workspace},
     view::{
-        find,
         kit::text::{elapsed, tokens},
-        root,
+        pane::find,
+        window::root,
     },
 };
 use artifact::{
@@ -717,7 +717,7 @@ pub fn render(
                     .unwrap_or_else(|_| Empty.into_any_element())
             };
             match nested {
-                true => crate::view::entry_link::nested(cx, draw),
+                true => crate::view::kit::link::nested(cx, draw),
                 false => draw(cx),
             }
         },
@@ -876,7 +876,7 @@ pub fn excerpt(
 ) -> AnyElement {
     let turns = turns(&chat.items);
     let to = to.min(turns.len());
-    crate::view::entry_link::enter_nested(cx);
+    crate::view::kit::link::enter_nested(cx);
     let drawn = div()
         .flex()
         .flex_col()
@@ -890,7 +890,7 @@ pub fn excerpt(
                 .map(|turn| zone(chat, turn, false, None, window, cx)),
         )
         .into_any_element();
-    crate::view::entry_link::leave_nested(cx);
+    crate::view::kit::link::leave_nested(cx);
     drawn
 }
 

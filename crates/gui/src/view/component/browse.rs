@@ -9,7 +9,7 @@
 //! built the page: a tab whose panel is not on screen has none.
 
 use super::{browser::Browser, panel::Panel};
-use crate::{model::settings::Browsing, view::root::Cydonia};
+use crate::{model::settings::Browsing, view::window::root::Cydonia};
 use bezel::gpui::{AnyWindowHandle, AsyncApp, Context, Entity, WeakEntity, Window};
 use browser::WebView;
 use futures::{StreamExt as _, channel::mpsc};

@@ -1,8 +1,10 @@
 //! Labels in the library: the column, the filter on its heading, and the
-//! selection's Label button — each opens [`crate::view::labels`]'s picker.
+//! selection's Label button — each opens [`crate::view::kit::labels`]'s picker.
 
 use super::ROW_GROUP;
-use crate::view::{component::menu::Menu, labels::Target, root::Cydonia, sidebar::Row};
+use crate::view::{
+    component::menu::Menu, kit::labels::Target, sidebar::Row, window::root::Cydonia,
+};
 use bezel::{
     gpui::{AnyElement, Context, Div, SharedString, Stateful, div, prelude::*, px},
     theme::Theme,

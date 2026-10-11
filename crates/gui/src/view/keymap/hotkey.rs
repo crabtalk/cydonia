@@ -18,7 +18,7 @@
 
 use crate::{
     model::{settings, state},
-    view::root::{self, Cydonia},
+    view::window::root::{self, Cydonia},
 };
 use bezel::gpui::{App, Global, Keystroke, SharedString, Task};
 use futures::StreamExt;

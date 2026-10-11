@@ -1,24 +1,24 @@
 //! The projects sidebar: a folding heading per project, and every session,
-//! article and table in it. The window's grid lives in [`crate::view::root`];
+//! article and table in it. The window's grid lives in [`crate::view::window::root`];
 //! this draws on it.
 
 use crate::model::state;
 #[cfg(feature = "desktop")]
 use crate::model::update;
 use crate::model::workspace::Showing;
-use crate::view::section::Section;
+use crate::view::window::section::Section;
 use crate::{
     model::{session::ChatSession, settings::Features},
     view::{
         article::TogglePlainText,
-        chrome,
         component::{
             menu::{self, Menu},
             transcript,
         },
         keymap::{self, Command},
         kit::new::{self, New},
-        root::{self, CommitName, Cydonia, DismissName, NewSession, OpenProject},
+        window::chrome,
+        window::root::{self, CommitName, Cydonia, DismissName, NewSession, OpenProject},
     },
 };
 use artifact::board::View;

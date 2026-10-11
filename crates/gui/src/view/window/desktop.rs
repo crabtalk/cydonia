@@ -4,7 +4,7 @@
 
 use crate::view::{
     kit::dialog::{answers, dialog},
-    root::Cydonia,
+    window::root::Cydonia,
 };
 use bezel::{
     gpui::{AnyElement, Context, Window, prelude::*},

@@ -10,7 +10,7 @@ use crate::{
     },
     view::{
         board::card_title,
-        entry_link::link,
+        kit::link::link,
         kit::{icon::kind_icon, text::untitled},
         sidebar::Row,
     },
@@ -33,7 +33,7 @@ const CARD_TITLE: usize = 48;
 
 /// The mark every `cydonia://` chip paints. Inline chips paint only a glyph's
 /// SVG, in the text colour — a file icon paints nothing there.
-const MARK: Icon = Icon::glyph(include_bytes!("../../assets/mark.svg"));
+const MARK: Icon = Icon::glyph(include_bytes!("../../../../assets/mark.svg"));
 
 #[derive(Clone)]
 pub(crate) struct Linkable {
@@ -528,7 +528,7 @@ fn by_prefix(
 /// the heading. A card paints its title — see [`card_chip_title`] — and handle. A link naming no entry
 /// paints the reference and the app's mark.
 pub(crate) fn preview(url: &str, cx: &App) -> Option<Preview> {
-    let reference = url.strip_prefix(crate::view::entry_link::SCHEME)?;
+    let reference = url.strip_prefix(crate::view::kit::link::SCHEME)?;
     let Some(resolved) = crate::model::workspace::references::resolve_in(reference, cx) else {
         return Some(Preview {
             title: Some(SharedString::from(reference.to_owned())),
@@ -558,9 +558,9 @@ pub(crate) fn preview(url: &str, cx: &App) -> Option<Preview> {
 }
 
 #[cfg(test)]
-#[path = "../../tests/unit/mention_rank.rs"]
+#[path = "../../../../tests/unit/mention_rank.rs"]
 mod rank_tests;
 
 #[cfg(test)]
-#[path = "../../tests/unit/mention_cards.rs"]
+#[path = "../../../../tests/unit/mention_cards.rs"]
 mod card_tests;

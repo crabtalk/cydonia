@@ -16,21 +16,25 @@
 //! because the menu bar holds its own copy of every equivalent — see
 //! [`menubar::refresh`].
 
+#[cfg(feature = "desktop")]
+pub mod hotkey;
+
 use crate::{
     model::settings::Shortcuts,
     view::{
         article::{self, ToggleOutline, TogglePlainText},
         board,
+        board::create,
+        board::info,
         component::{composer, ribbon},
-        create,
-        find::{FindNext, FindPrev},
-        info, menubar,
-        root::{
+        pane::find::{FindNext, FindPrev},
+        table,
+        window::menubar,
+        window::root::{
             self, CloseProject, GoBack, GoForward, NewArticle, NewBoard, NewSession,
             NewSessionNext, NewTable, NextEntry, OpenFiles, OpenProject, OpenReview, OpenSettings,
             PrevEntry, ToggleChanges, ToggleSidebar, ToggleTerminal,
         },
-        table,
     },
 };
 use bezel::{
@@ -441,10 +445,10 @@ pub fn bind_all(shortcuts: &Shortcuts, cx: &mut App) {
     // The app's own, every one of them scoped to a surface.
     cx.bind_keys(article::bindings());
     cx.bind_keys(board::bindings());
-    cx.bind_keys(super::drawer::bindings());
+    cx.bind_keys(super::pane::drawer::bindings());
     #[cfg(not(target_os = "linux"))]
     cx.bind_keys(super::component::browser::bindings());
-    cx.bind_keys(super::find::bindings());
+    cx.bind_keys(super::pane::find::bindings());
     cx.bind_keys(super::search::bindings());
     cx.bind_keys(composer::bindings());
     cx.bind_keys(create::bindings());

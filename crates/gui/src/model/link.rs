@@ -51,8 +51,8 @@ pub fn init(cx: &mut App) {
 }
 
 fn preview(url: &str, cx: &App) -> Option<Preview> {
-    if url.starts_with(crate::view::entry_link::SCHEME) {
-        return crate::view::mention::preview(url, cx);
+    if url.starts_with(crate::view::kit::link::SCHEME) {
+        return crate::view::kit::link::mention::preview(url, cx);
     }
     let mut entries = cache().lock().ok()?;
     match entries.get(url) {

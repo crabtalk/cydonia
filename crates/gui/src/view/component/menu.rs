@@ -1,7 +1,7 @@
 //! The `···` and `+` menus every sidebar row and column heading opens, and the
 //! one field that says which of them is showing.
 
-use crate::view::{root::Cydonia, sidebar::Row};
+use crate::view::{sidebar::Row, window::root::Cydonia};
 use bezel::{
     gpui::{
         self, AnyElement, Context, Div, Pixels, Point, SharedString, Stateful, Window, prelude::*,
@@ -49,7 +49,7 @@ pub(crate) enum Menu {
     /// The library's Agent heading.
     LibraryAgent,
     /// The label picker, by what it acts on.
-    Labels(crate::view::labels::Target),
+    Labels(crate::view::kit::labels::Target),
     /// The `···` in the pane header. Its own key rather than `Entry` of what
     /// the header is showing: that entry has a row in the sidebar too, and a
     /// key naming the entry would have one click open both of them.
@@ -69,7 +69,7 @@ pub(crate) enum Menu {
     /// shut the menu on every press.
     Lane(String),
     /// The agents on offer under `New session`, on the screen a project with
-    /// nothing open shows — see [`crate::view::root::Cydonia::launch`].
+    /// nothing open shows — see [`crate::view::window::root::Cydonia::launch`].
     Launch,
     /// The block picker on the article ribbon — see
     /// [`crate::view::component::ribbon`].

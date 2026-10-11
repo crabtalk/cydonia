@@ -9,6 +9,8 @@
 //!
 //! The link names the entry; deleting the block leaves the entry where it was.
 
+pub mod mention;
+
 use std::{path::Path, rc::Rc};
 
 use crate::{
@@ -23,9 +25,9 @@ use crate::{
         },
         detail::{Pointing, composer_agents},
         kit::{icon::kind_icon, text::untitled},
-        root::Cydonia,
         search::Linked,
         sidebar::Row,
+        window::root::Cydonia,
     },
 };
 use artifact::{kind::Kind, reference::Span};
@@ -120,7 +122,7 @@ pub(crate) fn leave_nested(cx: &mut App) {
 /// lists. Pressing it opens the link.
 fn nested_row(url: &str, cx: &App) -> AnyElement {
     let theme = Theme::of(cx).clone();
-    let preview = crate::view::mention::preview(url, cx);
+    let preview = crate::view::kit::link::mention::preview(url, cx);
     let title = preview
         .as_ref()
         .and_then(|preview| preview.title.clone())
@@ -947,7 +949,7 @@ impl Cydonia {
     pub(crate) fn sync_session_cards(&mut self, cx: &mut Context<Self>) {
         let workspace = self.workspace.read(cx);
         let items = slash_items();
-        let linkables = crate::view::mention::read(workspace);
+        let linkables = crate::view::kit::link::mention::read(workspace);
         let agents = composer_agents(workspace);
         let pointed: Vec<_> = self
             .session_cards

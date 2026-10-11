@@ -1,12 +1,12 @@
 //! The drawer a pane pulls up from its foot, holding one thing at a time: a
 //! board's card, or an entry a link names.
 //!
-//! The drawer is the pane's, held on its [`crate::view::leaf::Leaf`]; what it
+//! The drawer is the pane's, held on its [`crate::view::pane::leaf::Leaf`]; what it
 //! holds is a [`Peek`].
 
 use crate::{
     model::workspace::{Showing, references::Part},
-    view::{board::OpenCard, root::Cydonia, sidebar::Row},
+    view::{board::OpenCard, sidebar::Row, window::root::Cydonia},
 };
 use artifact::space::Member;
 use bezel::{

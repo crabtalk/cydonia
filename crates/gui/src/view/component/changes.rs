@@ -346,7 +346,7 @@ impl Render for Changes {
             .flex()
             .flex_col()
             .overflow_hidden()
-            .bg(crate::view::root::content_bg(&theme))
+            .bg(crate::view::window::root::content_bg(&theme))
             .when_some(message, |panel, message| {
                 panel.child(
                     div()

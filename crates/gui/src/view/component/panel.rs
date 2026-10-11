@@ -8,8 +8,8 @@ use super::browser::Browser;
 use super::terminal::{DirectoryChanged, Exited, Terminal};
 use super::{changes::Changes, file::FileView, files::Files};
 use crate::model::{settings::PanelTabs, workspace::Workspace};
-use crate::view::root::{Cydonia, ToggleChanges};
-use crate::view::{chrome, desktop::DesktopOnly};
+use crate::view::window::root::{Cydonia, ToggleChanges};
+use crate::view::{window::chrome, window::desktop::DesktopOnly};
 use bezel::{
     gpui::{
         self, AnyElement, Axis, Context, DragMoveEvent, Empty, Entity, Focusable, Render,
@@ -558,11 +558,15 @@ impl Panel {
             .map(|launch| {
                 let item = Item::action(launch.label()).with_icon(launch.icon());
                 match launch {
-                    Launch::Review => item.with_shortcut(&crate::view::root::OpenReview, window),
+                    Launch::Review => {
+                        item.with_shortcut(&crate::view::window::root::OpenReview, window)
+                    }
                     Launch::Terminal => item.with_shortcut_in(&NewTerminal, "SessionPanel", window),
                     #[cfg(not(target_os = "linux"))]
                     Launch::Browser => item,
-                    Launch::Files => item.with_shortcut(&crate::view::root::OpenFiles, window),
+                    Launch::Files => {
+                        item.with_shortcut(&crate::view::window::root::OpenFiles, window)
+                    }
                 }
             })
             .collect()
@@ -748,7 +752,7 @@ impl Render for Panel {
             .size_full()
             .flex()
             .flex_col()
-            .bg(crate::view::root::content_bg(&theme))
+            .bg(crate::view::window::root::content_bg(&theme))
             .key_context("SessionPanel")
             .track_focus(&self.focus)
             .on_mouse_down(
@@ -777,13 +781,13 @@ impl Render for Panel {
             }))
             .on_action(cx.listener(|this, _: &OpenFile, window, cx| this.files(window, cx)))
             .on_action(cx.listener(|this, _: &NewTerminal, window, cx| this.terminal(window, cx)))
-            .on_action(
-                cx.listener(|this, _: &crate::view::menubar::CloseWindow, window, cx| {
+            .on_action(cx.listener(
+                |this, _: &crate::view::window::menubar::CloseWindow, window, cx| {
                     if let Some(id) = this.strip.active().copied() {
                         this.close(id, window, cx);
                     }
-                }),
-            )
+                },
+            ))
             .on_action(cx.listener(|this, _: &CloseTab, window, cx| {
                 if let Some(id) = this.strip.active().copied() {
                     this.close(id, window, cx);
@@ -792,7 +796,7 @@ impl Render for Panel {
             .on_action(cx.listener(|this, _: &NextTab, window, cx| this.cycle(1, window, cx)))
             .on_action(cx.listener(|this, _: &PrevTab, window, cx| this.cycle(-1, window, cx)))
             .child(
-                crate::view::root::band()
+                crate::view::window::root::band()
                     .gap(px(6.))
                     // Always at the window's top right while it is up.
                     .when(right, |band| band.pr_0())
@@ -1278,7 +1282,7 @@ impl Cydonia {
         })
         .detach();
         cx.subscribe(&panel, |this, _, _: &OpenFeatures, cx| {
-            this.open_settings(crate::view::section::Section::Features, cx)
+            this.open_settings(crate::view::window::section::Section::Features, cx)
         })
         .detach();
         let tabs = self.workspace.read(cx).settings.features.panel;

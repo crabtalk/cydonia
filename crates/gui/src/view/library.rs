@@ -10,10 +10,10 @@ use crate::{
     model::{settings::Features, workspace::Showing},
     view::{
         component::menu::{self, Menu},
-        confirm::Doomed,
         kit::{icon::kind_icon, stamp},
-        root::Cydonia,
+        pane::confirm::Doomed,
         sidebar::{self, Row},
+        window::root::Cydonia,
     },
 };
 use artifact::kind::Kind;
@@ -35,7 +35,7 @@ use bezel::{
 };
 use std::{cell::Cell, collections::HashSet, ops::Range, path::PathBuf, rc::Rc};
 
-mod labels;
+mod column;
 
 /// The search field's width, and what the bar puts between its parts.
 const SEARCH: f32 = 240.;
@@ -464,7 +464,7 @@ impl Cydonia {
         let mut listings: Vec<Listing> = held
             .into_iter()
             .filter(|listing| {
-                !labelled || labels::passes(listing.labels.as_deref(), &library.labels)
+                !labelled || column::passes(listing.labels.as_deref(), &library.labels)
             })
             .collect();
         let query = library.query.read(cx).content().trim().to_owned();

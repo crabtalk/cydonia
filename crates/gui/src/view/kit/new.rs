@@ -5,7 +5,7 @@ use crate::{
     model::workspace::Workspace,
     view::{
         component::menu::{self, Act},
-        root::Cydonia,
+        window::root::Cydonia,
     },
 };
 use bezel::{

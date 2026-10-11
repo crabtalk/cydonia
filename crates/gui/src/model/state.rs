@@ -118,7 +118,7 @@ pub struct State {
     #[serde(default)]
     pub window: Option<Frame>,
     /// The palette's commands last run, most recent first, each as its menu
-    /// path and name — see [`crate::view::menubar::Command::key`].
+    /// path and name — see [`crate::view::window::menubar::Command::key`].
     #[serde(default)]
     pub commands: Vec<String>,
 }

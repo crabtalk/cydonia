@@ -1,5 +1,7 @@
 //! The article pane: one document, and the sidebar row that opens it.
 
+pub mod thread;
+
 use crate::{
     model::{article, workspace::Showing},
     view::{
@@ -8,11 +10,11 @@ use crate::{
             menu::{self, Menu},
             transcript::{MARK_AWAY, MARK_READING, MARK_VISIBLE},
         },
-        entry_link::SCHEME,
+        kit::labels::Target,
+        kit::link::SCHEME,
         kit::{stamp, text::grouped},
-        labels::Target,
-        root::{Cydonia, NewArticle},
         sidebar::{self, Row},
+        window::root::{Cydonia, NewArticle},
     },
 };
 use artifact::kind::Kind;
@@ -724,7 +726,7 @@ impl Cydonia {
             .thread_article(on, cx)
             .is_some_and(|path| self.workspace.read(cx).thread_reachable(&path))
         {
-            true => f32::from(article.composer.get()) + crate::view::root::COMPOSER_BOTTOM,
+            true => f32::from(article.composer.get()) + crate::view::window::root::COMPOSER_BOTTOM,
             false => 0.,
         };
         let margin = self.margin(project, at, &editor, cx);

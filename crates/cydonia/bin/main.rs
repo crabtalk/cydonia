@@ -8,7 +8,7 @@ use bezel::{gpui::App, gpui_platform};
 use gui::{
     agent, boot,
     model::{media, migrate, notify, settings, state, update, welcome},
-    view::{hotkey, menubar, root},
+    view::{keymap::hotkey, window::menubar, window::root},
 };
 
 /// What the system knows this app as, matching `CFBundleIdentifier` in
@@ -58,7 +58,7 @@ fn main() -> Result<()> {
         notify::on_response(cx);
         boot::init(&settings, cx);
         // And the one key the app does not hold itself, which is nothing at
-        // all until somebody asks for one — see [`gui::view::hotkey`].
+        // all until somebody asks for one — see [`gui::view::keymap::hotkey`].
         hotkey::apply(settings.shortcuts.activate(), cx);
         // Where a pasted screenshot's bytes go, which is the app's to say.
         media::init(settings.pasting(), cx);

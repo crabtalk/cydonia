@@ -4,7 +4,7 @@
 use cydonia_gui::{
     model::settings::{Settings, Shortcuts},
     view::{
-        hotkey,
+        keymap::hotkey,
         keymap::{self, Command},
     },
 };

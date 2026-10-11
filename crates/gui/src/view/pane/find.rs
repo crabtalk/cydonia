@@ -2,7 +2,7 @@
 //!
 //! The board's find narrows its cards instead — see
 //! [`crate::view::board::FindCard`]. Both share the pane's find field and
-//! [`crate::view::leaf::Leaf::finding`].
+//! [`crate::view::pane::leaf::Leaf::finding`].
 //!
 //! Hits are looked for in the rendered text of each block, the text a reader
 //! sees, not in the markdown source.
@@ -10,7 +10,7 @@
 use crate::view::{
     board::{self, DismissFind},
     component::transcript,
-    root::Cydonia,
+    window::root::Cydonia,
 };
 use artifact::{kind::Kind, search::Query, space::Member};
 use bezel::{
@@ -440,5 +440,5 @@ fn current(at: usize, len: usize) -> Option<usize> {
 }
 
 #[cfg(test)]
-#[path = "../../tests/unit/find.rs"]
+#[path = "../../../tests/unit/find.rs"]
 mod tests;

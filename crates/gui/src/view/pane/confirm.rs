@@ -5,8 +5,8 @@ use crate::{
     model::workspace::Showing,
     view::{
         kit::dialog::{answers, dialog},
-        root::Cydonia,
         sidebar::{Group, Row},
+        window::root::Cydonia,
     },
 };
 use bezel::{
