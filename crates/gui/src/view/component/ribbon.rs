@@ -10,12 +10,8 @@
 //! block is called, and whether code here means a fence — and because the
 //! editor cannot know that this app has spent `cmd-b` elsewhere.
 //!
-//! What it offers is what markdown spells: bold, italic, strikethrough, code
-//! and a link. Notion's own bar carries underline, a highlight and a colour
-//! too, and none of the three has a spelling CommonMark reads — see
-//! `markdown::Marks`. A document written with a delimiter this app invented is
-//! a document only this app can read back, and these are files on somebody's
-//! disk.
+//! What it offers: bold, italic, strikethrough, code, a highlight
+//! (`==text==`, [`editor::HIGHLIGHT_MARK`]) and a link.
 
 use crate::view::{
     component::menu::{self, Menu},
