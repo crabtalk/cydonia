@@ -5,7 +5,7 @@
 //! the backend: the memory project [`seed`] put at a path, else the files
 //! there.
 
-use anyhow::Result;
+use artifact::project::Result;
 use artifact::{
     article::{Article, comments::Comments, properties::Properties},
     board::Board,

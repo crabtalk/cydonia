@@ -16,6 +16,8 @@ default = ["sqlite"]
 # tables (`data.db`). Off, the crate links for wasm32; the filesystem backend
 # then has no numbers to give.
 sqlite = ["dep:rusqlite"]
+# Importing a cover: decoding a picture and resampling it to `cover::WIDTH`.
+pictures = ["dep:image"]
 
 [dependencies]
 anyhow.workspace = true
@@ -25,6 +27,7 @@ regex.workspace = true
 rusqlite = { workspace = true, optional = true }
 cacp.workspace = true
 dirs.workspace = true
+image = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

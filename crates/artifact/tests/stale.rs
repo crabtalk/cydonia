@@ -4,7 +4,10 @@
 mod common;
 
 use common::Scratch;
-use cydonia_artifact::project::{Project, Stale, memory};
+use cydonia_artifact::{
+    error::Error,
+    project::{Project, memory},
+};
 
 fn two_writers(store: &impl Project) {
     let made = store.create_board("Plans", "PLAN").unwrap();
@@ -16,7 +19,7 @@ fn two_writers(store: &impl Project) {
 
     second.name = "Second".into();
     let refused = store.save_board(&mut second).unwrap_err();
-    assert!(refused.is::<Stale>(), "{refused}");
+    assert!(matches!(refused, Error::Stale), "{refused}");
     assert_eq!(store.board(&made.id).unwrap().name, "First");
 
     let mut fresh = store.board(&made.id).unwrap();
@@ -33,7 +36,10 @@ fn gone(store: &impl Project) {
     let made = store.create_board("Plans", "PLAN").unwrap();
     let mut held = store.board(&made.id).unwrap();
     store.remove_board(&made.id).unwrap();
-    assert!(store.save_board(&mut held).unwrap_err().is::<Stale>());
+    assert!(matches!(
+        store.save_board(&mut held).unwrap_err(),
+        Error::Stale
+    ));
     assert!(store.board(&made.id).is_none());
 }
 
@@ -75,6 +81,9 @@ fn a_hand_edit_makes_a_held_copy_stale() {
     let text = std::fs::read_to_string(&file).unwrap();
     std::fs::write(&file, text.replace("Plans", "Edited")).unwrap();
     held.name = "Mine".into();
-    assert!(store.save_board(&mut held).unwrap_err().is::<Stale>());
+    assert!(matches!(
+        store.save_board(&mut held).unwrap_err(),
+        Error::Stale
+    ));
     assert_eq!(store.board(&made.id).unwrap().name, "Edited");
 }

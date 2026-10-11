@@ -136,8 +136,10 @@ fn board(name: &str, key: &str, columns: &[&str]) -> board::Board {
 /// came out of.
 #[test]
 fn a_card_takes_the_handle_of_the_board_it_lands_on() {
-    let mut from = board("Roadmap", "ROAD", &["TODO", "DOING"]);
+    // Made first: ids are minted from the clock, and a card minted in the
+    // millisecond `to`'s lanes were would collide with one and be renamed.
     let mut to = board("Plans", "PLAN", &["DOING", "TODO"]);
+    let mut from = board("Roadmap", "ROAD", &["TODO", "DOING"]);
     let doing = from.columns[1].id.clone();
     let card = from.add_card(&doing, "ship it".into()).unwrap().id.clone();
 

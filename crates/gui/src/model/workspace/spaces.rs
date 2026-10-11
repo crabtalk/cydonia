@@ -456,7 +456,7 @@ impl Workspace {
             Kind::Article => open
                 .articles
                 .iter()
-                .any(|article| article.archived && article.path.to_string_lossy() == member.id),
+                .any(|article| article.archived && article.id == member.id),
             Kind::Table => open
                 .tables
                 .iter()
@@ -533,11 +533,7 @@ impl Workspace {
                 live.push(Member::new(path.clone(), Kind::Board, board.id.clone()));
             }
             for article in &open.articles {
-                live.push(Member::new(
-                    path.clone(),
-                    Kind::Article,
-                    article.path.to_string_lossy().into_owned(),
-                ));
+                live.push(Member::new(path.clone(), Kind::Article, article.id.clone()));
             }
             for table in &open.tables {
                 live.push(Member::new(path.clone(), Kind::Table, table.key.clone()));
@@ -566,28 +562,7 @@ impl Workspace {
             .iter()
             .position(|open| open.path == member.project)?;
         let open = self.projects.get(at)?;
-        let showing = match member.kind {
-            Kind::Session => open
-                .sessions
-                .iter()
-                .find(|chat| chat.record.as_deref() == Some(member.id.as_str()))
-                .map(|chat| Showing::Session(chat.id))?,
-            Kind::Board => open
-                .boards
-                .iter()
-                .find(|board| board.id == member.id)
-                .map(|board| Showing::Board(board.id.clone()))?,
-            Kind::Article => open
-                .articles
-                .iter()
-                .find(|article| article.path.to_string_lossy() == member.id)
-                .map(|article| Showing::Article(article.id.clone()))?,
-            Kind::Table => open
-                .tables
-                .iter()
-                .find(|table| table.key == member.id)
-                .map(|table| Showing::Table(table.key.clone()))?,
-        };
+        let showing = open.stored(member.kind, &member.id)?;
         Some((at, showing))
     }
 
@@ -610,10 +585,7 @@ impl Workspace {
             Showing::Article(id) => Member::new(
                 path,
                 Kind::Article,
-                open.articles[open.article_ix(&id)?]
-                    .path
-                    .to_string_lossy()
-                    .into_owned(),
+                open.articles[open.article_ix(&id)?].id.clone(),
             ),
             Showing::Table(key) => {
                 open.table_ix(&key)?;

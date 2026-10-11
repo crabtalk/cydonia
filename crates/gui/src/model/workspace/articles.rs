@@ -65,10 +65,7 @@ impl Workspace {
         };
         article.open(text_size, cx);
         self.projects[project].article = Some(ix);
-        let id = self.projects[project].articles[ix]
-            .path
-            .to_string_lossy()
-            .into_owned();
+        let id = self.projects[project].articles[ix].id.clone();
         self.active = Some(project);
         self.remember(project, Kind::Article, id, cx);
         cx.notify();

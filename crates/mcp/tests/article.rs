@@ -181,8 +181,9 @@ fn a_cover_is_filed_in_the_articles_assets_and_replaced_whole() {
             .expect("the article's own assets"),
     );
 
+    // Twice as wide as a cover is kept: it comes in resampled.
     let drawn = scratch.path().join("drawn.png");
-    std::fs::write(&drawn, b"not really a png").unwrap();
+    image::RgbImage::new(3000, 1200).save(&drawn).unwrap();
     let text = said(server.call(
         "article_set_cover",
         json!({ "project": scratch.path(), "article": "Notes", "image": "drawn.png" }),
@@ -201,10 +202,12 @@ fn a_cover_is_filed_in_the_articles_assets_and_replaced_whole() {
     let first = covers(&folder);
     assert_eq!(first.len(), 1, "one cover: {first:?}");
     assert!(first[0].ends_with(".png"), "{first:?}");
+    let filed = image::image_dimensions(folder.join(&first[0])).unwrap();
+    assert_eq!(filed, (1500, 600));
 
     // A second one takes the first's place rather than standing beside it.
     let other = scratch.path().join("other.jpg");
-    std::fs::write(&other, b"nor this").unwrap();
+    image::RgbImage::new(40, 16).save(&other).unwrap();
     said(server.call(
         "article_set_cover",
         json!({ "project": scratch.path(), "article": "Notes", "image": "other.jpg" }),
@@ -242,6 +245,25 @@ fn a_cover_that_is_not_there_is_refused() {
         None,
     ));
     assert!(why.contains("no picture at"), "{why}");
+}
+
+/// A file that is no picture is refused, and the article keeps no cover.
+#[test]
+fn a_cover_that_is_no_picture_is_refused() {
+    let scratch = Scratch::new("cover-not-a-picture");
+    let server = scratch.server();
+    said(server.call(
+        "article_add",
+        json!({ "project": scratch.path(), "title": "Notes", "text": "# Notes" }),
+        None,
+    ));
+    std::fs::write(scratch.path().join("notes.png"), b"not a picture").unwrap();
+    let why = refused(server.call(
+        "article_set_cover",
+        json!({ "project": scratch.path(), "article": "Notes", "image": "notes.png" }),
+        None,
+    ));
+    assert!(why.contains("the cover cannot be written"), "{why}");
 }
 
 /// Archiving is reversible and deleting is not, which is the whole reason they

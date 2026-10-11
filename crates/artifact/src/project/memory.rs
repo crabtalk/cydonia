@@ -6,6 +6,7 @@
 //! Tables (`data.db`) are not part of it. Article covers are not carried: an
 //! [`Article`] from here has no cover.
 
+use crate::error::Error;
 use crate::kind::Kind;
 use crate::{
     article::{
@@ -19,7 +20,7 @@ use crate::{
     session::record::Record,
     stamp,
 };
-use anyhow::{Result, anyhow, bail};
+use anyhow::anyhow;
 use std::{
     cmp::Reverse,
     collections::{BTreeMap, HashMap, HashSet},
@@ -221,10 +222,10 @@ impl State {
         }
     }
 
-    fn article(&mut self, id: &str) -> Result<&mut Held> {
+    fn article(&mut self, id: &str) -> super::Result<&mut Held> {
         self.articles
             .get_mut(id)
-            .ok_or_else(|| anyhow!("no article {id}"))
+            .ok_or_else(|| not_found("article", id))
     }
 
     fn describe(&self, id: &str, held: &Held) -> Article {
@@ -267,7 +268,7 @@ impl super::Project for Project {
         Some(board)
     }
 
-    fn create_board(&self, name: &str, key: &str) -> Result<Board> {
+    fn create_board(&self, name: &str, key: &str) -> super::Result<Board> {
         let mut state = self.state();
         let mut board = Board::new(id::mint(), name);
         board.created = stamp::named(&board.id);
@@ -285,12 +286,12 @@ impl super::Project for Project {
         Ok(board)
     }
 
-    fn save_board(&self, board: &mut Board) -> Result<()> {
+    fn save_board(&self, board: &mut Board) -> super::Result<()> {
         let mut state = self.state();
         if let Some(seen) = &board.version
             && (!state.boards.contains_key(&board.id) || *seen != state.version(&board.id))
         {
-            return Err(super::Stale.into());
+            return Err(crate::error::Error::Stale);
         }
         *state.writes.entry(board.id.clone()).or_default() += 1;
         board.touched = stamp::now();
@@ -299,12 +300,12 @@ impl super::Project for Project {
         Ok(())
     }
 
-    fn remove_board(&self, id: &str) -> Result<()> {
+    fn remove_board(&self, id: &str) -> super::Result<()> {
         let mut state = self.state();
         state
             .boards
             .remove(id)
-            .ok_or_else(|| anyhow!("no board {id}"))?;
+            .ok_or_else(|| not_found("board", id))?;
         state.retire(Kind::Board, id);
         Ok(())
     }
@@ -332,23 +333,23 @@ impl super::Project for Project {
         Some(record)
     }
 
-    fn create_session(&self) -> Result<String> {
+    fn create_session(&self) -> super::Result<String> {
         Ok(stamp::fresh().to_string())
     }
 
-    fn save_session(&self, record: &Record) -> Result<()> {
+    fn save_session(&self, record: &Record) -> super::Result<()> {
         self.state()
             .sessions
             .insert(record.id.clone(), record.clone());
         Ok(())
     }
 
-    fn remove_session(&self, id: &str) -> Result<()> {
+    fn remove_session(&self, id: &str) -> super::Result<()> {
         let mut state = self.state();
         state
             .sessions
             .remove(id)
-            .ok_or_else(|| anyhow!("no session {id}"))?;
+            .ok_or_else(|| not_found("session", id))?;
         state.retire(Kind::Session, id);
         Ok(())
     }
@@ -369,7 +370,7 @@ impl super::Project for Project {
         state.articles.get(id).map(|held| state.describe(id, held))
     }
 
-    fn create_article(&self, markdown: &str) -> Result<Article> {
+    fn create_article(&self, markdown: &str) -> super::Result<Article> {
         let mut state = self.state();
         let id = stamp::free(stamp::now(), |id| state.articles.contains_key(id));
         let held = Held {
@@ -382,11 +383,11 @@ impl super::Project for Project {
         Ok(article)
     }
 
-    fn read_article(&self, id: &str) -> Result<String> {
+    fn read_article(&self, id: &str) -> super::Result<String> {
         Ok(self.state().article(id)?.markdown.clone())
     }
 
-    fn write_article(&self, id: &str, markdown: &str) -> Result<()> {
+    fn write_article(&self, id: &str, markdown: &str) -> super::Result<()> {
         let mut state = self.state();
         let held = state.article(id)?;
         held.comments.remap(&held.markdown, markdown);
@@ -403,7 +404,7 @@ impl super::Project for Project {
             .unwrap_or_default()
     }
 
-    fn save_comments(&self, id: &str, comments: &Comments) -> Result<()> {
+    fn save_comments(&self, id: &str, comments: &Comments) -> super::Result<()> {
         let mut state = self.state();
         let held = state.article(id)?;
         held.comments = comments.clone();
@@ -419,7 +420,7 @@ impl super::Project for Project {
             .unwrap_or_default()
     }
 
-    fn save_properties(&self, id: &str, properties: &Properties) -> Result<()> {
+    fn save_properties(&self, id: &str, properties: &Properties) -> super::Result<()> {
         let mut state = self.state();
         let held = state.article(id)?;
         held.properties = properties::apply(&held.properties, properties).unwrap_or_default();
@@ -427,29 +428,29 @@ impl super::Project for Project {
         Ok(())
     }
 
-    fn remove_article(&self, id: &str) -> Result<()> {
+    fn remove_article(&self, id: &str) -> super::Result<()> {
         let mut state = self.state();
         state
             .articles
             .remove(id)
-            .ok_or_else(|| anyhow!("no article {id}"))?;
+            .ok_or_else(|| not_found("article", id))?;
         state.retire(Kind::Article, id);
         Ok(())
     }
 
-    fn asset(&self, id: &str, name: &str) -> Result<Vec<u8>> {
+    fn asset(&self, id: &str, name: &str) -> super::Result<Vec<u8>> {
         let mut state = self.state();
         state
             .article(id)?
             .assets
             .get(name)
             .cloned()
-            .ok_or_else(|| anyhow!("no asset {name} in article {id}"))
+            .ok_or_else(|| not_found("asset", name))
     }
 
-    fn put_asset(&self, id: &str, name: &str, bytes: &[u8]) -> Result<()> {
+    fn put_asset(&self, id: &str, name: &str, bytes: &[u8]) -> super::Result<()> {
         if name.is_empty() || name.contains(['/', '\\']) || name == "." || name == ".." {
-            bail!("{name:?} is not a name");
+            return Err(anyhow!("{name:?} is not a name").into());
         }
         let mut state = self.state();
         state
@@ -459,11 +460,11 @@ impl super::Project for Project {
         Ok(())
     }
 
-    fn number(&self, kind: Kind, id: &str) -> Result<u64> {
+    fn number(&self, kind: Kind, id: &str) -> super::Result<u64> {
         Ok(self.state().number(kind, id))
     }
 
-    fn resolve(&self, kind: Kind, number: u64) -> Result<Option<String>> {
+    fn resolve(&self, kind: Kind, number: u64) -> super::Result<Option<String>> {
         Ok(self
             .state()
             .issued
@@ -472,8 +473,15 @@ impl super::Project for Project {
             .and_then(|(_, id)| id.clone()))
     }
 
-    fn retire(&self, kind: Kind, id: &str) -> Result<()> {
+    fn retire(&self, kind: Kind, id: &str) -> super::Result<()> {
         self.state().retire(kind, id);
         Ok(())
+    }
+}
+
+fn not_found(what: &'static str, named: &str) -> Error {
+    Error::NotFound {
+        what,
+        named: named.to_owned(),
     }
 }

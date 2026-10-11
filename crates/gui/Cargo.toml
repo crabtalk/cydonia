@@ -14,7 +14,7 @@ categories = ["gui", "development-tools"]
 name = "cydonia_gui"
 
 [dependencies]
-artifact.workspace = true
+artifact = { workspace = true, features = ["pictures"] }
 anyhow.workspace = true
 base64.workspace = true
 bezel.workspace = true

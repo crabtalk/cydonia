@@ -30,11 +30,30 @@ pub enum Sort {
 
 /// One remembered entry: which kind, and which of them.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(from = "Written")]
 pub struct Entry {
     pub kind: Kind,
-    /// The file the entry is, or a table's key. An index would drift as
-    /// siblings are added and removed between launches.
+    /// The entry's id — a session's record, a board's or an article's id, a
+    /// table's key. An index would drift as siblings are added and removed
+    /// between launches.
     pub id: String,
+}
+
+/// An [`Entry`] as `state.toml` holds it, before its id is read — see
+/// [`artifact::article::stored_id`].
+#[derive(Deserialize)]
+struct Written {
+    kind: Kind,
+    id: String,
+}
+
+impl From<Written> for Entry {
+    fn from(written: Written) -> Self {
+        Self {
+            kind: written.kind,
+            id: artifact::article::stored_id(written.kind, written.id),
+        }
+    }
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]

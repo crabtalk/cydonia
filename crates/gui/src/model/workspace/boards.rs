@@ -6,7 +6,7 @@
 use super::*;
 use artifact::error::{Act, Error};
 use artifact::kind::Kind;
-use artifact::project::{Project as _, Stale};
+use artifact::project::Project as _;
 
 impl Workspace {
     /// Save a draft against the latest disk contents, preserving other card fields.
@@ -38,7 +38,7 @@ impl Workspace {
                 return Err(error);
             }
             match store.save_board(&mut board) {
-                Err(error) if error.is::<Stale>() => continue,
+                Err(Error::Stale) => continue,
                 _ => break,
             }
         }
@@ -321,7 +321,7 @@ impl Workspace {
     /// when the edit changed it — and answer whatever the edit did. Nothing
     /// where no open project holds that board.
     ///
-    /// A save refused as [`Stale`] — another writer saved the board since it
+    /// A save refused as [`Error::Stale`] — another writer saved the board since it
     /// was read — takes the board as the backend now holds it, applies the
     /// same edit to that, and saves it once more. A board removed in the
     /// meantime keeps the edit in memory only.
@@ -347,15 +347,12 @@ impl Workspace {
             if serde_json::to_value(&*board).ok() == before {
                 return Some(done);
             }
-            match store.save_board(board) {
-                Err(error) if error.is::<Stale>() => {
-                    if let Some(mut fresh) = store.board(id) {
-                        done = edit(&mut fresh);
-                        let _ = store.save_board(&mut fresh);
-                        *board = fresh;
-                    }
-                }
-                _ => {}
+            if let Err(Error::Stale) = store.save_board(board)
+                && let Some(mut fresh) = store.board(id)
+            {
+                done = edit(&mut fresh);
+                let _ = store.save_board(&mut fresh);
+                *board = fresh;
             }
             return Some(done);
         }
@@ -424,9 +421,7 @@ impl Workspace {
             self.projects.get(to.0)?.store(),
         );
         source_store.carry_card_files(&source.id, card, &landing_store, &landing.id, &landed.id);
-        if let Err(error) = landing_store.save_board(&mut landing)
-            && error.is::<Stale>()
-        {
+        if let Err(Error::Stale) = landing_store.save_board(&mut landing) {
             source = source_store.board(&source.id)?;
             landing = landing_store.board(&landing.id)?;
             landed = artifact::board::carry_card(&mut source, &mut landing, card, column)?;

@@ -194,29 +194,24 @@ impl Workspace {
         let Some(project) = self.projects.get_mut(ix) else {
             return;
         };
-        let at = |path: Option<&Path>| path.is_some_and(|path| path.to_string_lossy() == id);
+        let showing = project.stored(kind, &id);
+        let at = showing.as_ref().and_then(|showing| project.ix_of(showing));
         match kind {
             Kind::Session => {
-                project.active = project
-                    .sessions
-                    .iter()
-                    .find(|chat| chat.record.as_deref() == Some(id.as_str()))
-                    .map(|chat| chat.id);
+                project.active = match showing {
+                    Some(Showing::Session(id)) => Some(id),
+                    _ => None,
+                };
             }
-            Kind::Board => {
-                project.board = project.boards.iter().position(|board| board.id == id);
-            }
+            Kind::Board => project.board = at,
             Kind::Article => {
-                project.article = project
-                    .articles
-                    .iter()
-                    .position(|article| at(Some(&article.path)));
+                project.article = at;
                 if let Some(at) = project.article {
                     project.articles[at].open(text_size, cx);
                 }
             }
             Kind::Table => {
-                project.table = project.table_ix(&id);
+                project.table = at;
                 project.reload_page();
             }
         }

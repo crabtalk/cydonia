@@ -336,6 +336,22 @@ impl Project {
     }
 
     /// Where the entry `showing` names is listed among its kind.
+    /// The entry a stored id names: a session by its record, every other kind
+    /// by its id or key.
+    pub fn stored(&self, kind: Kind, id: &str) -> Option<Showing> {
+        Some(match kind {
+            Kind::Session => Showing::Session(
+                self.sessions
+                    .iter()
+                    .find(|chat| chat.record.as_deref() == Some(id))?
+                    .id,
+            ),
+            Kind::Board => Showing::Board(self.boards[self.board_ix(id)?].id.clone()),
+            Kind::Article => Showing::Article(self.articles[self.article_ix(id)?].id.clone()),
+            Kind::Table => Showing::Table(self.tables[self.table_ix(id)?].key.clone()),
+        })
+    }
+
     /// What the entry `showing` names carries, whatever its kind.
     pub fn facts(&self, showing: &Showing) -> Option<Facts> {
         Some(self.facts_at(showing.kind(), self.ix_of(showing)?))

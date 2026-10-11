@@ -84,6 +84,16 @@ pub fn id_of(content: &Path) -> String {
         .map_or_else(crate::id::mint, str::to_owned)
 }
 
+/// An entry's id as a file written by hand or by an older cydonia names it.
+/// Files written before article ids named an article by the path of its
+/// `content.md`; that reads as the article's id.
+pub fn stored_id(kind: crate::kind::Kind, written: String) -> String {
+    match kind == crate::kind::Kind::Article && written.contains(['/', '\\']) {
+        true => id_of(Path::new(&written)),
+        false => written,
+    }
+}
+
 /// This millisecond's directory, or the first after it that is not taken. Two
 /// articles made inside one millisecond is the only way that happens.
 pub fn free(dir: &Path, stamp: u128) -> PathBuf {
@@ -135,7 +145,7 @@ pub fn move_to(content: &Path, to: &Path) -> std::io::Result<PathBuf> {
 /// article `landed` there. Each keeps its id where `to` has it free.
 fn carry_sessions(id: &str, from: &Path, landed: &str, to: &Path) -> std::io::Result<()> {
     let (source, target) = (fs::Project::new(from), fs::Project::new(to));
-    let failed = |e: anyhow::Error| std::io::Error::other(e.to_string());
+    let failed = |e: crate::error::Error| std::io::Error::other(e.to_string());
     for mut record in source.sessions() {
         if record.article.as_deref() != Some(id) {
             continue;

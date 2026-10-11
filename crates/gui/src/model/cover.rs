@@ -8,8 +8,6 @@
 //! path — a shuffle that rewrote the same name would repaint the picture it had
 //! just replaced.
 
-use anyhow::Result;
-use image::imageops::FilterType;
 use std::{
     f64::consts::SQRT_2,
     path::{Path, PathBuf},
@@ -122,18 +120,6 @@ pub fn seed(article: &Path, current: Option<&Path>) -> u64 {
     // Short enough to read: these names sit in a directory people open, and a
     // twenty-digit one buries the document's own name.
     seed % SEEDS
-}
-
-/// Bring a picked image in, no wider than [`WIDTH`]. Written back in the format
-/// its extension names, so a photo stays a JPEG instead of becoming a PNG
-/// twenty times its size.
-pub fn import(source: &Path, to: &Path) -> Result<()> {
-    let picture = image::open(source)?;
-    let picture = match picture.width() > WIDTH {
-        true => picture.resize(WIDTH, u32::MAX, FilterType::Lanczos3),
-        false => picture,
-    };
-    Ok(picture.save(to)?)
 }
 
 /// The picture: squares cut on a grid, massed at one corner and thinning out

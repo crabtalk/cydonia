@@ -5,7 +5,7 @@
 //! numbers. What a member really is, and where a space is kept, is the app's
 //! — see `cydonia`'s own space tests.
 
-use cydonia_artifact::space::{Axis, Node, Side};
+use cydonia_artifact::space::{Axis, Member, Node, Side};
 /// Evening a split shares the room out, and reaches the splits inside it.
 #[test]
 fn evening_shares_the_room() {
@@ -816,4 +816,27 @@ fn stack_of(tree: &Node<u64>, entry: u64) -> Vec<u64> {
     tree.at_path(&tree.path_to(&entry).unwrap())
         .unwrap()
         .stack()
+}
+
+/// A member written before article ids named an article by its `content.md`;
+/// it reads back as the article's id. Every other kind is read as written.
+#[test]
+fn an_article_member_written_as_a_path_reads_as_its_id() {
+    let written = r#"
+project = "/work/site"
+kind = "article"
+id = "/work/site/.cydonia/articles/1789958219063/content.md"
+"#;
+    let member: Member = toml::from_str(written).unwrap();
+    assert_eq!(member.id, "1789958219063");
+
+    let board: Member = toml::from_str(
+        r#"
+project = "/work/site"
+kind = "board"
+id = "a/b"
+"#,
+    )
+    .unwrap();
+    assert_eq!(board.id, "a/b");
 }

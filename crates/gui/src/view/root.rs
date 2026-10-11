@@ -693,11 +693,6 @@ impl Cydonia {
         let shown = shown
             .into_iter()
             .map(|mut entry| {
-                // The window names an article by its `content.md`; the tools
-                // name it by its id.
-                if entry.kind == Kind::Article {
-                    entry.id = artifact::article::id_of(&entry.project.join(&entry.id));
-                }
                 // A lone entry beside a focused chat is still the one in front.
                 entry.focused |= lone;
                 entry

@@ -620,25 +620,8 @@ impl Cydonia {
                     .projects
                     .iter()
                     .find(|open| open.path == found.root)?;
-                let (showing, touched) = match found.kind {
-                    Kind::Article => {
-                        let ix = open.article_ix(&found.id)?;
-                        (Showing::Article(found.id), open.articles[ix].touched)
-                    }
-                    Kind::Board => {
-                        let ix = open.board_ix(&found.id)?;
-                        (Showing::Board(found.id), open.boards[ix].touched)
-                    }
-                    Kind::Session => {
-                        let chat = open
-                            .sessions
-                            .iter()
-                            .find(|chat| chat.record.as_deref() == Some(found.id.as_str()))?;
-                        (Showing::Session(chat.id), chat.touched())
-                    }
-                    // The text search reads no tables.
-                    Kind::Table => return None,
-                };
+                let showing = open.stored(found.kind, &found.id)?;
+                let touched = open.facts(&showing)?.touched;
                 let row = Row::Entry {
                     project: open.path.clone(),
                     showing,

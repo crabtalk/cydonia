@@ -56,6 +56,35 @@ pub enum Error {
     /// `named` names a heading the article does not have; it has `anchors`.
     #[error("{}", headless(named, anchors))]
     NoHeading { named: String, anchors: Vec<String> },
+
+    /// A write refused because what it was based on is no longer what the
+    /// backend holds: another writer got there first. Read again, apply the
+    /// change again, and save that.
+    #[error("it changed since it was read")]
+    Stale,
+
+    /// A failure underneath, in its own words.
+    #[error(transparent)]
+    Other(anyhow::Error),
+}
+
+/// An [`Error`] that went through `anyhow` comes back as itself.
+impl From<anyhow::Error> for Error {
+    fn from(error: anyhow::Error) -> Self {
+        error.downcast::<Error>().unwrap_or_else(Self::Other)
+    }
+}
+
+impl From<serde_json::Error> for Error {
+    fn from(error: serde_json::Error) -> Self {
+        Self::Other(error.into())
+    }
+}
+
+impl From<std::io::Error> for Error {
+    fn from(error: std::io::Error) -> Self {
+        Self::Other(error.into())
+    }
 }
 
 /// What was being done when [`Error::Failed`] happened.

@@ -654,10 +654,27 @@ impl<T: Clone + PartialEq> Node<T> {
 /// per project, so two projects' `#12` are different entries, and a member has
 /// to say which it means without reading either project's database.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "Written")]
 pub struct Member {
     pub project: std::path::PathBuf,
     pub kind: Kind,
     pub id: String,
+}
+
+/// A [`Member`] as a file holds it, before its id is read — see
+/// [`crate::article::stored_id`].
+#[derive(Deserialize)]
+struct Written {
+    project: std::path::PathBuf,
+    kind: Kind,
+    id: String,
+}
+
+impl From<Written> for Member {
+    fn from(written: Written) -> Self {
+        let id = crate::article::stored_id(written.kind, written.id);
+        Self::new(written.project, written.kind, id)
+    }
 }
 
 impl Member {

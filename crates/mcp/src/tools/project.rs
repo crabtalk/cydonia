@@ -230,7 +230,7 @@ fn label_entry(args: Args<'_>) -> Outcome {
     }
     let entry = super::entry_numbered(&project, number, named)?;
     let store = fs::Project::new(&project);
-    let refused = |e: anyhow::Error| Error::failed(named, Act::Written, e);
+    let refused = |e: Error| Error::failed(named, Act::Written, e);
     let gone = || Error::Gone {
         named: named.to_owned(),
     };

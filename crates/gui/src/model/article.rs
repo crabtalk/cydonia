@@ -703,7 +703,7 @@ impl Article {
             .and_then(|ext| ext.to_str())
             .map(str::to_ascii_lowercase)
             .and_then(|ext| cover::path(&self.path, seed, &ext));
-        if let Some(to) = to.filter(|to| cover::import(source, to).is_ok()) {
+        if let Some(to) = to.filter(|to| artifact::article::cover::import(source, to).is_ok()) {
             self.replace_cover(Some(to));
         }
     }

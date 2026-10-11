@@ -82,7 +82,7 @@ pub struct Board {
     #[serde(skip)]
     pub created: Option<u128>,
     /// What the backend held when this copy was read, as the backend spells
-    /// it. A save carrying one is refused with [`crate::project::Stale`] when
+    /// it. A save carrying one is refused with [`crate::error::Error::Stale`] when
     /// the backend has moved on since. `None` for a board not read from a
     /// backend, whose save is not checked.
     #[serde(skip)]

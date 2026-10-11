@@ -534,8 +534,9 @@ fn within(project: &Path, path: &Path) -> PathBuf {
 
 /// File a picture as the article's cover, or take the one it has off.
 ///
-/// The bytes are copied rather than moved: the source is the caller's, and a
-/// picture in the article's `assets/` is one it may well link to as well.
+/// The picture is imported rather than moved — see
+/// [`article::cover::import`]: the source is the caller's, and a picture in the
+/// article's `assets/` is one it may well link to as well.
 /// What was there before goes, which is what keeps one article to one cover —
 /// `cover::of` reads the first one it finds and a second would shadow it.
 fn set_cover(args: Args<'_>) -> Outcome {
@@ -573,8 +574,7 @@ fn set_cover(args: Args<'_>) -> Outcome {
     if article::cover::is_cover(&source) && source == to {
         return Ok(Answer::said(format!("{} keeps its cover", found.label())));
     }
-    std::fs::create_dir_all(article::assets(&found.content))
-        .and_then(|()| std::fs::copy(&source, &to))
+    article::cover::import(&source, &to)
         .map_err(|e| Error::failed("the cover", Act::Written, e))?;
     if let Some(old) = previous.filter(|old| *old != to) {
         let _ = std::fs::remove_file(old);

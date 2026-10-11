@@ -283,7 +283,7 @@ impl Project {
         let file = dir.join(layout::BOARD_FILE);
         let cards_dir = dir.join(layout::CARDS);
         if board.version.is_some() && !file.is_file() {
-            return Err(super::Stale.into());
+            return Err(crate::error::Error::Stale.into());
         }
         std::fs::create_dir_all(&cards_dir)?;
         let structure = layout::board_toml(board)?;
@@ -303,13 +303,13 @@ impl Project {
             .as_ref()
             .is_some_and(|seen| *seen != version(held.as_bytes()));
         if ours && theirs {
-            return Err(super::Stale.into());
+            return Err(crate::error::Error::Stale.into());
         }
         let held_ids: HashSet<String> = layout::card_ids(&held);
         let mut writes = Vec::new();
         for card in board.columns.iter().flat_map(|column| &column.cards) {
             if !ours && !held_ids.contains(&card.id) {
-                return Err(super::Stale.into());
+                return Err(crate::error::Error::Stale.into());
             }
             let path = document::content(&cards_dir.join(component(&card.id)?));
             let held = read_card_files(&path);
@@ -326,7 +326,7 @@ impl Project {
                     .as_ref()
                     != Some(seen)
             {
-                return Err(super::Stale.into());
+                return Err(crate::error::Error::Stale.into());
             }
             writes.push((
                 card.id.clone(),
@@ -541,7 +541,7 @@ impl super::Project for Project {
         boards
     }
 
-    fn create_board(&self, name: &str, key: &str) -> Result<Board> {
+    fn create_board(&self, name: &str, key: &str) -> super::Result<Board> {
         let dir = self.init()?.join(BOARDS);
         std::fs::create_dir_all(&dir)?;
         let mut board = Board::new(free_board(&dir, stamp::now()), name);
@@ -556,11 +556,11 @@ impl super::Project for Project {
         Ok(board)
     }
 
-    fn save_board(&self, board: &mut Board) -> Result<()> {
-        self.write_board(board)
+    fn save_board(&self, board: &mut Board) -> super::Result<()> {
+        Ok(self.write_board(board)?)
     }
 
-    fn remove_board(&self, id: &str) -> Result<()> {
+    fn remove_board(&self, id: &str) -> super::Result<()> {
         std::fs::remove_dir_all(self.board_dir(component(id)?))?;
         self.retire(Kind::Board, id)
     }
@@ -592,7 +592,7 @@ impl super::Project for Project {
     ///
     /// Unique within this process — see [`stamp::fresh`] — and clear of any
     /// file already in the directory, which `-2` settles.
-    fn create_session(&self) -> Result<String> {
+    fn create_session(&self) -> super::Result<String> {
         let dir = self.init()?.join(SESSIONS);
         std::fs::create_dir_all(&dir)?;
         Ok(id::suffixed(&stamp::fresh().to_string(), |id| {
@@ -600,13 +600,13 @@ impl super::Project for Project {
         }))
     }
 
-    fn save_session(&self, record: &Record) -> Result<()> {
+    fn save_session(&self, record: &Record) -> super::Result<()> {
         let body = serde_json::to_string_pretty(record)?;
         crate::fs::save(&self.session_file(&record.id), body)?;
         Ok(())
     }
 
-    fn remove_session(&self, id: &str) -> Result<()> {
+    fn remove_session(&self, id: &str) -> super::Result<()> {
         std::fs::remove_file(self.session_file(id))?;
         self.retire(Kind::Session, id)
     }
@@ -631,7 +631,7 @@ impl super::Project for Project {
             .map(|content| self.describe(&content))
     }
 
-    fn create_article(&self, markdown: &str) -> Result<Article> {
+    fn create_article(&self, markdown: &str) -> super::Result<Article> {
         let dir = article::init(&self.root)?;
         let landing = article::free(&dir, stamp::now());
         let content = article::content(&landing);
@@ -640,11 +640,11 @@ impl super::Project for Project {
         Ok(article)
     }
 
-    fn read_article(&self, id: &str) -> Result<String> {
+    fn read_article(&self, id: &str) -> super::Result<String> {
         Ok(std::fs::read_to_string(self.article_file(id)?)?)
     }
 
-    fn write_article(&self, id: &str, markdown: &str) -> Result<()> {
+    fn write_article(&self, id: &str, markdown: &str) -> super::Result<()> {
         document::write(&self.article_file(id)?, markdown)?;
         Ok(())
     }
@@ -655,7 +655,7 @@ impl super::Project for Project {
             .unwrap_or_default()
     }
 
-    fn save_comments(&self, id: &str, comments: &Comments) -> Result<()> {
+    fn save_comments(&self, id: &str, comments: &Comments) -> super::Result<()> {
         let content = self.article_file(id)?;
         let text = std::fs::read_to_string(&content)?;
         article::comments::save(&content, &text, comments)?;
@@ -668,24 +668,24 @@ impl super::Project for Project {
             .unwrap_or_default()
     }
 
-    fn save_properties(&self, id: &str, properties: &Properties) -> Result<()> {
+    fn save_properties(&self, id: &str, properties: &Properties) -> super::Result<()> {
         article::properties::save(&self.article_file(id)?, properties)?;
         Ok(())
     }
 
-    fn remove_article(&self, id: &str) -> Result<()> {
+    fn remove_article(&self, id: &str) -> super::Result<()> {
         article::remove(&self.article_file(id)?)?;
         Ok(())
     }
 
-    fn asset(&self, id: &str, name: &str) -> Result<Vec<u8>> {
+    fn asset(&self, id: &str, name: &str) -> super::Result<Vec<u8>> {
         let content = self.article_file(id)?;
         Ok(std::fs::read(
             article::assets(&content).join(component(name)?),
         )?)
     }
 
-    fn put_asset(&self, id: &str, name: &str, bytes: &[u8]) -> Result<()> {
+    fn put_asset(&self, id: &str, name: &str, bytes: &[u8]) -> super::Result<()> {
         let dir = article::assets(&self.article_file(id)?);
         crate::fs::save(&dir.join(component(name)?), bytes)?;
         Ok(())
@@ -720,25 +720,25 @@ impl super::Project for Project {
         }
     }
 
-    fn number(&self, kind: Kind, id: &str) -> Result<u64> {
+    fn number(&self, kind: Kind, id: &str) -> super::Result<u64> {
         #[cfg(feature = "sqlite")]
-        return entry::Registry::open(&self.root)?.number(kind, id);
+        return Ok(entry::Registry::open(&self.root)?.number(kind, id)?);
         #[cfg(not(feature = "sqlite"))]
-        no_numbers(kind, id)
+        Ok(no_numbers(kind, id)?)
     }
 
-    fn resolve(&self, kind: Kind, number: u64) -> Result<Option<String>> {
+    fn resolve(&self, kind: Kind, number: u64) -> super::Result<Option<String>> {
         #[cfg(feature = "sqlite")]
-        return entry::Registry::open(&self.root)?.resolve(kind, number);
+        return Ok(entry::Registry::open(&self.root)?.resolve(kind, number)?);
         #[cfg(not(feature = "sqlite"))]
-        no_numbers(kind, &number.to_string())
+        Ok(no_numbers(kind, &number.to_string())?)
     }
 
-    fn retire(&self, kind: Kind, id: &str) -> Result<()> {
+    fn retire(&self, kind: Kind, id: &str) -> super::Result<()> {
         #[cfg(feature = "sqlite")]
-        return entry::Registry::open(&self.root)?.remove(kind, id);
+        return Ok(entry::Registry::open(&self.root)?.remove(kind, id)?);
         #[cfg(not(feature = "sqlite"))]
-        no_numbers(kind, id)
+        Ok(no_numbers(kind, id)?)
     }
 }
 

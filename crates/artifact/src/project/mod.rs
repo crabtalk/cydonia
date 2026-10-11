@@ -19,21 +19,9 @@ use crate::{
     board::Board,
     session::record::Record,
 };
-use anyhow::Result;
 
-/// A write refused because what it was based on is no longer what the backend
-/// holds: another writer got there first. Read again, apply the change again,
-/// and save that.
-#[derive(Debug)]
-pub struct Stale;
-
-impl std::fmt::Display for Stale {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("it changed since it was read")
-    }
-}
-
-impl std::error::Error for Stale {}
+/// What a [`Project`] answers a write or a lookup with.
+pub type Result<T> = std::result::Result<T, crate::error::Error>;
 
 /// A watch a backend keeps up for as long as this is held.
 pub struct Watching {
@@ -69,7 +57,7 @@ pub trait Project {
 
     /// Write a board back, and take the time it was written at — the key the
     /// sidebar orders on, which only the backend knows — and the version it
-    /// now has. Refused with [`Stale`] when the board carries a version the
+    /// now has. Refused with [`crate::error::Error::Stale`] when the board carries a version the
     /// backend no longer holds, or when it is gone.
     fn save_board(&self, board: &mut Board) -> Result<()>;
 
