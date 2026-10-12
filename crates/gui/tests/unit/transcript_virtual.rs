@@ -63,7 +63,10 @@ fn long_session_renders_nearby_turns_and_navigates_without_losing_selection(
             let viewport = view.state.list.state.viewport_bounds();
             assert_eq!(viewport.left(), px(0.));
             assert_eq!(viewport.right(), px(width));
-            let (position, _) = view.state.layouts.borrow()[&1999]
+            let (position, _) = view
+                .state
+                .selection
+                .layouts(1999)
                 .position(
                     markdown::Cursor::new(0, markdown::Part::Body, 0),
                     markdown::Affinity::Downstream,
@@ -76,15 +79,15 @@ fn long_session_renders_nearby_turns_and_navigates_without_losing_selection(
         });
     }
     view.read_with(&visual, |view, _| {
-        assert!(view.state.layouts.borrow().len() < 100);
+        assert!(view.state.selection.laid_out() < 100);
         assert!(view.state.list.state.is_following_tail());
         view.state.list.scroll_to(300);
     });
     visual.update(|window, _| window.refresh());
     visual.run_until_parked();
     view.read_with(&visual, |view, _| {
-        assert!(view.state.layouts.borrow().contains_key(&600));
-        assert!(view.state.layouts.borrow().len() < 100);
+        assert!(view.state.selection.is_laid_out(600));
+        assert!(view.state.selection.laid_out() < 100);
         assert_eq!(view.state.list.state.logical_scroll_top().item_ix, 300);
     });
     workspace.update(&mut visual, |workspace, cx| {
@@ -114,7 +117,7 @@ fn long_session_renders_nearby_turns_and_navigates_without_losing_selection(
             );
             view.state.point(600, selectable::Pointer::Up, &doc);
         }
-        view.state.focus.borrow().get(&600).unwrap().clone()
+        view.state.selection.focus_of(600).unwrap()
     });
     visual.update(|window, cx| window.focus(&focus, cx));
     visual.run_until_parked();

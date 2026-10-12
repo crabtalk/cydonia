@@ -29,7 +29,7 @@ use bezel::{
         popover,
         surface::{self, Surfaced as _},
         tooltip::Tooltip,
-        widgets::{Controls as _, Layout as _},
+        widgets::Controls as _,
     },
 };
 use editor::Mention;
@@ -1375,7 +1375,15 @@ impl Composer {
                 this.thread_open = !this.thread_open;
                 cx.notify();
             }))
-            .child(theme.disclosure(open))
+            // Up while it is shut, where the panel opens; down to close it.
+            .child(
+                icons::icon(match open {
+                    true => icons::arrows::ChevronDown,
+                    false => icons::arrows::ChevronUp,
+                })
+                .size(px(14.))
+                .text_color(theme.text_muted),
+            )
             .surface(theme, SURFACE)
             .into_any_element()
     }

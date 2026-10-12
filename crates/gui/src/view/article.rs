@@ -1,6 +1,7 @@
 //! The article pane: one document, and the sidebar row that opens it.
 
 pub mod comments;
+mod note;
 pub mod thread;
 
 use crate::view::kit::menu;
@@ -104,9 +105,6 @@ const META_GROUP: &str = "article-meta";
 
 /// How far the editor sits below the top of the band it is set in.
 const PAGE_TOP: f32 = 20.;
-
-/// How tall an open comment's note grows before it scrolls.
-const NOTE_MAX_HEIGHT: f32 = 320.;
 
 /// Room inside an open comment's card, around its quote, note and actions.
 const CARD_PAD: f32 = 12.;
@@ -1071,7 +1069,7 @@ impl ArticleView {
                             .comments
                             .comments
                             .iter()
-                            .any(|comment| comment.id == *id && !comment.resolved)
+                            .any(|comment| comment.id == *id && comment.opens())
                     });
                     if hit != open {
                         workspace.activate_comment(&path, hit, cx);
@@ -1552,23 +1550,19 @@ impl Note {
                 let Some(comment) = self.comments.iter().find(|comment| comment.id == id) else {
                     return div().into_any_element();
                 };
-                let note = match self.open == Some(id) {
-                    true => self.card(comment, &theme, window, cx).into_any_element(),
-                    false => self.closed(comment, &theme).into_any_element(),
-                };
-                self.hovered(
-                    // Occluding: the page under it would take the press and put
-                    // the caret there.
-                    div()
-                        .id(("comment", id))
-                        .occlude()
-                        .w_full()
+                // Occluding: the page under it would take the press and put
+                // the caret there.
+                let slot = div().id(("comment", id)).occlude().w_full();
+                // Only the closed row is a button. An open card's text takes a
+                // selection, and a press on the page is what closes it.
+                let slot = match self.open == Some(id) {
+                    true => slot.child(self.card(comment, &theme, window, cx)),
+                    false => slot
                         .cursor_pointer()
-                        .child(note),
-                    id,
-                )
-                .on_click(self.toggle(id))
-                .into_any_element()
+                        .child(self.closed(comment, &theme))
+                        .on_click(self.toggle(id)),
+                };
+                self.hovered(slot, id).into_any_element()
             }
             Slot::Open(id) => {
                 let Some(comment) = self.comments.iter().find(|comment| comment.id == id) else {
@@ -1676,63 +1670,16 @@ impl Note {
         cx: &mut App,
     ) -> impl IntoElement {
         let id = comment.id;
-        let quote = div()
-            .flex()
-            .items_start()
-            .gap(px(6.))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .pl(px(8.))
-                    .border_l_2()
-                    .border_color(comment_paint(theme).color)
-                    .text_style(TextStyle::Callout)
-                    .text_color(theme.text_muted)
-                    .line_clamp(2)
-                    .child(artifact::text::one_line(&comment.quote)),
+        // Its own view: selecting in the text answers the pointer there.
+        let text = self.root.upgrade().map(|root| {
+            let workspace = root.read(cx).workspace.clone();
+            let path = self.path.clone();
+            window.use_keyed_state(
+                SharedString::from(format!("comment-text-{}-{id}", self.path.display())),
+                cx,
+                move |_, cx| note::NoteText::new(workspace, path, id, cx),
             )
-            .when(comment.detached(), |el| {
-                el.child(
-                    div()
-                        .flex_none()
-                        .text_style(TextStyle::Caption)
-                        .text_color(theme.text_faint)
-                        .child("Outdated"),
-                )
-            });
-        use artifact::article::comments::Author;
-        let waiting = comment
-            .replies
-            .last()
-            .is_some_and(|reply| reply.from == Author::Reader);
-        let thread = div()
-            .id(("comment-note", id))
-            .max_h(px(NOTE_MAX_HEIGHT))
-            .map(|el| scrollbars::scrolls(el, scrollbars::Axes::Vertical))
-            .flex()
-            .flex_col()
-            .gap(px(8.))
-            .text_style(TextStyle::Body)
-            .child(markdown::markdown(&comment.note, window, cx))
-            .children(comment.replies.iter().map(|reply| {
-                match reply.from {
-                    Author::Reader => div()
-                        .pt(px(4.))
-                        .font_weight(gpui::FontWeight::MEDIUM)
-                        .child(reply.text.clone())
-                        .into_any_element(),
-                    Author::Agent => markdown::markdown(&reply.text, window, cx).into_any_element(),
-                }
-            }))
-            .when(waiting, |el| {
-                el.child(
-                    div()
-                        .text_style(TextStyle::Callout)
-                        .text_color(theme.text_faint)
-                        .child("Waiting for an answer…"),
-                )
-            });
+        });
         // The card is contents only; its fill is the surface's.
         popover::popover_card_flush(theme)
             .w_full()
@@ -1740,8 +1687,7 @@ impl Note {
             .flex()
             .flex_col()
             .gap(px(8.))
-            .child(quote)
-            .child(thread)
+            .children(text)
             .children(self.follow_up_field(comment, theme))
             .child(self.actions(comment, theme))
             .surface(theme, crate::view::component::composer::SURFACE)

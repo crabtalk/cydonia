@@ -107,7 +107,7 @@ fn a_clicked_session_link_reaches_the_handler_with_the_session_folder(
     let point = window
         .update(&mut visual, |view, _, cx| {
             let _ = cx;
-            let layouts = view.held.layouts(0);
+            let layouts = view.held.selection.layouts(0);
             let from = markdown::Cursor::new(0, markdown::Part::default(), 5);
             let to = markdown::Cursor { offset: 6, ..from };
             layouts.rects(markdown::Selection::new(from, to))[0].center()

@@ -423,9 +423,8 @@ impl Workspace {
         Some((agent, offers))
     }
 
-    /// Change the article default by one pick, with the offers read from the
-    /// project at `cwd`. A pick the agent does not offer is dropped. Changing
-    /// the agent starts its choices over.
+    /// Change the article default by one pick made on the article default's
+    /// own agent — see [`Self::remember_article`].
     pub fn set_article_default(
         &mut self,
         cwd: &Path,
@@ -435,12 +434,26 @@ impl Workspace {
         let Some(current) = self.article_agent(cx) else {
             return;
         };
+        self.remember_article(cwd, &current, change, cx);
+    }
+
+    /// Change the article default by one pick made on `current`, with the
+    /// offers read from the project at `cwd`. A pick the agent does not offer
+    /// is dropped. A pick on another agent than the default's, or a change of
+    /// agent, starts the choices over on that agent.
+    fn remember_article(
+        &mut self,
+        cwd: &Path,
+        current: &settings::Agent,
+        change: ArticleChange,
+        cx: &mut Context<Self>,
+    ) {
         let key = match &change {
             ArticleChange::Agent(ix) => match self.settings.agents.get(*ix) {
                 Some(entry) => session_preferences::agent_key(entry),
                 None => return,
             },
-            _ => session_preferences::agent_key(&current),
+            _ => session_preferences::agent_key(current),
         };
         let mut next = self.settings.article_session.clone();
         if next.agent.as_deref() != Some(key.as_str()) {
@@ -449,7 +462,7 @@ impl Workspace {
                 ..Default::default()
             };
         }
-        let offers = session_preferences::offers(cwd, &current);
+        let offers = session_preferences::offers(cwd, current);
         match change {
             ArticleChange::Agent(_) => {}
             ArticleChange::Mode(mode) => {
@@ -689,12 +702,39 @@ impl Workspace {
     }
 
     /// Switch a session's mode — what the composer's mode picker reports.
-    /// See [`ChatSession::set_mode`].
+    /// See [`ChatSession::set_mode`]. A pick in an article's session becomes
+    /// the article default; one in any other session, the project's default
+    /// for its agent.
     pub fn set_session_mode(&mut self, id: u64, mode_id: String, cx: &mut Context<Self>) {
-        self.with_session(id, cx, |chat| chat.set_mode(&mode_id));
+        let Some(chat) = self.session_entity(id).cloned() else {
+            return;
+        };
+        let (taken, article, cwd, entry) = chat.update(cx, |chat, cx| {
+            let taken = chat.set_mode(&mode_id);
+            cx.notify();
+            (
+                taken,
+                chat.article.is_some(),
+                chat.cwd.clone(),
+                chat.entry.clone(),
+            )
+        });
+        if !taken {
+            return;
+        }
+        if article {
+            self.remember_article(&cwd, &entry, ArticleChange::Mode(mode_id), cx);
+        } else if let Err(error) = session_preferences::remember_mode(&cwd, &entry, &mode_id) {
+            chat.update(cx, |chat, cx| {
+                chat.default_unsaved(error);
+                cx.notify();
+            });
+        }
     }
 
-    /// The same for a config option, which is where the model lives.
+    /// The same for a config option, which is where the model lives. Article
+    /// defaults hold select values only, so a boolean picked in an article's
+    /// session stays with that session.
     pub fn set_session_config(
         &mut self,
         id: u64,
@@ -702,7 +742,38 @@ impl Workspace {
         value: SessionConfigOptionValue,
         cx: &mut Context<Self>,
     ) {
-        self.with_session(id, cx, |chat| chat.set_config(&config_id, value));
+        let Some(chat) = self.session_entity(id).cloned() else {
+            return;
+        };
+        let (taken, article, cwd, entry) = chat.update(cx, |chat, cx| {
+            let taken = chat.set_config(&config_id, value.clone());
+            cx.notify();
+            (
+                taken,
+                chat.article.is_some(),
+                chat.cwd.clone(),
+                chat.entry.clone(),
+            )
+        });
+        if !taken {
+            return;
+        }
+        if article {
+            if let SessionConfigOptionValue::ValueId { value } = value {
+                let change = ArticleChange::Config {
+                    id: config_id,
+                    value: value.to_string(),
+                };
+                self.remember_article(&cwd, &entry, change, cx);
+            }
+        } else if let Err(error) =
+            session_preferences::remember_config(&cwd, &entry, &config_id, value)
+        {
+            chat.update(cx, |chat, cx| {
+                chat.default_unsaved(error);
+                cx.notify();
+            });
+        }
     }
 
     /// The session the chat pane would show. Gated, and it is the gate that

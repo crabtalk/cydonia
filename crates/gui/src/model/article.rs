@@ -30,7 +30,7 @@ use bezel::{
     gpui::{App, AppContext as _, Context, Entity},
     ui::input::{Shape, TextField},
 };
-use editor::{Anchor, AnchorId, Document, DocumentEvent, Mode};
+use editor::{Anchor, AnchorId, Document, DocumentEvent, Mode, SourceAnchor};
 use markdown::AppExt as _;
 use std::{
     cell::OnceCell,
@@ -369,14 +369,20 @@ impl Article {
             .comments
             .comments
             .iter()
-            .map(|comment| (AnchorId(comment.id), comment.range(), self.wash(comment)))
+            .map(|comment| SourceAnchor {
+                id: AnchorId(comment.id),
+                range: comment.range(),
+                state: self.wash(comment),
+                actionable: comment.opens(),
+            })
             .collect();
         document.update(cx, |document, cx| {
             document.set_source_anchors(text, anchors, cx)
         });
     }
 
-    /// Repaint the comments' washes over the ranges the document holds.
+    /// Repaint the comments' washes over the ranges the document holds, and
+    /// say again which of them a press opens.
     fn restate_comments(&self, cx: &mut App) {
         let Some(document) = &self.document else {
             return;
@@ -385,14 +391,17 @@ impl Article {
             .read(cx)
             .anchors()
             .iter()
-            .map(|anchor| Anchor {
-                state: self
+            .map(|anchor| {
+                let held = self
                     .comments
                     .comments
                     .iter()
-                    .find(|comment| comment.id == anchor.id.0)
-                    .map_or(anchor.state, |comment| self.wash(comment)),
-                ..anchor.clone()
+                    .find(|comment| comment.id == anchor.id.0);
+                Anchor {
+                    state: held.map_or(anchor.state, |comment| self.wash(comment)),
+                    actionable: held.map_or(anchor.actionable, Comment::opens),
+                    ..anchor.clone()
+                }
             })
             .collect();
         if document.read(cx).anchors() != anchors.as_slice() {
@@ -469,7 +478,7 @@ impl Article {
             self.comments
                 .comments
                 .iter()
-                .any(|comment| comment.id == *id && !comment.resolved)
+                .any(|comment| comment.id == *id && comment.opens())
         });
         if self.hovered_comment != id {
             self.hovered_comment = id;

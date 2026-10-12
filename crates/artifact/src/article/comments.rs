@@ -110,6 +110,12 @@ impl Comment {
             .count()
     }
 
+    /// Whether a press on its words opens its note. A resolved comment's words
+    /// keep their range but open nothing.
+    pub fn opens(&self) -> bool {
+        !self.resolved
+    }
+
     /// Whether the words it was on are gone.
     pub fn detached(&self) -> bool {
         self.start >= self.end

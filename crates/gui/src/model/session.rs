@@ -774,7 +774,10 @@ impl ChatSession {
     /// agent's `CurrentModeUpdate` is the confirmation, so a picker that waited
     /// for it would read as a press that did nothing — and the update, when it
     /// lands, is what settles any disagreement.
-    pub fn set_mode(&mut self, mode_id: &str) {
+    ///
+    /// Answers whether the agent offers `mode_id`. The pick is kept as this
+    /// session's choice only; which default it also becomes is the caller's.
+    pub fn set_mode(&mut self, mode_id: &str) -> bool {
         let offered = self.offered().0.is_some_and(|modes| {
             modes
                 .available_modes
@@ -782,7 +785,7 @@ impl ChatSession {
                 .any(|mode| &*mode.id == mode_id)
         });
         if !offered {
-            return;
+            return false;
         }
         #[cfg(feature = "desktop")]
         if let Connection::Live(session) = &self.connection {
@@ -792,20 +795,23 @@ impl ChatSession {
             modes.current_mode_id = mode_id.into();
         }
         self.preferences.mode = Some(mode_id.into());
-        if let Err(error) = session_preferences::remember_mode(&self.cwd, &self.entry, mode_id) {
-            self.notice(true, &format!("Could not save session default: {error}"));
-        }
         self.save_preferences();
+        true
+    }
+
+    /// Say that a pick taken here could not be kept as a default.
+    pub fn default_unsaved(&mut self, error: impl std::fmt::Display) {
+        self.notice(true, &format!("Could not save session default: {error}"));
     }
 
     /// The same for a config option, which is where the model lives
     /// (`session/set_config_option`).
-    pub fn set_config(&mut self, config_id: &str, value: SessionConfigOptionValue) {
+    pub fn set_config(&mut self, config_id: &str, value: SessionConfigOptionValue) -> bool {
         let offered = self.offered().1.iter().any(|option| {
             &*option.id == config_id && session_preferences::supports(option, &value)
         });
         if !offered {
-            return;
+            return false;
         }
         #[cfg(feature = "desktop")]
         if let Connection::Live(session) = &self.connection {
@@ -819,14 +825,9 @@ impl ChatSession {
         if let Some(option) = found {
             session_preferences::adopt(option, value.clone());
         }
-        self.preferences
-            .config
-            .insert(config_id.into(), value.clone());
-        let saved = session_preferences::remember_config(&self.cwd, &self.entry, config_id, value);
-        if let Err(error) = saved {
-            self.notice(true, &format!("Could not save session default: {error}"));
-        }
+        self.preferences.config.insert(config_id.into(), value);
         self.save_preferences();
+        true
     }
 
     /// What the agent offers this session, and what it is on: the live
