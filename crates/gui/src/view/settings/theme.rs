@@ -389,6 +389,7 @@ impl SettingsWindow {
                     self.highlight_row(cx),
                     self.selection_row(cx),
                     self.find_row(cx),
+                    self.comment_row(cx),
                 ],
             ))
             .child(boxed(
@@ -687,6 +688,21 @@ impl SettingsWindow {
             system,
             cx,
             |workspace, value, cx| workspace.set_search(value, cx),
+        )
+    }
+
+    /// The colour behind commented words, or the default.
+    fn comment_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let current = self.workspace.read(cx).settings.appearance.comment_color;
+        let system = markdown::default_comment(&theme).color;
+        self.preset_row(
+            "comment-color",
+            "Comments colour",
+            current,
+            system,
+            cx,
+            |workspace, value, cx| workspace.set_comment_color(value, cx),
         )
     }
 

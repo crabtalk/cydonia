@@ -108,6 +108,12 @@ const PAGE_TOP: f32 = 20.;
 /// How tall an open comment's note grows before it scrolls.
 const NOTE_MAX_HEIGHT: f32 = 320.;
 
+/// Room inside an open comment's card, around its quote, note and actions.
+const CARD_PAD: f32 = 12.;
+
+/// How big a margin mark is, square.
+const MARK_SIZE: f32 = 24.;
+
 actions!(
     cydonia_article,
     [LeaveTitle, ToggleOutline, TogglePlainText]
@@ -265,11 +271,16 @@ pub fn find_paint(theme: &Theme) -> (bezel::gpui::Hsla, bezel::gpui::Hsla) {
     (solid.opacity(0.5), solid)
 }
 
-fn source_offset(editor: &editor::Editor, cx: &App) -> f32 {
-    if editor.mode() != Mode::Source {
-        return 0.;
+/// How comments paint: cut from [`Washes::comment`].
+pub fn comment_paint(theme: &Theme) -> markdown::CommentWashes {
+    match Washes::current().comment {
+        Some(color) => markdown::CommentWashes::of(color.solid(theme)),
+        None => markdown::default_comment(theme),
     }
-    let style = cx.source_style();
+}
+
+/// The type `editor` sets its page in, at the size the reader has zoomed it to.
+fn page_type(editor: &editor::Editor, cx: &App) -> markdown::Typography {
     let base = bezel::theme::base_text_size();
     let limits = cx.editor_text_size();
     let size = ((editor.text_size().unwrap_or(base) + cx.editor_text_size_adjustment())
@@ -277,7 +288,15 @@ fn source_offset(editor: &editor::Editor, cx: &App) -> f32 {
         * 10.)
         .round()
         / 10.;
-    let text_size = cx.typography().scaled(size / base).body.size();
+    cx.typography().scaled(size / base)
+}
+
+fn source_offset(editor: &editor::Editor, cx: &App) -> f32 {
+    if editor.mode() != Mode::Source {
+        return 0.;
+    }
+    let style = cx.source_style();
+    let text_size = page_type(editor, cx).body.size();
     let digits = editor
         .source_lines()
         .to_string()
@@ -1077,10 +1096,14 @@ impl ArticleView {
             .collect();
         let notes_wanted =
             workspace.settings.appearance.comments == crate::model::settings::Comments::Full;
+        let line = page_type(editor.read(cx), cx).body.line_height();
+        // The open card's quote is level with the line, not its frame.
+        let lift = CARD_PAD - (line - TextStyle::Callout.painted_line_height()) / 2.;
         let note = Note {
             comments: Rc::new(shown),
             open: article.active_comment,
             hovered: article.hovered_comment,
+            line,
             path: article.path.clone(),
             root: self.root.clone(),
         };
@@ -1089,6 +1112,7 @@ impl ArticleView {
             Margin::new(
                 notes,
                 article.active_comment,
+                px(lift),
                 notes_wanted,
                 build,
                 self.margin.clone(),
@@ -1136,7 +1160,7 @@ impl ArticleView {
         );
         let row = |comment: &artifact::article::comments::Comment| {
             let quote = artifact::text::one_line(&comment.quote);
-            let note = comment.note.lines().next().unwrap_or_default().to_owned();
+            let note = comment.headline().to_owned();
             let icon = match comment.resolved {
                 true => icons::glyph::Check,
                 false => icons::social::MessageCircle,
@@ -1692,6 +1716,8 @@ struct Note {
     open: Option<u64>,
     /// The comment whose note or text the pointer is over.
     hovered: Option<u64>,
+    /// How tall a line of the page is.
+    line: f32,
     path: PathBuf,
     root: gpui::WeakEntity<Cydonia>,
 }
@@ -1704,12 +1730,9 @@ impl Note {
                 let Some(comment) = self.comments.iter().find(|comment| comment.id == id) else {
                     return div().into_any_element();
                 };
-                let open = self.open == Some(id);
-                let lit = open || self.hovered == Some(id);
-                let rule = match (lit, comment.detached()) {
-                    (true, _) => theme.accent,
-                    (false, true) => theme.text_faint,
-                    (false, false) => theme.warning.opacity(0.6),
+                let note = match self.open == Some(id) {
+                    true => self.card(comment, &theme, window, cx).into_any_element(),
+                    false => self.closed(comment, &theme).into_any_element(),
                 };
                 self.hovered(
                     // Occluding: the page under it would take the press and put
@@ -1719,18 +1742,7 @@ impl Note {
                         .occlude()
                         .w_full()
                         .cursor_pointer()
-                        .child(
-                            popover::popover_card(&theme)
-                                .w_full()
-                                .child(
-                                    div()
-                                        .pl(px(10.))
-                                        .border_l_2()
-                                        .border_color(rule)
-                                        .child(self.body(comment, open, &theme, window, cx)),
-                                )
-                                .surface(&theme, crate::view::component::composer::SURFACE),
-                        ),
+                        .child(note),
                     id,
                 )
                 .on_click(self.toggle(id))
@@ -1745,96 +1757,145 @@ impl Note {
                         .id(("comment-open", id))
                         .occlude()
                         .w(px(NOTE_WIDTH))
-                        .child(
-                            // The card is contents only; its fill is the
-                            // surface's.
-                            popover::popover_card(&theme)
-                                .child(self.body(comment, true, &theme, window, cx))
-                                .surface(&theme, crate::view::component::composer::SURFACE),
-                        ),
+                        .child(self.card(comment, &theme, window, cx)),
                     id,
                 )
                 .into_any_element()
             }
             Slot::Mark { first, count } => {
                 let tint = match self.open == Some(first) || self.hovered == Some(first) {
-                    true => theme.accent,
+                    true => comment_paint(&theme).color,
                     false => theme.text_muted,
                 };
-                theme
-                    .ghost(("comment-mark", first))
-                    .occlude()
+                div()
                     .w(px(MARK_GUTTER))
-                    .h(px(24.))
+                    .h(px(self.line))
+                    .flex()
+                    .items_center()
                     .justify_center()
-                    .gap(px(2.))
                     .child(
-                        icons::icon(icons::social::MessageCircle)
-                            .size(px(14.))
-                            .text_color(tint),
+                        theme
+                            .ghost(("comment-mark", first))
+                            .occlude()
+                            .h(px(MARK_SIZE))
+                            .min_w(px(MARK_SIZE))
+                            .px(px(4.))
+                            .justify_center()
+                            .gap(px(2.))
+                            .child(
+                                icons::icon(icons::social::MessageCircle)
+                                    .size(px(14.))
+                                    .text_color(tint),
+                            )
+                            .when(count > 1, |el| {
+                                el.child(
+                                    div()
+                                        .text_style(TextStyle::Caption)
+                                        .text_color(tint)
+                                        .child(count.to_string()),
+                                )
+                            })
+                            .on_click(self.toggle(first)),
                     )
-                    .when(count > 1, |el| {
-                        el.child(
-                            div()
-                                .text_style(TextStyle::Caption)
-                                .text_color(tint)
-                                .child(count.to_string()),
-                        )
-                    })
-                    .on_click(self.toggle(first))
                     .into_any_element()
             }
         }
     }
 
-    /// The quote, the note, and while it is open what can be done with it.
-    fn body(
+    /// A closed comment: its mark and the first line of its note, one line of
+    /// the page tall.
+    fn closed(
         &self,
         comment: &artifact::article::comments::Comment,
-        open: bool,
+        theme: &Theme,
+    ) -> impl IntoElement {
+        let id = comment.id;
+        let lit = self.hovered == Some(id);
+        let washes = comment_paint(theme);
+        let (tint, text) = match (lit, comment.detached()) {
+            (true, _) => (washes.color, theme.text),
+            (false, true) => (theme.text_faint, theme.text_faint),
+            (false, false) => (theme.text_muted, theme.text_muted),
+        };
+        theme
+            .ghost(("comment-line", id))
+            .h(px(self.line))
+            .px(px(6.))
+            .gap(px(6.))
+            // Over the ghost's own hover wash: lit from the page or from
+            // here, the row takes its words' colour.
+            .when(lit, |el| {
+                el.bg(washes.active).hover(move |el| el.bg(washes.active))
+            })
+            .child(
+                icons::icon(icons::social::MessageCircle)
+                    .flex_none()
+                    .size(px(14.))
+                    .text_color(tint),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_style(TextStyle::Callout)
+                    .text_color(text)
+                    .child(comment.headline().to_owned()),
+            )
+    }
+
+    /// An open comment: the words it is on, the whole note, and what can be
+    /// done with it.
+    fn card(
+        &self,
+        comment: &artifact::article::comments::Comment,
         theme: &Theme,
         window: &mut Window,
         cx: &mut App,
-    ) -> gpui::Stateful<Div> {
+    ) -> impl IntoElement {
         let id = comment.id;
-        let quote = artifact::text::one_line(&comment.quote);
-        let note = match open {
-            true => div()
-                .id(("comment-note", id))
-                .max_h(px(NOTE_MAX_HEIGHT))
-                .map(|el| scrollbars::scrolls(el, scrollbars::Axes::Vertical))
-                .text_style(TextStyle::Callout)
-                .child(markdown::markdown(&comment.note, window, cx))
-                .into_any_element(),
-            false => div()
-                .text_style(TextStyle::Callout)
-                .text_color(theme.text_muted)
-                .line_clamp(3)
-                .child(comment.note.clone())
-                .into_any_element(),
-        };
-        div()
+        let quote = div()
             .flex()
-            .flex_col()
-            .gap(px(2.))
+            .items_start()
+            .gap(px(6.))
             .child(
                 div()
-                    .flex()
-                    .gap(px(6.))
-                    .text_style(TextStyle::Caption)
-                    .text_color(theme.text_faint)
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .child(format!("“{quote}”")),
-                    )
-                    .when(comment.detached(), |el| el.child("Outdated")),
+                    .flex_1()
+                    .min_w_0()
+                    .pl(px(8.))
+                    .border_l_2()
+                    .border_color(comment_paint(theme).color)
+                    .text_style(TextStyle::Callout)
+                    .text_color(theme.text_muted)
+                    .line_clamp(2)
+                    .child(artifact::text::one_line(&comment.quote)),
             )
+            .when(comment.detached(), |el| {
+                el.child(
+                    div()
+                        .flex_none()
+                        .text_style(TextStyle::Caption)
+                        .text_color(theme.text_faint)
+                        .child("Outdated"),
+                )
+            });
+        let note = div()
+            .id(("comment-note", id))
+            .max_h(px(NOTE_MAX_HEIGHT))
+            .map(|el| scrollbars::scrolls(el, scrollbars::Axes::Vertical))
+            .text_style(TextStyle::Body)
+            .child(markdown::markdown(&comment.note, window, cx));
+        // The card is contents only; its fill is the surface's.
+        popover::popover_card_flush(theme)
+            .w_full()
+            .p(px(CARD_PAD))
+            .flex()
+            .flex_col()
+            .gap(px(8.))
+            .child(quote)
             .child(note)
-            .when(open, |el| el.child(self.actions(comment, theme)))
-            .id(("comment-body", id))
+            .child(self.actions(comment, theme))
+            .surface(theme, crate::view::component::composer::SURFACE)
     }
 
     fn actions(&self, comment: &artifact::article::comments::Comment, theme: &Theme) -> Div {
@@ -1850,7 +1911,6 @@ impl Note {
         div()
             .flex()
             .gap(px(2.))
-            .pt(px(4.))
             .children(comment.turn.clone().map(|turn| {
                 let root = root.clone();
                 button(

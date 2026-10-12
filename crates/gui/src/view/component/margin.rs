@@ -24,10 +24,10 @@ pub const NOTE_WIDTH: f32 = 260.;
 pub const NOTE_INSET: f32 = 16.;
 
 /// Room a margin of marks takes.
-pub const MARK_GUTTER: f32 = 32.;
+pub const MARK_GUTTER: f32 = 40.;
 
 /// Space between two stacked notes.
-const GAP: f32 = 8.;
+const GAP: f32 = 4.;
 
 /// Tops closer than this are one line, and share a mark.
 const SAME_LINE: f32 = 4.;
@@ -89,6 +89,8 @@ pub struct Margin {
     notes: Vec<(u64, Pixels)>,
     /// The comment whose note sits exactly at its line.
     pinned: Option<u64>,
+    /// How far above its line the open note starts.
+    lift: Pixels,
     /// Notes where they fit, marks where they do not.
     notes_wanted: bool,
     build: Build,
@@ -102,6 +104,7 @@ impl Margin {
     pub fn new(
         notes: Vec<(u64, Pixels)>,
         pinned: Option<u64>,
+        lift: Pixels,
         notes_wanted: bool,
         build: Build,
         glide: Rc<RefCell<Glide>>,
@@ -110,6 +113,7 @@ impl Margin {
         Self {
             notes,
             pinned,
+            lift,
             notes_wanted,
             build,
             glide,
@@ -227,7 +231,10 @@ impl Element for Margin {
             for (id, top) in &self.notes {
                 let mut element = (self.build)(Slot::Note(*id), window, cx);
                 heights.push(measure(&mut element, width, window, cx));
-                wants.push(*top);
+                wants.push(match self.pinned == Some(*id) {
+                    true => *top - self.lift,
+                    false => *top,
+                });
                 built.push(element);
             }
             let pinned = self
@@ -277,7 +284,7 @@ impl Element for Margin {
             let mut element = (self.build)(Slot::Open(*id), window, cx);
             measure(&mut element, px(NOTE_WIDTH), window, cx);
             let x = bounds.size.width - px(MARK_GUTTER + NOTE_WIDTH);
-            element.prepaint_at(bounds.origin + point(x, *top), window, cx);
+            element.prepaint_at(bounds.origin + point(x, *top - self.lift), window, cx);
             built.push(element);
         }
         built

@@ -222,6 +222,10 @@ pub struct Appearance {
     /// accent.
     #[serde(deserialize_with = "paint_or_unset")]
     pub search: Option<Paint>,
+    /// The colour behind commented words, and the margin's marks for them.
+    /// Unset, or not a colour, keeps [`markdown::default_comment`].
+    #[serde(deserialize_with = "paint_or_unset")]
+    pub comment_color: Option<Paint>,
     /// The caret's colour. Unset, or not a colour, keeps the palette's.
     #[serde(deserialize_with = "paint_or_unset")]
     pub caret: Option<Paint>,
@@ -558,6 +562,7 @@ impl Default for Appearance {
             highlight: Paint::Named(Highlight::default()),
             selection: None,
             search: None,
+            comment_color: None,
             caret: None,
             caret_shape: CaretShape::default(),
             caret_height: CaretHeight::default(),
@@ -1390,6 +1395,7 @@ fn write_appearance(doc: &mut toml_edit::DocumentMut, appearance: &Appearance) -
     for (key, color) in [
         ("selection", appearance.selection),
         ("search", appearance.search),
+        ("comment_color", appearance.comment_color),
         ("caret", appearance.caret),
     ] {
         match color {

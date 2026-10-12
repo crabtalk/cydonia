@@ -81,6 +81,15 @@ impl Comment {
     pub fn detached(&self) -> bool {
         self.start >= self.end
     }
+
+    /// The note's first line with any text on it.
+    pub fn headline(&self) -> &str {
+        self.note
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .unwrap_or_default()
+    }
 }
 
 impl Comments {

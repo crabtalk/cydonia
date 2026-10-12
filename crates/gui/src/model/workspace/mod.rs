@@ -348,6 +348,7 @@ impl Workspace {
             highlight: self.settings.appearance.highlight,
             selection: self.settings.appearance.selection,
             search: self.settings.appearance.search,
+            comment_color: self.settings.appearance.comment_color,
             caret: self.settings.appearance.caret,
             caret_shape: self.settings.appearance.caret_shape,
             caret_height: self.settings.appearance.caret_height,
@@ -938,6 +939,14 @@ impl Workspace {
 
     pub fn set_search(&mut self, value: Option<settings::Paint>, cx: &mut Context<Self>) {
         self.settings.appearance.search = value;
+        crate::model::palette::Washes::of(&self.settings.appearance).install();
+        self.save_appearance();
+        cx.refresh_windows();
+        cx.notify();
+    }
+
+    pub fn set_comment_color(&mut self, value: Option<settings::Paint>, cx: &mut Context<Self>) {
+        self.settings.appearance.comment_color = value;
         crate::model::palette::Washes::of(&self.settings.appearance).install();
         self.save_appearance();
         cx.refresh_windows();

@@ -49,6 +49,7 @@ pub fn init(settings: &Settings, cx: &mut App) {
     crate::model::palette::Washes::of(&look).install();
     cx.set_mark_paint(article::mark_paint);
     cx.set_find_paint(article::find_paint);
+    cx.set_comment_paint(article::comment_paint);
     cx.set_mermaid_zoom(markdown::mermaid::Zoom {
         min: 0.1,
         max: 4.0,
