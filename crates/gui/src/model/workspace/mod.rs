@@ -55,6 +55,7 @@ mod articles;
 mod boards;
 mod labels;
 mod spaces;
+pub use sessions::ArticleChange;
 pub use spaces::Showing;
 mod order;
 mod projects;

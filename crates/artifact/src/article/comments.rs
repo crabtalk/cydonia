@@ -102,6 +102,14 @@ impl Comment {
         self.start..self.end
     }
 
+    /// How many replies an agent has written on the note.
+    pub fn agent_replies(&self) -> usize {
+        self.replies
+            .iter()
+            .filter(|reply| reply.from == Author::Agent)
+            .count()
+    }
+
     /// Whether the words it was on are gone.
     pub fn detached(&self) -> bool {
         self.start >= self.end

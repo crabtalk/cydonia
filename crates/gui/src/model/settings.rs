@@ -89,6 +89,11 @@ pub struct Settings {
     /// see [`Shortcuts`].
     #[serde(default)]
     pub shortcuts: Shortcuts,
+    /// `[article_session]`: the agent an article's session opens on, and the
+    /// choices it opens with. Set by picking on an article's composer before
+    /// its first send.
+    #[serde(default)]
+    pub article_session: ArticleSession,
     /// What the app will show. Every bare key has to go above it, and every
     /// table below — `[[agents]]` is the one that follows.
     #[serde(default)]
@@ -1059,6 +1064,7 @@ impl Default for Settings {
             drawer_composer: drawer_composer(),
             appearance: Appearance::default(),
             shortcuts: Shortcuts::default(),
+            article_session: ArticleSession::default(),
             features: Features::default(),
             mcp: Mcp::default(),
             browser: Browsing::default(),
@@ -1284,6 +1290,66 @@ pub fn set_opener(opens: Opens, opener: &Opener) -> Result<()> {
             hidden.push(app.to_string_lossy().as_ref());
         }
         held["hidden"] = toml_edit::value(hidden);
+        Ok(true)
+    })
+}
+
+/// `[article_session]`: the agent and choices an article's session opens with.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ArticleSession {
+    /// The agent's key, as `session_preferences` files its choices under —
+    /// `id:<registry id>` or `name:<name>`. None until one is picked.
+    pub agent: Option<String>,
+    pub mode: Option<String>,
+    /// Select values by config option id. Booleans are not offered as
+    /// article defaults.
+    pub config: BTreeMap<String, String>,
+}
+
+impl ArticleSession {
+    /// The choices a session opened on this default starts with.
+    pub fn choices(&self) -> crate::model::session_preferences::Choices {
+        use cacp::schema::SessionConfigOptionValue;
+        crate::model::session_preferences::Choices {
+            mode: self.mode.clone(),
+            config: self
+                .config
+                .iter()
+                .map(|(id, value)| {
+                    (
+                        id.clone(),
+                        SessionConfigOptionValue::ValueId {
+                            value: value.as_str().into(),
+                        },
+                    )
+                })
+                .collect(),
+        }
+    }
+}
+
+/// Write the whole of `[article_session]`.
+pub fn set_article_session(article: &ArticleSession) -> Result<()> {
+    Here::edit(|doc| {
+        let held = table(doc, "article_session")?;
+        match &article.agent {
+            Some(agent) => held["agent"] = toml_edit::value(agent.as_str()),
+            None => {
+                held.remove("agent");
+            }
+        }
+        match &article.mode {
+            Some(mode) => held["mode"] = toml_edit::value(mode.as_str()),
+            None => {
+                held.remove("mode");
+            }
+        }
+        let mut config = toml_edit::Table::new();
+        for (id, value) in &article.config {
+            config[id.as_str()] = toml_edit::value(value.as_str());
+        }
+        held["config"] = toml_edit::Item::Table(config);
         Ok(true)
     })
 }

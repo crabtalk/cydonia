@@ -10,6 +10,15 @@ use artifact::kind::Kind;
 use artifact::project::Project as _;
 use bezel::gpui::Entity;
 
+/// One pick on an article's composer before its session exists, which changes
+/// the article's default. The agent is its index in `settings.agents`.
+#[derive(Clone)]
+pub enum ArticleChange {
+    Agent(usize),
+    Mode(String),
+    Config { id: String, value: String },
+}
+
 impl Workspace {
     /// Open a session in the active project. `seed` is its first prompt, sent
     /// as soon as the agent is up — what a dispatched card rides in on.
@@ -218,6 +227,25 @@ impl Workspace {
         });
     }
 
+    /// Open the session an agent menu's Connect row is on. Unlike
+    /// [`Self::wake_session`], an archived one is brought back into use first.
+    pub(crate) fn connect_session(&mut self, id: u64, cx: &mut Context<Self>) {
+        if !self.settings.features.sessions {
+            return;
+        }
+        let Some(chat) = self.session_entity(id).cloned() else {
+            return;
+        };
+        chat.update(cx, |chat, cx| {
+            if chat.idle() && chat.resumable() {
+                chat.closed = false;
+                chat.flush();
+                chat.resume(cx);
+                cx.notify();
+            }
+        });
+    }
+
     pub(super) fn project_of(&self, id: u64) -> Option<usize> {
         self.projects
             .iter()
@@ -331,19 +359,124 @@ impl Workspace {
             .map(|chat| chat.id)
     }
 
-    /// Open another session under the article at `path` on the preferred
-    /// agent, which the article shows from then on — see
+    /// Open another session under the article at `path` on the article's
+    /// default agent, which the article shows from then on — see
     /// [`Self::article_thread`].
     pub fn new_article_session(&mut self, path: &Path, cx: &mut Context<Self>) -> Option<u64> {
         let (ix, article) = self.thread_article(path)?;
-        let entry = self.preferred_agent(cx)?;
+        let entry = self.article_agent(cx)?;
+        let choices = self.article_choices(&entry);
         let id = self.next_id;
         self.next_id += 1;
         let cwd = self.projects[ix].path.clone();
-        let chat = cx.new(|cx| ChatSession::connect_article(id, entry, cwd, article, cx));
+        let chat = cx.new(|cx| ChatSession::connect_article(id, entry, cwd, article, choices, cx));
         self.projects[ix].sessions.push(HeldSession { id, chat });
         cx.notify();
         Some(id)
+    }
+
+    /// The agent an article's session opens on: the article default's, while
+    /// it is still configured, and otherwise [`Self::preferred_agent`].
+    pub fn article_agent(&self, cx: &App) -> Option<settings::Agent> {
+        let default = self.settings.article_session.agent.as_deref();
+        self.settings
+            .agents
+            .iter()
+            .find(|agent| default == Some(session_preferences::agent_key(agent).as_str()))
+            .cloned()
+            .or_else(|| self.preferred_agent(cx))
+    }
+
+    /// The choices a session opened on `agent` starts with: the article
+    /// default's, when the default is for that agent.
+    fn article_choices(&self, agent: &settings::Agent) -> session_preferences::Choices {
+        let article = &self.settings.article_session;
+        if article.agent.as_deref() == Some(session_preferences::agent_key(agent).as_str()) {
+            article.choices()
+        } else {
+            session_preferences::Choices::default()
+        }
+    }
+
+    /// What an article's session would open on before one is opened: its
+    /// agent, and that agent's offers in the article's project with the
+    /// default's choices on.
+    pub fn article_offer(
+        &self,
+        path: &Path,
+        cx: &App,
+    ) -> Option<(settings::Agent, session_preferences::Offers)> {
+        let (ix, _) = self.thread_article(path)?;
+        self.article_default_offers(&self.projects[ix].path, cx)
+    }
+
+    /// The same for the project at `cwd`, which the Settings screen reads the
+    /// article default's options from.
+    pub fn article_default_offers(
+        &self,
+        cwd: &Path,
+        cx: &App,
+    ) -> Option<(settings::Agent, session_preferences::Offers)> {
+        let agent = self.article_agent(cx)?;
+        let choices = self.article_choices(&agent);
+        let offers = session_preferences::offers(cwd, &agent).with(&choices);
+        Some((agent, offers))
+    }
+
+    /// Change the article default by one pick, with the offers read from the
+    /// project at `cwd`. A pick the agent does not offer is dropped. Changing
+    /// the agent starts its choices over.
+    pub fn set_article_default(
+        &mut self,
+        cwd: &Path,
+        change: ArticleChange,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(current) = self.article_agent(cx) else {
+            return;
+        };
+        let key = match &change {
+            ArticleChange::Agent(ix) => match self.settings.agents.get(*ix) {
+                Some(entry) => session_preferences::agent_key(entry),
+                None => return,
+            },
+            _ => session_preferences::agent_key(&current),
+        };
+        let mut next = self.settings.article_session.clone();
+        if next.agent.as_deref() != Some(key.as_str()) {
+            next = settings::ArticleSession {
+                agent: Some(key),
+                ..Default::default()
+            };
+        }
+        let offers = session_preferences::offers(cwd, &current);
+        match change {
+            ArticleChange::Agent(_) => {}
+            ArticleChange::Mode(mode) => {
+                if offers.modes.is_some_and(|modes| {
+                    modes
+                        .available_modes
+                        .iter()
+                        .any(|m| &*m.id == mode.as_str())
+                }) {
+                    next.mode = Some(mode);
+                }
+            }
+            ArticleChange::Config { id, value } => {
+                let choice = cacp::schema::SessionConfigOptionValue::ValueId {
+                    value: value.as_str().into(),
+                };
+                let offered = offers.config.iter().any(|option| {
+                    &*option.id == id.as_str() && session_preferences::supports(option, &choice)
+                });
+                if offered {
+                    next.config.insert(id, value);
+                }
+            }
+        }
+        let _ = settings::set_article_session(&next);
+        self.settings.article_session = next;
+        cx.notify();
     }
 
     /// Whether the composer under the article at `path` has anywhere to send:
@@ -360,6 +493,13 @@ impl Workspace {
             Some(chat) => self.reachable_session(chat),
             None => self.preferred_agent(cx).is_some(),
         }
+    }
+
+    /// The directory of the project holding the article at `path`, while
+    /// article threads are on.
+    pub fn article_cwd(&self, path: &Path) -> Option<PathBuf> {
+        let (ix, _) = self.thread_article(path)?;
+        Some(self.projects[ix].path.clone())
     }
 
     /// The project holding the article at `path`, and the article's id, while

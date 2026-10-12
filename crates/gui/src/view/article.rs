@@ -25,7 +25,7 @@ use crate::{
 use artifact::kind::Kind;
 use artifact::space::Member;
 use bezel::ui::scroll as scrollbars;
-use bezel::ui::surface::Surfaced as _;
+use bezel::ui::surface::{self, Surfaced as _};
 use bezel::{
     gpui::{
         self, AnyElement, App, Context, CursorStyle, Div, Entity, Focusable as _, KeyBinding,
@@ -275,12 +275,15 @@ pub fn find_paint(theme: &Theme) -> (bezel::gpui::Hsla, bezel::gpui::Hsla) {
     (solid.opacity(0.5), solid)
 }
 
-/// How comments paint: cut from [`Washes::comment`].
+/// How comments paint: cut from [`Washes::comment`]. A resolved comment paints
+/// no wash, and its range is still held.
 pub fn comment_paint(theme: &Theme) -> markdown::CommentWashes {
-    match Washes::current().comment {
+    let mut washes = match Washes::current().comment {
         Some(color) => markdown::CommentWashes::of(color.solid(theme)),
         None => markdown::default_comment(theme),
-    }
+    };
+    washes.resolved = washes.resolved.opacity(0.);
+    washes
 }
 
 /// The type `editor` sets its page in, at the size the reader has zoomed it to.
@@ -695,6 +698,8 @@ impl ArticleView {
         };
         let follow_up = cx.new(|cx| {
             TextField::new(cx)
+                // The pill is the field's frame.
+                .with_frame(false)
                 .with_key_context(FOLLOW_UP_CONTEXT)
                 .with_placeholder("Ask a follow-up…")
         });
@@ -1776,19 +1781,23 @@ impl Note {
                 window.focus(&field.focus_handle(cx), cx);
             }
         };
+        // Its own layer over the card's: inside one glass layer every primitive
+        // shares one draw order, and the pill's glass would not see past the
+        // card's fill.
         Some(
-            div()
-                .rounded(px(Theme::control_radius()))
-                .border_1()
-                .border_color(theme.border)
-                .px(px(8.))
-                .py(px(4.))
-                .text_style(TextStyle::Callout)
-                // The card under it opens and shuts on a press.
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_action(ask)
-                .child(field)
-                .into_any_element(),
+            surface::layered(
+                div()
+                    .rounded_full()
+                    .px(px(12.))
+                    .py(px(6.))
+                    .text_style(TextStyle::Callout)
+                    // The card under it opens and shuts on a press.
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_action(ask)
+                    .child(field)
+                    .surface(theme, crate::view::component::composer::SURFACE),
+            )
+            .into_any_element(),
         )
     }
 

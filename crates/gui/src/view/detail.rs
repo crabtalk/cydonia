@@ -4,7 +4,8 @@ use crate::view::kit::menu::{self, Menu};
 use crate::{
     model::{
         session::{ChatSession, Choice, Command, Usage},
-        workspace::{Showing, Workspace},
+        session_preferences::{self, Offers},
+        workspace::{ArticleChange, Showing, Workspace},
     },
     view::{
         component::{composer, transcript},
@@ -33,8 +34,8 @@ use bezel::{
     },
 };
 use cacp::schema::{
-    PermissionOptionKind, SessionConfigKind, SessionConfigOptionCategory, SessionConfigOptionValue,
-    SessionConfigSelectOption, SessionConfigSelectOptions, SessionModeState,
+    PermissionOptionKind, SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory,
+    SessionConfigOptionValue, SessionConfigSelectOptions, SessionModeState,
 };
 use std::path::{Path, PathBuf};
 
@@ -92,8 +93,15 @@ fn panel_height(preferred: Option<f32>, available: f32) -> f32 {
 /// came for. Booleans are left out — a menu of two rows is a toggle wearing a
 /// menu, and the agent menu has nowhere to put a real one yet.
 fn switches(chat: &ChatSession) -> Vec<composer::Switch> {
-    let mut switches: Vec<composer::Switch> = chat
-        .config
+    let (modes, config) = chat.offered();
+    switches_of(modes, config)
+}
+
+fn switches_of(
+    modes: Option<&SessionModeState>,
+    config: &[SessionConfigOption],
+) -> Vec<composer::Switch> {
+    let mut switches: Vec<composer::Switch> = config
         .iter()
         .filter_map(|option| {
             let SessionConfigKind::Select(select) = &option.kind else {
@@ -109,11 +117,9 @@ fn switches(chat: &ChatSession) -> Vec<composer::Switch> {
             })
         })
         .collect();
-    if let Some(modes) = chat
-        .modes
-        .as_ref()
+    if let Some(modes) = modes
         .filter(|modes| !modes.available_modes.is_empty())
-        .filter(|modes| !covered_by_config(chat, modes))
+        .filter(|modes| !covered_by_config(config, modes))
     {
         switches.push(composer::Switch {
             id: composer::SwitchId::Mode,
@@ -141,8 +147,8 @@ fn switches(chat: &ChatSession) -> Vec<composer::Switch> {
 ///
 /// Matched on the values as well as on the category, because the category is
 /// optional and an agent that leaves it off still sends the same list twice.
-fn covered_by_config(chat: &ChatSession, modes: &SessionModeState) -> bool {
-    chat.config.iter().any(|option| {
+fn covered_by_config(config: &[SessionConfigOption], modes: &SessionModeState) -> bool {
+    config.iter().any(|option| {
         if option.category == Some(SessionConfigOptionCategory::Mode) {
             return true;
         }
@@ -160,19 +166,13 @@ fn covered_by_config(chat: &ChatSession, modes: &SessionModeState) -> bool {
 /// A select's values, with a group's rows folded in beside the ungrouped ones.
 /// A switch gets one flat card, and a group is a heading it has nowhere to put.
 fn select_options(options: &SessionConfigSelectOptions) -> Vec<composer::SwitchOption> {
-    fn one(option: &SessionConfigSelectOption) -> composer::SwitchOption {
-        composer::SwitchOption {
+    session_preferences::select_values(options)
+        .into_iter()
+        .map(|option| composer::SwitchOption {
             id: option.value.to_string().into(),
             name: option.name.clone().into(),
-        }
-    }
-    match options {
-        SessionConfigSelectOptions::Ungrouped(options) => options.iter().map(one).collect(),
-        SessionConfigSelectOptions::Grouped(groups) => groups
-            .iter()
-            .flat_map(|group| group.options.iter().map(one))
-            .collect(),
-    }
+        })
+        .collect()
 }
 
 /// A path as it is shown: `~` for a home directory nobody needs spelled out.
@@ -448,6 +448,9 @@ impl Cydonia {
                     ComposerEvent::Reconnect => self
                         .workspace
                         .update(cx, |workspace, cx| workspace.wake_session(id, cx)),
+                    ComposerEvent::Connect => self
+                        .workspace
+                        .update(cx, |workspace, cx| workspace.connect_session(id, cx)),
                     ComposerEvent::Switch(switch, value) => self.switch(id, switch, value, cx),
                     _ => {}
                 }
@@ -480,7 +483,7 @@ impl Cydonia {
         let arranged = workspace.active_space().is_some();
         let agents = composer_agents(workspace);
         // The agent an article's first send opens its session on.
-        let first = workspace.preferred_agent(cx).and_then(|entry| {
+        let first = workspace.article_agent(cx).and_then(|entry| {
             agents
                 .iter()
                 .position(|agent| agent.name.as_ref() == entry.name)
@@ -500,8 +503,12 @@ impl Cydonia {
             .map(|(pane, article)| {
                 if let Some(path) = article {
                     let id = workspace.article_thread(path, cx);
-                    return Pointing::of(id.and_then(|id| workspace.session(id, cx)), &agents)
-                        .under_article(first);
+                    let chat = id.and_then(|id| workspace.session(id, cx));
+                    let point = Pointing::of(chat, &agents).under_article(first);
+                    return match (chat, workspace.article_offer(path, cx)) {
+                        (None, Some((_, offers))) => point.offering(&agents, first, &offers),
+                        _ => point,
+                    };
                 }
                 let id = match &pane.read(cx).entry {
                     Some(entry) => {
@@ -575,12 +582,34 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Connect opens the article's session as a send would, without a message.
         let session = match event {
-            composer::ComposerEvent::Submit(..) => self
+            composer::ComposerEvent::Submit(..)
+            | composer::ComposerEvent::Reconnect
+            | composer::ComposerEvent::Connect => self
                 .workspace
                 .update(cx, |workspace, cx| workspace.article_session(path, cx)),
             _ => self.workspace.read(cx).article_thread(path, cx),
         };
+        if let composer::ComposerEvent::Switch(id, value) = event
+            && session.is_none()
+        {
+            let change = match id {
+                composer::SwitchId::Agent => value.parse().ok().map(ArticleChange::Agent),
+                composer::SwitchId::Mode => Some(ArticleChange::Mode(value.to_string())),
+                composer::SwitchId::Config(config) => Some(ArticleChange::Config {
+                    id: config.to_string(),
+                    value: value.to_string(),
+                }),
+            };
+            let cwd = self.workspace.read(cx).article_cwd(path);
+            if let (Some(change), Some(cwd)) = (change, cwd) {
+                self.workspace.update(cx, |workspace, cx| {
+                    workspace.set_article_default(&cwd, change, cx)
+                });
+            }
+            return;
+        }
         self.composer_event(session, event, window, cx);
     }
 
@@ -866,13 +895,14 @@ pub(crate) struct Pointing {
     agents: Vec<composer::Agent>,
     current: Option<usize>,
     switches: Vec<composer::Switch>,
+    connectable: bool,
     usage: Option<Usage>,
 }
 
 impl Pointing {
     pub(crate) fn of(chat: Option<&ChatSession>, agents: &[composer::Agent]) -> Self {
-        // Both belong to the agent process rather than to the transcript, so a
-        // session read back off disk offers neither until it reconnects.
+        // Usage belongs to the agent process rather than to the transcript, so
+        // a session read back off disk shows none until it reconnects.
         let live = chat.filter(|chat| chat.live());
         Self {
             session: chat.map(|chat| chat.id),
@@ -896,7 +926,8 @@ impl Pointing {
                     .iter()
                     .position(|agent| agent.name == chat.entry.name)
             }),
-            switches: live.map(switches).unwrap_or_default(),
+            switches: chat.map(switches).unwrap_or_default(),
+            connectable: chat.is_some_and(|chat| chat.idle()),
             usage: live.and_then(|chat| chat.usage),
         }
     }
@@ -908,6 +939,34 @@ impl Pointing {
         if self.session.is_none() {
             self.current = first;
         }
+        self
+    }
+
+    /// Pointed at an article with no session yet: its default agent's offers,
+    /// with the agent itself as a switch in front of them.
+    pub(crate) fn offering(
+        mut self,
+        agents: &[composer::Agent],
+        current: Option<usize>,
+        offers: &Offers,
+    ) -> Self {
+        let agent = composer::Switch {
+            id: composer::SwitchId::Agent,
+            name: "Agent".into(),
+            current: current.map(|ix| ix.to_string().into()),
+            options: agents
+                .iter()
+                .enumerate()
+                .map(|(ix, agent)| composer::SwitchOption {
+                    id: ix.to_string().into(),
+                    name: agent.name.clone(),
+                })
+                .collect(),
+        };
+        self.switches = std::iter::once(agent)
+            .chain(switches_of(offers.modes.as_ref(), &offers.config))
+            .collect();
+        self.connectable = true;
         self
     }
 
@@ -923,7 +982,7 @@ impl Pointing {
         composer.set_last_asked(self.last_asked);
         composer.set_activity(self.activity, cx);
         composer.set_agents(&self.agents, self.current, cx);
-        composer.set_switches(&self.switches, cx);
+        composer.set_switches(&self.switches, self.connectable, cx);
         composer.set_usage(self.usage, cx);
     }
 }
@@ -1233,6 +1292,8 @@ impl Cydonia {
                 },
                 cx,
             ),
+            // Only offered before a session exists; see `thread_event`.
+            composer::SwitchId::Agent => {}
         });
         cx.notify();
     }

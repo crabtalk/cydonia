@@ -132,6 +132,9 @@ pub enum SwitchId {
     /// `session/set_config_option`, by the option's own id — which is where
     /// the model lives.
     Config(SharedString),
+    /// The agent an article's session opens on, offered before there is a
+    /// session to switch. Its options are the configured agents by index.
+    Agent,
 }
 
 /// One value a switch can be set to.
@@ -163,6 +166,9 @@ pub enum ComposerEvent {
     Submit(String, Vec<Attachment>),
     Cancel,
     Reconnect,
+    /// The agent menu's Connect row: opens the session, bringing an archived
+    /// one back as typing into it does.
+    Connect,
     Terminal,
     Changes,
     Files,
@@ -322,9 +328,12 @@ pub struct Composer {
     /// The configured agents, and which one the session runs on.
     agents: Vec<Agent>,
     agent: Option<usize>,
-    /// What the live session can be switched between — its mode, its model.
+    /// What the session can be switched between — its mode, its model.
     /// Empty for a session with no agent behind it.
     switches: Vec<Switch>,
+    /// Whether the session is idle, so the agent menu can connect it when
+    /// there is nothing to switch yet.
+    connectable: bool,
     /// Context spent, when the agent counts it.
     usage: Option<Usage>,
     /// The agent mark's menu or the tools menu, whichever is up.
@@ -400,6 +409,7 @@ impl Composer {
             agents: Vec::new(),
             agent: None,
             switches: Vec::new(),
+            connectable: false,
             usage: None,
             menu: ContextMenu::default(),
             panel_tabs: PanelTabs::default(),
@@ -531,13 +541,14 @@ impl Composer {
         cx.notify();
     }
 
-    /// What the session can be switched between, and how much context it has
-    /// spent. Both belong to a live connection, so both go empty with one.
-    pub fn set_switches(&mut self, switches: &[Switch], cx: &mut Context<Self>) {
-        if self.switches == switches {
+    /// What the session can be switched between: the agent's offers, live or
+    /// cached.
+    pub fn set_switches(&mut self, switches: &[Switch], connectable: bool, cx: &mut Context<Self>) {
+        if self.switches == switches && self.connectable == connectable {
             return;
         }
         self.switches = switches.to_vec();
+        self.connectable = connectable;
         // The open path is left alone: a chain that no longer names a submenu
         // simply stops painting, and the agent row — which is what a pick is
         // usually in the middle of — keeps its place at the top whatever the
@@ -1074,7 +1085,7 @@ impl Composer {
         Some(self.menu.place("composer-menu", card))
     }
 
-    /// The menu's rows: whatever the live session offers, one submenu each.
+    /// The menu's rows: whatever the session offers, one submenu each.
     /// Each switch carries the value it is on in its own name — the reason to
     /// open one of these is as often to read what it is set to as to change it,
     /// and a submenu row has one line to say both on.
@@ -1085,7 +1096,7 @@ impl Composer {
     ///
     /// No leading glyphs either: these rows are words, and one icon among them
     /// would open an empty gutter down the menu's left.
-    fn menu_items(&self) -> Vec<Item> {
+    fn menu_rows(&self) -> Vec<Item> {
         self.switches
             .iter()
             .map(|switch| {
@@ -1104,15 +1115,37 @@ impl Composer {
             .collect()
     }
 
-    /// Pick the option at `path` in the agent menu: one row per level, the
-    /// switch and then which of its options — [`Self::menu_items`] taken
-    /// backwards.
-    fn switch(&mut self, path: &[usize], _: &mut Window, cx: &mut Context<Self>) {
-        let [row, at] = path[..] else { return };
-        if let Some(switch) = self.switches.get(row)
-            && let Some(option) = switch.options.get(at)
+    /// The agent menu's rows: the switches, then Connect when the session is
+    /// idle and nothing but the article's agent is on offer.
+    fn menu_items(&self) -> Vec<Item> {
+        let mut items = self.menu_rows();
+        if self.connectable
+            && self
+                .switches
+                .iter()
+                .all(|switch| switch.id == SwitchId::Agent)
         {
-            cx.emit(ComposerEvent::Switch(switch.id.clone(), option.id.clone()));
+            items.push(Item::action("Connect"));
+        }
+        items
+    }
+
+    /// Pick the option at `path` in the agent menu: one row per level, the
+    /// switch and then which of its options — [`Self::menu_rows`] taken
+    /// backwards. A single row past the switches is Connect.
+    fn switch(&mut self, path: &[usize], _: &mut Window, cx: &mut Context<Self>) {
+        match path[..] {
+            [row] if self.connectable && row == self.switches.len() => {
+                cx.emit(ComposerEvent::Connect);
+            }
+            [row, at] => {
+                if let Some(switch) = self.switches.get(row)
+                    && let Some(option) = switch.options.get(at)
+                {
+                    cx.emit(ComposerEvent::Switch(switch.id.clone(), option.id.clone()));
+                }
+            }
+            _ => {}
         }
         cx.notify();
     }

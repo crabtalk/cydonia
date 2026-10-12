@@ -5,7 +5,7 @@ use crate::model::{
     themes,
 };
 use crate::{
-    model::workspace::Workspace,
+    model::workspace::{ArticleChange, Workspace},
     view::settings::{self, SettingsWindow, Switch, group, labelled},
 };
 use artifact::board::View;
@@ -13,12 +13,14 @@ use bezel::theme::AppExt as _;
 use bezel::ui::color::Swatch;
 use bezel::{
     gpui::{
-        AnyElement, Context, DragMoveEvent, Empty, Entity, FontWeight, Hsla, div, prelude::*, px,
+        AnyElement, Context, DragMoveEvent, Empty, Entity, FontWeight, Hsla, SharedString, div,
+        prelude::*, px,
     },
     theme::{Appearance, TextStyle, Theme, ThemeFamily, Tint, Typeset, appearance::AppearanceMode},
     ui::combobox::{Combobox, ComboboxEvent},
     ui::widgets::{self, Controls, Scaffolding, SliderDrag},
 };
+use std::path::PathBuf;
 
 /// The tint's ceiling: Slate's chroma, the most coloured of the five neutrals
 /// bezel ships in `BASE_COLORS`. Past it the greys stop reading as greys.
@@ -396,6 +398,199 @@ impl SettingsWindow {
                 "Pasting",
                 vec![self.source_paste_row(cx), self.download_web_row(cx)],
             ))
+            .child(boxed("Article session", self.article_session_rows(cx)))
+            .into_any_element()
+    }
+
+    /// The article default: the agent an article's session opens on, and the
+    /// mode and model it opens with. The same value an article's composer sets
+    /// before its first send. Mode and model are read from the project this
+    /// window is on, once its agent has connected there.
+    fn article_session_rows(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        use crate::model::session_preferences;
+        use cacp::schema::{SessionConfigKind, SessionConfigOptionCategory};
+        let theme = Theme::of(cx).clone();
+        let workspace = self.workspace.read(cx);
+        let Some(cwd) = workspace
+            .active_project()
+            .map(|project| project.path.clone())
+        else {
+            return vec![
+                theme
+                    .card_row(false)
+                    .child(labelled(
+                        &theme,
+                        "Article agent",
+                        "Open a project to choose the agent and its model.",
+                        false,
+                    ))
+                    .into_any_element(),
+            ];
+        };
+        let Some((agent, offers)) = workspace.article_default_offers(&cwd, cx) else {
+            return vec![
+                theme
+                    .card_row(false)
+                    .child(labelled(
+                        &theme,
+                        "Article agent",
+                        "Add an agent to choose one.",
+                        false,
+                    ))
+                    .into_any_element(),
+            ];
+        };
+        let key = session_preferences::agent_key(&agent);
+        let agents: Vec<(SharedString, ArticleChange)> = workspace
+            .settings
+            .agents
+            .iter()
+            .enumerate()
+            .map(|(ix, entry)| (entry.name.clone().into(), ArticleChange::Agent(ix)))
+            .collect();
+        let current = workspace
+            .settings
+            .agents
+            .iter()
+            .position(|entry| session_preferences::agent_key(entry) == key);
+        let mut rows = vec![self.article_choice_row(
+            "article-agent",
+            "Article agent",
+            "The agent an article's session opens on.",
+            agents,
+            current,
+            cwd.clone(),
+            cx,
+        )];
+        if let Some(modes) = offers
+            .modes
+            .as_ref()
+            .filter(|modes| !modes.available_modes.is_empty())
+        {
+            let options: Vec<(SharedString, ArticleChange)> = modes
+                .available_modes
+                .iter()
+                .map(|mode| {
+                    (
+                        mode.name.clone().into(),
+                        ArticleChange::Mode(mode.id.to_string()),
+                    )
+                })
+                .collect();
+            let current = modes
+                .available_modes
+                .iter()
+                .position(|mode| mode.id == modes.current_mode_id);
+            rows.push(self.article_choice_row(
+                "article-mode",
+                "Mode",
+                "The mode an article's session opens in.",
+                options,
+                current,
+                cwd.clone(),
+                cx,
+            ));
+        }
+        let model = offers.config.iter().find_map(|option| {
+            let SessionConfigKind::Select(select) = &option.kind else {
+                return None;
+            };
+            (option.category == Some(SessionConfigOptionCategory::Model))
+                .then_some((option, select))
+        });
+        if let Some((option, select)) = model {
+            let values = session_preferences::select_values(&select.options);
+            let options: Vec<(SharedString, ArticleChange)> = values
+                .iter()
+                .map(|value| {
+                    (
+                        value.name.clone().into(),
+                        ArticleChange::Config {
+                            id: option.id.to_string(),
+                            value: value.value.to_string(),
+                        },
+                    )
+                })
+                .collect();
+            let current = values
+                .iter()
+                .position(|value| value.value == select.current_value);
+            rows.push(self.article_choice_row(
+                "article-model",
+                option.name.clone(),
+                "The model an article's session opens on.",
+                options,
+                current,
+                cwd,
+                cx,
+            ));
+        }
+        rows
+    }
+
+    /// A row that picks one of `options` from a menu on its trigger, each
+    /// option being the change it makes to the article default.
+    #[allow(clippy::too_many_arguments)]
+    fn article_choice_row(
+        &self,
+        id: &'static str,
+        title: impl Into<SharedString>,
+        blurb: &'static str,
+        options: Vec<(SharedString, ArticleChange)>,
+        current: Option<usize>,
+        cwd: PathBuf,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        use bezel::ui::popover;
+        let theme = Theme::of(cx).clone();
+        let label = current
+            .and_then(|ix| options.get(ix))
+            .map(|(name, _)| name.clone())
+            .unwrap_or_default();
+        let trigger = popover::menu_trigger_matching(
+            theme
+                .select_trigger_with(None::<Empty>, label)
+                .gap(px(8.))
+                .id(id)
+                .relative(),
+            |this: &mut Self| &mut this.picker,
+            move |open| *open == id,
+            move |_| id,
+            cx,
+        );
+        let card = (self.picker.get() == Some(&id)).then(|| {
+            let rows = options.into_iter().enumerate().map(|(ix, (name, change))| {
+                let cwd = cwd.clone();
+                popover::menu_row(&theme, current == Some(ix), None)
+                    .id((id, ix))
+                    .cursor_pointer()
+                    .hover(|row| row.bg(theme.element_hover))
+                    .child(name)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.workspace.update(cx, |workspace, cx| {
+                            workspace.set_article_default(&cwd, change.clone(), cx)
+                        });
+                        popover::close_popup(this, cx, |this: &mut Self| &mut this.picker);
+                    }))
+            });
+            popover::anchored_menu_below_end(
+                id,
+                popover::dismiss_on_out(
+                    popover::popover_card(&theme)
+                        .flex()
+                        .flex_col()
+                        .children(rows),
+                    |this: &mut Self| &mut this.picker,
+                    cx,
+                )
+                .into_any_element(),
+                self.picker.closing_since(),
+            )
+        });
+        theme
+            .card_row(false)
+            .child(labelled(&theme, title, blurb, false))
+            .child(trigger.children(card))
             .into_any_element()
     }
 

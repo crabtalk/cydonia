@@ -307,6 +307,7 @@ impl Article {
     fn save_comments(&mut self, text: &str) -> bool {
         let mut file = self.store.comments(&self.id);
         file.carry(None, text);
+        let answered = self.filed_by_agent(&file);
         self.comments.take_replies(&file);
         let arrived: Vec<Comment> = file
             .comments
@@ -323,8 +324,33 @@ impl Article {
         let any = !arrived.is_empty();
         self.comments.comments.extend(arrived);
         self.know_comments();
+        if let Some(id) = answered {
+            self.active_comment = Some(id);
+        }
         let _ = self.store.save_comments(&self.id, &self.comments);
-        any
+        any || answered.is_some()
+    }
+
+    /// The newest open comment an agent has just filed in `fresh`: a note it
+    /// added, or an answer on one. What the margin opens on when it lands.
+    fn filed_by_agent(&self, fresh: &Comments) -> Option<u64> {
+        fresh
+            .comments
+            .iter()
+            .filter(|comment| !comment.resolved)
+            .filter(|comment| {
+                match self
+                    .comments
+                    .comments
+                    .iter()
+                    .find(|held| held.id == comment.id)
+                {
+                    None => comment.id > self.known_comment,
+                    Some(held) => comment.agent_replies() > held.agent_replies(),
+                }
+            })
+            .map(|comment| comment.id)
+            .max()
     }
 
     /// Hand the comments' ranges to the document, which carries them through
@@ -421,8 +447,12 @@ impl Article {
         if fresh == self.comments {
             return false;
         }
+        let answered = self.filed_by_agent(&fresh);
         self.comments = fresh;
         self.know_comments();
+        if let Some(id) = answered {
+            self.active_comment = Some(id);
+        }
         self.place_comments(cx);
         true
     }
