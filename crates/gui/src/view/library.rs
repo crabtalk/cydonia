@@ -745,8 +745,7 @@ impl Library {
             false => self.library_list(listings, window, cx),
         };
         div()
-            .flex_1()
-            .min_h_0()
+            .size_full()
             .flex()
             .flex_col()
             .px(px(24.))
