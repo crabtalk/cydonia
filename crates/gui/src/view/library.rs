@@ -36,9 +36,7 @@ use bezel::{
         icons::{self, Icon},
         input::{FieldEvent, TextField},
         menu::Item as MenuItem,
-        popover,
-        scroll::{self as scrollbars, Axes},
-        table, tabs,
+        popover, table, tabs,
         widgets::{ButtonStyle, Buttons, Controls},
     },
 };
@@ -152,8 +150,7 @@ pub(crate) enum Field {
 }
 
 impl Field {
-    /// Its heading and width. A flexible column's weight is the least width
-    /// it reads at, so at the table's least width each is exactly that.
+    /// Its heading and width.
     fn column(self) -> table::Column {
         let (title, width) = match self {
             Self::Check => ("", table::Width::Fixed(px(40.))),
@@ -1146,7 +1143,6 @@ impl Library {
         let fields = tab.fields();
         let columns: Rc<Vec<table::Column>> =
             Rc::new(fields.iter().map(|field| field.column()).collect());
-        let width = least(&columns);
         let headings: Vec<AnyElement> = fields
             .iter()
             .zip(columns.iter())
@@ -1211,18 +1207,11 @@ impl Library {
         .track_scroll(&scroll)
         .flex_1()
         .min_h_0();
-        div()
-            .id("library-table")
+        table::table(&theme)
             .flex_1()
             .min_h_0()
-            .map(|el| scrollbars::scrolls(el, Axes::Horizontal))
-            .child(
-                table::table(&theme)
-                    .h_full()
-                    .min_w(px(width))
-                    .child(table::header(&theme).flex_none().children(headings))
-                    .child(rows),
-            )
+            .child(table::header(&theme).flex_none().children(headings))
+            .child(rows)
             .into_any_element()
     }
 
@@ -1313,8 +1302,6 @@ impl Library {
         let checked = self.is_selected(&listing.row);
         let muted = |text: Option<SharedString>| {
             div()
-                .min_w_0()
-                .truncate()
                 .text_color(theme.text_muted)
                 .child(text.unwrap_or_default())
                 .into_any_element()
@@ -1335,7 +1322,6 @@ impl Library {
                 .child(
                     div()
                         .min_w_0()
-                        .truncate()
                         .text_color(match listing.archived {
                             true => theme.text_faint,
                             false => theme.text,
@@ -1480,16 +1466,4 @@ fn measure(into: Rc<Cell<Pixels>>) -> impl IntoElement {
     )
     .absolute()
     .size_full()
-}
-
-/// The narrowest `columns` are laid out at; a pane narrower scrolls the table
-/// sideways.
-fn least(columns: &[table::Column]) -> f32 {
-    columns
-        .iter()
-        .map(|column| match column.width {
-            table::Width::Fixed(width) => f32::from(width),
-            table::Width::Flex(least) => least,
-        })
-        .sum()
 }
