@@ -355,7 +355,7 @@ impl SettingsWindow {
 
     /// The Editor section. The Cursor group's rows reach every text field, not
     /// the editor alone.
-    pub(super) fn editor_body(&self, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn documents_body(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let boxed = |label: &'static str, rows: Vec<AnyElement>| {
             group(&theme, label).child(theme.group_box().children(rows))
@@ -424,13 +424,13 @@ impl SettingsWindow {
     }
 
     pub(super) fn comments_row(&self, cx: &mut Context<Self>) -> AnyElement {
-        use crate::model::settings::Comments;
+        use crate::model::settings::CommentDisplay as Comments;
         let theme = Theme::of(cx).clone();
         let current = self.workspace.read(cx).settings.appearance.comments;
         theme
             .card_row(false)
             .child(
-                labelled(&theme, "Comments", "Notes beside an article's lines, or a mark to open each one. A narrow pane shows marks.", false),
+                labelled(&theme, "Comments", "Notes beside an article's lines, or a mark to open each one, for an article without its own choice. A narrow pane shows marks.", false),
             )
             .child(
                 theme

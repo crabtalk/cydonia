@@ -13,11 +13,7 @@ use artifact::board::View;
 use artifact::space::Member;
 use bezel::{
     gpui::{AnyElement, App, Context, Window, prelude::*},
-    ui::{
-        icons,
-        input::Case,
-        menu::{Item, Segment},
-    },
+    ui::{icons, input::Case, menu::Item},
 };
 use std::path::PathBuf;
 
@@ -210,20 +206,20 @@ impl Cydonia {
                 .board_in(project, ix, cx)
                 .map(|board| (board.id.clone(), board.view))
         {
-            let views = [View::Lanes, View::List];
-            let item = Item::segmented(
-                [
-                    Segment::new(icons::development::SquareKanban, "Lanes"),
-                    Segment::new(icons::layout::LayoutList, "List"),
+            shown.push(menu::switch::<Cydonia, _>(
+                "View",
+                icons::layout::LayoutList,
+                vec![
+                    (
+                        View::Lanes,
+                        icons::development::SquareKanban.into(),
+                        "Lanes",
+                    ),
+                    (View::List, icons::layout::LayoutList.into(), "List"),
                 ],
-                views.iter().position(|at| *at == view).unwrap_or_default(),
-            );
-            let act: menu::Act = Box::new(move |this, path, _, cx| {
-                if let Some(view) = path.first().and_then(|at| views.get(*at)) {
-                    this.set_board_view(&id, *view, cx);
-                }
-            });
-            shown.push((item, act));
+                view,
+                move |this, view, _, cx| this.set_board_view(&id, view, cx),
+            ));
         }
 
         // ── the entry itself ──

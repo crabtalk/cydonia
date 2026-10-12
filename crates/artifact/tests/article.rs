@@ -197,3 +197,30 @@ fn a_cover_beside_the_page_is_still_read() {
 
     assert_eq!(article::cover::of(&content), Some(picture));
 }
+
+/// How a page shows its comments is written down when it is chosen, and taken
+/// out again when the page is handed back to the reader's default.
+#[test]
+fn a_page_remembers_how_it_shows_its_comments() {
+    use article::properties::CommentDisplay;
+    let scratch = Scratch::new("article-comments");
+    let dir = article::dir(scratch.path()).join("1757000000000");
+    fs::create_dir_all(&dir).unwrap();
+    let content = article::content(&dir);
+    fs::write(&content, "").unwrap();
+
+    assert_eq!(article::properties::comments(&content), None);
+    article::properties::set_title(&content, "Roadmap");
+    article::properties::set_comments(&content, Some(CommentDisplay::Minimal));
+    assert_eq!(
+        article::properties::comments(&content),
+        Some(CommentDisplay::Minimal)
+    );
+    article::properties::set_comments(&content, None);
+    let properties = article::properties::path(&content).unwrap();
+    let text = fs::read_to_string(&properties).unwrap();
+    assert!(
+        !text.contains("comments"),
+        "the key goes with the setting: {text}"
+    );
+}

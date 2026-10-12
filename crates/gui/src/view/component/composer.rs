@@ -170,16 +170,6 @@ pub enum ComposerEvent {
     Switch(SwitchId, SharedString),
 }
 
-/// A switchable row's name with the value it is on. A submenu row is one line
-/// and has no column for a value the way the old flyout did, so what a thing
-/// is set to is written into what it is called.
-fn set_to(name: &str, value: Option<SharedString>) -> SharedString {
-    match value {
-        Some(value) => format!("{name}: {value}").into(),
-        None => name.into(),
-    }
-}
-
 /// The text as a markdown blockquote.
 ///
 /// Every line marked, blank ones included — a blockquote broken by an unmarked
@@ -1100,7 +1090,7 @@ impl Composer {
             .iter()
             .map(|switch| {
                 Item::submenu(
-                    set_to(&switch.name, self.value_of(switch)),
+                    crate::view::kit::menu::set_to(&switch.name, self.value_of(switch)),
                     switch
                         .options
                         .iter()

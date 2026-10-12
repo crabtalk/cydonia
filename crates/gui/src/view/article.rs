@@ -39,7 +39,7 @@ use bezel::{
         context_menu::{ContextMenu, Place},
         icons,
         input::TextField,
-        menu::{Item, Segment},
+        menu::Item,
         popover,
         tooltip::Tooltip,
         widgets::{ButtonStyle, Buttons as _, Status as _},
@@ -917,8 +917,8 @@ impl ArticleView {
                 true => f32::from(self.composer.get()) + crate::view::window::root::COMPOSER_BOTTOM,
                 false => 0.,
             };
-        let notes =
-            workspace.settings.appearance.comments == crate::model::settings::Comments::Full;
+        let notes = article.comments_shown(workspace.settings.appearance.comments)
+            == crate::model::settings::CommentDisplay::Full;
         let source_offset = source_offset(editor.read(cx), cx);
         let scroll = self.scroll.clone();
         let margin = self.margin(project, at, &editor, cx);
@@ -1094,8 +1094,8 @@ impl ArticleView {
             .filter(|(id, _)| shown.iter().any(|comment| comment.id == id.0))
             .map(|(id, top)| (id.0, top + px(PAGE_TOP)))
             .collect();
-        let notes_wanted =
-            workspace.settings.appearance.comments == crate::model::settings::Comments::Full;
+        let notes_wanted = article.comments_shown(workspace.settings.appearance.comments)
+            == crate::model::settings::CommentDisplay::Full;
         let line = page_type(editor.read(cx), cx).body.line_height();
         // The open card's quote is level with the line, not its frame.
         let lift = CARD_PAD - (line - TextStyle::Callout.painted_line_height()) / 2.;
@@ -1132,32 +1132,51 @@ impl ArticleView {
         path: &Path,
         cx: &App,
     ) -> Vec<(Item, menu::Act<Self>)> {
-        use crate::model::settings::Comments;
+        use crate::model::settings::CommentDisplay;
         let workspace = self.workspace.read(cx);
         let Some(article) = workspace.article_in(project, at) else {
             return Vec::new();
         };
         let comments = &article.comments.comments;
-        let shown = workspace.settings.appearance.comments;
-        let modes = Comments::ALL;
-        let switch: (Item, menu::Act<Self>) = (
-            Item::segmented(
-                [
-                    Segment::new(icons::layout::PanelRight, Comments::Full.label()),
-                    Segment::new(icons::social::MessageCircle, Comments::Minimal.label()),
+        let shown = article.comments_shown(workspace.settings.appearance.comments);
+        let switch = {
+            let path = path.to_owned();
+            menu::switch::<Self, _>(
+                "Show",
+                icons::social::MessageCircle,
+                vec![
+                    (
+                        CommentDisplay::Full,
+                        icons::layout::PanelRight.into(),
+                        CommentDisplay::Full.label(),
+                    ),
+                    (
+                        CommentDisplay::Minimal,
+                        icons::social::MessageCircle.into(),
+                        CommentDisplay::Minimal.label(),
+                    ),
                 ],
-                modes
-                    .iter()
-                    .position(|mode| *mode == shown)
-                    .unwrap_or_default(),
-            ),
-            Box::new(move |this, path, _, cx| {
-                if let Some(mode) = path.first().and_then(|at| modes.get(*at)) {
-                    this.workspace
-                        .update(cx, |workspace, cx| workspace.set_comments(*mode, cx));
-                }
-            }),
-        );
+                shown,
+                move |this, mode, _, cx| {
+                    this.workspace.update(cx, |workspace, cx| {
+                        workspace.set_comment_display(&path, Some(mode), cx)
+                    });
+                },
+            )
+        };
+        // Only for a page carrying a choice of its own, as the header menu's
+        // Use default width is.
+        let default = article.comment_display.is_some().then(|| {
+            let path = path.to_owned();
+            menu::row::<Self>(
+                Item::action("Use default").with_icon(icons::glyph::Undo2),
+                move |this, _, cx| {
+                    this.workspace.update(cx, |workspace, cx| {
+                        workspace.set_comment_display(&path, None, cx)
+                    });
+                },
+            )
+        });
         let row = |comment: &artifact::article::comments::Comment| {
             let quote = artifact::text::one_line(&comment.quote);
             let note = comment.headline().to_owned();
@@ -1205,7 +1224,11 @@ impl ArticleView {
             let heading: menu::Act<Self> = Box::new(|_, _, _, _| {});
             resolved.insert(0, (Item::Heading("Resolved".into()), heading));
         }
-        menu::sections([vec![switch], open, resolved])
+        menu::sections([
+            std::iter::once(switch).chain(default).collect(),
+            open,
+            resolved,
+        ])
     }
 
     /// Every comment on the article, open and resolved, from a button over the

@@ -4,6 +4,7 @@
 //! `use super::*`: these methods work on the same struct and reach the same
 //! names as the rest of it.
 use super::*;
+use artifact::article::properties::CommentDisplay;
 use artifact::kind::Kind;
 
 impl Workspace {
@@ -188,6 +189,20 @@ impl Workspace {
     pub fn set_full_width(&mut self, on: &Path, wide: Option<bool>, cx: &mut Context<Self>) {
         if let Some(article) = self.article_at_mut(on) {
             article.set_full_width(wide);
+            cx.notify();
+        }
+    }
+
+    /// Set how one page's margin shows its comments — see
+    /// [`Article::set_comment_display`].
+    pub fn set_comment_display(
+        &mut self,
+        on: &Path,
+        display: Option<CommentDisplay>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(article) = self.article_at_mut(on) {
+            article.set_comment_display(display);
             cx.notify();
         }
     }

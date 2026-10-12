@@ -73,6 +73,45 @@ pub(crate) fn submenu<V: 'static>(
     (item, act)
 }
 
+/// A switchable row's name with the value it is on. A submenu row is one line
+/// and has no column for a value, so what a thing is set to is written into
+/// what it is called.
+pub(crate) fn set_to(name: &str, value: Option<SharedString>) -> SharedString {
+    match value {
+        Some(value) => format!("{name}: {value}").into(),
+        None => name.into(),
+    }
+}
+
+/// A switch between `options`: a submenu named for the one it is on, `current`,
+/// with a checked row per option. Picking one hands its value to `pick`.
+pub(crate) fn switch<V: 'static, T: Copy + PartialEq + 'static>(
+    name: &str,
+    icon: impl Into<Icon>,
+    options: Vec<(T, Icon, &'static str)>,
+    current: T,
+    pick: impl Fn(&mut V, T, &mut Window, &mut Context<V>) + 'static,
+) -> (Item, Act<V>) {
+    let pick = std::rc::Rc::new(pick);
+    let on = options
+        .iter()
+        .find(|(value, ..)| *value == current)
+        .map(|(_, _, label)| SharedString::from(*label));
+    let rows = options
+        .into_iter()
+        .map(|(value, glyph, label)| {
+            let pick = pick.clone();
+            row::<V>(
+                Item::action(label)
+                    .with_icon(glyph)
+                    .checked(value == current),
+                move |this, window, cx| pick(this, value, window, cx),
+            )
+        })
+        .collect();
+    submenu(set_to(name, on), icon, rows)
+}
+
 /// Groups of rows, one after another with a separator between each two. Empty
 /// groups are dropped, so no separator stands at an end or beside another.
 pub(crate) fn sections<V: 'static>(

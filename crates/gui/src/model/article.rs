@@ -23,7 +23,7 @@ use artifact::{
     article as layout,
     article::{
         comments::{Comment, Comments},
-        properties::{self, Properties},
+        properties::{self, CommentDisplay, Properties},
     },
 };
 use bezel::{
@@ -106,6 +106,10 @@ pub struct Article {
     /// see [`Article::wide`]. Cached like [`Article::archived`]: the frame
     /// reads it, and a frame is not somewhere to open a file.
     pub full_width: Option<bool>,
+    /// How its margin shows its comments, and `None` for a page nobody has
+    /// decided about — see [`Article::comments_shown`]. Cached like
+    /// [`Article::full_width`].
+    pub comment_display: Option<CommentDisplay>,
     /// Its labels, normalised — see [`artifact::label`]. Cached like
     /// [`Article::archived`].
     pub labels: Vec<String>,
@@ -138,6 +142,7 @@ impl Article {
             created: held.created,
             archived: properties.archived,
             full_width: properties.full_width,
+            comment_display: properties.comments,
             labels: properties.labels,
             id: held.id,
             store,
@@ -161,6 +166,7 @@ impl Article {
             title: self.title.clone(),
             archived: self.archived,
             full_width: self.full_width,
+            comments: self.comment_display,
             labels: self.labels.clone(),
         }
     }
@@ -197,6 +203,19 @@ impl Article {
     /// One answer, so the pane and the menu that toggles it cannot disagree.
     pub fn wide(&self, default: bool) -> bool {
         self.full_width.unwrap_or(default)
+    }
+
+    /// Set how the margin shows its comments. `None` hands it back to the
+    /// reader's default and takes the key out of the file.
+    pub fn set_comment_display(&mut self, display: Option<CommentDisplay>) {
+        self.comment_display = display;
+        let _ = self.store.save_properties(&self.id, &self.properties());
+    }
+
+    /// How this page's margin shows its comments, against the app's own
+    /// default.
+    pub fn comments_shown(&self, default: CommentDisplay) -> CommentDisplay {
+        self.comment_display.unwrap_or(default)
     }
 
     /// Which form the document is in. The document's answer where there is
@@ -505,6 +524,7 @@ impl Article {
         self.cover = fresh.cover.clone();
         self.archived = fresh.archived;
         self.full_width = fresh.full_width;
+        self.comment_display = fresh.comment_display;
         self.labels = fresh.labels.clone();
         self.touched = fresh.touched;
         self.created = fresh.created;
@@ -545,6 +565,7 @@ impl Article {
         }
         self.archived = held.archived;
         self.full_width = held.full_width;
+        self.comment_display = held.comments;
         self.labels = held.labels;
         let old = std::mem::take(&mut self.saved);
         self.saved = self.store.read_article(&self.id).unwrap_or_default();

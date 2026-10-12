@@ -871,7 +871,7 @@ impl Workspace {
         cx.notify();
     }
 
-    pub fn set_comments(&mut self, comments: settings::Comments, cx: &mut Context<Self>) {
+    pub fn set_comments(&mut self, comments: settings::CommentDisplay, cx: &mut Context<Self>) {
         self.settings.appearance.comments = comments;
         self.save_appearance();
         cx.notify();
