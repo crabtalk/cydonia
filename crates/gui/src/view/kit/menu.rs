@@ -54,6 +54,11 @@ pub(crate) fn row<V: 'static>(
     )
 }
 
+/// A line of plain text, read and never chosen.
+pub(crate) fn note<V: 'static>(text: impl Into<SharedString>) -> (Item, Act<V>) {
+    (Item::Note(text.into()), Box::new(|_, _, _, _| {}))
+}
+
 /// A row that drops a panel of rows of its own. Picking one of those is what
 /// acts; the submenu row itself only opens.
 pub(crate) fn submenu<V: 'static>(

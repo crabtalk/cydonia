@@ -18,7 +18,11 @@ use crate::{
 };
 use artifact::error::{Act, Error};
 use artifact::{
-    article::{self, anchor, comments::Comment, properties::Properties},
+    article::{
+        self, anchor,
+        comments::{Author, Comment, Reply},
+        properties::Properties,
+    },
     kind::Kind,
     project::{Project as _, fs},
     reference::{Span, Within},
@@ -111,6 +115,15 @@ const NOTE: Arg = Arg {
     about: "The note, in Cydonia Markdown. Shown in the margin beside the quote, a few lines of it until it is opened.",
 };
 
+const COMMENT: Arg = Arg {
+    name: "comment",
+    about: "The note's id, as the follow-up names it.",
+};
+const ANSWER: Arg = Arg {
+    name: "answer",
+    about: "The answer, in Cydonia Markdown. Shown in the note's thread under the follow-up it answers.",
+};
+
 const QUERY: Arg = Arg {
     name: "query",
     about: "The text to find, matched case-insensitively.",
@@ -119,7 +132,7 @@ const QUERY: Arg = Arg {
 /// Hits a search answers with, at most.
 const HITS: usize = 20;
 
-pub static TOOLS: [Tool; 13] = [
+pub static TOOLS: [Tool; 14] = [
     Tool {
         name: "article_list",
         description: "List the project's articles, most recently written first.",
@@ -192,6 +205,22 @@ pub static TOOLS: [Tool; 13] = [
         writes: true,
         deletes: false,
         call: comment,
+    },
+    Tool {
+        name: "article_comment_reply",
+        description: "Answer a follow-up asked on a note in an article's margin. The answer joins the note's thread; the article itself is not changed.",
+        schema: |bound| {
+            let mut schema = fields(bound, &[PROJECT, ARTICLE, ANSWER]);
+            schema["properties"][COMMENT.name] =
+                json!({ "type": "integer", "description": COMMENT.about });
+            if let Some(required) = schema["required"].as_array_mut() {
+                required.push(json!(COMMENT.name));
+            }
+            schema
+        },
+        writes: true,
+        deletes: false,
+        call: comment_reply,
     },
     Tool {
         name: "article_set_cover",
@@ -677,6 +706,38 @@ fn comment(args: Args<'_>) -> Outcome {
         .map_err(|e| Error::failed(found.label(), Act::Written, e))?;
     Ok(Answer::said(format!("{} has a new comment", found.label()))
         .with(json!({ "id": found.id, "comment": id })))
+}
+
+fn comment_reply(args: Args<'_>) -> Outcome {
+    let answer = args.text(ANSWER)?;
+    let id = match args.value(COMMENT) {
+        Some(Value::Number(id)) => id.as_u64(),
+        Some(Value::String(id)) => id.trim().parse().ok(),
+        _ => None,
+    }
+    .ok_or_else(|| Trouble::Invalid("comment is required, as the note's id".to_owned()))?;
+    let project = root(&args)?;
+    let found = locate(project, args.text(ARTICLE)?)?;
+    let store = fs::Project::new(project);
+    let mut held = store.comments(&found.id);
+    let Some(comment) = held.get_mut(id) else {
+        return Err(Trouble::Refused(format!(
+            "{} has no note {id}",
+            found.label()
+        )));
+    };
+    comment.replies.push(Reply {
+        from: Author::Agent,
+        text: answer.to_owned(),
+        turn: session::turn_link(&args),
+    });
+    store
+        .save_comments(&found.id, &held)
+        .map_err(|e| Error::failed(found.label(), Act::Written, e))?;
+    Ok(
+        Answer::said(format!("{} has an answer on note {id}", found.label()))
+            .with(json!({ "id": found.id, "comment": id })),
+    )
 }
 
 fn rename(args: Args<'_>) -> Outcome {

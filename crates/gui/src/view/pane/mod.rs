@@ -487,6 +487,12 @@ impl Pane {
                 )
             }))
             .child(grip)
+            // The article in front's comments, beside the pane's `···`.
+            .children(
+                self.front_tab(cx)
+                    .and_then(|tab| tab.read(cx).article_shown(cx))
+                    .map(|view| view.read(cx).comments.clone()),
+            )
             .child({
                 let name = self.name.clone();
                 self.bar_button(

@@ -131,6 +131,15 @@ impl Cydonia {
         let left = !self.sidebar_open && chrome::has(CaptionSide::Left, window, cx);
         let right = self.changes.is_none() && chrome::has(CaptionSide::Right, window, cx);
         let bare = toolbar.is_none();
+        // The open article's comments, beside its `···`.
+        let comments = match self.library.is_some() {
+            true => None,
+            false => self
+                .leaf()
+                .read(cx)
+                .article_shown(cx)
+                .map(|view| view.read(cx).comments.clone()),
+        };
         let renaming = self.header_renaming(cx).is_some();
         // Which board the band is showing, if any — the only entry with a
         // panel.
@@ -227,6 +236,7 @@ impl Cydonia {
                                 .children(board.as_deref().and_then(|id| self.info_panel(id, cx)))
                                 .child(chrome::grip("header-grip", &self.drag, window)),
                         )
+                        .children(comments)
                         .children(toolbar.entry.map(|entry| {
                             self.menu_button(
                                 SharedString::from("header-menu"),

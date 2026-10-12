@@ -22,7 +22,7 @@ use artifact::project::Project as _;
 use artifact::{
     article as layout,
     article::{
-        comments::{Comment, Comments},
+        comments::{Author, Comment, Comments, Reply},
         properties::{self, CommentDisplay, Properties},
     },
 };
@@ -307,6 +307,7 @@ impl Article {
     fn save_comments(&mut self, text: &str) -> bool {
         let mut file = self.store.comments(&self.id);
         file.carry(None, text);
+        self.comments.take_replies(&file);
         let arrived: Vec<Comment> = file
             .comments
             .into_iter()
@@ -459,6 +460,20 @@ impl Article {
             true => self.place_comments(cx),
             false => self.restate_comments(cx),
         }
+    }
+
+    /// Add the reader's follow-up `question` to comment `id`'s thread.
+    pub fn ask_on_comment(&mut self, id: u64, question: String, cx: &mut App) {
+        let Some(comment) = self.comments.get_mut(id) else {
+            return;
+        };
+        comment.replies.push(Reply {
+            from: Author::Reader,
+            text: question,
+            turn: None,
+        });
+        self.save_comments(&self.saved.clone());
+        self.restate_comments(cx);
     }
 
     pub fn delete_comment(&mut self, id: u64, cx: &mut App) {

@@ -32,3 +32,9 @@ fn the_pinned_note_sits_at_its_line_and_the_others_make_room() {
         vec![-34., 10., 54.]
     );
 }
+
+#[test]
+fn the_room_kept_for_notes_holds_notes() {
+    assert!(Margin::fits_notes(px(Margin::room(true))));
+    assert!(!Margin::fits_notes(px(Margin::room(false))));
+}

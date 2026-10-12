@@ -58,7 +58,7 @@ pub fn session_context(
     }
     if let Some(article) = article {
         context.push_str(&format!(
-            "Current article: {article}. This session was opened under it. Answer a question about one of its passages here, and file the answer as a note on that passage with article_comment, its first line the question.\n"
+            "Current article: {article}. This session was opened under it. Answer a question about one of its passages here, and file the answer as a note on that passage with article_comment, its first line the question. A follow-up on a note names the note's id: answer it here, and add the answer to that note with article_comment_reply.\n"
         ));
     }
     context.push('\n');

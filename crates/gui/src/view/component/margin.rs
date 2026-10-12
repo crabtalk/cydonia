@@ -18,13 +18,16 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 use web_time::Instant;
 
 /// The widest a note is set.
-pub const NOTE_WIDTH: f32 = 260.;
+const NOTE_WIDTH: f32 = 260.;
 
 /// Room left of a note, between it and the column.
-pub const NOTE_INSET: f32 = 16.;
+const NOTE_INSET: f32 = 16.;
 
-/// Room a margin of marks takes.
-pub const MARK_GUTTER: f32 = 40.;
+/// Room right of a note, between it and the pane's edge.
+const NOTE_TRAIL: f32 = 16.;
+
+/// Room a margin of marks takes, its marks centred in it.
+const MARK_GUTTER: f32 = 40.;
 
 /// Space between two stacked notes.
 const GAP: f32 = 4.;
@@ -149,9 +152,18 @@ impl Margin {
         shown
     }
 
+    /// The room the margin takes beside the column: a note's and the room
+    /// either side of it with `notes`, a mark's without.
+    pub fn room(notes: bool) -> f32 {
+        match notes {
+            true => NOTE_INSET + NOTE_WIDTH + NOTE_TRAIL,
+            false => MARK_GUTTER,
+        }
+    }
+
     /// Whether the margin, `width` wide, sets notes rather than marks.
-    pub fn fits_notes(width: Pixels) -> bool {
-        width >= px(NOTE_INSET + NOTE_WIDTH * 0.75)
+    fn fits_notes(width: Pixels) -> bool {
+        width >= px(NOTE_INSET + NOTE_WIDTH * 0.75 + NOTE_TRAIL)
     }
 }
 
@@ -225,7 +237,7 @@ impl Element for Margin {
             };
         let mut built = Vec::new();
         if self.notes_wanted && Margin::fits_notes(bounds.size.width) {
-            let width = (bounds.size.width - px(NOTE_INSET)).min(px(NOTE_WIDTH));
+            let width = (bounds.size.width - px(NOTE_INSET + NOTE_TRAIL)).min(px(NOTE_WIDTH));
             let mut wants = Vec::new();
             let mut heights = Vec::new();
             for (id, top) in &self.notes {

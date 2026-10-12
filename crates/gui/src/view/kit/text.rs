@@ -20,6 +20,14 @@ pub(crate) fn grouped(n: u64) -> String {
     out
 }
 
+/// `n` words, as a reader counts them out.
+pub(crate) fn word_count(n: usize) -> String {
+    match n {
+        1 => "1 word".to_owned(),
+        _ => format!("{} words", grouped(n as u64)),
+    }
+}
+
 /// Tokens, thinned to the digits that carry: `840`, `4.2K`, `128K`, `1.2M`,
 /// `3.40B`.
 pub(crate) fn tokens(n: u64) -> String {

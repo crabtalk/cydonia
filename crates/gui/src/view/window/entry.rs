@@ -5,7 +5,7 @@ use crate::model::workspace::Showing;
 use crate::view::{
     article::TogglePlainText,
     keymap::{self, Command},
-    kit::menu,
+    kit::{menu, stamp, text},
     sidebar::{Group, Lit, Renaming, Row, on_disk},
     window::root::Cydonia,
 };
@@ -310,7 +310,25 @@ impl Cydonia {
                 move |this, window, cx| this.ask_delete(&entry, window, cx)
             },
         )];
-        menu::sections([shown, held, disk, tab_rows, delete])
+        // ── what the open page is, at the foot: read, never chosen ──
+        let mut about: Vec<(Item, menu::Act)> = Vec::new();
+        if matches!(entry.showing(), Some(Showing::Article(_)))
+            && page
+            && let Some(article) = self.pane_doc(cx)
+        {
+            if let Some(words) = article.words() {
+                about.push(menu::note(text::word_count(words)));
+            }
+            about.push(menu::note(format!(
+                "Edited {}",
+                stamp::full(article.touched)
+            )));
+            if let Some(created) = article.created {
+                about.push(menu::note(format!("Created {}", stamp::full(created))));
+            }
+        }
+
+        menu::sections([shown, held, disk, tab_rows, delete, about])
     }
 
     /// Drop an entry, file and all. Deleting the session on screen lands on

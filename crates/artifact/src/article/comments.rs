@@ -47,6 +47,30 @@ pub struct Comment {
     pub turn: Option<String>,
     #[serde(default)]
     pub resolved: bool,
+    /// What was said after the note: follow-ups asked on it, and their
+    /// answers, oldest first.
+    #[serde(default, rename = "reply", skip_serializing_if = "Vec::is_empty")]
+    pub replies: Vec<Reply>,
+}
+
+/// One message after a comment's note.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Reply {
+    pub from: Author,
+    pub text: String,
+    /// The session turn that produced it, as a `cydonia://` link.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn: Option<String>,
+}
+
+/// Who wrote a [`Reply`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Author {
+    /// The person reading the article, asking a follow-up.
+    Reader,
+    /// The agent, answering one.
+    Agent,
 }
 
 impl Comment {
@@ -70,6 +94,7 @@ impl Comment {
             note,
             turn,
             resolved: false,
+            replies: Vec::new(),
         }
     }
 
@@ -93,6 +118,25 @@ impl Comment {
 }
 
 impl Comments {
+    /// The comment `id`, to change.
+    pub fn get_mut(&mut self, id: u64) -> Option<&mut Comment> {
+        self.comments.iter_mut().find(|comment| comment.id == id)
+    }
+
+    /// Take the replies `from` holds past the ones each comment here already
+    /// has: what was said in a thread since these were read.
+    pub fn take_replies(&mut self, from: &Comments) {
+        for held in &mut self.comments {
+            let Some(there) = from.comments.iter().find(|there| there.id == held.id) else {
+                continue;
+            };
+            if there.replies.len() > held.replies.len() && there.replies.starts_with(&held.replies)
+            {
+                held.replies = there.replies.clone();
+            }
+        }
+    }
+
     /// Hold the ranges against `text`.
     pub fn stamp(&mut self, text: &str) {
         self.content = version(text.as_bytes());

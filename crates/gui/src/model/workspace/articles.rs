@@ -231,6 +231,14 @@ impl Workspace {
         }
     }
 
+    /// Ask a follow-up on one comment — see [`Article::ask_on_comment`].
+    pub fn ask_on_comment(&mut self, on: &Path, id: u64, question: String, cx: &mut Context<Self>) {
+        if let Some(article) = self.article_at_mut(on) {
+            article.ask_on_comment(id, question, cx);
+            cx.notify();
+        }
+    }
+
     pub fn delete_comment(&mut self, on: &Path, id: u64, cx: &mut Context<Self>) {
         if let Some(article) = self.article_at_mut(on) {
             article.delete_comment(id, cx);

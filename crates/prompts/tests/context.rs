@@ -97,6 +97,7 @@ fn an_article_session_names_its_article() {
     let under = prompts::session_context(Path::new("/project"), Some(43), Some("1791"), true, &[]);
     assert!(under.contains("Current article: 1791"));
     assert!(under.contains("article_comment"));
+    assert!(under.contains("article_comment_reply"));
     let loose = prompts::session_context(Path::new("/project"), Some(43), None, true, &[]);
     assert!(!loose.contains("Current article"));
 }
