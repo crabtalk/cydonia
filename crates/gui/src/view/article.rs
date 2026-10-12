@@ -254,11 +254,13 @@ pub fn marks() -> markdown::Marks {
     markdown::Marks::new().with(editor::HIGHLIGHT_MARK, "==")
 }
 
-/// How [`marks`] paint: every highlight in [`Washes::highlight`].
+/// How [`marks`] paint: every highlight in [`Washes::highlight`], its text
+/// in whichever of the theme's text and background reads on it.
 pub fn mark_paint(name: &str, theme: &Theme) -> Option<markdown::MarkPaint> {
-    let color = Washes::current().highlight;
+    let wash = Washes::current().highlight.solid(theme);
     (name == editor::HIGHLIGHT_MARK).then(|| markdown::MarkPaint {
-        background: Some(color.solid(theme)),
+        color: Some(bezel::theme::legible_on(wash, theme.text, theme.bg)),
+        background: Some(wash),
         ..Default::default()
     })
 }

@@ -1098,6 +1098,7 @@ dependencies = [
  "alacritty_terminal",
  "bezel-gpui",
  "bezel-theme",
+ "bezel-ui",
  "image",
  "libc",
  "miniz_oxide 0.8.9",

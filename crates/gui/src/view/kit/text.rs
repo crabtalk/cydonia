@@ -1,7 +1,7 @@
 //! Numbers and names as the app writes them in a line of text.
 
 use artifact::board::Card;
-use std::time::Duration;
+use std::{path::Path, time::Duration};
 
 /// The longest a [`CardTitle::short_title`] runs, in characters, ahead of its
 /// `…`.
@@ -59,6 +59,24 @@ pub(crate) fn untitled(title: &str, fallback: &str) -> String {
 }
 
 /// The titles a card is shown under, read off its text.
+/// How a path reads on screen.
+pub(crate) trait ShownPath {
+    /// The path, with `~` for a home directory nobody needs spelled out.
+    fn shown(&self) -> String;
+}
+
+impl ShownPath for Path {
+    fn shown(&self) -> String {
+        let full = self.display().to_string();
+        dirs::home_dir()
+            .and_then(|home| {
+                full.strip_prefix(home.to_str()?)
+                    .map(|rest| format!("~{rest}"))
+            })
+            .unwrap_or(full)
+    }
+}
+
 pub(crate) trait CardTitle {
     /// The one line a card is listed under.
     fn title(&self) -> String;

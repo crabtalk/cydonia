@@ -1,6 +1,7 @@
 //! The detail column and its floating plan, permission, and composer controls.
 
 use crate::view::kit::menu::{self, Menu};
+use crate::view::kit::text::ShownPath as _;
 use crate::{
     model::{
         session::{ChatSession, Choice, Command, Usage},
@@ -173,17 +174,6 @@ fn select_options(options: &SessionConfigSelectOptions) -> Vec<composer::SwitchO
             name: option.name.clone().into(),
         })
         .collect()
-}
-
-/// A path as it is shown: `~` for a home directory nobody needs spelled out.
-pub(crate) fn shown_path(path: &Path) -> String {
-    let full = path.display().to_string();
-    dirs::home_dir()
-        .and_then(|home| {
-            full.strip_prefix(home.to_str()?)
-                .map(|rest| format!("~{rest}"))
-        })
-        .unwrap_or(full)
 }
 
 /// One of the two answers a permission request comes down to, with the *once*
@@ -1074,7 +1064,7 @@ impl Cydonia {
         let name = workspace
             .projects
             .get(ix)
-            .map(|project| shown_path(&project.path))
+            .map(|project| project.path.shown())
             .unwrap_or_default();
         let offered = new::offered(workspace);
         let mut rows: Vec<AnyElement> = Vec::new();
