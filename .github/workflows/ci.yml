@@ -39,8 +39,9 @@ jobs:
       - run: sudo .github/scripts/linux-deps
       - run: cargo clippy --workspace --all-targets
 
-  # Every platform but macOS, which is built on the machines cydonia is
-  # developed on. 22.04 sets the glibc floor of a Linux build.
+  # Linux x86_64 and Windows. macOS is built on the machines cydonia is
+  # developed on, and Linux aarch64 by `nightly.yml`. 22.04 sets the glibc
+  # floor of a Linux build.
   build:
     name: build (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
@@ -49,7 +50,6 @@ jobs:
       matrix:
         include:
           - { name: linux-x86_64, os: ubuntu-22.04 }
-          - { name: linux-aarch64, os: ubuntu-22.04-arm }
           - { name: windows-x86_64, os: windows-latest }
     steps:
       - uses: actions/checkout@v4

@@ -197,6 +197,7 @@ impl Version {
     }
 
     /// The directory this version waits in beside the app it replaces.
+    #[cfg(unix)]
     fn staging(&self, parent: &Path) -> PathBuf {
         parent.join(format!("{STAGING}{}", self.0))
     }
