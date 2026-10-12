@@ -81,9 +81,10 @@ fn embed(url: &str) -> BlockKind {
 pub(crate) struct Links;
 
 impl markdown::Links for Links {
-    /// A web link in the system browser, a file in the file manager. With
-    /// shift held, a web link opens in a panel browser tab and a file in a
-    /// panel file tab, where the window can take one.
+    /// A web link in the system browser, a file in the file manager, and a
+    /// missing file nowhere. With shift held, a web link opens in a panel
+    /// browser tab and a file in a panel file tab, where the window can take
+    /// one.
     fn open(link: Link<'_>, window: &mut Window, cx: &mut App) {
         let Some(Some(root)) = window.root::<Cydonia>() else {
             cx.open_url(link.url);
@@ -95,6 +96,10 @@ impl markdown::Links for Links {
         }
         let shift = window.modifiers().shift;
         if let Some((path, line)) = file_of(link, &root, cx) {
+            // A missing file is neither revealed nor opened; its hover says so.
+            if !path.exists() {
+                return;
+            }
             let opened = shift
                 && root.update(cx, |root, cx| {
                     root.open_file_in_panel(path.clone(), line, window, cx)
@@ -143,7 +148,8 @@ impl markdown::Links for Links {
     }
 
     /// Its own links as their entries, a web page as its bookmark, a
-    /// picture as itself, and any other file or folder as its path.
+    /// picture as itself, any other file or folder as its path, and a missing
+    /// one as not found.
     fn hover(link: Link<'_>, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         if link.is_web() {
             return Some(markdown::render::hover_bookmark(link, cx));
@@ -159,6 +165,9 @@ impl markdown::Links for Links {
             Some(line) => format!("{}:{line}", path.shown()),
             None => path.shown(),
         };
+        if !path.exists() {
+            return Some(Tooltip::card(format!("Not found · {shown}"), None, cx));
+        }
         match path.is_file() && markdown::is_image(&path.to_string_lossy()) {
             true => Some(picture_hover(path, shown, cx)),
             false => Some(Tooltip::card(shown, None, cx)),
