@@ -838,7 +838,7 @@ fn busy_orb_opens_its_session_without_opening_the_card(cx: &mut TestAppContext) 
     cx.update(|window, cx| {
         root.update(cx, |root, cx| {
             root.close_drawer(None, window, cx);
-            root.workspace.update(cx, |workspace, _| {
+            root.workspace.update(cx, |workspace, cx| {
                 workspace.settings.features.sessions = true;
                 let project = &mut workspace.projects[0];
                 let chat = ChatSession::restore(
@@ -857,7 +857,9 @@ fn busy_orb_opens_its_session_without_opening_the_card(cx: &mut TestAppContext) 
                     }))
                     .unwrap(),
                 );
-                project.sessions.push(chat);
+                project
+                    .sessions
+                    .push(crate::model::project::HeldSession::new(chat, cx));
             });
             root.workspace.read(cx).projects[0].boards[0]
                 .board
@@ -876,7 +878,7 @@ fn busy_orb_opens_its_session_without_opening_the_card(cx: &mut TestAppContext) 
                 .cards[0];
             let idle = card_working(
                 card,
-                card_session(card, root.workspace.read(cx)),
+                card_session(card, root.workspace.read(cx), cx),
                 &root.card_marks,
             )
             .unwrap();
@@ -896,7 +898,7 @@ fn busy_orb_opens_its_session_without_opening_the_card(cx: &mut TestAppContext) 
                 .cards[0];
             let working = card_working(
                 card,
-                card_session(card, root.workspace.read(cx)),
+                card_session(card, root.workspace.read(cx), cx),
                 &root.card_marks,
             )
             .unwrap();

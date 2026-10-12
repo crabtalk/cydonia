@@ -26,7 +26,7 @@ use artifact::board::Board;
 use bezel::theme::AppExt as _;
 use bezel::ui::AppExt as _;
 use bezel::{
-    gpui::{App, Context, EntityId, EventEmitter},
+    gpui::{App, AppContext as _, Context, EntityId, EventEmitter},
     theme::{Brand, Tint, Vibrancy, appearance::AppearanceMode},
     ui::icons::Icon,
 };
@@ -78,11 +78,6 @@ const RECENT_COMMANDS: usize = 20;
 /// let go of here: a card's position is not that card's any more, and the
 /// editor that had the caret is a different entity.
 pub struct Reloaded;
-
-/// What one session holds changed — its transcript, its plan, whether it is
-/// streaming — without the workspace changing what it lists. Emitted in place
-/// of a notification, so only what draws that session draws again.
-pub struct SessionChanged(pub u64);
 
 /// The performance section's figures: what is in memory right now.
 pub struct Resident {
@@ -233,7 +228,7 @@ impl Workspace {
             .space
             .and_then(|id| this.spaces.iter().position(|space| space.id == id));
         for ix in restore {
-            this.restore_sessions(ix);
+            this.restore_sessions(ix, cx);
             this.watch_project(ix, cx);
         }
         this.open_last_entry(cx);
@@ -441,8 +436,8 @@ impl Workspace {
     /// moves under it — an agent uninstalled leaves a session pointing at a
     /// command that is gone, and handing that back opens a second session
     /// that cannot start either.
-    pub fn preferred_agent(&self) -> Option<settings::Agent> {
-        self.active_session()
+    pub fn preferred_agent(&self, cx: &App) -> Option<settings::Agent> {
+        self.active_session(cx)
             .and_then(|chat| self.agent_for(&chat.entry))
             .or_else(|| self.settings.agents.first())
             .cloned()
@@ -475,7 +470,7 @@ impl Workspace {
             self.settings = settings;
             cx.set_global(self.settings.browser.clone());
             rail::set_agents(self.rail_agents());
-            self.readopt_agents();
+            self.readopt_agents(cx);
             self.load_agent_icons(cx);
         }
         cx.notify();
@@ -483,11 +478,12 @@ impl Workspace {
 
     /// Hand every session the file's copy of the agent it names — see
     /// [`readopt`], which is the rule for one of them.
-    fn readopt_agents(&mut self) {
+    fn readopt_agents(&self, cx: &mut App) {
         let agents = &self.settings.agents;
-        for project in &mut self.projects {
-            for chat in &mut project.sessions {
-                readopt(agents, &mut chat.entry);
+        for project in &self.projects {
+            for held in &project.sessions {
+                held.chat
+                    .update(cx, |chat, _| readopt(agents, &mut chat.entry));
             }
         }
     }
@@ -967,14 +963,9 @@ impl Workspace {
     /// What this process is holding, counted off the state itself rather than
     /// tracked alongside it — a tally kept in parallel is a tally that can
     /// disagree with what is actually resident.
-    pub fn resident(&self) -> Resident {
+    pub fn resident(&self, cx: &App) -> Resident {
         let articles = || self.projects.iter().flat_map(|project| &project.articles);
-        let sessions = || {
-            self.projects
-                .iter()
-                .flat_map(|project| &project.sessions)
-                .filter(|chat| chat.history_loaded())
-        };
+        let sessions = || self.chats(cx).filter(|chat| chat.history_loaded());
         Resident {
             projects: self.projects.len(),
             articles: articles().count(),
@@ -988,7 +979,6 @@ impl Workspace {
 }
 
 impl EventEmitter<Reloaded> for Workspace {}
-impl EventEmitter<SessionChanged> for Workspace {}
 
 /// Point one session's entry at the file's copy of the agent it names.
 ///

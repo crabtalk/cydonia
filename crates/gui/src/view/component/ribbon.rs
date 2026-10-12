@@ -344,7 +344,7 @@ impl Tab {
             start..from + source[from..to].trim_end().len(),
         );
         let workspace = self.workspace.read(cx);
-        let article = workspace.article_of(self.entry.as_ref())?;
+        let article = workspace.article_of(self.entry.as_ref(), cx)?;
         let chip = article.number.and_then(|number| {
             let project = &workspace.projects[workspace.article_at(&article.path)?.0];
             let name = reference::project_name(&project.path)?;
@@ -448,7 +448,7 @@ impl Tab {
         if self.entry.is_none() && self.kind != artifact::kind::Kind::Article {
             return None;
         }
-        Some(workspace.article_of(self.entry.as_ref())?.path.clone())
+        Some(workspace.article_of(self.entry.as_ref(), cx)?.path.clone())
     }
 
     // ── chrome ───────────────────────────────────────────────────
@@ -491,7 +491,7 @@ impl Tab {
 
         let threads = self
             .thread_article(cx)
-            .is_some_and(|path| self.workspace.read(cx).thread_reachable(&path));
+            .is_some_and(|path| self.workspace.read(cx).thread_reachable(&path, cx));
         let theme = Theme::of(cx).clone();
         let card = popover::popover_card(&theme)
             .flex()

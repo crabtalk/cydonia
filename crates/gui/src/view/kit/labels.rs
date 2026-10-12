@@ -1,16 +1,18 @@
 //! The label picker: one entry's labels, the library's filter, or its
-//! selection's, opened from whichever trigger names it.
+//! selection's, opened from whichever trigger names it. Each view that hangs
+//! one holds its own [`Labels`] and implements [`LabelHost`].
 
+use crate::model::workspace::Workspace;
 use crate::view::{sidebar::Row, window::root::Cydonia};
 use bezel::{
     gpui::{
-        AnyElement, App, Context, Div, Entity, InteractiveElement, Stateful, Subscription,
-        WeakEntity, Window, div, prelude::*, px,
+        AnyElement, App, AppContext as _, Context, Div, Entity, InteractiveElement, Stateful,
+        Subscription, WeakEntity, Window, div, prelude::*, px,
     },
     theme::{TextStyle, Theme, Typeset},
     ui::{
         multi_select::{self, Check, Choice, MultiSelect, MultiSelectEvent},
-        popover,
+        popover::{self, Popup},
         widgets::Content as _,
     },
 };
@@ -35,20 +37,35 @@ pub(crate) struct Picker {
     _events: Subscription,
 }
 
-impl Cydonia {
-    /// Open the label picker on `target`, or shut it when the press that led
-    /// here found it open — see [`Self::labels_trigger`].
-    pub(crate) fn toggle_labels(
-        &mut self,
-        target: Target,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.picker.take_press_was_open() {
-            popover::close_popup(self, cx, |this: &mut Self| &mut this.picker);
+/// A view's label picker: closed, or open on one target.
+#[derive(Default)]
+pub(crate) struct Labels(Popup<Picker>);
+
+/// A view that hangs a label picker.
+pub(crate) trait LabelHost: Sized + 'static {
+    fn labels(&self) -> &Labels;
+    fn labels_mut(&mut self) -> &mut Labels;
+    fn label_workspace(&self) -> &Entity<Workspace>;
+    fn label_root(&self) -> &WeakEntity<Cydonia>;
+
+    /// The entries in the selection — the library's; none elsewhere.
+    fn selected_rows(&self) -> Vec<Row> {
+        Vec::new()
+    }
+
+    /// The label filter the Heading target edits — the library's; none
+    /// elsewhere.
+    fn label_filter(&mut self) -> Option<&mut Vec<String>> {
+        None
+    }
+
+    /// Open the picker on `target`, or shut it when the press that led here
+    /// found it open — see [`Self::labels_trigger`].
+    fn toggle_labels(&mut self, target: Target, window: &mut Window, cx: &mut Context<Self>) {
+        if self.labels_mut().0.take_press_was_open() {
+            popover::close_popup(self, cx, |this: &mut Self| &mut this.labels_mut().0);
             return;
         }
-        self.close_menu(cx);
         let choices = self.label_choices(&target, cx);
         let creates = target != Target::Heading;
         let select = cx.new(|cx| {
@@ -66,7 +83,7 @@ impl Cydonia {
             window,
             |this, _, event: &MultiSelectEvent, window, cx| this.label_event(event, window, cx),
         );
-        self.picker.open(Picker {
+        self.labels_mut().0.open(Picker {
             target,
             select,
             _events: events,
@@ -76,18 +93,15 @@ impl Cydonia {
 
     /// `el`, noting each press for `target`'s picker, so a press on the
     /// trigger of the picker that is open shuts it rather than reopening it.
-    /// Through `root`, so a view other than the window can hang a trigger.
-    pub(crate) fn labels_trigger<E: InteractiveElement>(
-        el: E,
-        target: Target,
-        root: WeakEntity<Cydonia>,
-    ) -> E {
+    fn labels_trigger<E: InteractiveElement>(el: E, target: Target, cx: &Context<Self>) -> E {
+        let this = cx.entity().downgrade();
         // Capture, as [`popover::trigger_press_matching`] does, so the note
         // lands before any dismissal in the frame reads it.
         el.capture_any_mouse_down(move |_, _, cx| {
             let target = target.clone();
-            root.update(cx, |root, _| {
-                root.picker
+            this.update(cx, |this, _| {
+                this.labels_mut()
+                    .0
                     .note_trigger_press_matching(|picker| picker.target == target)
             })
             .ok();
@@ -96,28 +110,24 @@ impl Cydonia {
 
     /// `labels` as chips in `trigger`, which a press opens the picker from.
     /// With none, a faint "Add label" shows while `group` is hovered.
-    pub(crate) fn label_chips(
+    fn label_chips(
         &self,
         trigger: Stateful<Div>,
         target: Target,
         labels: &[String],
         group: &'static str,
-        root: WeakEntity<Cydonia>,
-        cx: &App,
+        cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let theme = Theme::of(cx).clone();
         let chips = trigger
             .cursor_pointer()
-            .on_click({
-                let (target, root) = (target.clone(), root.clone());
-                move |_, window, cx| {
+            .on_click(cx.listener({
+                let target = target.clone();
+                move |this, _, window, cx| {
                     cx.stop_propagation();
-                    root.update(cx, |root, cx| {
-                        root.toggle_labels(target.clone(), window, cx)
-                    })
-                    .ok();
+                    this.toggle_labels(target.clone(), window, cx);
                 }
-            })
+            }))
             .children(
                 labels
                     .iter()
@@ -134,17 +144,18 @@ impl Cydonia {
                 )
             })
             .children(self.label_picker(&target));
-        Self::labels_trigger(chips, target, root)
+        Self::labels_trigger(chips, target, cx)
     }
 
     /// The picker, anchored under its trigger, while `target`'s is open.
-    pub(crate) fn label_picker(&self, target: &Target) -> Option<AnyElement> {
-        let picker = self.picker.get()?;
+    fn label_picker(&self, target: &Target) -> Option<AnyElement> {
+        let labels = &self.labels().0;
+        let picker = labels.get()?;
         (picker.target == *target).then(|| {
             popover::anchored_menu_below(
-                "library-labels",
+                "labels-picker",
                 picker.select.clone().into_any_element(),
-                self.picker.closing_since(),
+                labels.closing_since(),
             )
         })
     }
@@ -155,42 +166,49 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(target) = self.picker.as_open().map(|picker| picker.target.clone()) else {
+        let Some(target) = self.labels().0.get().map(|picker| picker.target.clone()) else {
             return;
         };
         match event {
             MultiSelectEvent::Toggled { name, on } => self.apply_label(&target, name, *on, cx),
             MultiSelectEvent::Created(name) => self.apply_label(&target, name, true, cx),
             MultiSelectEvent::Renamed { from, to } => {
-                self.workspace
+                self.label_workspace()
                     .update(cx, |workspace, cx| workspace.rename_label(from, to, cx));
-                if let Some(library) = &mut self.library {
-                    for label in &mut library.labels {
+                if let Some(filter) = self.label_filter() {
+                    for label in filter.iter_mut() {
                         if label == from.as_ref() {
                             *label = to.to_string();
                         }
                     }
-                    library.labels = artifact::label::normalize_all(&library.labels);
+                    *filter = artifact::label::normalize_all(&*filter);
                 }
             }
             MultiSelectEvent::Deleted(name) => {
                 let count = self
-                    .workspace
+                    .label_workspace()
                     .read(cx)
                     .label_counts(cx)
                     .get(name.as_ref())
                     .copied()
                     .unwrap_or_default();
-                self.ask_delete_label(name.to_string(), count, window, cx);
+                let name = name.to_string();
+                let root = self.label_root().clone();
+                window.defer(cx, move |window, cx| {
+                    root.update(cx, |root, cx| {
+                        root.ask_delete_label(name, count, window, cx)
+                    })
+                    .ok();
+                });
                 return;
             }
             MultiSelectEvent::Dismissed => {
-                popover::close_popup(self, cx, |this: &mut Self| &mut this.picker);
+                popover::close_popup(self, cx, |this: &mut Self| &mut this.labels_mut().0);
                 return;
             }
         }
         let choices = self.label_choices(&target, cx);
-        if let Some(picker) = self.picker.as_open() {
+        if let Some(picker) = self.labels().0.get() {
             picker
                 .select
                 .update(cx, |select, cx| select.set_choices(choices, cx));
@@ -204,17 +222,17 @@ impl Cydonia {
             Target::Cell(row) | Target::Page(row) => vec![row.clone()],
             Target::Selection => self.selected_rows(),
             Target::Heading => {
-                if let Some(library) = &mut self.library {
-                    library.labels.retain(|label| label != name);
+                if let Some(filter) = self.label_filter() {
+                    filter.retain(|label| label != name);
                     if on {
-                        library.labels.push(name.to_owned());
+                        filter.push(name.to_owned());
                     }
-                    library.labels.sort();
+                    filter.sort();
                 }
                 return;
             }
         };
-        self.workspace.update(cx, |workspace, cx| {
+        self.label_workspace().update(cx, |workspace, cx| {
             for row in rows {
                 let Row::Entry { project, showing } = row else {
                     continue;
@@ -228,30 +246,27 @@ impl Cydonia {
     }
 
     /// Every label in every open project, as `target` sees it.
-    fn label_choices(&self, target: &Target, cx: &App) -> Vec<Choice> {
-        let workspace = self.workspace.read(cx);
-        let counts = workspace.label_counts(cx);
-        let held: Vec<Vec<String>> = match target {
+    fn label_choices(&mut self, target: &Target, cx: &App) -> Vec<Choice> {
+        let rows = match target {
             Target::Cell(row) | Target::Page(row) => vec![row.clone()],
             Target::Selection => self.selected_rows(),
             Target::Heading => Vec::new(),
-        }
-        .into_iter()
-        .filter_map(|row| {
-            let Row::Entry { project, showing } = row else {
-                return None;
-            };
-            let at = workspace.project_at(&project)?;
-            workspace
-                .labels_of(at, &showing, cx)
-                .map(<[String]>::to_vec)
-        })
-        .collect();
-        let filter = self
-            .library
-            .as_ref()
-            .map(|library| library.labels.clone())
-            .unwrap_or_default();
+        };
+        let filter = self.label_filter().cloned().unwrap_or_default();
+        let workspace = self.label_workspace().read(cx);
+        let counts = workspace.label_counts(cx);
+        let held: Vec<Vec<String>> = rows
+            .into_iter()
+            .filter_map(|row| {
+                let Row::Entry { project, showing } = row else {
+                    return None;
+                };
+                let at = workspace.project_at(&project)?;
+                workspace
+                    .labels_of(at, &showing, cx)
+                    .map(<[String]>::to_vec)
+            })
+            .collect();
         let mut names: Vec<String> = counts.keys().cloned().collect();
         if *target == Target::Heading {
             names.extend(filter.iter().cloned());

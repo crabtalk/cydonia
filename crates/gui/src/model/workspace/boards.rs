@@ -443,7 +443,7 @@ impl Workspace {
             .board_in(from.0, from.1, cx)
             .and_then(|board| board.card(card))
             .and_then(|card| card.session.clone())
-            .is_some_and(|record| self.session_by_record(&record).is_some());
+            .is_some_and(|record| self.session_by_record(&record, cx).is_some());
         if live {
             return None;
         }

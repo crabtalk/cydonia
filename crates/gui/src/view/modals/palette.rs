@@ -197,7 +197,7 @@ impl Hit {
                     .projects
                     .iter()
                     .find(|open| open.path == found.root)?;
-                let showing = open.stored(found.kind, &found.id)?;
+                let showing = open.stored(found.kind, &found.id, cx)?;
                 let touched = open.facts(&showing, cx)?.touched;
                 let row = Row::Entry {
                     project: open.path.clone(),
@@ -229,8 +229,8 @@ impl Cydonia {
         // Read before the field takes focus: what can run is what the
         // surface under the palette could.
         let commands = menubar::commands(window, cx);
-        let (query, filter) = self.applied_draft();
-        let recent = self.recent_rows(cx);
+        let (query, filter) = self.search.read(cx).draft();
+        let recent = self.list(cx).recent_rows();
         let workspace = self.workspace.clone();
         let root = cx.entity().downgrade();
         self.toggle_modal(window, cx, |window, cx| {
@@ -248,7 +248,7 @@ impl Cydonia {
     /// Raise the palette to link an entry: Enter hands the one picked to `on`
     /// rather than opening it.
     pub(crate) fn link_search(&mut self, on: OnLink, window: &mut Window, cx: &mut Context<Self>) {
-        let recent = self.recent_rows(cx);
+        let recent = self.list(cx).recent_rows();
         let workspace = self.workspace.clone();
         let root = cx.entity().downgrade();
         self.toggle_modal(window, cx, |window, cx| {
@@ -407,9 +407,10 @@ impl Palette {
             return;
         };
         let kind = self.kind(cx);
-        let _ = self
-            .root
-            .update(cx, |root, cx| root.apply_search(query, kind, cx));
+        let _ = self.root.update(cx, |root, cx| {
+            root.search
+                .update(cx, |search, cx| search.apply(query, kind, cx))
+        });
         cx.emit(DismissEvent);
     }
 
@@ -549,7 +550,7 @@ impl Palette {
             return None;
         };
         Some(Linked {
-            url: self.workspace.read(cx).link_of_session(*id)?,
+            url: self.workspace.read(cx).link_of_session(*id, cx)?,
         })
     }
 
@@ -653,9 +654,9 @@ impl Palette {
         };
         let id = *id;
         let theme = Theme::of(cx).clone();
-        let count = self.workspace.update(cx, |workspace, _| {
-            workspace.load_history(id);
-            let chat = workspace.session(id)?;
+        let count = self.workspace.update(cx, |workspace, cx| {
+            workspace.load_history(id, cx);
+            let chat = workspace.session(id, cx)?;
             Some(artifact::session::chat::turns(&chat.items).len())
         });
         let body = count.map(|count| {
@@ -868,10 +869,9 @@ impl Palette {
 
     fn hit_row(&self, ix: usize, hit: &Hit, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        let root = self.root.upgrade();
-        let project = root
-            .as_ref()
-            .and_then(|root| root.read(cx).located(&hit.row, cx))
+        let project = hit
+            .row
+            .located(self.workspace.read(cx))
             .and_then(|(project, _)| {
                 self.workspace
                     .read(cx)
@@ -882,7 +882,7 @@ impl Palette {
         let icon = kind_icon(hit.row.kind().unwrap_or(Kind::Article));
         let title = match &hit.card {
             Some(card) => format!("{} · {}", card.handle, card.title),
-            None => root.map_or_else(String::new, |root| root.read(cx).label_of_row(&hit.row, cx)),
+            None => hit.row.label(self.workspace.read(cx), cx),
         };
         let selected = ix == self.selected;
         let snippet = hit.snippet.as_ref().map(|(line, at)| {

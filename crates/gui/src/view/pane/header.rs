@@ -12,6 +12,7 @@ use crate::view::{
     kit::menu::Menu,
     sidebar::{Renaming, Row},
     window::chrome,
+    window::entry::Host,
     window::root::{self, Cydonia},
 };
 use artifact::kind::Kind;
@@ -42,7 +43,7 @@ pub(crate) struct Entry {
 
 /// Where an entry is renamed — one place per kind, never two.
 pub(crate) enum Naming {
-    /// In the band, in place. See [`Cydonia::header_renaming`].
+    /// In a field where its name is drawn. See [`Cydonia::header_renaming`].
     Inline(Renaming),
     /// In the board's identity panel, by id: a board is named by its name *and*
     /// its key, so one place edits both. See [`Cydonia::toggle_info`].
@@ -91,14 +92,11 @@ impl Cydonia {
         })
     }
 
-    /// Which rename the band is drawing the name field for. One field, one
-    /// place: the sidebar row asks this before drawing it, and the band wins
-    /// because it is what is left when the sidebar is folded away.
+    /// Which rename the band is drawing its name field for: the band's own,
+    /// while the entry it names is the one the band shows. A space and the
+    /// library draw no band.
     pub(crate) fn header_renaming(&self, cx: &App) -> Option<&Renaming> {
-        // A space draws no band, so there is no field here to be the one
-        // place — the sidebar row draws it instead. Without this the field
-        // would be nowhere: the row stands down for a band that is not there.
-        if self.arranged(cx) || self.library.is_some() {
+        if self.workspace.read(cx).active_space().is_some() || self.library.is_some() {
             return None;
         }
         let at = self.renaming.as_ref()?;
@@ -239,11 +237,17 @@ impl Cydonia {
                                 icons::layout::Ellipsis,
                                 Menu::Header,
                                 Place::BelowEnd,
-                                Self::entry_menu_rows(Menu::Header, entry.row, entry.archived),
+                                {
+                                    let (row, archived) = (entry.row, entry.archived);
+                                    Box::new(move |this, _, cx| {
+                                        this.entry_rows(Host::Header, &row, archived, cx)
+                                    })
+                                },
                                 cx,
                             )
-                            .children(self.entry_menu(
+                            .children(self.menu_here(
                                 &Menu::Header,
+                                "header-menu-card",
                                 window,
                                 cx,
                             ))

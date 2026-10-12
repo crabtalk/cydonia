@@ -18,6 +18,8 @@ use crate::{
         sidebar::{Dragged, Row},
         window::{
             chrome,
+            entry::Host,
+            reach::InWindow,
             root::{self, Cydonia},
         },
     },
@@ -146,36 +148,6 @@ impl Pane {
             .cloned()
     }
 
-    /// Run `act` on the window once this pane is no longer being updated.
-    fn defer_window(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-        act: impl FnOnce(&mut Cydonia, &mut Window, &mut Context<Cydonia>) + 'static,
-    ) {
-        let root = self.root.clone();
-        window.defer(cx, move |window, cx| {
-            root.update(cx, |root, cx| act(root, window, cx)).ok();
-        });
-    }
-
-    /// Rows the window builds, picked from this pane's menu: each runs on the
-    /// window once the pane's own handling is done.
-    fn through(rows: Vec<(Item, menu::Act<Cydonia>)>) -> Vec<(Item, menu::Act<Self>)> {
-        rows.into_iter()
-            .map(|(item, act)| {
-                let act = Rc::new(act);
-                let act: menu::Act<Self> = Box::new(move |this, path, window, cx| {
-                    let (act, path) = (act.clone(), path.to_vec());
-                    this.defer_window(window, cx, move |root, window, cx| {
-                        act(root, &path, window, cx)
-                    });
-                });
-                (item, act)
-            })
-            .collect()
-    }
-
     /// Open `menu` at `place` with the rows the window builds for it, or shut
     /// it where it is the one up.
     fn toggle_menu(
@@ -226,7 +198,7 @@ impl Pane {
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
         let toolbar = self.root.upgrade().and_then(|root| {
-            let (project, showing) = self.workspace.read(cx).showing_of(tab)?;
+            let (project, showing) = self.workspace.read(cx).showing_of(tab, cx)?;
             root.read(cx).toolbar_of(project, showing, cx)
         });
         // A number is a project's own, and an arrangement can hold panes from
@@ -292,15 +264,11 @@ impl Pane {
                         let Some((row, archived)) = entry.clone() else {
                             return;
                         };
-                        let rows = Cydonia::entry_menu_rows(
-                            menu::Menu::Tab(shown_tab.clone()),
-                            row,
-                            archived,
-                        );
+                        let host = Host::Tab(shown_tab.clone());
                         this.toggle_menu(
                             menu_key.clone(),
                             Place::At(press.position),
-                            move |root, window, cx| rows(root, window, cx),
+                            move |root, _, cx| root.entry_rows(host, &row, archived, cx),
                             window,
                             cx,
                         );
@@ -400,7 +368,7 @@ impl Pane {
         let project = self
             .workspace
             .read(cx)
-            .showing_of(&front)
+            .showing_of(&front, cx)
             .map(|(project, _)| project);
         let (fold_controls, grip) = match self.root.upgrade() {
             Some(root) => root.update(cx, |root, cx| {
@@ -541,6 +509,12 @@ impl Pane {
                     .flatten(),
             )
             .into_any_element()
+    }
+}
+
+impl InWindow for Pane {
+    fn root(&self) -> &WeakEntity<Cydonia> {
+        &self.root
     }
 }
 

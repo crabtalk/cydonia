@@ -2,8 +2,8 @@
 //! of the article's newest session under a head row naming it.
 
 use crate::{
-    model::workspace::{SessionChanged, Workspace},
-    view::{component::transcript, window::root::Cydonia},
+    model::workspace::Workspace,
+    view::{component::transcript, kit::watch::Watch, window::root::Cydonia},
 };
 use bezel::motion::{Fade, Painter};
 use bezel::{
@@ -29,6 +29,7 @@ pub(crate) struct ThreadView {
     article: PathBuf,
     /// The thread's own view of the session it shows.
     transcript: Option<Entity<transcript::SessionView>>,
+    watch: Watch,
 }
 
 impl ThreadView {
@@ -39,17 +40,12 @@ impl ThreadView {
         cx: &mut Context<Self>,
     ) -> Self {
         cx.observe(&workspace, |_, _, cx| cx.notify()).detach();
-        cx.subscribe(&workspace, |this, workspace, event: &SessionChanged, cx| {
-            if workspace.read(cx).article_thread(&this.article) == Some(event.0) {
-                cx.notify();
-            }
-        })
-        .detach();
         Self {
             workspace,
             root,
             article,
             transcript: None,
+            watch: Watch::default(),
         }
     }
 }
@@ -57,9 +53,11 @@ impl ThreadView {
 impl Render for ThreadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::of(cx).clone();
-        let id = self.workspace.read(cx).article_thread(&self.article);
+        let id = self.workspace.read(cx).article_thread(&self.article, cx);
+        let chat = id.and_then(|id| self.workspace.read(cx).session_entity(id).cloned());
+        self.watch.set(&chat, cx);
         let title = id
-            .and_then(|id| self.workspace.read(cx).session(id))
+            .and_then(|id| self.workspace.read(cx).session(id, cx))
             .map(|chat| chat.title.trim().to_owned())
             .filter(|title| !title.is_empty())
             .unwrap_or_else(|| "New chat".to_owned());

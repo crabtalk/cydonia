@@ -16,7 +16,7 @@ impl Workspace {
     ) -> Option<&'a [String]> {
         let open = self.projects.get(project)?;
         match showing {
-            Showing::Session(id) => open.session(*id).map(|chat| chat.labels.as_slice()),
+            Showing::Session(id) => open.session(*id, cx).map(|chat| chat.labels.as_slice()),
             Showing::Article(id) => open
                 .article_ix(id)
                 .map(|ix| open.articles[ix].labels.as_slice()),
@@ -60,7 +60,7 @@ impl Workspace {
 
     /// An agent's labelling of the session filed under `record`.
     pub fn label_record(&mut self, record: &str, labels: Vec<String>, cx: &mut Context<Self>) {
-        let Some(id) = self.session_by_record(record).map(|chat| chat.id) else {
+        let Some(id) = self.session_by_record(record, cx).map(|chat| chat.id) else {
             return;
         };
         let Some(project) = self.project_of(id) else {

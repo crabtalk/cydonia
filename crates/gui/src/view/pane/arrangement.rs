@@ -296,7 +296,7 @@ impl Cydonia {
             return space.panes().iter().any(|pane| {
                 let front = self.front_of(pane, &workspace.stack_of(pane), cx);
                 workspace
-                    .showing_of(&front)
+                    .showing_of(&front, cx)
                     .is_some_and(|(open, shown)| open == at && &shown == showing)
             });
         }
@@ -405,18 +405,18 @@ impl Cydonia {
     fn dropped(&mut self, item: &Dragged, cx: &mut Context<Self>) -> Option<Member> {
         match item {
             Dragged::Tab(member) => Some(member.clone()),
-            Dragged::Row(row) => self.landed_row(row, cx),
+            Dragged::Row(row) => row.landed(&self.workspace.clone(), cx),
         }
     }
 
     /// What a carried item is called, for the ghost that follows the pointer.
     pub(crate) fn label_of_dragged(&self, item: &Dragged, cx: &App) -> String {
         match item {
-            Dragged::Row(row) => self.label_of_row(row, cx),
+            Dragged::Row(row) => row.label(self.workspace.read(cx), cx),
             Dragged::Tab(member) => self
                 .workspace
                 .read(cx)
-                .showing_of(member)
+                .showing_of(member, cx)
                 .and_then(|(project, showing)| self.toolbar_of(project, showing, cx))
                 .map(|toolbar| toolbar.title)
                 .unwrap_or_default(),
@@ -467,7 +467,7 @@ impl Cydonia {
     fn member_showing(&self, project: usize, pane: Kind, cx: &App) -> Option<Member> {
         let workspace = self.workspace.read(cx);
         let showing = workspace.projects.get(project)?.selected(pane)?;
-        workspace.member_of(project, showing)
+        workspace.member_of(project, showing, cx)
     }
 
     /// What the `···` on a pane's bar offers: what can be done to the *pane*.
@@ -763,7 +763,7 @@ impl Cydonia {
         // No agent to open one on: the session pane says so and offers the
         // install.
         if let New::Session(None) = kind
-            && self.workspace.read(cx).preferred_agent().is_none()
+            && self.workspace.read(cx).preferred_agent(cx).is_none()
         {
             return self.new_session_action(&NewSession, window, cx);
         }
@@ -773,7 +773,7 @@ impl Cydonia {
                 New::Session(at) => {
                     let agent = match at {
                         Some(at) => workspace.settings.agents.get(at).cloned()?,
-                        None => workspace.preferred_agent()?,
+                        None => workspace.preferred_agent(cx)?,
                     };
                     let id = workspace.new_session(agent, None, cx)?;
                     // A space names its members by file, and a new session
@@ -799,7 +799,7 @@ impl Cydonia {
                 }
                 New::Board => return None,
             };
-            workspace.member_of(project, showing)
+            workspace.member_of(project, showing, cx)
         });
         if let Some(member) = member {
             self.add_tab(pane, member, window, cx);

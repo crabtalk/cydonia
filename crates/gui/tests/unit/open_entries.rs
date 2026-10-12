@@ -301,8 +301,10 @@ fn syncing_the_composers_leaves_the_focus_where_it_was(cx: &mut gpui::TestAppCon
                 // A draft to write in, which is what the sync does to the
                 // field and what the field reports as a change.
                 chat.draft = "half a thought".into();
-                workspace.projects[0].sessions.push(chat);
-                let session = workspace.member_of_session(7).expect("a member");
+                workspace.projects[0]
+                    .sessions
+                    .push(crate::model::project::HeldSession::new(chat, cx));
+                let session = workspace.member_of_session(7, cx).expect("a member");
                 (board, session)
             });
 

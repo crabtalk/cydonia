@@ -5,22 +5,14 @@
 //! A query is searched off disk on a background thread — see
 //! [`artifact::search::disk`] — so an entry's hits are as of its last write.
 
-use crate::view::{
-    keymap::{self, Command},
-    modals::palette::{Filter, Hit, ToggleSearch},
-    sidebar::{self, Row},
-    window::root::Cydonia,
-};
+use crate::model::workspace::Workspace;
+use crate::view::{modals::palette::Hit, sidebar::Row};
 use artifact::{
     kind::Kind,
     project::fs,
     search::{self, Block, Query},
 };
-use bezel::{
-    gpui::{AnyElement, App, Context, Task, div, prelude::*, px},
-    theme::{TextStyle, Theme, Typeset as _},
-    ui::{icons, popover, widgets::Buttons as _},
-};
+use bezel::gpui::{App, Context, Entity, Task};
 use std::{collections::HashMap, path::PathBuf, sync::mpsc, time::Duration};
 
 /// How long typing has to pause before the query is searched.
@@ -43,18 +35,27 @@ struct Applied {
     ready: bool,
 }
 
-/// The query applied to the workspace, while there is one.
-#[derive(Default)]
+/// The query applied to the workspace, while there is one. One entity for the
+/// window: the sidebar draws its rows by it, and the window hands it to every
+/// pane's find.
 pub(crate) struct Search {
+    workspace: Entity<Workspace>,
     applied: Option<Applied>,
-    applied_task: Option<Task<()>>,
+    task: Option<Task<()>>,
 }
 
-impl Cydonia {
+impl Search {
+    pub(crate) fn new(workspace: Entity<Workspace>) -> Self {
+        Self {
+            workspace,
+            applied: None,
+            task: None,
+        }
+    }
+
     /// What the palette opens holding: the applied query and its kind.
-    pub(crate) fn applied_draft(&self) -> (String, Option<Kind>) {
-        self.search
-            .applied
+    pub(crate) fn draft(&self) -> (String, Option<Kind>) {
+        self.applied
             .as_ref()
             .map_or_else(Default::default, |applied| {
                 (applied.query.text().to_owned(), applied.filter)
@@ -62,25 +63,20 @@ impl Cydonia {
     }
 
     /// Apply `query`, narrowed to `kind`, to the workspace.
-    pub(crate) fn apply_search(
-        &mut self,
-        query: Query,
-        kind: Option<Kind>,
-        cx: &mut Context<Self>,
-    ) {
-        self.search.applied = Some(Applied {
+    pub(crate) fn apply(&mut self, query: Query, kind: Option<Kind>, cx: &mut Context<Self>) {
+        self.applied = Some(Applied {
             query,
             filter: kind,
             found: Vec::new(),
             ready: false,
         });
-        self.push_finds(cx);
-        self.refresh_applied_search(cx);
+        self.refresh(cx);
         cx.notify();
     }
 
-    pub(crate) fn refresh_applied_search(&mut self, cx: &mut Context<Self>) {
-        let Some(applied) = self.search.applied.as_mut() else {
+    /// Search the open projects for the applied query again.
+    pub(crate) fn refresh(&mut self, cx: &mut Context<Self>) {
+        let Some(applied) = self.applied.as_mut() else {
             return;
         };
         let query = applied.query.clone();
@@ -91,14 +87,14 @@ impl Cydonia {
             .iter()
             .map(|p| p.path.clone())
             .collect::<Vec<_>>();
-        self.search.applied_task = Some(cx.spawn(async move |this, cx| {
+        self.task = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(SETTLE).await;
             let found = cx
                 .background_executor()
                 .spawn(async move { search_all(&roots, &query) })
                 .await;
             let _ = this.update(cx, |this, cx| {
-                if let Some(applied) = this.search.applied.as_mut() {
+                if let Some(applied) = this.applied.as_mut() {
                     applied.found = found;
                     applied.ready = true;
                 }
@@ -107,12 +103,13 @@ impl Cydonia {
         }));
     }
 
-    pub(crate) fn applied_query(&self) -> Option<&Query> {
-        self.search.applied.as_ref().map(|a| &a.query)
+    pub(crate) fn query(&self) -> Option<&Query> {
+        self.applied.as_ref().map(|a| &a.query)
     }
 
-    pub(crate) fn applied_rows(&self, cx: &App) -> Option<Vec<Row>> {
-        let applied = self.search.applied.as_ref()?;
+    /// The rows the applied query leaves standing, most relevant first.
+    pub(crate) fn rows(&self, cx: &App) -> Option<Vec<Row>> {
+        let applied = self.applied.as_ref()?;
         Some(
             Hit::ranked(applied.found.clone(), self.workspace.read(cx), cx)
                 .into_iter()
@@ -126,98 +123,21 @@ impl Cydonia {
         )
     }
 
-    pub(crate) fn clear_applied_search(&mut self, cx: &mut Context<Self>) {
-        self.search.applied = None;
-        self.search.applied_task = None;
-        self.push_finds(cx);
+    pub(crate) fn clear(&mut self, cx: &mut Context<Self>) {
+        self.applied = None;
+        self.task = None;
         cx.notify();
     }
 
-    /// The sidebar's row that raises the palette.
-    pub(crate) fn search_row(&self, cx: &mut Context<Self>) -> AnyElement {
-        let theme = Theme::of(cx).clone();
-        let chord = keymap::label(Command::Search, &self.workspace.read(cx).settings.shortcuts);
-        if let Some(applied) = &self.search.applied {
-            let label = match applied.filter {
-                Some(kind) => format!("{} · {}", applied.query.text(), Filter::Kind(kind).label()),
-                None => applied.query.text().to_owned(),
-            };
-            let count = self.applied_rows(cx).map_or(0, |rows| rows.len());
-            return sidebar::row("applied-search", "applied-search", false, false, 0, &theme)
-                .flex_none()
-                .min_w_0()
-                .mb(px(4.))
-                .child(
-                    icons::icon(icons::text::Search)
-                        .size(px(14.))
-                        .text_color(theme.text_muted),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .text_style(TextStyle::Body)
-                        .text_color(theme.text)
-                        .child(label),
-                )
-                .child(
-                    div()
-                        .flex_none()
-                        .text_style(TextStyle::Caption)
-                        .text_color(theme.text_muted)
-                        .child(if !applied.ready {
-                            "…".to_owned()
-                        } else {
-                            count.to_string()
-                        }),
-                )
-                .child(
-                    theme
-                        .ghost("clear-workspace-search")
-                        .debug_selector(|| "clear-workspace-search".into())
-                        .flex_none()
-                        .size(px(24.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(
-                            icons::icon(icons::notifications::X)
-                                .size(px(14.))
-                                .text_color(theme.text_muted),
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            cx.stop_propagation();
-                            this.clear_applied_search(cx);
-                        })),
-                )
-                .on_click(
-                    cx.listener(|this, _, window, cx| {
-                        this.toggle_search(&ToggleSearch, window, cx)
-                    }),
-                )
-                .into_any_element();
-        }
-        sidebar::row("search-row", "search-row", false, false, 0, &theme)
-            .flex_none()
-            .mb(px(4.))
-            .child(
-                icons::icon(icons::text::Search)
-                    .size(px(14.))
-                    .text_color(theme.text_muted),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .text_style(TextStyle::Body)
-                    .text_color(theme.text_muted)
-                    .child("Search"),
-            )
-            .children(chord.map(|chord| popover::kbd_hint(&theme, chord)))
-            .on_click(
-                cx.listener(|this, _, window, cx| this.toggle_search(&ToggleSearch, window, cx)),
-            )
-            .into_any_element()
+    /// The applied query as the sidebar shows it: its text, its kind, and
+    /// whether its search has come back.
+    pub(crate) fn shown(&self) -> Option<(String, Option<Kind>, bool)> {
+        let applied = self.applied.as_ref()?;
+        Some((
+            applied.query.text().to_owned(),
+            applied.filter,
+            applied.ready,
+        ))
     }
 }
 

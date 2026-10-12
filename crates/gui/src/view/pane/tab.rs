@@ -2,13 +2,14 @@
 //! its items, its find bar, its drawer, its formatting bar and its composer.
 
 use crate::{
-    model::workspace::{SessionChanged, Showing, Workspace},
+    model::workspace::{Showing, Workspace},
     view::{
         article,
         board::{self, DismissFind},
         component::{composer::Composer, ribbon::Ribbon, transcript},
+        kit::watch::Watch,
         table,
-        window::root::Cydonia,
+        window::{reach::InWindow, root::Cydonia},
     },
 };
 use artifact::kind::Kind;
@@ -108,6 +109,8 @@ pub(crate) struct Tab {
     /// field it puts up — see [`crate::view::component::ribbon`].
     pub(crate) ribbon: Ribbon,
     pub(crate) menu: ContextMenu<Self, TabMenu>,
+    /// The sessions it draws — see [`Self::watch_sessions`].
+    sessions_watch: Watch,
 }
 
 impl Tab {
@@ -125,12 +128,6 @@ impl Tab {
         // What the pane draws is read off the model, and a cached pane draws
         // again only when told.
         cx.observe(&workspace, |_, _, cx| cx.notify()).detach();
-        cx.subscribe(&workspace, |this, _, event: &SessionChanged, cx| {
-            if this.draws_session(event.0, cx) {
-                cx.notify();
-            }
-        })
-        .detach();
         cx.subscribe(&find_field, |this, _, event: &FieldEvent, cx| {
             if let FieldEvent::Changed(_) = event {
                 this.find_changed(cx);
@@ -161,6 +158,7 @@ impl Tab {
             applied: None,
             ribbon: Ribbon::new(cx),
             menu: ContextMenu::default(),
+            sessions_watch: Watch::default(),
         }
     }
 }
@@ -171,7 +169,7 @@ impl Tab {
     pub(crate) fn showing(&self, cx: &App) -> Option<(usize, Showing)> {
         let workspace = self.workspace.read(cx);
         match &self.entry {
-            Some(entry) => workspace.showing_of(entry),
+            Some(entry) => workspace.showing_of(entry, cx),
             None => {
                 let project = workspace.active?;
                 let showing = workspace.projects.get(project)?.selected(self.kind)?;
@@ -182,25 +180,21 @@ impl Tab {
 
     /// Whether the pane draws anything of session `id`: the session it shows,
     /// or the thread under the article it shows.
-    fn draws_session(&self, id: u64, cx: &App) -> bool {
-        self.shown_session(cx) == Some(id)
-            || self
-                .thread_article(cx)
-                .is_some_and(|path| self.workspace.read(cx).article_thread(&path) == Some(id))
-    }
-
-    /// Run `act` on the window once this pane is no longer being updated: what
-    /// the window does in answer can reach back into the pane.
-    pub(crate) fn defer_window(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-        act: impl FnOnce(&mut Cydonia, &mut Window, &mut Context<Cydonia>) + 'static,
-    ) {
-        let root = self.root.clone();
-        window.defer(cx, move |window, cx| {
-            root.update(cx, |root, cx| act(root, window, cx)).ok();
-        });
+    /// Observe the sessions the pane draws: the one it shows, and the
+    /// thread under the article it shows.
+    fn watch_sessions(&mut self, cx: &mut Context<Self>) {
+        let workspace = self.workspace.read(cx);
+        let thread = self
+            .thread_article(cx)
+            .and_then(|path| workspace.article_thread(&path, cx));
+        let sessions: Vec<_> = [self.shown_session(cx), thread]
+            .into_iter()
+            .flatten()
+            .filter_map(|id| workspace.session_entity(id).cloned())
+            .collect();
+        let mut watch = std::mem::take(&mut self.sessions_watch);
+        watch.set(&sessions, cx);
+        self.sessions_watch = watch;
     }
 
     /// What the pane shows, drawn: the item, and what the pane hangs over it.
@@ -284,9 +278,16 @@ impl Tab {
     }
 }
 
+impl InWindow for Tab {
+    fn root(&self) -> &WeakEntity<Cydonia> {
+        &self.root
+    }
+}
+
 impl Render for Tab {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_items(cx);
+        self.watch_sessions(cx);
         let theme = Theme::of(cx).clone();
         let showing = self.showing(cx);
         let body = match &showing {
@@ -314,7 +315,7 @@ impl Render for Tab {
         };
         // A pane of a space always carries its composer; the window's one pane
         // stands the reason there in its place when there is nowhere to send.
-        let reachable = self.entry.is_some() || self.workspace.read(cx).reachable();
+        let reachable = self.entry.is_some() || self.workspace.read(cx).reachable(cx);
         let footer = match (&showing, session) {
             (_, Some(id)) if reachable => Some(self.session_footer(Some(id), cx)),
             (_, Some(id)) => self

@@ -7,12 +7,12 @@
 //! that ends on a tool call still shows the prose before it as prose.
 
 use crate::{
-    model::{
-        session::ChatSession,
-        workspace::{SessionChanged, Workspace},
-    },
+    model::{session::ChatSession, workspace::Workspace},
     view::{
-        kit::text::{elapsed, tokens},
+        kit::{
+            text::{elapsed, tokens},
+            watch::Watch,
+        },
         pane::find::{self, Find, Searchable},
         window::root::{self, Cydonia},
     },
@@ -496,7 +496,7 @@ fn prose(
     ix: usize,
     text: &str,
     window: &mut Window,
-    cx: &mut Context<Workspace>,
+    cx: &mut Context<ChatSession>,
 ) -> AnyElement {
     let doc = if matches!(chat.items.get(ix), Some(ChatItem::User(_))) {
         gallery::document(text).0
@@ -656,6 +656,7 @@ pub(crate) enum Drawn {
 struct Hold<'a> {
     state: &'a State,
     view: WeakEntity<SessionView>,
+    workspace: WeakEntity<Workspace>,
 }
 
 /// One view of one session's transcript: a pane's, a drawer's, or one an
@@ -677,6 +678,7 @@ pub(crate) struct SessionView {
     find: Find,
     /// The session's [`ChatSession::epoch`] the state was built against.
     epoch: u64,
+    watch: Watch,
 }
 
 impl SessionView {
@@ -691,19 +693,13 @@ impl SessionView {
     ) -> Self {
         let epoch = workspace
             .read(cx)
-            .session(session)
+            .session(session, cx)
             .map_or(0, |chat| chat.epoch);
         let state = State::default();
         if drawn != Drawn::Pane {
             state.follow_tail();
         }
         cx.observe(&workspace, |_, _, cx| cx.notify()).detach();
-        cx.subscribe(&workspace, |this, _, event: &SessionChanged, cx| {
-            if event.0 == this.session {
-                cx.notify();
-            }
-        })
-        .detach();
         Self {
             session,
             pane,
@@ -714,19 +710,21 @@ impl SessionView {
             state,
             find: Find::default(),
             epoch,
+            watch: Watch::default(),
         }
     }
 
     /// The turn the selection is in, from 0.
     pub(crate) fn selected_turn(&self, cx: &App) -> Option<usize> {
         let workspace = self.workspace.read(cx);
-        self.state.selected_turn(workspace.session(self.session)?)
+        self.state
+            .selected_turn(workspace.session(self.session, cx)?)
     }
 
     /// What is selected, as it would be pasted.
     pub(crate) fn copied(&self, cx: &App) -> Option<String> {
         let workspace = self.workspace.read(cx);
-        self.state.copied(workspace.session(self.session)?)
+        self.state.copied(workspace.session(self.session, cx)?)
     }
 
     /// Follow a held press to `position`, and scroll the stream while it is
@@ -764,7 +762,7 @@ impl Searchable for SessionView {
 
     fn hits(&self, cx: &App) -> usize {
         let workspace = self.workspace.read(cx);
-        match (workspace.session(self.session), self.find.query()) {
+        match (workspace.session(self.session, cx), self.find.query()) {
             (Some(chat), Some(query)) => hits(&chat.items, &query).len(),
             _ => 0,
         }
@@ -772,7 +770,7 @@ impl Searchable for SessionView {
 
     fn reveal_hit(&mut self, cx: &mut Context<Self>) {
         let workspace = self.workspace.read(cx);
-        let Some(chat) = workspace.session(self.session) else {
+        let Some(chat) = workspace.session(self.session, cx) else {
             return;
         };
         let hits = self
@@ -790,7 +788,13 @@ impl Searchable for SessionView {
 impl Render for SessionView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let id = self.session;
-        let epoch = self.workspace.read(cx).session(id).map(|chat| chat.epoch);
+        let chat = self.workspace.read(cx).session_entity(id).cloned();
+        self.watch.set(&chat, cx);
+        let epoch = self
+            .workspace
+            .read(cx)
+            .session(id, cx)
+            .map(|chat| chat.epoch);
         let Some(epoch) = epoch else {
             return div().flex_1().into_any_element();
         };
@@ -809,30 +813,37 @@ impl Render for SessionView {
         };
         let width = self.width.get();
         let state = &self.state;
-        let body = workspace.update(cx, |workspace, cx| {
-            let chat = workspace.session(id)?;
-            let hold = Hold { state, view };
-            Some(match drawn {
-                Drawn::Excerpt { from, to } => excerpt(chat, &hold, from, to, window, cx),
-                _ => {
-                    let queued_root = root.clone();
-                    let queued = move |window: &mut Window, cx: &mut bezel::gpui::App| {
-                        if drawn != Drawn::Pane {
-                            return None;
-                        }
-                        let pane = pane.clone();
-                        queued_root
-                            .update(cx, |root, cx| {
-                                root.queue(id, pane.as_ref(), window, cx)
-                                    .map(IntoElement::into_any_element)
-                            })
-                            .ok()
-                            .flatten()
-                    };
-                    let rewind = move |at, window: &mut Window, cx: &mut bezel::gpui::App| {
-                        let _ = root.update(cx, |root, cx| root.ask_rewind(id, at, window, cx));
-                    };
-                    render(chat, &hold, find, width, queued, rewind, drawn, window, cx)
+        let chat = workspace.read(cx).session_entity(id).cloned();
+        let workspace = workspace.downgrade();
+        let body = chat.map(|chat| {
+            chat.update(cx, |chat, cx| {
+                let hold = Hold {
+                    state,
+                    view,
+                    workspace,
+                };
+                match drawn {
+                    Drawn::Excerpt { from, to } => excerpt(chat, &hold, from, to, window, cx),
+                    _ => {
+                        let queued_root = root.clone();
+                        let queued = move |window: &mut Window, cx: &mut bezel::gpui::App| {
+                            if drawn != Drawn::Pane {
+                                return None;
+                            }
+                            let pane = pane.clone();
+                            queued_root
+                                .update(cx, |root, cx| {
+                                    root.queue(id, pane.as_ref(), window, cx)
+                                        .map(IntoElement::into_any_element)
+                                })
+                                .ok()
+                                .flatten()
+                        };
+                        let rewind = move |at, window: &mut Window, cx: &mut bezel::gpui::App| {
+                            let _ = root.update(cx, |root, cx| root.ask_rewind(id, at, window, cx));
+                        };
+                        render(chat, &hold, find, width, queued, rewind, drawn, window, cx)
+                    }
                 }
             })
         });
@@ -891,7 +902,7 @@ fn render(
     rewind: impl Fn(usize, &mut Window, &mut bezel::gpui::App) + 'static,
     drawn: Drawn,
     _window: &mut Window,
-    cx: &mut Context<Workspace>,
+    cx: &mut Context<ChatSession>,
 ) -> AnyElement {
     let id = chat.id;
     let state = hold.state;
@@ -958,11 +969,12 @@ fn render(
                     let hold = Hold {
                         state: &this.state,
                         view: cx.entity().downgrade(),
+                        workspace: workspace.downgrade(),
                     };
-                    workspace.update(cx, |workspace, cx| {
-                        let Some(chat) = workspace.session(id) else {
-                            return Empty.into_any_element();
-                        };
+                    let Some(chat) = workspace.read(cx).session_entity(id).cloned() else {
+                        return Empty.into_any_element();
+                    };
+                    chat.update(cx, |chat, cx| {
                         let Some(turn) = turns.get(index) else {
                             return Empty.into_any_element();
                         };
@@ -1000,7 +1012,7 @@ fn render(
                 let Some(items) = view
                     .workspace
                     .read(cx)
-                    .session(id)
+                    .session(id, cx)
                     .map(|chat| turns_for_cache(&chat.items, range))
                 else {
                     return;
@@ -1058,10 +1070,10 @@ fn render(
                 &self::turns(&chat.items),
                 px(rail_room(pane_width)),
                 Some({
-                    let workspace = cx.entity().downgrade();
+                    let workspace = hold.workspace.clone();
                     Rc::new(move |from, to, _: &mut Window, cx: &mut bezel::gpui::App| {
                         let _ = workspace.update(cx, |workspace, cx| {
-                            if let Some(link) = workspace.turn_link(id, from, to) {
+                            if let Some(link) = workspace.turn_link(id, from, to, cx) {
                                 cx.write_to_clipboard(ClipboardItem::new_string(link));
                             }
                         });
@@ -1097,11 +1109,18 @@ fn render(
                 ))
                 .cursor_pointer()
                 .hover(|link| link.text_color(theme.text))
-                .on_click(cx.listener(move |workspace, _, _, cx| {
-                    if let Some(id) = workspace.session_by_record(&source).map(|chat| chat.id) {
-                        workspace.select_session(id, cx);
+                .on_click({
+                    let workspace = hold.workspace.clone();
+                    move |_, _, cx| {
+                        let _ = workspace.update(cx, |workspace, cx| {
+                            if let Some(id) =
+                                workspace.session_by_record(&source, cx).map(|chat| chat.id)
+                            {
+                                workspace.select_session(id, cx);
+                            }
+                        });
                     }
-                }))
+                })
                 .into_any_element()
         }))
         .child(transcript)
@@ -1117,7 +1136,7 @@ fn excerpt(
     from: usize,
     to: usize,
     window: &mut Window,
-    cx: &mut Context<Workspace>,
+    cx: &mut Context<ChatSession>,
 ) -> AnyElement {
     let turns = turns(&chat.items);
     let to = to.min(turns.len());
@@ -1464,7 +1483,7 @@ fn zone(
     running: bool,
     rewind: Option<Rewind>,
     window: &mut Window,
-    cx: &mut Context<Workspace>,
+    cx: &mut Context<ChatSession>,
 ) -> AnyElement {
     let theme = Theme::of(cx).clone();
     let first = turn.range.start;
@@ -1590,14 +1609,20 @@ fn zone(
                                         .tooltip(|window, cx| {
                                             Tooltip::text("Copy link to turn", window, cx)
                                         })
-                                        .on_click(cx.listener(move |workspace, _, _, cx| {
-                                            if let Some(link) = workspace.turn_link(id, turn, turn)
-                                            {
-                                                cx.write_to_clipboard(ClipboardItem::new_string(
-                                                    link,
-                                                ));
+                                        .on_click({
+                                            let workspace = hold.workspace.clone();
+                                            move |_, _, cx| {
+                                                let _ = workspace.update(cx, |workspace, cx| {
+                                                    if let Some(link) =
+                                                        workspace.turn_link(id, turn, turn, cx)
+                                                    {
+                                                        cx.write_to_clipboard(
+                                                            ClipboardItem::new_string(link),
+                                                        );
+                                                    }
+                                                });
                                             }
-                                        }))
+                                        })
                                         .child(
                                             theme
                                                 .icon_at(TextStyle::Caption, icons::text::Link)
@@ -1620,9 +1645,14 @@ fn zone(
                                         .tooltip(|window, cx| {
                                             Tooltip::text("Fork session from here", window, cx)
                                         })
-                                        .on_click(cx.listener(move |workspace, _, _, cx| {
-                                            workspace.fork_session(id, first, cx);
-                                        }))
+                                        .on_click({
+                                            let workspace = hold.workspace.clone();
+                                            move |_, _, cx| {
+                                                let _ = workspace.update(cx, |workspace, cx| {
+                                                    workspace.fork_session(id, first, cx);
+                                                });
+                                            }
+                                        })
                                         .child(
                                             theme
                                                 .icon_at(
@@ -1769,7 +1799,7 @@ fn work_header(
     at: usize,
     steps: usize,
     open: bool,
-    cx: &mut Context<Workspace>,
+    cx: &mut Context<ChatSession>,
 ) -> AnyElement {
     let theme = Theme::of(cx).clone();
     let label = match steps {
@@ -1816,7 +1846,7 @@ fn work(
     chat: &ChatSession,
     hold: &Hold,
     body: Range<usize>,
-    cx: &mut Context<Workspace>,
+    cx: &mut Context<ChatSession>,
 ) -> Vec<AnyElement> {
     let theme = Theme::of(cx).clone();
     let is_tool = |item: &ChatItem| matches!(item, ChatItem::Tool { .. });
@@ -1848,7 +1878,7 @@ fn work(
 }
 
 /// One thought: a single clipped line, or the whole text once opened.
-fn thought(hold: &Hold, ix: usize, text: &str, cx: &mut Context<Workspace>) -> AnyElement {
+fn thought(hold: &Hold, ix: usize, text: &str, cx: &mut Context<ChatSession>) -> AnyElement {
     let theme = Theme::of(cx).clone();
     let open = hold.state.output.contains(&ix);
     let muted = theme.text_muted.opacity(0.7);
@@ -1940,7 +1970,7 @@ fn tool(
     hold: &Hold,
     ix: usize,
     first: bool,
-    cx: &mut Context<Workspace>,
+    cx: &mut Context<ChatSession>,
 ) -> AnyElement {
     let theme = Theme::of(cx).clone();
     let ChatItem::Tool {
@@ -2006,7 +2036,7 @@ fn process(
     ix: usize,
     command: &str,
     output: &str,
-    cx: &mut Context<Workspace>,
+    cx: &mut Context<ChatSession>,
 ) -> AnyElement {
     let theme = Theme::of(cx).clone();
     let open = hold.state.output.contains(&ix);
@@ -2156,7 +2186,12 @@ fn spend(chat: &ChatSession, theme: &Theme) -> Option<AnyElement> {
 /// The turn in flight, while it has produced nothing to show yet. `at` is the
 /// turn's first item — the question, which is what its word and its orb come
 /// from.
-fn working(chat: &ChatSession, hold: &Hold, at: usize, cx: &mut Context<Workspace>) -> AnyElement {
+fn working(
+    chat: &ChatSession,
+    hold: &Hold,
+    at: usize,
+    cx: &mut Context<ChatSession>,
+) -> AnyElement {
     let theme = Theme::of(cx).clone();
     let asked = chat.items.get(at).and_then(item_text).unwrap_or_default();
     let state = orb_of(chat);

@@ -63,7 +63,7 @@ fn a_settled_transcript_hides_its_thumb(cx: &mut gpui::TestAppContext) {
                 "Answer {i}\n\nAnother paragraph with **bold** text."
             )));
         }
-        project.sessions.push(chat);
+        project.sessions.push(crate::model::project::HeldSession::new(chat, cx));
         workspace.projects.push(project);
     });
     let window = cx.add_window(|_, cx| ChatView {

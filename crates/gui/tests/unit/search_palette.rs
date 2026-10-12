@@ -65,10 +65,10 @@ fn applying_search_hands_the_draft_to_the_workspace(cx: &mut gpui::TestAppContex
         });
     })
     .unwrap();
-    root.read_with(cx, |this, _| {
-        assert_eq!(this.applied_query().unwrap().text(), "retry");
+    root.read_with(cx, |this, cx| {
+        assert_eq!(this.search.read(cx).query().unwrap().text(), "retry");
         assert_eq!(
-            this.applied_draft(),
+            this.search.read(cx).draft(),
             ("retry".to_owned(), Some(Kind::Article))
         );
     });

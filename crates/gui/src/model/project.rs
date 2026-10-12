@@ -58,9 +58,26 @@ impl HeldBoard {
     }
 }
 
+/// A session a project holds: its id, which never changes, and the session,
+/// which every view drawing any of it observes.
+#[derive(Clone)]
+pub struct HeldSession {
+    pub id: u64,
+    pub chat: Entity<ChatSession>,
+}
+
+impl HeldSession {
+    pub fn new(chat: ChatSession, cx: &mut App) -> Self {
+        Self {
+            id: chat.id,
+            chat: cx.new(|_| chat),
+        }
+    }
+}
+
 pub struct Project {
     pub path: PathBuf,
-    pub sessions: Vec<ChatSession>,
+    pub sessions: Vec<HeldSession>,
     pub active: Option<u64>,
     pub boards: Vec<HeldBoard>,
     unloaded_boards: std::collections::HashSet<String>,
@@ -355,22 +372,29 @@ impl Project {
             .unwrap_or_else(|| self.path.display().to_string())
     }
 
-    pub fn session(&self, id: u64) -> Option<&ChatSession> {
-        self.sessions.iter().find(|chat| chat.id == id)
+    pub fn session<'a>(&self, id: u64, cx: &'a App) -> Option<&'a ChatSession> {
+        Some(self.session_entity(id)?.read(cx))
     }
 
-    pub fn session_mut(&mut self, id: u64) -> Option<&mut ChatSession> {
-        self.sessions.iter_mut().find(|chat| chat.id == id)
+    pub fn session_entity(&self, id: u64) -> Option<&Entity<ChatSession>> {
+        self.sessions
+            .iter()
+            .find(|held| held.id == id)
+            .map(|held| &held.chat)
+    }
+
+    /// The sessions, read.
+    pub fn chats<'a>(&'a self, cx: &'a App) -> impl Iterator<Item = &'a ChatSession> + 'a {
+        self.sessions.iter().map(|held| held.chat.read(cx))
     }
 
     /// Where the entry `showing` names is listed among its kind.
     /// The entry a stored id names: a session by its record, every other kind
     /// by its id or key.
-    pub fn stored(&self, kind: Kind, id: &str) -> Option<Showing> {
+    pub fn stored(&self, kind: Kind, id: &str, cx: &App) -> Option<Showing> {
         Some(match kind {
             Kind::Session => Showing::Session(
-                self.sessions
-                    .iter()
+                self.chats(cx)
                     .find(|chat| chat.record.as_deref() == Some(id))?
                     .id,
             ),
@@ -400,7 +424,7 @@ impl Project {
     pub fn facts_at(&self, kind: Kind, ix: usize, cx: &App) -> Facts {
         match kind {
             Kind::Session => {
-                let chat = &self.sessions[ix];
+                let chat = self.sessions[ix].chat.read(cx);
                 Facts {
                     showing: Showing::Session(chat.id),
                     label: chat.label(),
@@ -456,7 +480,7 @@ impl Project {
 
     pub fn ix_of(&self, showing: &Showing) -> Option<usize> {
         match showing {
-            Showing::Session(id) => self.sessions.iter().position(|chat| chat.id == *id),
+            Showing::Session(id) => self.sessions.iter().position(|held| held.id == *id),
             Showing::Board(id) => self.board_ix(id),
             Showing::Article(id) => self.article_ix(id),
             Showing::Table(key) => self.table_ix(key),
@@ -478,8 +502,8 @@ impl Project {
         self.tables.iter().position(|table| table.key == key)
     }
 
-    pub fn active_session(&self) -> Option<&ChatSession> {
-        self.active.and_then(|id| self.session(id))
+    pub fn active_session<'a>(&self, cx: &'a App) -> Option<&'a ChatSession> {
+        self.active.and_then(|id| self.session(id, cx))
     }
 }
 

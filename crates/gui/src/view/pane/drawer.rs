@@ -5,6 +5,7 @@
 //! holds is a [`Peek`].
 
 use super::Tab;
+use crate::view::window::reach::InWindow as _;
 use crate::{
     model::workspace::{Showing, references::Part},
     view::{
@@ -640,8 +641,9 @@ impl Cydonia {
             return;
         };
         if let Some(Part::Card(card)) = &named.part {
-            let board = self
-                .located(&named.row, cx)
+            let board = named
+                .row
+                .located(self.workspace.read(cx))
                 .and_then(|(project, at)| self.workspace.read(cx).board_member(project, at));
             if let Some(board) = board {
                 self.open_card(on, board, card.id.clone(), window, cx);
@@ -669,13 +671,13 @@ impl Cydonia {
             } => {
                 let id = *id;
                 self.workspace
-                    .update(cx, |workspace, _| workspace.load_history(id));
+                    .update(cx, |workspace, cx| workspace.load_history(id, cx));
             }
             Row::Entry {
                 showing: Showing::Article(_),
                 ..
             } => {
-                let Some((project, ix)) = self.located(&named.row, cx) else {
+                let Some((project, ix)) = named.row.located(self.workspace.read(cx)) else {
                     return;
                 };
                 self.workspace
@@ -776,7 +778,7 @@ impl Cydonia {
             } => Some(*id),
             _ => None,
         };
-        let title = self.label_of_row(&named.row, cx);
+        let title = named.row.label(self.workspace.read(cx), cx);
         let lead = vec![
             icons::icon(crate::view::kit::icon::kind_icon(named.kind))
                 .size(px(14.))
@@ -841,7 +843,7 @@ impl Cydonia {
                     Row::Entry {
                         showing: Showing::Article(_) | Showing::Board(_) | Showing::Table(_),
                         ..
-                    } if !self.on_screen(&row, cx) => self.located(&row, cx),
+                    } if !self.on_screen(&row, cx) => row.located(self.workspace.read(cx)),
                     _ => None,
                 };
                 let body = peek

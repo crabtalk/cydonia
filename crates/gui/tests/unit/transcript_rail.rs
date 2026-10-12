@@ -63,6 +63,7 @@ impl Render for RailView {
                 &Hold {
                     state: &self.2,
                     view: gpui::WeakEntity::new_invalid(),
+                    workspace: gpui::WeakEntity::new_invalid(),
                 },
                 &turns(&self.0.items),
                 px(100.),

@@ -109,12 +109,12 @@ impl Workspace {
             return;
         };
         // Its sessions went with it, and are held where it landed.
-        self.drop_article_sessions(from, &id);
+        self.drop_article_sessions(from, &id, cx);
         let landed = artifact::article::id_of(&arrived);
         let carried = artifact::project::Project::sessions(&self.projects[to].store());
         for stored in carried {
             if stored.article.as_deref() == Some(landed.as_str()) {
-                self.restore_record(to, stored);
+                self.restore_record(to, stored, cx);
             }
         }
         self.reload_project(&source, cx);
@@ -123,10 +123,10 @@ impl Workspace {
 
     /// Let go of the sessions opened under article `id` in the project at
     /// `project`.
-    fn drop_article_sessions(&mut self, project: usize, id: &str) {
+    fn drop_article_sessions(&mut self, project: usize, id: &str, cx: &App) {
         if let Some(open) = self.projects.get_mut(project) {
             open.sessions
-                .retain(|chat| chat.article.as_deref() != Some(id));
+                .retain(|held| held.chat.read(cx).article.as_deref() != Some(id));
         }
     }
 
@@ -142,7 +142,7 @@ impl Workspace {
         gone.remove();
         project
             .sessions
-            .retain(|chat| chat.article.as_deref() != Some(gone.id.as_str()));
+            .retain(|held| held.chat.read(cx).article.as_deref() != Some(gone.id.as_str()));
         project.article = project
             .article
             .filter(|open| *open != ix)

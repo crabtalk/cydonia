@@ -32,7 +32,9 @@ impl Tab {
 
     /// The session the pane shows.
     pub(crate) fn shown_session(&self, cx: &App) -> Option<u64> {
-        self.workspace.read(cx).session_id_of(self.entry.as_ref())
+        self.workspace
+            .read(cx)
+            .session_id_of(self.entry.as_ref(), cx)
     }
 
     /// Make the views for what the pane is about to draw.

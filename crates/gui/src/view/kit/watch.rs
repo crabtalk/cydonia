@@ -1,27 +1,66 @@
-//! The one entity a view draws from, observed. Notifying an entity redraws
-//! only the views observing it: a cached pane drawing it without a watch keeps
+//! The entities a view draws from, observed. Notifying an entity redraws only
+//! the views observing it: a cached pane drawing it without a watch keeps
 //! drawing what it held before.
 
-use bezel::gpui::{Context, Entity, EntityId, Subscription};
+use bezel::gpui::{Context, Entity, EntityId, Subscription, Window};
 
 #[derive(Default)]
-pub(crate) struct Watch(Option<(EntityId, Subscription)>);
+pub(crate) struct Watch(Vec<(EntityId, Subscription)>);
 
 impl Watch {
-    /// Observe `entity` from the view `cx` is, dropping whatever was observed
-    /// before. A no-op while it is already the one observed.
-    pub(crate) fn set<V: 'static, T: 'static>(
+    /// Observe `entities` from the view `cx` is, redrawing it when one
+    /// changes, and stop observing whatever else was observed before.
+    pub(crate) fn set<'a, V: 'static, T: 'static>(
         &mut self,
-        entity: Option<&Entity<T>>,
+        entities: impl IntoIterator<Item = &'a Entity<T>>,
         cx: &mut Context<V>,
     ) {
-        let id = entity.map(Entity::entity_id);
-        if self.0.as_ref().map(|(id, _)| *id) == id {
+        self.reconcile(entities, |entity| {
+            cx.observe(entity, |_, _, cx| cx.notify())
+        });
+    }
+
+    /// [`Self::set`], running `on` when one changes instead of redrawing.
+    pub(crate) fn set_in<'a, V: 'static, T: 'static>(
+        &mut self,
+        entities: impl IntoIterator<Item = &'a Entity<T>>,
+        window: &mut Window,
+        cx: &mut Context<V>,
+        on: impl Fn(&mut V, Entity<T>, &mut Window, &mut Context<V>) + Clone + 'static,
+    ) {
+        self.reconcile(entities, |entity| {
+            let on = on.clone();
+            cx.observe_in(entity, window, move |this, entity, window, cx| {
+                on(this, entity, window, cx)
+            })
+        });
+    }
+
+    fn reconcile<'a, T: 'static>(
+        &mut self,
+        entities: impl IntoIterator<Item = &'a Entity<T>>,
+        mut observe: impl FnMut(&Entity<T>) -> Subscription,
+    ) {
+        let entities: Vec<&Entity<T>> = entities.into_iter().collect();
+        let same = self.0.len() == entities.len()
+            && self
+                .0
+                .iter()
+                .zip(&entities)
+                .all(|((id, _), entity)| *id == entity.entity_id());
+        if same {
             return;
         }
-        self.0 = entity.map(|entity| {
-            let watch = cx.observe(entity, |_, _, cx| cx.notify());
-            (entity.entity_id(), watch)
-        });
+        let mut held = std::mem::take(&mut self.0);
+        self.0 = entities
+            .into_iter()
+            .map(|entity| {
+                let id = entity.entity_id();
+                match held.iter().position(|(at, _)| *at == id) {
+                    Some(ix) => held.swap_remove(ix),
+                    None => (id, observe(entity)),
+                }
+            })
+            .collect();
     }
 }

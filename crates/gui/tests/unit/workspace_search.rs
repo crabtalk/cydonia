@@ -1,7 +1,9 @@
 //! How the workspace search finds entries off disk and narrows the sidebar.
 
 use super::*;
-use bezel::gpui::{Entity, IntoElement, Window};
+use crate::view::window::root::Cydonia;
+use bezel::gpui::{Context, Entity, IntoElement, Window, div, prelude::*, px};
+use bezel::theme::Theme;
 
 #[test]
 fn the_title_outranks_the_body_and_earlier_blocks_outrank_later() {
@@ -40,16 +42,19 @@ fn workspace_search_keeps_results_beyond_the_palette_limit(cx: &mut gpui::TestAp
                 project.expanded = false;
                 workspace.projects.push(project);
             });
-            let before = this.rows(cx);
-            this.search.applied = Some(Applied {
-                query: Query::literal("retry").unwrap(),
-                filter: Some(Kind::Article),
-                found,
-                ready: true,
+            let before = this.list(cx).rows();
+            this.search.update(cx, |search, _| {
+                search.applied = Some(Applied {
+                    query: Query::literal("retry").unwrap(),
+                    filter: Some(Kind::Article),
+                    found,
+                    ready: true,
+                })
             });
             this.push_finds(cx);
             assert_eq!(
-                this.rows(cx)
+                this.list(cx)
+                    .rows()
                     .iter()
                     .filter(|row| matches!(
                         row,
@@ -62,10 +67,10 @@ fn workspace_search_keeps_results_beyond_the_palette_limit(cx: &mut gpui::TestAp
                 crate::view::modals::palette::SHOWN + 1
             );
             assert!(!this.workspace.read(cx).projects[0].expanded);
-            this.refresh_applied_search(cx);
-            assert!(this.search.applied.as_ref().unwrap().ready);
+            this.search.update(cx, Search::refresh);
+            assert!(this.search.read(cx).applied.as_ref().unwrap().ready);
             assert_eq!(
-                this.applied_rows(cx).unwrap().len(),
+                this.search.read(cx).rows(cx).unwrap().len(),
                 crate::view::modals::palette::SHOWN + 1
             );
             this.workspace.update(cx, |workspace, cx| {
@@ -78,21 +83,26 @@ fn workspace_search_keeps_results_beyond_the_palette_limit(cx: &mut gpui::TestAp
                 .update(cx, |pane, _| pane.kind = artifact::kind::Kind::Article);
             this.sync_items(cx);
             let editor = this.pane_editor(cx).unwrap();
-            let matches =
-                crate::view::pane::find::hits(editor.read(cx).doc(), this.applied_query().unwrap());
+            let matches = crate::view::pane::find::hits(
+                editor.read(cx).doc(),
+                this.search.read(cx).query().unwrap(),
+            );
             assert_eq!(matches.len(), 2);
             editor.update(cx, |editor, cx| editor.select(matches[1], cx));
             this.leaf().clone().update(cx, |pane, _| pane.find_at = 1);
             this.reveal_applied_match(cx);
             assert_eq!(editor.read(cx).selection(), matches[0]);
             assert_eq!(this.leaf().read(cx).find_at, 0);
-            this.search.applied.as_mut().unwrap().filter = Some(Kind::Board);
-            assert!(this.rows(cx).is_empty());
-            this.clear_applied_search(cx);
+            this.search.update(cx, |search, _| {
+                search.applied.as_mut().unwrap().filter = Some(Kind::Board)
+            });
+            assert!(this.list(cx).rows().is_empty());
+            this.search.update(cx, Search::clear);
+            this.push_finds(cx);
             editor.update(cx, |editor, cx| editor.select(matches[1], cx));
             this.reveal_applied_match(cx);
             assert_eq!(editor.read(cx).selection(), matches[1]);
-            assert!(this.rows(cx) == before);
+            assert!(this.list(cx).rows() == before);
         })
         .unwrap();
     std::fs::remove_dir_all(&root).unwrap();
@@ -106,7 +116,15 @@ impl gpui::Render for SearchControls {
             div()
                 .size_full()
                 .flex()
-                .child(div().w(px(240.)).flex_none().child(root.search_row(cx)))
+                .child(
+                    div()
+                        .w(px(240.))
+                        .h(px(300.))
+                        .flex_none()
+                        .flex()
+                        .flex_col()
+                        .child(root.sidebar.clone()),
+                )
                 .child(
                     div().relative().flex_1().h(px(200.)).children(
                         root.leaf()
@@ -143,7 +161,9 @@ fn applied_board_search_has_visible_working_exit_controls(cx: &mut gpui::TestApp
             root.update(cx, |root, cx| {
                 let query =
                     Query::literal("a very long query that must leave room for the close button");
-                root.apply_search(query.unwrap(), None, cx);
+                root.search
+                    .update(cx, |search, cx| search.apply(query.unwrap(), None, cx));
+                root.push_finds(cx);
                 assert!(!root.leaf().read(cx).find(cx).text().is_empty());
             })
         });
@@ -179,7 +199,7 @@ fn applied_board_search_has_visible_working_exit_controls(cx: &mut gpui::TestApp
         cx.simulate_mouse_up(center, MouseButton::Left, Modifiers::default());
         cx.run_until_parked();
         cx.update(|_, cx| {
-            assert!(root.read(cx).applied_query().is_none());
+            assert!(root.read(cx).search.read(cx).query().is_none());
             assert!(root.read(cx).leaf().read(cx).find(cx).text().is_empty());
         });
         assert!(cx.debug_bounds("search-pill").is_none());

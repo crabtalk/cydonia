@@ -15,11 +15,11 @@ use crate::{
             margin::{self, Glide, MARK_GUTTER, Margin, NOTE_INSET, NOTE_WIDTH, Slot},
             transcript::{MARK_AWAY, MARK_READING, MARK_VISIBLE},
         },
-        kit::labels::Target,
+        kit::labels::{LabelHost, Labels, Target},
         kit::link::SCHEME,
         kit::{stamp, text::grouped},
         pane::find::{self, Find, Searchable},
-        sidebar::{self, Row},
+        sidebar::Row,
         window::root::{Cydonia, NewArticle},
     },
 };
@@ -497,7 +497,7 @@ impl Cydonia {
     pub(crate) fn pane_doc<'a>(&self, cx: &'a App) -> Option<&'a crate::model::article::Article> {
         self.workspace
             .read(cx)
-            .article_of(self.leaf().read(cx).entry.as_ref())
+            .article_of(self.leaf().read(cx).entry.as_ref(), cx)
     }
 
     /// The same by its file — the one address every write to an article is
@@ -611,68 +611,6 @@ impl Cydonia {
         );
         view.update(cx, |view, cx| view.peek(cx))
     }
-
-    /// One article in the sidebar, under the project that holds it.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn article_row(
-        &self,
-        entry: &Row,
-        project: usize,
-        ix: usize,
-        title: String,
-        lifted: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement + use<> {
-        let theme = Theme::of(cx).clone();
-        let workspace = self.workspace.read(cx);
-        let light = self.light_of(entry, cx);
-        let selected = light.selected();
-        let article = workspace
-            .projects
-            .get(project)
-            .and_then(|open| open.articles.get(ix));
-        let archived = article.is_some_and(|article| article.archived);
-        let tint = light.tint(archived, &theme);
-        let id = SharedString::from(sidebar::key_of(entry));
-
-        sidebar::row(
-            id,
-            "article-row",
-            selected,
-            lifted,
-            self.indent_of(entry, cx),
-            &theme,
-        )
-        .child(
-            icons::icon(icons::files::FileText)
-                .size(px(14.))
-                .flex_none()
-                .text_color(tint),
-        )
-        // Display-only: the title is written at the head of the page, and
-        // this row is never a second field for it.
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .truncate()
-                .text_style(TextStyle::Body)
-                .text_color(tint)
-                .child(title),
-        )
-        .child(self.archive_button(
-            format!("archive-{}", sidebar::key_of(entry)),
-            "article-row",
-            entry,
-            archived,
-            window,
-            cx,
-        ))
-        .on_click(cx.listener(move |this, _, window, cx| {
-            this.open_article(project, ix, window, cx);
-        }))
-    }
 }
 
 /// Which of an article view's menus is up.
@@ -720,6 +658,8 @@ pub(crate) struct ArticleView {
     outline_hovered: bool,
     /// What the pane's find looks for in the document.
     find: Find,
+    /// The picker the labels under the title open.
+    labels: Labels,
     _editor: Option<Subscription>,
 }
 
@@ -743,6 +683,7 @@ impl ArticleView {
             menu: ContextMenu::default(),
             outline_hovered: false,
             find: Find::default(),
+            labels: Labels::default(),
             _editor: None,
         }
     }
@@ -953,7 +894,7 @@ impl ArticleView {
         let path = article.path.clone();
         // What the composer under the article covers of the pane's foot.
         let covered =
-            match workspace.settings.features.threads() && workspace.thread_reachable(&path) {
+            match workspace.settings.features.threads() && workspace.thread_reachable(&path, cx) {
                 true => f32::from(self.composer.get()) + crate::view::window::root::COMPOSER_BOTTOM,
                 false => 0.,
             };
@@ -1554,7 +1495,7 @@ impl ArticleView {
         project: usize,
         at: usize,
         band: Band,
-        cx: &Context<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let workspace = self.workspace.read(cx);
         let open = workspace.projects.get(project)?;
@@ -1582,14 +1523,7 @@ impl ArticleView {
             .flex_wrap()
             .items_center()
             .gap(px(4.));
-        let chips = self.root.upgrade()?.read(cx).label_chips(
-            chips,
-            target,
-            &labels,
-            META_GROUP,
-            self.root.clone(),
-            cx,
-        );
+        let chips = self.label_chips(chips, target, &labels, META_GROUP, cx);
         let about = div()
             .id("article-about")
             .flex_none()
@@ -1721,6 +1655,24 @@ impl Searchable for ArticleView {
         if let (Some(editor), Some(hit)) = (&self.editor, hit) {
             editor.update(cx, |editor, cx| editor.select(hit, cx));
         }
+    }
+}
+
+impl LabelHost for ArticleView {
+    fn labels(&self) -> &Labels {
+        &self.labels
+    }
+
+    fn labels_mut(&mut self) -> &mut Labels {
+        &mut self.labels
+    }
+
+    fn label_workspace(&self) -> &Entity<Workspace> {
+        &self.workspace
+    }
+
+    fn label_root(&self) -> &WeakEntity<Cydonia> {
+        &self.root
     }
 }
 

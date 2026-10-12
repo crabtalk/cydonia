@@ -1315,7 +1315,7 @@ impl Cydonia {
             .iter()
             .flat_map(|project| {
                 std::iter::once(project.path.clone())
-                    .chain(project.sessions.iter().map(|chat| chat.cwd.clone()))
+                    .chain(project.chats(cx).map(|chat| chat.cwd.clone()))
             })
             .collect()
     }

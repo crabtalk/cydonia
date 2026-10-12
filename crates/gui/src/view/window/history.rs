@@ -8,7 +8,7 @@
 
 use artifact::space::Member;
 use bezel::{
-    gpui::{Context, IntoElement, ListOffset, Pixels, Point, Window, div, prelude::*},
+    gpui::{Context, Div, IntoElement, ListOffset, Pixels, Point, Window, div, prelude::*},
     motion::{Fade, Painter},
     theme::Theme,
     ui::{
@@ -124,7 +124,7 @@ impl Cydonia {
                 let at = self
                     .library
                     .as_ref()
-                    .map(|library| Position::Library(library.shelf(cx)));
+                    .map(|library| Position::Library(library.read(cx).shelf(cx)));
                 return Stop {
                     place: Place::Library,
                     at,
@@ -132,7 +132,7 @@ impl Cydonia {
             }
         };
         let workspace = self.workspace.read(cx);
-        let at = workspace.showing_of(&member).and_then(|(_, showing)| {
+        let at = workspace.showing_of(&member, cx).and_then(|(_, showing)| {
             Some(match showing {
                 Showing::Session(_) => {
                     Position::Transcript(self.session_scroll(&member, cx)?.read(cx).state.top())
@@ -162,7 +162,7 @@ impl Cydonia {
             return;
         };
         let workspace = self.workspace.read(cx);
-        let Some((_, showing)) = workspace.showing_of(member) else {
+        let Some((_, showing)) = workspace.showing_of(member, cx) else {
             return;
         };
         match (showing, at) {
@@ -286,10 +286,48 @@ impl Cydonia {
     /// The sidebar row that opens `member`, while it still exists.
     fn row_of(&self, member: &Member, cx: &Context<Self>) -> Option<Row> {
         let workspace = self.workspace.read(cx);
-        let (project, showing) = workspace.showing_of(member)?;
+        let (project, showing) = workspace.showing_of(member, cx)?;
         Some(Row::Entry {
             project: workspace.projects.get(project)?.path.clone(),
             showing,
         })
+    }
+
+    /// The control that folds the sidebar away and brings it back. It belongs
+    /// to whichever column runs along the window's left edge, so it changes
+    /// strip across the collapse.
+    pub(crate) fn fold_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let theme = Theme::of(cx).clone();
+        let label = if self.sidebar_open {
+            "Hide sidebar"
+        } else {
+            "Show sidebar"
+        };
+        // The same glyph either way: it names the column the button acts on,
+        // and the tooltip says which way it will go. A glyph that flips is a
+        // second thing to read for what the label already says.
+        theme
+            .icon_button(
+                icons::layout::PanelLeft,
+                ButtonStyle::Ghost,
+                Some(Fade::new(Painter::of(cx), "toggle-sidebar")),
+            )
+            .id("toggle-sidebar")
+            .flex_none()
+            .tooltip(move |window, cx| Tooltip::text(label, window, cx))
+            .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx)))
+    }
+
+    /// The fold with back and forward beside it. Every band along the
+    /// window's left edge places this one element, so the three stand in the
+    /// same spots whether the sidebar is open or folded.
+    pub(crate) fn fold_controls(&self, cx: &mut Context<Self>) -> Div {
+        div()
+            .flex_none()
+            .flex()
+            .flex_row()
+            .items_center()
+            .child(self.fold_toggle(cx))
+            .child(self.history_buttons(cx))
     }
 }

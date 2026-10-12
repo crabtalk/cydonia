@@ -103,7 +103,7 @@ pub(crate) fn read(workspace: &Workspace, cx: &App) -> Linkables {
                     row,
                 }
             };
-        held.extend(project.sessions.iter().filter_map(|chat| {
+        held.extend(project.chats(cx).filter_map(|chat| {
             let number = chat.number?;
             Some(Linkable {
                 agent: Some(chat.entry.name.clone()),

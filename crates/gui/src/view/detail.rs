@@ -301,7 +301,7 @@ impl Cydonia {
             return space.panes().into_iter().next().map(|pane| pane.project);
         }
         if self.showing(cx) == Some(Kind::Session)
-            && let Some(chat) = workspace.active_session()
+            && let Some(chat) = workspace.active_session(cx)
         {
             return Some(chat.cwd.clone());
         }
@@ -480,7 +480,7 @@ impl Cydonia {
         let arranged = workspace.active_space().is_some();
         let agents = composer_agents(workspace);
         // The agent an article's first send opens its session on.
-        let first = workspace.preferred_agent().and_then(|entry| {
+        let first = workspace.preferred_agent(cx).and_then(|entry| {
             agents
                 .iter()
                 .position(|agent| agent.name.as_ref() == entry.name)
@@ -499,14 +499,14 @@ impl Cydonia {
             .zip(&articles)
             .map(|(pane, article)| {
                 if let Some(path) = article {
-                    let id = workspace.article_thread(path);
-                    return Pointing::of(id.and_then(|id| workspace.session(id)), &agents)
+                    let id = workspace.article_thread(path, cx);
+                    return Pointing::of(id.and_then(|id| workspace.session(id, cx)), &agents)
                         .under_article(first);
                 }
                 let id = match &pane.read(cx).entry {
                     Some(entry) => {
                         workspace
-                            .showing_of(entry)
+                            .showing_of(entry, cx)
                             .and_then(|(_, showing)| match showing {
                                 Showing::Session(id) => Some(id),
                                 _ => None,
@@ -514,7 +514,7 @@ impl Cydonia {
                     }
                     None => workspace.active_id(),
                 };
-                Pointing::of(id.and_then(|id| workspace.session(id)), &agents)
+                Pointing::of(id.and_then(|id| workspace.session(id, cx)), &agents)
             })
             .collect();
         // Read out before writing: the composers are updated through `cx`,
@@ -563,7 +563,7 @@ impl Cydonia {
         if on.is_none() && self.showing(cx) != Some(Kind::Article) {
             return None;
         }
-        Some(workspace.article_of(on)?.path.clone())
+        Some(workspace.article_of(on, cx)?.path.clone())
     }
 
     /// What a press in the composer under the article at `path` asks for. The
@@ -579,7 +579,7 @@ impl Cydonia {
             composer::ComposerEvent::Submit(..) => self
                 .workspace
                 .update(cx, |workspace, cx| workspace.article_session(path, cx)),
-            _ => self.workspace.read(cx).article_thread(path),
+            _ => self.workspace.read(cx).article_thread(path, cx),
         };
         self.composer_event(session, event, window, cx);
     }
@@ -589,8 +589,8 @@ impl Cydonia {
     pub(crate) fn new_thread(&mut self, path: &Path, cx: &mut Context<Self>) {
         self.workspace.update(cx, |workspace, cx| {
             let said = workspace
-                .article_thread(path)
-                .and_then(|id| workspace.session(id))
+                .article_thread(path, cx)
+                .and_then(|id| workspace.session(id, cx))
                 .is_some_and(|chat| !chat.unsaid());
             if said {
                 workspace.new_article_session(path, cx);
@@ -632,7 +632,17 @@ impl Cydonia {
         // A space arranges several entries, so it draws its own panes. One
         // entry open on its own is the single pane below.
         let panes = match library {
-            true => Some(self.library_view(window, cx)),
+            true => self.library.clone().map(|library| {
+                library
+                    .cached(
+                        gpui::StyleRefinement::default()
+                            .flex_1()
+                            .min_h_0()
+                            .flex()
+                            .flex_col(),
+                    )
+                    .into_any_element()
+            }),
             false => self.panes(window, cx),
         };
         let body = match panes {
@@ -1145,7 +1155,7 @@ impl Cydonia {
         member: &Member,
         cx: &App,
     ) -> Option<gpui::Entity<transcript::SessionView>> {
-        let id = self.workspace.read(cx).session_id_of(Some(member))?;
+        let id = self.workspace.read(cx).session_id_of(Some(member), cx)?;
         self.leaves
             .iter()
             .map(|pane| pane.read(cx))

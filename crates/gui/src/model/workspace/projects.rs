@@ -72,7 +72,7 @@ impl Workspace {
         }
         self.projects.push(Project::new(path, cx));
         let ix = self.projects.len() - 1;
-        self.restore_sessions(ix);
+        self.restore_sessions(ix, cx);
         self.watch_project(ix, cx);
         self.select_project(ix, cx);
     }
@@ -95,6 +95,14 @@ impl Workspace {
         project.expanded = !project.expanded;
         self.save();
         cx.notify();
+    }
+
+    /// Show what the project has archived under its divider, or fold it away.
+    pub fn toggle_archive(&mut self, ix: usize, cx: &mut Context<Self>) {
+        if let Some(open) = self.projects.get_mut(ix) {
+            open.archive_open = !open.archive_open;
+            cx.notify();
+        }
     }
 
     /// Carry a project to another place in the list. `active` follows the
@@ -193,7 +201,7 @@ impl Workspace {
         let Some(project) = self.projects.get_mut(ix) else {
             return;
         };
-        let showing = project.stored(kind, &id);
+        let showing = project.stored(kind, &id, cx);
         let at = showing.as_ref().and_then(|showing| project.ix_of(showing));
         match kind {
             Kind::Session => {
@@ -287,9 +295,9 @@ impl Workspace {
     pub(super) fn prune_archived_for(&mut self, kind: Option<Kind>, cx: &mut Context<Self>) {
         for (ix, project) in self.projects.iter_mut().enumerate() {
             let active = self.active == Some(ix);
-            for chat in &mut project.sessions {
-                if !(active && kind == Some(Kind::Session) && project.active == Some(chat.id)) {
-                    chat.unload_history();
+            for held in &project.sessions {
+                if !(active && kind == Some(Kind::Session) && project.active == Some(held.id)) {
+                    held.chat.update(cx, |chat, _| chat.unload_history());
                 }
             }
             for (at, article) in project.articles.iter_mut().enumerate() {

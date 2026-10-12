@@ -110,7 +110,7 @@ impl Cydonia {
     /// Raise the question. Delete is the one thing here that cannot be taken
     /// back — Archive, right above it, is the reversible answer.
     pub(crate) fn ask_delete(&mut self, entry: &Row, window: &mut Window, cx: &mut Context<Self>) {
-        let label = self.label_of_row(entry, cx);
+        let label = entry.label(self.workspace.read(cx), cx);
         let (goes, note) = self.goes_with(entry, cx);
         self.ask(
             Confirm {
@@ -170,8 +170,11 @@ impl Cydonia {
             Doomed::Label(name) => {
                 self.workspace
                     .update(cx, |workspace, cx| workspace.delete_label(name, cx));
-                if let Some(library) = &mut self.library {
-                    library.drop_label_filter(name);
+                if let Some(library) = &self.library {
+                    library.update(cx, |library, cx| {
+                        library.drop_label_filter(name);
+                        cx.notify();
+                    });
                 }
             }
             Doomed::Many(all) => {
@@ -282,7 +285,7 @@ impl Cydonia {
         let answered = self
             .workspace
             .read(cx)
-            .session(id)
+            .session(id, cx)
             .is_some_and(|chat| chat.items.len() > at + 1);
         if !answered {
             self.rewind(id, at, window, cx);
@@ -330,7 +333,7 @@ impl Cydonia {
         const UNDONE: &str = "This cannot be undone.";
         let workspace = self.workspace.read(cx);
         let at = |path: Option<String>| (path, UNDONE.to_owned());
-        let located = self.located(entry, cx);
+        let located = entry.located(self.workspace.read(cx));
         let open = located.and_then(|(project, _)| workspace.projects.get(project));
         let ix = located.map_or(0, |(_, ix)| ix);
         match entry {
@@ -352,7 +355,7 @@ impl Cydonia {
                 showing: Showing::Session(id),
                 ..
             } => open
-                .and_then(|open| open.session(*id))
+                .and_then(|open| open.session(*id, cx))
                 .and_then(|chat| chat.filed())
                 .map(|record| at(Some(format!(".cydonia/sessions/{record}.json"))))
                 // A session is filed from its first turn — `flush` leaves

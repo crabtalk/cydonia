@@ -10,7 +10,7 @@
 use super::Tab;
 use crate::view::{
     board::{self, DismissFind, FindCard},
-    window::root::Cydonia,
+    window::{reach::InWindow as _, root::Cydonia},
 };
 use artifact::{kind::Kind, search::Query};
 use bezel::{
@@ -415,7 +415,9 @@ impl Tab {
 
     fn dismiss_text_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.finding && self.applied.is_some() {
-            self.defer_window(window, cx, |root, _, cx| root.clear_applied_search(cx));
+            self.defer_window(window, cx, |root, _, cx| {
+                root.search.update(cx, crate::view::search::Search::clear)
+            });
             window.focus(&self.focus, cx);
             return;
         }
@@ -427,7 +429,7 @@ impl Tab {
 impl Cydonia {
     /// Hand every pane the workspace search applied.
     pub(crate) fn push_finds(&mut self, cx: &mut Context<Self>) {
-        let applied = self.applied_query().cloned();
+        let applied = self.search.read(cx).query().cloned();
         for pane in self.leaves.clone() {
             pane.update(cx, |pane, cx| pane.set_applied(applied.clone(), cx));
         }

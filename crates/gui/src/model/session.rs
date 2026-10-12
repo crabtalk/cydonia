@@ -15,11 +15,12 @@
 use crate::agent::acp::{self, Event, Launch, Reply, Session};
 #[cfg(feature = "desktop")]
 use crate::model::notify;
+#[cfg(feature = "desktop")]
+use crate::model::workspace::references;
 use crate::model::{
     session_preferences::{self, Choices},
     settings,
     store::{self, Store},
-    workspace::Workspace,
 };
 #[cfg(feature = "desktop")]
 use anyhow::anyhow;
@@ -249,14 +250,13 @@ impl ChatSession {
         entry: settings::Agent,
         cwd: PathBuf,
         seed: Option<String>,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<Self>,
     ) -> Self {
         let preferences = session_preferences::load(&cwd, &entry, None);
         let record = store::open(&cwd).create_session().ok();
         #[cfg(feature = "desktop")]
         let (pump, connection) = (
             pump(
-                id,
                 &entry,
                 Launch {
                     choices: preferences.clone(),
@@ -320,7 +320,7 @@ impl ChatSession {
         entry: settings::Agent,
         cwd: PathBuf,
         article: String,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<Self>,
     ) -> Self {
         let mut chat = Self::connect(id, entry, cwd, None, cx);
         chat.article = Some(article);
@@ -511,7 +511,7 @@ impl ChatSession {
     /// Cut the transcript back to before the user message at `at` and return
     /// that message. The agent is restarted on a fresh session, and what is
     /// left goes to it as history with the next prompt.
-    pub fn rewind(&mut self, at: usize, cx: &mut Context<Workspace>) -> Option<String> {
+    pub fn rewind(&mut self, at: usize, cx: &mut Context<Self>) -> Option<String> {
         if !self.load_history() {
             return None;
         }
@@ -572,7 +572,7 @@ impl ChatSession {
     /// agent still holds when it supports `session/load`.
     ///
     /// Nothing without the `desktop` feature: there is no agent to point at.
-    pub fn resume(&mut self, cx: &mut Context<Workspace>) {
+    pub fn resume(&mut self, cx: &mut Context<Self>) {
         #[cfg(not(feature = "desktop"))]
         {
             let _ = cx;
@@ -586,7 +586,6 @@ impl ChatSession {
                 self.record = self.store().create_session().ok();
             }
             self._pump = pump(
-                self.id,
                 &self.entry,
                 Launch {
                     previous: self.agent_session.clone(),
@@ -1218,7 +1217,7 @@ fn content_text(block: &ContentBlock) -> String {
 /// Drain the ACP event channel into the session, for as long as there is one.
 ///
 /// The launch carries the previous session and its saved choices.
-fn pump(id: u64, entry: &settings::Agent, launch: Launch, cx: &mut Context<Workspace>) -> Task<()> {
+fn pump(entry: &settings::Agent, launch: Launch, cx: &mut Context<ChatSession>) -> Task<()> {
     let entry = entry.clone();
     // Ours, not the launch's — a launch that fails still wrote to its stderr,
     // and a receiver the launch owned would be dropped with the error.
@@ -1247,15 +1246,14 @@ fn pump(id: u64, entry: &settings::Agent, launch: Launch, cx: &mut Context<Works
                         said.push(line);
                     }
                 }
-                let _ = this.update(cx, |workspace, cx| {
-                    workspace.with_session(id, cx, |chat| {
-                        chat.connection = Connection::Lost;
-                        // What it said before the verdict, then the verdict.
-                        for line in said {
-                            chat.stderr(line);
-                        }
-                        chat.notice(true, &format!("connection failed: {e:#}"));
-                    });
+                let _ = this.update(cx, |chat, cx| {
+                    chat.connection = Connection::Lost;
+                    // What it said before the verdict, then the verdict.
+                    for line in said {
+                        chat.stderr(line);
+                    }
+                    chat.notice(true, &format!("connection failed: {e:#}"));
+                    cx.notify();
                 });
                 return;
             }
@@ -1266,11 +1264,8 @@ fn pump(id: u64, entry: &settings::Agent, launch: Launch, cx: &mut Context<Works
         drop(echo);
 
         if this
-            .update(cx, |workspace, cx| {
-                workspace.with_session(id, cx, |chat| {
-                    if chat.closed {
-                        return;
-                    }
+            .update(cx, |chat, cx| {
+                if !chat.closed {
                     chat.agent_session = Some(session.session_id.to_string());
                     // What this agent lets you switch, read off `session/new`
                     // before the session is boxed away. Every change after
@@ -1279,8 +1274,12 @@ fn pump(id: u64, entry: &settings::Agent, launch: Launch, cx: &mut Context<Works
                     chat.config = session.response.config_options.clone().unwrap_or_default();
                     chat.preferences = Choices::capture(chat.modes.as_ref(), &chat.config);
                     chat.connection = Connection::Live(Box::new(session));
-                });
-                workspace.session_connected(id, cx);
+                }
+                // Whatever was typed while it had no agent goes now, and the
+                // agent's own id is written down for a later launch to load.
+                chat.drain();
+                chat.flush();
+                cx.notify();
             })
             .is_err()
         {
@@ -1292,25 +1291,22 @@ fn pump(id: u64, entry: &settings::Agent, launch: Launch, cx: &mut Context<Works
             while let Ok(event) = events.try_recv() {
                 batch.push(event);
             }
-            let streaming = this.update(cx, |workspace, cx| {
-                let was_streaming = workspace.session(id).is_some_and(|chat| chat.streaming);
-                workspace.with_session(id, cx, |chat| {
-                    for event in batch {
-                        chat.apply(event);
-                    }
-                });
-                let streaming = workspace.session(id).is_some_and(|chat| chat.streaming);
+            let streaming = this.update(cx, |chat, cx| {
+                let was_streaming = chat.streaming;
+                for event in batch {
+                    chat.apply(event);
+                }
+                cx.notify();
                 // The turn's end, as the only place that can see it: `apply`
                 // takes no app to speak to, and a session read from outside
                 // cannot tell a turn that has just stopped from one that was
                 // never running.
-                if was_streaming && !streaming {
-                    let notify = workspace.settings.notify_turns;
-                    if let Some(chat) = workspace.session(id) {
-                        notify::turn_finished(chat, notify, cx);
-                    }
+                if was_streaming && !chat.streaming {
+                    let notify = references::current(cx)
+                        .is_some_and(|workspace| workspace.read(cx).settings.notify_turns);
+                    notify::turn_finished(chat, notify, cx);
                 }
-                streaming
+                chat.streaming
             });
             match streaming {
                 Ok(true) => cx.background_executor().timer(STREAM_FRAME).await,

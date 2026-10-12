@@ -4,6 +4,7 @@
 //! over a run picked out of the transcript.
 
 use super::Tab;
+use crate::view::window::reach::InWindow as _;
 use crate::{
     model::workspace::Workspace,
     view::{
@@ -74,7 +75,7 @@ impl Band {
     /// The agent's plan, while it still has something left to do.
     fn plan(&self, cx: &App) -> Option<impl IntoElement + use<>> {
         let theme = Theme::of(cx).clone();
-        let chat = self.workspace.read(cx).session(self.session?)?;
+        let chat = self.workspace.read(cx).session(self.session?, cx)?;
         if chat.plan.is_empty() || chat.plan.iter().all(|(_, s)| *s == PlanStatus::Done) {
             return None;
         }
@@ -114,7 +115,7 @@ impl Band {
     /// and for what an agent has to ask to get the stack of rows instead.
     fn permission<V: 'static>(&self, cx: &Context<V>) -> Option<impl IntoElement + use<V>> {
         let theme = Theme::of(cx).clone();
-        let chat = self.workspace.read(cx).session(self.session?)?;
+        let chat = self.workspace.read(cx).session(self.session?, cx)?;
         let prompt = chat.permission.as_ref()?;
         let id = chat.id;
         let painter = Painter::of(cx);
@@ -273,10 +274,10 @@ impl Tab {
     pub(crate) fn thread_footer(&self, cx: &Context<Self>) -> Option<AnyElement> {
         let path = self.thread_article(cx)?;
         let workspace = self.workspace.read(cx);
-        if !workspace.thread_reachable(&path) {
+        if !workspace.thread_reachable(&path, cx) {
             return None;
         }
-        let session = workspace.article_thread(&path);
+        let session = workspace.article_thread(&path, cx);
         // The article's own measure, not the session's: the article's page and
         // outline keep clear of it.
         let height = self
@@ -303,7 +304,9 @@ impl Tab {
     ) -> Option<AnyElement> {
         let theme = Theme::of(cx).clone();
         let workspace = self.workspace.read(cx);
-        let chat = workspace.session(session?).filter(|chat| !chat.unsaid())?;
+        let chat = workspace
+            .session(session?, cx)
+            .filter(|chat| !chat.unsaid())?;
         let message = adrift_line(&chat.entry.name, !workspace.settings.agents.is_empty());
         Some(
             theme
@@ -325,7 +328,7 @@ impl Tab {
     pub(crate) fn conversation(&self, id: Option<u64>, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let workspace = self.workspace.read(cx);
-        let Some(chat) = id.and_then(|id| workspace.session(id)) else {
+        let Some(chat) = id.and_then(|id| workspace.session(id, cx)) else {
             // No session, and the pane showing regardless: one was asked for
             // with no agent to open it on — see [`Tab::asked_session`].
             return match self.asked_session {
@@ -345,7 +348,7 @@ impl Tab {
             // transcript that has nothing to show *and* nowhere to send is the
             // whole pane, so the way out goes here rather than under it.
             let others = !workspace.settings.agents.is_empty();
-            if !workspace.reachable() {
+            if !workspace.reachable(cx) {
                 return self.no_agent(Some(&agent), others, cx);
             }
             return theme
@@ -441,7 +444,7 @@ impl Tab {
                     });
                     let link = turn.and_then(|(id, turn)| {
                         this.workspace
-                            .update(cx, |workspace, _| workspace.turn_link(id, turn, turn))
+                            .update(cx, |workspace, cx| workspace.turn_link(id, turn, turn, cx))
                     });
                     if let Some(link) = link {
                         cx.write_to_clipboard(gpui::ClipboardItem::new_string(link));
@@ -524,7 +527,7 @@ impl Tab {
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement + use<>> {
         let theme = Theme::of(cx).clone();
-        let chat = self.workspace.read(cx).session(id)?;
+        let chat = self.workspace.read(cx).session(id, cx)?;
         let cwd = chat.cwd.clone();
         let queue = chat.queue.clone();
         self.queued_galleries

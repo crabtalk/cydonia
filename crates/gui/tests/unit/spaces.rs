@@ -12,7 +12,6 @@ use crate::model::workspace::Showing;
 use crate::model::{settings::Settings, state};
 use artifact::kind::Kind;
 use artifact::space::{Member, Side};
-use gpui::AppContext as _;
 
 /// A scratch project or two, torn down when the test ends — and a config
 /// directory beside them that the test's writes land in.
@@ -150,8 +149,8 @@ fn a_space_can_span_projects(cx: &mut gpui::TestAppContext) {
         let space = workspace.active_space().expect("open");
         assert_eq!(space.leaves(), 2);
         // Both resolve, each to the project it is in.
-        assert_eq!(workspace.showing_of(&here).map(|(at, _)| at), Some(0));
-        assert_eq!(workspace.showing_of(&there).map(|(at, _)| at), Some(1));
+        assert_eq!(workspace.showing_of(&here, cx).map(|(at, _)| at), Some(0));
+        assert_eq!(workspace.showing_of(&there, cx).map(|(at, _)| at), Some(1));
         space.id.clone()
     });
 
@@ -173,9 +172,9 @@ fn a_member_in_a_shut_project_resolves_to_nothing(cx: &mut gpui::TestAppContext)
 
     workspace.update(cx, |workspace, cx| {
         let elsewhere = Member::new(scratch.project("two"), Kind::Board, a.id.clone());
-        assert!(workspace.showing_of(&elsewhere).is_none());
+        assert!(workspace.showing_of(&elsewhere, cx).is_none());
         // The same id in a project that *is* open still resolves.
-        assert!(workspace.showing_of(&a).is_some());
+        assert!(workspace.showing_of(&a, cx).is_some());
         let _ = cx;
     });
 }
@@ -441,10 +440,13 @@ fn sending_into_a_pane_stays_in_the_space(cx: &mut gpui::TestAppContext) {
         let path = workspace.projects[0].path.clone();
         workspace.projects[0]
             .sessions
-            .push(resting_session(7, &path));
+            .push(crate::model::project::HeldSession::new(
+                resting_session(7, &path),
+                cx,
+            ));
         workspace.projects[0].active = Some(7);
         let chat = workspace
-            .member_of(0, Showing::Session(7))
+            .member_of(0, Showing::Session(7), cx)
             .expect("a member");
 
         workspace.arrange(&board, &chat, Side::Right, cx);
@@ -830,16 +832,18 @@ fn a_session_with_no_file_can_be_given_one_and_arranged(cx: &mut gpui::TestAppCo
         let path = workspace.projects[0].path.clone();
         let mut chat = resting_session(7, &path);
         chat.record = None;
-        workspace.projects[0].sessions.push(chat);
+        workspace.projects[0]
+            .sessions
+            .push(crate::model::project::HeldSession::new(chat, cx));
 
         assert!(
-            workspace.member_of_session(7).is_none(),
+            workspace.member_of_session(7, cx).is_none(),
             "nothing for a space to name yet",
         );
 
         workspace.retain_session(7, cx).expect("a file is minted");
         let session = workspace
-            .member_of_session(7)
+            .member_of_session(7, cx)
             .expect("and now it names one");
 
         workspace.arrange(&board, &session, Side::Right, cx);
@@ -1110,7 +1114,7 @@ fn an_article_made_in_a_pane_stays_in_the_space(cx: &mut gpui::TestAppContext) {
         let ix = workspace.create_article().expect("made");
         let id = workspace.projects[0].articles[ix].id.clone();
         let member = workspace
-            .member_of(0, Showing::Article(id))
+            .member_of(0, Showing::Article(id), cx)
             .expect("a member");
         workspace.stack_pane(&b, &member, cx);
         assert_eq!(workspace.space, Some(0));

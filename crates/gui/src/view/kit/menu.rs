@@ -1,7 +1,8 @@
-//! The `···` and `+` menus every sidebar row, pane and column heading opens,
-//! on the window's one [`ContextMenu`], keyed by [`Menu`].
+//! The rows and triggers every view's [`ContextMenu`] is built from, and the
+//! window's own menus — the band's and the launch screen's — keyed by
+//! [`Menu`].
 
-use crate::view::{sidebar::Row, window::root::Cydonia};
+use crate::view::window::root::Cydonia;
 use bezel::{
     gpui::{self, AnyElement, Context, Div, SharedString, Stateful, Window, prelude::*},
     motion::{Fade, Painter},
@@ -32,37 +33,11 @@ pub(crate) enum Reveal {
     Shown(bool),
 }
 
-/// Which menu is open.
-///
-/// Cloned rather than copied since several name a row or a pane.
+/// Which of the window's own menus is open.
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) enum Menu {
-    /// The `+` on a project heading, by the project's path: what to start
-    /// here.
-    Add(std::path::PathBuf),
-    /// A project heading, by the project's path: what to do to the project.
-    Project(std::path::PathBuf),
-    /// The `···` on an entry's row, whichever kind it is.
-    Entry(Row),
-    /// The `···` on an entry's row in the library. Its own key: the same entry
-    /// has a sidebar row, and one key would open both menus.
-    Library(Row),
-    /// The library's tabs, as a select in a narrow bar.
-    LibraryTab,
-    /// The library's project picker.
-    LibraryProject,
-    /// The library selection's `Move to`.
-    LibraryMove,
-    /// The library's Status heading.
-    LibraryStatus,
-    /// The library's Agent heading.
-    LibraryAgent,
-    /// The `···` in the pane header. Its own key rather than `Entry` of what
-    /// the header is showing: that entry has a row in the sidebar too, and a
-    /// key naming the entry would have one click open both of them.
+    /// The `···` in the band over the window's one pane.
     Header,
-    /// A pane's tab, right-pressed, by the entry the tab is on.
-    Tab(artifact::space::Member),
     /// The agents on offer under `New session`, on the screen a project with
     /// nothing open shows — see [`crate::view::window::root::Cydonia::launch`].
     Launch,
@@ -127,7 +102,6 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        bezel::ui::popover::close_popup(self, cx, |this: &mut Self| &mut this.picker);
         ContextMenu::toggle(
             self,
             |this| &mut this.menu,
@@ -176,16 +150,9 @@ impl Cydonia {
     ) -> Stateful<Div> {
         // Resolved during render, never in a hover style: GPUI can resolve
         // hover differently in prepaint and paint.
-        let reveal = match (group, &menu) {
-            (None, _) => Reveal::Always,
-            (Some(_), Menu::Entry(_)) => {
-                Reveal::Shown(self.sidebar_hovered.as_ref() == Some(&menu))
-            }
-            // The project's head reports its hover as its `···`.
-            (Some(_), Menu::Add(ix)) => {
-                Reveal::Shown(matches!(&self.sidebar_hovered, Some(Menu::Project(at)) if at == ix))
-            }
-            (Some(group), _) => Reveal::Group(group),
+        let reveal = match group {
+            None => Reveal::Always,
+            Some(group) => Reveal::Group(group),
         };
         let button = button(id, mark, reveal, self.menu_open(&menu), cx).on_click({
             let menu = menu.clone();

@@ -113,7 +113,7 @@ impl SettingsWindow {
             documents,
             sessions,
             items,
-        } = self.workspace.read(cx).resident();
+        } = self.workspace.read(cx).resident(cx);
         group(&theme, "Resident")
             .child(
                 theme

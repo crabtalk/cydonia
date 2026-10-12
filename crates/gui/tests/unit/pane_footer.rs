@@ -32,14 +32,14 @@ fn arranged_session_measures_its_own_composer(cx: &mut gpui::TestAppContext) {
                     let record = serde_json::from_value(serde_json::json!({
                         "id":id.to_string(), "agent":"test", "title":"", "name":null, "updated":1, "items":[]
                     })).unwrap();
-                    project.sessions.push(ChatSession::restore(id, cwd.clone(), Agent {
+                    project.sessions.push(crate::model::project::HeldSession::new(ChatSession::restore(id, cwd.clone(), Agent {
                         name: "test".into(), id: None, command: String::new(), args: vec![], env: Default::default(),
-                    }, record));
+                    }, record), cx));
                 }
                 project.active = Some(1);
                 workspace.projects.push(project);
                 workspace.active = Some(0);
-                workspace.member_of(0, Showing::Session(2)).unwrap()
+                workspace.member_of(0, Showing::Session(2), cx).unwrap()
             });
             let tab = root.leaves[0].clone();
             tab.update(cx, |tab, _| tab.entry = Some(member.clone()));

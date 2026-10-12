@@ -1,8 +1,12 @@
 //! Labels in the library: the column, the filter on its heading, and the
 //! selection's Label button — each opens [`crate::view::kit::labels`]'s picker.
 
+use super::Library;
 use super::ROW_GROUP;
-use crate::view::{kit::labels::Target, sidebar::Row, window::root::Cydonia};
+use crate::view::{
+    kit::labels::{LabelHost as _, Target},
+    sidebar::Row,
+};
 use bezel::{
     gpui::{AnyElement, Context, Div, SharedString, Stateful, div, prelude::*, px},
     theme::Theme,
@@ -12,7 +16,7 @@ use bezel::{
     },
 };
 
-impl Cydonia {
+impl Library {
     /// A listing's labels, as one line of chips cut at the cell's edge. Empty
     /// shows nothing until the row is hovered. Opens the picker on the entry.
     pub(super) fn label_cell(
@@ -36,7 +40,7 @@ impl Cydonia {
             .items_center()
             .gap(px(4.))
             .overflow_hidden();
-        self.label_chips(cell, target, labels, ROW_GROUP, cx.entity().downgrade(), cx)
+        self.label_chips(cell, target, labels, ROW_GROUP, cx)
             .into_any_element()
     }
 
@@ -60,7 +64,7 @@ impl Cydonia {
                 this.toggle_labels(Target::Heading, window, cx);
             }))
             .children(self.label_picker(&Target::Heading));
-        Self::labels_trigger(cell, Target::Heading, cx.entity().downgrade()).into_any_element()
+        Self::labels_trigger(cell, Target::Heading, cx).into_any_element()
     }
 
     /// The selection bar's Label button.
@@ -75,13 +79,13 @@ impl Cydonia {
                 this.toggle_labels(Target::Selection, window, cx);
             }))
             .children(self.label_picker(&Target::Selection));
-        Self::labels_trigger(button, Target::Selection, cx.entity().downgrade())
+        Self::labels_trigger(button, Target::Selection, cx)
     }
 
     /// The filters on, each a pill that takes it off. Nothing while none is.
     pub(super) fn filter_strip(&self, cx: &mut Context<Self>) -> Option<Div> {
         let theme = Theme::of(cx).clone();
-        let library = self.library.as_ref()?;
+        let library = self;
         let workspace = self.workspace.read(cx);
         let project = library
             .project
@@ -125,9 +129,7 @@ impl Cydonia {
                         .id("library-filter-labels")
                         .cursor_pointer()
                         .on_click(cx.listener(|this, _, _, cx| {
-                            if let Some(library) = &mut this.library {
-                                library.labels.clear();
-                            }
+                            this.labels.clear();
                             cx.notify();
                         }))
                 })),

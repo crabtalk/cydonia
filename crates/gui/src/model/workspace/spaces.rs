@@ -384,7 +384,7 @@ impl Workspace {
             .entries()
             .into_iter()
             .find(|member| member != entry)
-            .and_then(|member| Some((member.clone(), self.showing_of(&member)?)));
+            .and_then(|member| Some((member.clone(), self.showing_of(&member, cx)?)));
 
         if let Some(at) = self.space {
             self.delete_space(at, cx);
@@ -448,6 +448,7 @@ impl Workspace {
             Kind::Session => open
                 .sessions
                 .iter()
+                .map(|held| held.chat.read(cx))
                 .any(|chat| chat.closed && chat.record.as_deref() == Some(member.id.as_str())),
             Kind::Board => open
                 .boards
@@ -524,7 +525,7 @@ impl Workspace {
         let mut live: Vec<Member> = Vec::new();
         for open in &self.projects {
             let path = open.path.clone();
-            for chat in &open.sessions {
+            for chat in open.chats(cx) {
                 if let Some(record) = chat.record.clone() {
                     live.push(Member::new(path.clone(), Kind::Session, record));
                 }
@@ -556,13 +557,13 @@ impl Workspace {
     /// What the member names, and which open project it is in. Nothing for one
     /// whose project is shut, or which has gone since the space named it —
     /// that draws as an empty pane rather than a panic.
-    pub fn showing_of(&self, member: &Member) -> Option<(usize, Showing)> {
+    pub fn showing_of(&self, member: &Member, cx: &App) -> Option<(usize, Showing)> {
         let at = self
             .projects
             .iter()
             .position(|open| open.path == member.project)?;
         let open = self.projects.get(at)?;
-        let showing = open.stored(member.kind, &member.id)?;
+        let showing = open.stored(member.kind, &member.id, cx)?;
         Some((at, showing))
     }
 
@@ -571,13 +572,22 @@ impl Workspace {
     ///
     /// Nothing for a session with no file yet: a space names entries on disk,
     /// and one that has had no turn is not there to be named.
-    pub fn member_of(&self, project: usize, showing: Showing) -> Option<Member> {
+    pub fn member_of(&self, project: usize, showing: Showing, cx: &App) -> Option<Member> {
+        let Showing::Session(id) = showing else {
+            return self.filed_member(project, showing);
+        };
+        let open = self.projects.get(project)?;
+        let record = open.session(id, cx)?.filed()?.to_owned();
+        Some(Member::new(open.path.clone(), Kind::Session, record))
+    }
+
+    /// [`Self::member_of`] for a board, an article or a table, whose id is
+    /// its file. Nothing for a session.
+    fn filed_member(&self, project: usize, showing: Showing) -> Option<Member> {
         let open = self.projects.get(project)?;
         let path = open.path.clone();
         Some(match showing {
-            Showing::Session(id) => {
-                Member::new(path, Kind::Session, open.session(id)?.filed()?.to_owned())
-            }
+            Showing::Session(_) => return None,
             Showing::Board(id) => {
                 open.board_ix(&id)?;
                 Member::new(path, Kind::Board, id)
@@ -597,19 +607,19 @@ impl Workspace {
     /// The member naming the board listed at `ix` in `project`.
     pub fn board_member(&self, project: usize, ix: usize) -> Option<Member> {
         let id = self.projects.get(project)?.boards.get(ix)?.id.clone();
-        self.member_of(project, Showing::Board(id))
+        self.filed_member(project, Showing::Board(id))
     }
 
     /// The member naming the article listed at `ix` in `project`.
     pub fn article_member(&self, project: usize, ix: usize) -> Option<Member> {
         let id = self.projects.get(project)?.articles.get(ix)?.id.clone();
-        self.member_of(project, Showing::Article(id))
+        self.filed_member(project, Showing::Article(id))
     }
 
     /// The member naming the table listed at `ix` in `project`.
     pub fn table_member(&self, project: usize, ix: usize) -> Option<Member> {
         let key = self.projects.get(project)?.tables.get(ix)?.key.clone();
-        self.member_of(project, Showing::Table(key))
+        self.filed_member(project, Showing::Table(key))
     }
 
     /// The board a pane is on, by its place in its project. Named apart from
@@ -631,7 +641,7 @@ impl Workspace {
         let Some(member) = member else {
             return self.active_board(cx);
         };
-        match self.showing_of(member)? {
+        match self.showing_of(member, cx)? {
             (project, Showing::Board(id)) => {
                 self.board_in(project, self.projects.get(project)?.board_ix(&id)?, cx)
             }
@@ -641,11 +651,11 @@ impl Workspace {
 
     /// The session one pane is showing, the way [`Self::board_of`] answers
     /// for a board.
-    pub fn session_id_of(&self, member: Option<&Member>) -> Option<u64> {
+    pub fn session_id_of(&self, member: Option<&Member>, cx: &App) -> Option<u64> {
         let Some(member) = member else {
             return self.active_id();
         };
-        match self.showing_of(member)? {
+        match self.showing_of(member, cx)? {
             (_, Showing::Session(id)) => Some(id),
             _ => None,
         }
@@ -653,11 +663,11 @@ impl Workspace {
 
     /// The article one pane is showing, the way [`Self::board_of`] answers for
     /// a board.
-    pub fn article_of(&self, member: Option<&Member>) -> Option<&Article> {
+    pub fn article_of(&self, member: Option<&Member>, cx: &App) -> Option<&Article> {
         let Some(member) = member else {
             return self.active_article();
         };
-        match self.showing_of(member)? {
+        match self.showing_of(member, cx)? {
             (project, Showing::Article(id)) => {
                 self.article_in(project, self.projects.get(project)?.article_ix(&id)?)
             }
@@ -667,11 +677,11 @@ impl Workspace {
 
     /// The table one pane is showing, the way [`Self::board_of`] answers for a
     /// board.
-    pub fn table_of(&self, member: Option<&Member>) -> Option<&Table> {
+    pub fn table_of(&self, member: Option<&Member>, cx: &App) -> Option<&Table> {
         let Some(member) = member else {
             return self.active_table();
         };
-        match self.showing_of(member)? {
+        match self.showing_of(member, cx)? {
             (project, Showing::Table(key)) => {
                 self.table_in(project, self.projects.get(project)?.table_ix(&key)?)
             }
@@ -699,8 +709,8 @@ impl Workspace {
         open.pages.get(&open.tables.get(ix)?.key)
     }
 
-    pub fn session_in(&self, project: usize, id: u64) -> Option<&ChatSession> {
-        self.projects.get(project)?.session(id)
+    pub fn session_in<'a>(&self, project: usize, id: u64, cx: &'a App) -> Option<&'a ChatSession> {
+        self.projects.get(project)?.session(id, cx)
     }
 
     /// Put the project's selection on what a pane is showing.
@@ -768,7 +778,7 @@ impl Workspace {
             .tree
             .panes()
             .iter()
-            .filter_map(|member| self.showing_of(member))
+            .filter_map(|member| self.showing_of(member, cx))
             .collect();
         for (project, showing) in showing {
             self.bring_up(project, &showing, cx);

@@ -8,7 +8,6 @@ use crate::{
     model::workspace::Workspace,
     view::{
         kit::menu,
-        sidebar::{self, Renaming, Row},
         window::root::{Cydonia, NewTable},
     },
 };
@@ -221,73 +220,6 @@ impl Cydonia {
                 .into_any_element(),
         )
     }
-
-    /// One table in the sidebar, under the project that holds it.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn table_row(
-        &self,
-        entry: &Row,
-        project: usize,
-        ix: usize,
-        name: String,
-        lifted: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement + use<> {
-        let theme = Theme::of(cx).clone();
-        let workspace = self.workspace.read(cx);
-        let light = self.light_of(entry, cx);
-        let selected = light.selected();
-        let table = workspace
-            .projects
-            .get(project)
-            .and_then(|open| open.tables.get(ix));
-        let archived = table.is_some_and(|table| table.archived);
-        let key = table.map(|table| &table.key);
-        // The band draws the field when it is showing this entry — see
-        // [`Cydonia::header_renaming`], which is what keeps one field from
-        // being claimed by two places at once.
-        let renaming = matches!(&self.renaming, Some(Renaming::Table(at)) if Some(at) == key)
-            && self.header_renaming(cx).is_none();
-        let tone = light.tint(archived, &theme);
-
-        sidebar::row(
-            SharedString::from(sidebar::key_of(entry)),
-            "table-row",
-            selected,
-            lifted,
-            self.indent_of(entry, cx),
-            &theme,
-        )
-        .child(
-            icons::icon(icons::files::Table2)
-                .size(px(14.))
-                .flex_none()
-                .text_color(tone),
-        )
-        .child(match renaming {
-            true => self.name_field(cx),
-            false => div()
-                .flex_1()
-                .min_w_0()
-                .truncate()
-                .text_style(TextStyle::Body)
-                .text_color(tone)
-                .child(name)
-                .into_any_element(),
-        })
-        .child(self.archive_button(
-            format!("archive-{}", sidebar::key_of(entry)),
-            "table-row",
-            entry,
-            archived,
-            window,
-            cx,
-        ))
-        .on_click(cx.listener(move |this, _, window, cx| {
-            this.open_table(project, ix, window, cx);
-        }))
-    }
 }
 
 /// One pane's view of one table: its rows, with the one field that writes
@@ -325,7 +257,7 @@ impl TableView {
     fn key(&self, cx: &App) -> Option<String> {
         self.workspace
             .read(cx)
-            .table_of(Some(&self.table))
+            .table_of(Some(&self.table), cx)
             .map(|table| table.key.clone())
     }
 
@@ -361,7 +293,7 @@ impl TableView {
             Cell::Name => self
                 .workspace
                 .read(cx)
-                .table_of(Some(&self.table))
+                .table_of(Some(&self.table), cx)
                 .map(|table| table.name.clone())
                 .unwrap_or_default(),
         };

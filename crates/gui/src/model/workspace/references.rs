@@ -131,8 +131,7 @@ impl Workspace {
 /// own title.
 fn entry(project: &Project, number: u64, cx: &App) -> Option<(Kind, Showing, String)> {
     project
-        .sessions
-        .iter()
+        .chats(cx)
         .find(|chat| chat.number == Some(number))
         .map(|chat| (Kind::Session, Showing::Session(chat.id), chat.title.clone()))
         .or_else(|| {

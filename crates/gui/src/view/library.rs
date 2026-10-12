@@ -7,24 +7,32 @@
 //! see [`Cydonia::enter_member`].
 
 use crate::{
-    model::{settings::Features, workspace::Showing},
+    model::{
+        settings::Features,
+        workspace::{Showing, Workspace},
+    },
     view::{
-        kit::menu::{self, Menu},
-        kit::{icon::kind_icon, stamp},
+        kit::{
+            icon::kind_icon,
+            labels::{LabelHost, Labels},
+            menu::{self, Act},
+            stamp,
+        },
         modals::confirm::Doomed,
         sidebar::{self, Row},
-        window::root::Cydonia,
+        window::{entry::Host, reach::InWindow, root::Cydonia},
     },
 };
 use artifact::kind::Kind;
 use bezel::{
     gpui::{
-        self, AnyElement, App, Context, Div, Entity, Pixels, SharedString, Stateful,
-        UniformListScrollHandle, Window, div, prelude::*, px, uniform_list,
+        self, AnyElement, App, AppContext as _, Context, Div, Entity, Pixels, SharedString,
+        Stateful, Subscription, UniformListScrollHandle, WeakEntity, Window, div, prelude::*, px,
+        uniform_list,
     },
     theme::{TextStyle, Theme, Typeset},
     ui::{
-        context_menu::Place,
+        context_menu::{ContextMenu, Place},
         icons::{self, Icon},
         input::{FieldEvent, TextField},
         menu::Item as MenuItem,
@@ -225,8 +233,31 @@ pub(crate) struct Shelf {
     query: String,
 }
 
-/// What the library is showing, while it is up.
+/// Which of the library's menus is up.
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) enum LibraryMenu {
+    /// A listing's `···`, by the entry it is on.
+    Entry(Row),
+    /// The tabs, as a select in a narrow bar.
+    Tab,
+    /// The project picker.
+    Project,
+    /// The selection's `Move to`.
+    Move,
+    /// The Status heading.
+    Status,
+    /// The Agent heading.
+    Agent,
+}
+
+/// The library, while it stands over the panes: what it lists and how, its
+/// selection, and its own menus and label picker. Drawn cached in the detail
+/// column's place.
 pub(crate) struct Library {
+    workspace: Entity<Workspace>,
+    root: WeakEntity<Cydonia>,
+    menu: ContextMenu<Self, LibraryMenu>,
+    labels_picker: Labels,
     tab: Tab,
     status: Status,
     /// The one project listed, by its path, or every open one.
@@ -244,6 +275,7 @@ pub(crate) struct Library {
     /// two do not fit beside the search.
     bar: Rc<Cell<Pixels>>,
     strip: Rc<Cell<Pixels>>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl Library {
@@ -266,8 +298,13 @@ impl Library {
     }
 
     /// A library narrowed as `shelf` says.
-    fn shelved(shelf: Shelf, cx: &mut Context<Cydonia>) -> Self {
-        let library = Self::new(cx);
+    pub(crate) fn shelved(
+        shelf: Shelf,
+        workspace: Entity<Workspace>,
+        root: WeakEntity<Cydonia>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let library = Self::new(workspace, root, cx);
         library
             .query
             .update(cx, |field, cx| field.set_content(shelf.query, cx));
@@ -282,21 +319,31 @@ impl Library {
         }
     }
 
-    fn new(cx: &mut Context<Cydonia>) -> Self {
+    pub(crate) fn new(
+        workspace: Entity<Workspace>,
+        root: WeakEntity<Cydonia>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let query = cx.new(|cx| {
             TextField::new(cx)
                 .with_frame(false)
                 .with_placeholder("Search the library…")
         });
-        // The list is drawn from the root's render, so what is typed has to
-        // reach the root: the field's own `notify` repaints the field alone.
-        cx.subscribe(&query, |_, _, event: &FieldEvent, cx| {
-            if matches!(event, FieldEvent::Changed(_)) {
-                cx.notify();
-            }
-        })
-        .detach();
+        let subscriptions = vec![
+            // What is typed narrows the list: the field's own `notify`
+            // repaints the field alone.
+            cx.subscribe(&query, |_, _, event: &FieldEvent, cx| {
+                if matches!(event, FieldEvent::Changed(_)) {
+                    cx.notify();
+                }
+            }),
+            cx.observe(&workspace, |_, _, cx| cx.notify()),
+        ];
         Self {
+            workspace,
+            root,
+            menu: ContextMenu::default(),
+            labels_picker: Labels::default(),
             tab: Tab::Articles,
             status: Status::Active,
             project: None,
@@ -308,6 +355,7 @@ impl Library {
             scroll: UniformListScrollHandle::new(),
             bar: Rc::new(Cell::new(px(0.))),
             strip: Rc::new(Cell::new(px(0.))),
+            _subscriptions: subscriptions,
         }
     }
 }
@@ -339,7 +387,11 @@ impl Cydonia {
                 self.library = None;
                 cx.notify();
             }
-            false => self.put_up_library(Library::new(cx), window, cx),
+            false => {
+                let (workspace, root) = (self.workspace.clone(), cx.entity().downgrade());
+                let library = cx.new(|cx| Library::new(workspace, root, cx));
+                self.put_up_library(library, window, cx)
+            }
         }
     }
 
@@ -351,10 +403,17 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.put_up_library(Library::shelved(shelf, cx), window, cx);
+        let (workspace, root) = (self.workspace.clone(), cx.entity().downgrade());
+        let library = cx.new(|cx| Library::shelved(shelf, workspace, root, cx));
+        self.put_up_library(library, window, cx);
     }
 
-    fn put_up_library(&mut self, library: Library, window: &mut Window, cx: &mut Context<Self>) {
+    fn put_up_library(
+        &mut self,
+        library: Entity<Library>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.commit(cx);
         self.library = Some(library);
         // The panes under it are not drawn, and a focus left in one reaches
@@ -362,37 +421,13 @@ impl Cydonia {
         window.focus(&self.focus, cx);
         cx.notify();
     }
+}
 
-    /// The sidebar's row that puts the library up, lit while it is.
-    pub(crate) fn library_entry(&self, cx: &mut Context<Self>) -> AnyElement {
-        let theme = Theme::of(cx).clone();
-        let open = self.library.is_some();
-        let tone = sidebar::tint(open, false, &theme);
-        sidebar::row("library-entry", "library-entry", open, false, 0, &theme)
-            .flex_none()
-            .mb(px(4.))
-            .child(
-                icons::icon(icons::text::LibraryBig)
-                    .size(px(14.))
-                    .text_color(tone),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .text_style(TextStyle::Body)
-                    .text_color(tone)
-                    .child("Library"),
-            )
-            .on_click(cx.listener(|this, _, window, cx| this.toggle_library(window, cx)))
-            .into_any_element()
-    }
-
+impl Library {
     /// Every entry of the tab's kind in every open project, or the one picked,
     /// with what a switch hides left out.
     fn listings(&self, cx: &App) -> Vec<Listing> {
-        let Some(library) = &self.library else {
-            return Vec::new();
-        };
+        let library = self;
         let workspace = self.workspace.read(cx);
         let features = &workspace.settings.features;
         let mut out = Vec::new();
@@ -450,9 +485,7 @@ impl Cydonia {
     /// With how many the tab holds before the search and the label filter, to
     /// say how many those hide.
     fn library_listings(&self, cx: &App) -> (Vec<Listing>, usize) {
-        let Some(library) = &self.library else {
-            return (Vec::new(), 0);
-        };
+        let library = self;
         let labelled = library.tab.labelled();
         let held: Vec<Listing> = self
             .listings(cx)
@@ -524,103 +557,90 @@ impl Cydonia {
     // ── state ────────────────────────────────────────────────────
 
     fn library_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {
-        if let Some(library) = &mut self.library {
-            library.tab = tab;
-            library.selected.clear();
-            // An order by a column the tab does not have would be one nobody
-            // can see or undo.
-            if !tab.fields().contains(&library.order.field) {
-                library.order = Order::EDITED;
-            }
-            cx.notify();
+        let library = &mut *self;
+        library.tab = tab;
+        library.selected.clear();
+        // An order by a column the tab does not have would be one nobody
+        // can see or undo.
+        if !tab.fields().contains(&library.order.field) {
+            library.order = Order::EDITED;
         }
+        cx.notify();
     }
 
     fn library_agent(&mut self, agent: Option<String>, cx: &mut Context<Self>) {
-        if let Some(library) = &mut self.library {
-            library.agent = agent;
-            library.selected.clear();
-            cx.notify();
-        }
+        let library = &mut *self;
+        library.agent = agent;
+        library.selected.clear();
+        cx.notify();
     }
 
     fn library_status(&mut self, status: Status, cx: &mut Context<Self>) {
-        if let Some(library) = &mut self.library {
-            library.status = status;
-            library.selected.clear();
-            cx.notify();
-        }
+        let library = &mut *self;
+        library.status = status;
+        library.selected.clear();
+        cx.notify();
     }
 
     fn library_project(&mut self, project: Option<PathBuf>, cx: &mut Context<Self>) {
-        if let Some(library) = &mut self.library {
-            library.project = project;
-            library.selected.clear();
-            cx.notify();
-        }
+        let library = &mut *self;
+        library.project = project;
+        library.selected.clear();
+        cx.notify();
     }
 
     fn library_sort_by(&mut self, field: Field, ascending: bool, cx: &mut Context<Self>) {
-        if let Some(library) = &mut self.library {
-            library.order = Order { field, ascending };
-            cx.notify();
-        }
+        let library = &mut *self;
+        library.order = Order { field, ascending };
+        cx.notify();
     }
 
     /// A press on `field`'s heading: the sorted column reverses, any other
     /// starts ascending.
     fn library_sort(&mut self, field: Field, cx: &mut Context<Self>) {
-        if let Some(library) = &mut self.library {
-            library.order = Order {
-                field,
-                ascending: library.order.field != field || !library.order.ascending,
-            };
-            cx.notify();
-        }
+        let library = &mut *self;
+        library.order = Order {
+            field,
+            ascending: library.order.field != field || !library.order.ascending,
+        };
+        cx.notify();
     }
 
     fn library_select(&mut self, row: Row, cx: &mut Context<Self>) {
-        if let Some(library) = &mut self.library {
-            if !library.selected.remove(&row) {
-                library.selected.insert(row);
-            }
-            cx.notify();
+        let library = &mut *self;
+        if !library.selected.remove(&row) {
+            library.selected.insert(row);
         }
+        cx.notify();
     }
 
     /// Take the selection, leaving none.
     fn take_selected(&mut self) -> Vec<Row> {
-        self.library
-            .as_mut()
-            .map(|library| library.selected.drain().collect())
-            .unwrap_or_default()
+        self.selected.drain().collect()
     }
 
     /// The entries in the selection.
-    pub(crate) fn selected_rows(&self) -> Vec<Row> {
-        self.library
-            .iter()
-            .flat_map(|library| library.selected.iter().cloned())
-            .collect()
+    pub(crate) fn selected(&self) -> Vec<Row> {
+        self.selected.iter().cloned().collect()
     }
 
     // ── acting on the selection ──────────────────────────────────
 
     /// Put every selected entry away, or bring every one back.
     fn archive_selected(&mut self, archived: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let rows = self.selected_rows();
-        self.take_selected();
-        for row in &rows {
-            self.archive_entry(row, archived, window, cx);
-        }
+        let rows = self.take_selected();
+        self.defer_window(window, cx, move |root, window, cx| {
+            for row in &rows {
+                root.archive_entry(row, archived, window, cx);
+            }
+        });
         cx.notify();
     }
 
     /// Move every selected article into the project at `to`, its folder and
     /// pictures with it. Only articles move between projects.
     fn move_selected(&mut self, to: usize, cx: &mut Context<Self>) {
-        let rows = self.selected_rows();
-        self.take_selected();
+        let rows = self.take_selected();
         for row in rows {
             if !matches!(
                 row,
@@ -633,7 +653,7 @@ impl Cydonia {
             }
             // Read for each in turn: a move takes the article out of its
             // project's list, and every one after it shifts up a place.
-            if let Some((from, ix)) = self.located(&row, cx)
+            if let Some((from, ix)) = row.located(self.workspace.read(cx))
                 && from != to
             {
                 self.workspace
@@ -650,17 +670,20 @@ impl Cydonia {
             .into_iter()
             .map(Doomed::Entry)
             .collect();
-        self.ask_delete_many(doomed, window, cx);
+        self.defer_window(window, cx, |root, window, cx| {
+            root.ask_delete_many(doomed, window, cx)
+        });
     }
 
     /// Open a listing's entry in the drawer over the library. A session before
     /// its first turn has no number to name it by, and opens where it lives,
     /// which puts the library away.
     fn open_listing(&mut self, row: &Row, window: &mut Window, cx: &mut Context<Self>) {
-        match self.drawn_reference(row, cx) {
-            Some(reference) => self.peek(None, &reference, window, cx),
-            None => self.open_row(row, window, cx),
-        }
+        let (reference, row) = (self.drawn_reference(row, cx), row.clone());
+        self.defer_window(window, cx, move |root, window, cx| match reference {
+            Some(reference) => root.peek(None, &reference, window, cx),
+            None => root.open_row(&row, window, cx),
+        });
     }
 
     /// How an entry is named to the drawer, `project#12`. Nothing for a
@@ -685,9 +708,7 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        let Some(library) = &self.library else {
-            return div().into_any_element();
-        };
+        let library = &*self;
         let selected = !library.selected.is_empty();
         let (listings, total) = self.library_listings(cx);
         let archived = library.status == Status::Archived;
@@ -757,9 +778,7 @@ impl Cydonia {
     /// is selected.
     fn library_bar(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let theme = Theme::of(cx).clone();
-        let Some(library) = &self.library else {
-            return div();
-        };
+        let library = self;
         let tab = library.tab;
         let (bar, strip) = (library.bar.clone(), library.strip.clone());
         let features = &self.workspace.read(cx).settings.features;
@@ -839,7 +858,7 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let theme = Theme::of(cx).clone();
-        let menu = Menu::LibraryTab;
+        let menu = LibraryMenu::Tab;
         let trigger = theme
             .select_trigger(tab.label())
             .flex_none()
@@ -877,9 +896,7 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) -> Div {
         let theme = Theme::of(cx).clone();
-        let Some(library) = &self.library else {
-            return div();
-        };
+        let library = self;
         let count = library.selected.len();
         let articles = library.tab == Tab::Articles;
         let labelled = library.tab.labelled();
@@ -914,9 +931,9 @@ impl Cydonia {
             )
             .when(articles && projects > 1, |bar| {
                 bar.child(
-                    self.library_trigger("library-move", "Move to", Menu::LibraryMove, cx)
+                    self.library_trigger("library-move", "Move to", LibraryMenu::Move, cx)
                         .children(self.menu_here(
-                            &Menu::LibraryMove,
+                            &LibraryMenu::Move,
                             "library-move-menu",
                             window,
                             cx,
@@ -947,7 +964,7 @@ impl Cydonia {
         &self,
         id: &'static str,
         label: &'static str,
-        menu: Menu,
+        menu: LibraryMenu,
         cx: &Context<Self>,
     ) -> Stateful<Div> {
         let theme = Theme::of(cx);
@@ -962,7 +979,7 @@ impl Cydonia {
     /// A click that opens the library's `menu` under what was pressed.
     fn open_library_menu(
         &self,
-        menu: Menu,
+        menu: LibraryMenu,
         cx: &Context<Self>,
     ) -> impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static {
         cx.listener(move |this, _, window, cx| {
@@ -979,12 +996,12 @@ impl Cydonia {
     }
 
     /// The rows of the library's `menu`.
-    fn library_rows(&self, menu: &Menu, cx: &App) -> Vec<(MenuItem, menu::Act)> {
+    fn library_rows(&self, menu: &LibraryMenu, cx: &App) -> Vec<(MenuItem, Act<Self>)> {
         match menu {
-            Menu::LibraryProject => self.library_project_rows(cx),
-            Menu::LibraryMove => self.move_rows(cx),
-            Menu::LibraryAgent => self.agent_rows(cx),
-            Menu::LibraryStatus => self.status_rows(),
+            LibraryMenu::Project => self.library_project_rows(cx),
+            LibraryMenu::Move => self.move_rows(cx),
+            LibraryMenu::Agent => self.agent_rows(cx),
+            LibraryMenu::Status => self.status_rows(),
             _ => Vec::new(),
         }
     }
@@ -997,7 +1014,7 @@ impl Cydonia {
         column: &table::Column,
         sorted: Option<bool>,
         id: &'static str,
-        menu: Menu,
+        menu: LibraryMenu,
         card: &'static str,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1019,12 +1036,8 @@ impl Cydonia {
     }
 
     /// The menu under a sortable heading's picker: its two sorts, then a line.
-    fn sorts(&self, field: Field) -> Vec<(MenuItem, menu::Act)> {
-        let sorted = self
-            .library
-            .as_ref()
-            .filter(|library| library.order.field == field)
-            .map(|library| library.order.ascending);
+    fn sorts(&self, field: Field) -> Vec<(MenuItem, Act<Self>)> {
+        let sorted = (self.order.field == field).then_some(self.order.ascending);
         vec![
             menu::row::<Self>(
                 MenuItem::action("Sort A → Z")
@@ -1042,10 +1055,8 @@ impl Cydonia {
         ]
     }
 
-    fn library_project_rows(&self, cx: &App) -> Vec<(MenuItem, menu::Act)> {
-        let Some(library) = &self.library else {
-            return Vec::new();
-        };
+    fn library_project_rows(&self, cx: &App) -> Vec<(MenuItem, Act<Self>)> {
+        let library = self;
         let picked = library.project.clone();
         let mut rows = self.sorts(Field::Project);
         rows.push(menu::row::<Self>(
@@ -1067,7 +1078,7 @@ impl Cydonia {
     }
 
     /// The projects a selection's articles can move into.
-    fn move_rows(&self, cx: &App) -> Vec<(MenuItem, menu::Act)> {
+    fn move_rows(&self, cx: &App) -> Vec<(MenuItem, Act<Self>)> {
         self.workspace
             .read(cx)
             .projects
@@ -1083,17 +1094,13 @@ impl Cydonia {
     }
 
     /// The agents a session in an open project runs on, to list one's alone.
-    fn agent_rows(&self, cx: &App) -> Vec<(MenuItem, menu::Act)> {
-        let Some(library) = &self.library else {
-            return Vec::new();
-        };
+    fn agent_rows(&self, cx: &App) -> Vec<(MenuItem, Act<Self>)> {
+        let library = self;
         let picked = library.agent.clone();
         let mut names: Vec<String> = self
             .workspace
             .read(cx)
-            .projects
-            .iter()
-            .flat_map(|open| &open.sessions)
+            .chats(cx)
             .map(|chat| chat.entry.name.clone())
             .collect();
         names.sort();
@@ -1113,10 +1120,8 @@ impl Cydonia {
         rows
     }
 
-    fn status_rows(&self) -> Vec<(MenuItem, menu::Act)> {
-        let Some(library) = &self.library else {
-            return Vec::new();
-        };
+    fn status_rows(&self) -> Vec<(MenuItem, Act<Self>)> {
+        let library = self;
         let picked = library.status;
         Status::ALL
             .into_iter()
@@ -1137,9 +1142,7 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        let Some(library) = &self.library else {
-            return div().into_any_element();
-        };
+        let library = self;
         let (order, scroll, tab) = (library.order, library.scroll.clone(), library.tab);
         let fields = tab.fields();
         let columns: Rc<Vec<table::Column>> =
@@ -1157,7 +1160,7 @@ impl Cydonia {
                             column,
                             sorted,
                             "library-heading-project",
-                            Menu::LibraryProject,
+                            LibraryMenu::Project,
                             "library-project-menu",
                             window,
                             cx,
@@ -1168,7 +1171,7 @@ impl Cydonia {
                             column,
                             sorted,
                             "library-heading-agent",
-                            Menu::LibraryAgent,
+                            LibraryMenu::Agent,
                             "library-agent-menu",
                             window,
                             cx,
@@ -1179,7 +1182,7 @@ impl Cydonia {
                             column,
                             None,
                             "library-heading-status",
-                            Menu::LibraryStatus,
+                            LibraryMenu::Status,
                             "library-status-menu",
                             window,
                             cx,
@@ -1228,12 +1231,10 @@ impl Cydonia {
     /// show while anything is selected; otherwise on the row's hover.
     fn library_check(&self, listing: &Listing, ix: usize, cx: &mut Context<Self>) -> Stateful<Div> {
         let theme = Theme::of(cx).clone();
-        let (checked, any) = self.library.as_ref().map_or((false, false), |library| {
-            (
-                library.selected.contains(&listing.row),
-                !library.selected.is_empty(),
-            )
-        });
+        let (checked, any) = (
+            self.selected.contains(&listing.row),
+            !self.selected.is_empty(),
+        );
         theme
             .checkbox(checked)
             .id(("library-check", ix))
@@ -1259,25 +1260,44 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let id = SharedString::from(format!("library-menu-{ix}"));
-        let menu = Menu::Library(listing.row.clone());
-        let rows = Self::entry_menu_rows(menu.clone(), listing.row.clone(), listing.archived);
-        self.menu_button(
+        let menu = LibraryMenu::Entry(listing.row.clone());
+        let (row, archived) = (listing.row.clone(), listing.archived);
+        let open = self.menu.key() == Some(&menu);
+        let button = menu::button(
             id,
-            Some(ROW_GROUP),
             icons::layout::Ellipsis,
-            menu.clone(),
-            Place::BelowEnd,
-            rows,
+            menu::Reveal::Group(ROW_GROUP),
+            open,
             cx,
         )
-        .children(self.entry_menu(&menu, window, cx))
-        .into_any_element()
+        .on_click(cx.listener({
+            let menu = menu.clone();
+            move |this, _, window, cx| {
+                cx.stop_propagation();
+                let row = row.clone();
+                this.toggle_menu(
+                    menu.clone(),
+                    Place::BelowEnd,
+                    move |this, _, cx| {
+                        let rows = this
+                            .root
+                            .upgrade()
+                            .map(|root| root.read(cx).entry_rows(Host::Library, &row, archived, cx))
+                            .unwrap_or_default();
+                        Self::through(rows)
+                    },
+                    window,
+                    cx,
+                );
+            }
+        }));
+        self.menu_trigger(button, menu.clone(), cx)
+            .children(self.menu_here(&menu, "library-entry-menu", window, cx))
+            .into_any_element()
     }
 
     fn is_selected(&self, row: &Row) -> bool {
-        self.library
-            .as_ref()
-            .is_some_and(|library| library.selected.contains(row))
+        self.selected.contains(row)
     }
 
     /// One line of the list.
@@ -1362,6 +1382,89 @@ impl Cydonia {
                 move |this, _, window, cx| this.open_listing(&row, window, cx)
             }))
             .into_any_element()
+    }
+}
+
+impl Library {
+    /// Open `menu` at `place` with the rows `rows` builds, or shut it where it
+    /// is the one up.
+    fn toggle_menu(
+        &mut self,
+        menu: LibraryMenu,
+        place: Place,
+        rows: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) -> Vec<(MenuItem, Act<Self>)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        ContextMenu::toggle(
+            self,
+            |this| &mut this.menu,
+            menu,
+            place,
+            |this, window, cx| menu::chooser(rows(this, window, cx)),
+            window,
+            cx,
+        );
+    }
+
+    /// `el`, noting each press for `menu` — see [`ContextMenu::trigger`].
+    fn menu_trigger<E: gpui::StatefulInteractiveElement>(
+        &self,
+        el: E,
+        menu: LibraryMenu,
+        cx: &Context<Self>,
+    ) -> E {
+        ContextMenu::trigger(el, |this: &mut Self| &mut this.menu, menu, cx)
+    }
+
+    /// The menu `menu`, placed, while it is on screen.
+    fn menu_here(
+        &self,
+        menu: &LibraryMenu,
+        id: impl Into<SharedString>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        self.menu
+            .render_for(menu, id, |this| &mut this.menu, window, cx)
+    }
+}
+
+impl InWindow for Library {
+    fn root(&self) -> &WeakEntity<Cydonia> {
+        &self.root
+    }
+}
+
+impl LabelHost for Library {
+    fn labels(&self) -> &Labels {
+        &self.labels_picker
+    }
+
+    fn labels_mut(&mut self) -> &mut Labels {
+        &mut self.labels_picker
+    }
+
+    fn label_workspace(&self) -> &Entity<Workspace> {
+        &self.workspace
+    }
+
+    fn label_root(&self) -> &WeakEntity<Cydonia> {
+        &self.root
+    }
+
+    fn selected_rows(&self) -> Vec<Row> {
+        self.selected()
+    }
+
+    fn label_filter(&mut self) -> Option<&mut Vec<String>> {
+        Some(&mut self.labels)
+    }
+}
+
+impl Render for Library {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.library_view(window, cx)
     }
 }
 

@@ -327,8 +327,8 @@ impl Cydonia {
                 row,
                 part: Some(Part::Card(card)),
                 ..
-            }) => self
-                .located(&row, cx)
+            }) => row
+                .located(self.workspace.read(cx))
                 .and_then(|(project, at)| {
                     self.card_embed(project, at, &card.id, reference, window, cx)
                 })
@@ -359,7 +359,7 @@ impl Cydonia {
     /// a board's columns. Pressing it opens the entry.
     pub(crate) fn entry_row(&self, named: Named, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        let title = self.label_of_row(&named.row, cx);
+        let title = named.row.label(self.workspace.read(cx), cx);
         let kind = match named.kind {
             Kind::Session => "Session",
             Kind::Article => "Article",
@@ -499,7 +499,7 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        let title = self.label_of_row(&row, cx);
+        let title = row.label(self.workspace.read(cx), cx);
         let block = passage.blocks.start;
         let named = match passage.label.as_str() {
             "" => format!("#{number}"),
@@ -554,8 +554,8 @@ impl Cydonia {
                 row,
                 part: Some(Part::Card(card)),
                 ..
-            }) => self
-                .located(&row, cx)
+            }) => row
+                .located(self.workspace.read(cx))
                 .and_then(|(project, at)| {
                     self.card_embed(project, at, &card.id, reference, window, cx)
                 })
@@ -623,7 +623,7 @@ impl Cydonia {
     /// An article's first [`HOVER_BLOCKS`] blocks, as a passage. `None` for an
     /// empty article or one not found.
     fn opening(&self, row: &Row, cx: &App) -> Option<Passage> {
-        let (project, at) = self.located(row, cx)?;
+        let (project, at) = row.located(self.workspace.read(cx))?;
         let disk = self.workspace.read(cx).article_in(project, at)?.disk();
         let count = disk.blocks.len().min(HOVER_BLOCKS);
         let end = disk.blocks.get(count.checked_sub(1)?)?.end;
@@ -646,8 +646,8 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let base = self
-            .located(row, cx)
+        let base = row
+            .located(self.workspace.read(cx))
             .and_then(|(project, at)| self.workspace.read(cx).article_in(project, at))
             .and_then(|article| article.path.parent().map(std::path::Path::to_path_buf));
         let doc = markdown::parse_with(passage.markdown(), &cx.marks());
@@ -684,7 +684,7 @@ impl Cydonia {
         let (title, agent, streaming) = self
             .workspace
             .read(cx)
-            .session(id)
+            .session(id, cx)
             .map(|chat| (chat.title.clone(), chat.entry.name.clone(), chat.streaming))
             .unwrap_or_default();
         fence_band(&theme)
@@ -801,7 +801,7 @@ impl Cydonia {
             window,
             cx,
         );
-        let read = self.workspace.read(cx).session(id).map(|chat| {
+        let read = self.workspace.read(cx).session(id, cx).map(|chat| {
             (
                 chat.title.clone(),
                 chat.entry.name.clone(),
@@ -904,7 +904,7 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         self.workspace
-            .update(cx, |workspace, _| workspace.load_history(id));
+            .update(cx, |workspace, cx| workspace.load_history(id, cx));
         let (workspace, root) = (self.workspace.clone(), cx.entity().downgrade());
         window
             .use_keyed_state(
@@ -939,7 +939,7 @@ impl Cydonia {
         let composer = cx.new(Composer::new);
         let point = {
             let workspace = self.workspace.read(cx);
-            Pointing::of(workspace.session(id), &composer_agents(workspace))
+            Pointing::of(workspace.session(id, cx), &composer_agents(workspace))
         };
         composer.update(cx, |composer, cx| {
             composer.set_tools(false, cx);
@@ -971,7 +971,7 @@ impl Cydonia {
             .map(|(id, composer)| {
                 (
                     composer.clone(),
-                    Pointing::of(workspace.session(*id), &agents),
+                    Pointing::of(workspace.session(*id, cx), &agents),
                 )
             })
             .collect();

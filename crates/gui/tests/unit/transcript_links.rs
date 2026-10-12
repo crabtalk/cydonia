@@ -36,12 +36,14 @@ impl gpui::Render for LinkedTranscript {
         cx: &mut gpui::Context<Self>,
     ) -> impl gpui::IntoElement {
         let held = &self.held;
-        let prose = self.workspace.update(cx, |workspace, cx| {
+        let chat = self.workspace.read(cx).session_entity(1).unwrap().clone();
+        let prose = chat.update(cx, |chat, cx| {
             super::prose(
-                workspace.session(1).unwrap(),
+                chat,
                 &super::Hold {
                     state: held,
                     view: gpui::WeakEntity::new_invalid(),
+                    workspace: gpui::WeakEntity::new_invalid(),
                 },
                 0,
                 "Read [source](src/main.rs:12).",
@@ -71,18 +73,23 @@ fn a_clicked_session_link_reaches_the_handler_with_the_session_folder(
                 "updated": 1, "items": []
             }))
             .unwrap();
-            project.sessions.push(ChatSession::restore(
-                1,
-                cwd,
-                Agent {
-                    name: "test".into(),
-                    id: None,
-                    command: String::new(),
-                    args: vec![],
-                    env: Default::default(),
-                },
-                record,
-            ));
+            project
+                .sessions
+                .push(crate::model::project::HeldSession::new(
+                    ChatSession::restore(
+                        1,
+                        cwd,
+                        Agent {
+                            name: "test".into(),
+                            id: None,
+                            command: String::new(),
+                            args: vec![],
+                            env: Default::default(),
+                        },
+                        record,
+                    ),
+                    cx,
+                ));
             workspace.projects.push(project);
         });
         let observe = cx.observe(&workspace, |_, _, cx| cx.notify());

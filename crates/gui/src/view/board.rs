@@ -848,9 +848,9 @@ pub(crate) struct BoardView {
 
 /// The session a card was dispatched to, while it is still open — a card
 /// whose session has been closed is a card you can run again.
-fn card_session<'a>(card: &Card, workspace: &'a Workspace) -> Option<&'a ChatSession> {
+fn card_session<'a>(card: &Card, workspace: &'a Workspace, cx: &'a App) -> Option<&'a ChatSession> {
     let record = card.session.as_deref()?;
-    workspace.session_by_record(record)
+    workspace.session_by_record(record, cx)
 }
 /// A card's mark: the orb while it is busy, the linked session's `#number`
 /// while it is not, and nothing when no session is linked. A session stays
@@ -1294,7 +1294,7 @@ impl Cydonia {
                     .board_in(project, board_at, cx)
                     .and_then(|board| {
                         let card = board.card(&id)?;
-                        let chat = card_session(card, self.workspace.read(cx));
+                        let chat = card_session(card, self.workspace.read(cx), cx);
                         Some((
                             board.handle_of(card),
                             card.text.clone(),
@@ -1616,7 +1616,7 @@ impl BoardView {
         let working = card.and_then(|card| {
             card_working(
                 card,
-                card_session(card, self.workspace.read(cx)),
+                card_session(card, self.workspace.read(cx), cx),
                 &self.marks,
             )
         });
@@ -2099,14 +2099,14 @@ impl BoardView {
                 .board_at(&board, cx)
                 .and_then(|board| board.card(&card))
                 .map(|card| card.text.clone());
-            let (Some(text), Some(entry)) = (text, workspace.preferred_agent()) else {
+            let (Some(text), Some(entry)) = (text, workspace.preferred_agent(cx)) else {
                 return;
             };
             // Nothing to link to is nothing to write: clearing the field on a
             // refused dispatch would take the card's last session off it.
             let Some(record) = workspace
                 .new_session(entry, Some(text), cx)
-                .and_then(|id| workspace.mint_record(id))
+                .and_then(|id| workspace.mint_record(id, cx))
             else {
                 return;
             };
@@ -2934,7 +2934,7 @@ impl BoardView {
             .board_in(project, board_at, cx)
             .map(|board| board.id.clone())
             .unwrap_or_default();
-        let chat = card_session(card, self.workspace.read(cx));
+        let chat = card_session(card, self.workspace.read(cx), cx);
         let live = chat.map(|chat| chat.id);
         let sessions = self.workspace.read(cx).settings.features.sessions;
         let working = card_working(card, chat, &self.marks);
@@ -3527,7 +3527,7 @@ impl BoardView {
             .board_in(project, board_at, cx)
             .map(|board| board.id.clone())
             .unwrap_or_default();
-        let chat = card_session(card, self.workspace.read(cx));
+        let chat = card_session(card, self.workspace.read(cx), cx);
         let live = chat.map(|chat| chat.id);
         let sessions = self.workspace.read(cx).settings.features.sessions;
         let working = card_working(card, chat, &self.marks);
