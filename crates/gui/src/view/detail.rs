@@ -87,21 +87,15 @@ fn panel_height(preferred: Option<f32>, available: f32) -> f32 {
     preferred.clamp(min, (available - 160.).max(min))
 }
 
-/// What the live session can be switched between, flattened to the one shape
-/// the composer draws: its config options, then its modes.
+/// What `offers` can be switched between, flattened to the one shape the
+/// composer draws: the config options, then the modes. Every composer's agent
+/// menu is built here.
 ///
 /// Config first, because the model is a config option and it is the one people
 /// came for. Booleans are left out — a menu of two rows is a toggle wearing a
 /// menu, and the agent menu has nowhere to put a real one yet.
-fn switches(chat: &ChatSession) -> Vec<composer::Switch> {
-    let (modes, config) = chat.offered();
-    switches_of(modes, config)
-}
-
-fn switches_of(
-    modes: Option<&SessionModeState>,
-    config: &[SessionConfigOption],
-) -> Vec<composer::Switch> {
+fn switches_of(offers: &Offers) -> Vec<composer::Switch> {
+    let (modes, config) = (offers.modes.as_ref(), offers.config.as_slice());
     let mut switches: Vec<composer::Switch> = config
         .iter()
         .filter_map(|option| {
@@ -438,9 +432,6 @@ impl Cydonia {
                     ComposerEvent::Reconnect => self
                         .workspace
                         .update(cx, |workspace, cx| workspace.wake_session(id, cx)),
-                    ComposerEvent::Connect => self
-                        .workspace
-                        .update(cx, |workspace, cx| workspace.connect_session(id, cx)),
                     ComposerEvent::Switch(switch, value) => self.switch(id, switch, value, cx),
                     _ => {}
                 }
@@ -494,7 +485,7 @@ impl Cydonia {
                 if let Some(path) = article {
                     let id = workspace.article_thread(path, cx);
                     let chat = id.and_then(|id| workspace.session(id, cx));
-                    let point = Pointing::of(chat, &agents).under_article(first);
+                    let point = Pointing::of(chat, &agents, cx).under_article(first);
                     return match (chat, workspace.article_offer(path, cx)) {
                         (None, Some((_, offers))) => point.offering(&agents, first, &offers),
                         _ => point,
@@ -511,7 +502,7 @@ impl Cydonia {
                     }
                     None => workspace.active_id(),
                 };
-                Pointing::of(id.and_then(|id| workspace.session(id, cx)), &agents)
+                Pointing::of(id.and_then(|id| workspace.session(id, cx)), &agents, cx)
             })
             .collect();
         // Read out before writing: the composers are updated through `cx`,
@@ -559,11 +550,8 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Connect opens the article's session as a send would, without a message.
         let session = match event {
-            composer::ComposerEvent::Submit(..)
-            | composer::ComposerEvent::Reconnect
-            | composer::ComposerEvent::Connect => self
+            composer::ComposerEvent::Submit(..) | composer::ComposerEvent::Reconnect => self
                 .workspace
                 .update(cx, |workspace, cx| workspace.article_session(path, cx)),
             _ => self.workspace.read(cx).article_thread(path, cx),
@@ -872,12 +860,11 @@ pub(crate) struct Pointing {
     agents: Vec<composer::Agent>,
     current: Option<usize>,
     switches: Vec<composer::Switch>,
-    connectable: bool,
     usage: Option<Usage>,
 }
 
 impl Pointing {
-    pub(crate) fn of(chat: Option<&ChatSession>, agents: &[composer::Agent]) -> Self {
+    pub(crate) fn of(chat: Option<&ChatSession>, agents: &[composer::Agent], cx: &App) -> Self {
         // Usage belongs to the agent process rather than to the transcript, so
         // a session read back off disk shows none until it reconnects.
         let live = chat.filter(|chat| chat.live());
@@ -903,8 +890,7 @@ impl Pointing {
                     .iter()
                     .position(|agent| agent.name == chat.entry.name)
             }),
-            switches: chat.map(switches).unwrap_or_default(),
-            connectable: chat.is_some_and(|chat| chat.idle()),
+            switches: chat.map_or_else(Vec::new, |chat| switches_of(&chat.offered(cx))),
             usage: live.and_then(|chat| chat.usage),
         }
     }
@@ -940,10 +926,7 @@ impl Pointing {
                 })
                 .collect(),
         };
-        self.switches = std::iter::once(agent)
-            .chain(switches_of(offers.modes.as_ref(), &offers.config))
-            .collect();
-        self.connectable = true;
+        self.switches = std::iter::once(agent).chain(switches_of(offers)).collect();
         self
     }
 
@@ -959,7 +942,7 @@ impl Pointing {
         composer.set_last_asked(self.last_asked);
         composer.set_activity(self.activity, cx);
         composer.set_agents(&self.agents, self.current, cx);
-        composer.set_switches(&self.switches, self.connectable, cx);
+        composer.set_switches(&self.switches, cx);
         composer.set_usage(self.usage, cx);
     }
 }

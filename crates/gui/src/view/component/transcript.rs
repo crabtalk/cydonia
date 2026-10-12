@@ -1239,6 +1239,7 @@ fn range_menu<V: 'static>(
         "rail-range",
         &items,
         &hold.state.range_cursor.borrow(),
+        None,
         window,
         cx,
         move |_: &mut V, hit, window, cx| {

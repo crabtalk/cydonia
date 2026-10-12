@@ -5,7 +5,7 @@
 //! names as the rest of it.
 use super::*;
 use crate::model::project::HeldSession;
-use crate::model::session_preferences;
+use crate::model::session_preferences::{self, OfferCache};
 use artifact::kind::Kind;
 use artifact::project::Project as _;
 use bezel::gpui::Entity;
@@ -227,25 +227,6 @@ impl Workspace {
         });
     }
 
-    /// Open the session an agent menu's Connect row is on. Unlike
-    /// [`Self::wake_session`], an archived one is brought back into use first.
-    pub(crate) fn connect_session(&mut self, id: u64, cx: &mut Context<Self>) {
-        if !self.settings.features.sessions {
-            return;
-        }
-        let Some(chat) = self.session_entity(id).cloned() else {
-            return;
-        };
-        chat.update(cx, |chat, cx| {
-            if chat.idle() && chat.resumable() {
-                chat.closed = false;
-                chat.flush();
-                chat.resume(cx);
-                cx.notify();
-            }
-        });
-    }
-
     pub(super) fn project_of(&self, id: u64) -> Option<usize> {
         self.projects
             .iter()
@@ -419,7 +400,7 @@ impl Workspace {
     ) -> Option<(settings::Agent, session_preferences::Offers)> {
         let agent = self.article_agent(cx)?;
         let choices = self.article_choices(&agent);
-        let offers = session_preferences::offers(cwd, &agent).with(&choices);
+        let offers = OfferCache::get(cx, cwd, &agent).with(&choices);
         Some((agent, offers))
     }
 
@@ -462,7 +443,7 @@ impl Workspace {
                 ..Default::default()
             };
         }
-        let offers = session_preferences::offers(cwd, current);
+        let offers = OfferCache::get(cx, cwd, current);
         match change {
             ArticleChange::Agent(_) => {}
             ArticleChange::Mode(mode) => {
@@ -710,7 +691,7 @@ impl Workspace {
             return;
         };
         let (taken, article, cwd, entry) = chat.update(cx, |chat, cx| {
-            let taken = chat.set_mode(&mode_id);
+            let taken = chat.set_mode(&mode_id, cx);
             cx.notify();
             (
                 taken,
@@ -746,7 +727,7 @@ impl Workspace {
             return;
         };
         let (taken, article, cwd, entry) = chat.update(cx, |chat, cx| {
-            let taken = chat.set_config(&config_id, value.clone());
+            let taken = chat.set_config(&config_id, value.clone(), cx);
             cx.notify();
             (
                 taken,

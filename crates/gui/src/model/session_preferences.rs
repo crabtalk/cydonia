@@ -2,6 +2,7 @@
 
 use super::settings::{self, Agent};
 use anyhow::Result;
+use bezel::gpui::{App, Global};
 use cacp::schema::{
     SessionConfigKind, SessionConfigOption, SessionConfigOptionValue, SessionConfigSelectOption,
     SessionConfigSelectOptions, SessionModeState,
@@ -110,6 +111,65 @@ impl Offers {
     }
 }
 
+impl Offers {
+    fn is_empty(&self) -> bool {
+        self.modes.is_none() && self.config.is_empty()
+    }
+}
+
+/// Every agent's [`Offers`] per project, read from `session-preferences.json`
+/// once and written through. Every composer and default reads offers here.
+#[derive(Default)]
+pub struct OfferCache(BTreeMap<String, BTreeMap<PathBuf, Offers>>);
+
+impl Global for OfferCache {}
+
+impl OfferCache {
+    /// Read the cache in, once, at launch.
+    pub fn load(cx: &mut App) {
+        let mut cache = Self::default();
+        for (cwd, agents) in path().and_then(|path| read(&path)).unwrap_or_default() {
+            for (key, agent) in agents {
+                if !agent.offers.is_empty() {
+                    cache
+                        .0
+                        .entry(key)
+                        .or_default()
+                        .insert(cwd.clone(), agent.offers);
+                }
+            }
+        }
+        cx.set_global(cache);
+    }
+
+    /// What `agent` offers in the project at `cwd`: its offers there, else
+    /// its offers in another project, else nothing.
+    pub fn get(cx: &App, cwd: &Path, agent: &Agent) -> Offers {
+        let Some(projects) = cx
+            .try_global::<Self>()
+            .and_then(|cache| cache.0.get(&agent_key(agent)))
+        else {
+            return Offers::default();
+        };
+        projects
+            .get(cwd)
+            .or_else(|| projects.values().next())
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Keep what `agent` offered on connecting in the project at `cwd`.
+    pub fn remember(cx: &mut App, cwd: &Path, agent: &Agent, offers: Offers) -> Result<()> {
+        edit(cwd, agent, |agent| agent.offers = offers.clone())?;
+        cx.default_global::<Self>()
+            .0
+            .entry(agent_key(agent))
+            .or_default()
+            .insert(cwd.to_path_buf(), offers);
+        Ok(())
+    }
+}
+
 #[derive(Default, Serialize, Deserialize)]
 #[serde(default)]
 struct AgentChoices {
@@ -151,19 +211,6 @@ pub fn load(cwd: &Path, agent: &Agent, session: Option<&str>) -> Choices {
         .and_then(|session| agent.sessions.get(session))
         .unwrap_or(&agent.defaults)
         .clone()
-}
-
-pub fn offers(cwd: &Path, agent: &Agent) -> Offers {
-    let stored = path().and_then(|path| read(&path)).unwrap_or_default();
-    stored
-        .get(cwd)
-        .and_then(|project| project.get(&agent_key(agent)))
-        .map(|agent| agent.offers.clone())
-        .unwrap_or_default()
-}
-
-pub fn remember_offers(cwd: &Path, agent: &Agent, offers: &Offers) -> Result<()> {
-    edit(cwd, agent, |agent| agent.offers = offers.clone())
 }
 
 fn edit(cwd: &Path, agent: &Agent, change: impl FnOnce(&mut AgentChoices)) -> Result<()> {

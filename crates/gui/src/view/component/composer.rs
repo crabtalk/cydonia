@@ -166,9 +166,6 @@ pub enum ComposerEvent {
     Submit(String, Vec<Attachment>),
     Cancel,
     Reconnect,
-    /// The agent menu's Connect row: opens the session, bringing an archived
-    /// one back as typing into it does.
-    Connect,
     Terminal,
     Changes,
     Files,
@@ -331,9 +328,6 @@ pub struct Composer {
     /// What the session can be switched between — its mode, its model.
     /// Empty for a session with no agent behind it.
     switches: Vec<Switch>,
-    /// Whether the session is idle, so the agent menu can connect it when
-    /// there is nothing to switch yet.
-    connectable: bool,
     /// Context spent, when the agent counts it.
     usage: Option<Usage>,
     /// The agent mark's menu or the tools menu, whichever is up.
@@ -409,7 +403,6 @@ impl Composer {
             agents: Vec::new(),
             agent: None,
             switches: Vec::new(),
-            connectable: false,
             usage: None,
             menu: ContextMenu::default(),
             panel_tabs: PanelTabs::default(),
@@ -543,12 +536,11 @@ impl Composer {
 
     /// What the session can be switched between: the agent's offers, live or
     /// cached.
-    pub fn set_switches(&mut self, switches: &[Switch], connectable: bool, cx: &mut Context<Self>) {
-        if self.switches == switches && self.connectable == connectable {
+    pub fn set_switches(&mut self, switches: &[Switch], cx: &mut Context<Self>) {
+        if self.switches == switches {
             return;
         }
         self.switches = switches.to_vec();
-        self.connectable = connectable;
         // The open path is left alone: a chain that no longer names a submenu
         // simply stops painting, and the agent row — which is what a pick is
         // usually in the middle of — keeps its place at the top whatever the
@@ -959,6 +951,7 @@ impl Composer {
                         "composer-commands",
                         &items,
                         &cursor,
+                        None,
                         window,
                         cx,
                         move |composer, hit, _, cx| match hit {
@@ -1046,7 +1039,7 @@ impl Composer {
                     |this| &mut this.menu,
                     ComposerMenu::Agent,
                     Place::Above,
-                    |composer, _, _| (composer.menu_items(), Self::switch),
+                    |composer, _, _| (composer.menu_rows(), Self::switch),
                     window,
                     cx,
                 );
@@ -1115,37 +1108,15 @@ impl Composer {
             .collect()
     }
 
-    /// The agent menu's rows: the switches, then Connect when the session is
-    /// idle and nothing but the article's agent is on offer.
-    fn menu_items(&self) -> Vec<Item> {
-        let mut items = self.menu_rows();
-        if self.connectable
-            && self
-                .switches
-                .iter()
-                .all(|switch| switch.id == SwitchId::Agent)
-        {
-            items.push(Item::action("Connect"));
-        }
-        items
-    }
-
     /// Pick the option at `path` in the agent menu: one row per level, the
     /// switch and then which of its options — [`Self::menu_rows`] taken
-    /// backwards. A single row past the switches is Connect.
+    /// backwards.
     fn switch(&mut self, path: &[usize], _: &mut Window, cx: &mut Context<Self>) {
-        match path[..] {
-            [row] if self.connectable && row == self.switches.len() => {
-                cx.emit(ComposerEvent::Connect);
-            }
-            [row, at] => {
-                if let Some(switch) = self.switches.get(row)
-                    && let Some(option) = switch.options.get(at)
-                {
-                    cx.emit(ComposerEvent::Switch(switch.id.clone(), option.id.clone()));
-                }
-            }
-            _ => {}
+        if let [row, at] = path[..]
+            && let Some(switch) = self.switches.get(row)
+            && let Some(option) = switch.options.get(at)
+        {
+            cx.emit(ComposerEvent::Switch(switch.id.clone(), option.id.clone()));
         }
         cx.notify();
     }

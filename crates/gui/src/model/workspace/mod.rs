@@ -188,6 +188,7 @@ impl Workspace {
         });
         crate::model::typography::set_terminal_size(look.mono_font_size, cx);
         crate::model::typography::set_file_size(look.mono_font_size, cx);
+        crate::model::session_preferences::OfferCache::load(cx);
         let mut this = Self {
             settings,
             projects,
