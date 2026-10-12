@@ -560,19 +560,6 @@ impl Cydonia {
         view
     }
 
-    /// The article the pane `on` shows, while article threads are on: what
-    /// its composer sends to. `None` is the single pane.
-    pub(crate) fn thread_article(&self, on: Option<&Member>, cx: &App) -> Option<PathBuf> {
-        let workspace = self.workspace.read(cx);
-        if !workspace.settings.features.threads() {
-            return None;
-        }
-        if on.is_none() && self.showing(cx) != Some(Kind::Article) {
-            return None;
-        }
-        Some(workspace.article_of(on, cx)?.path.clone())
-    }
-
     /// What a press in the composer under the article at `path` asks for. The
     /// first send opens the article's session.
     pub(crate) fn thread_event(

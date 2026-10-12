@@ -572,9 +572,7 @@ impl Cydonia {
         // An article's composer takes the focus only from a press into it.
         if current.is_some()
             && current != previous
-            && self
-                .thread_article(self.leaf().read(cx).entry.clone().as_ref(), cx)
-                .is_none()
+            && self.leaf().read(cx).thread_article(cx).is_none()
         {
             window.focus(&self.composer_focus_handle(cx), cx);
         }
@@ -666,32 +664,38 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<Tab> {
-        let composer = Self::pane_parts(entry.clone(), window, cx);
+        let composer = cx.new(Composer::new);
         let (workspace, root) = (self.workspace.clone(), cx.entity().downgrade());
         let (docs, sort) = (self.card_docs.clone(), self.board_sort.clone());
         let applied = self.search.read(cx).query().cloned();
-        cx.new(|cx| {
-            let mut pane = Tab::new(entry, workspace, root, docs, sort, composer, cx);
+        let pane = cx.new(|cx| {
+            let mut pane = Tab::new(entry, workspace, root, docs, sort, composer.clone(), cx);
             pane.applied = applied;
             pane
-        })
+        });
+        Self::wire_composer(&pane, &composer, window, cx);
+        pane
     }
 
-    /// The entities one pane needs, with the composer wired to this window.
-    ///
-    /// `on` is the pane's entry, where it has one: an event from a composer in
-    /// a pane that is not the focused one moves the focus there first, so what
-    /// was typed is sent to the session it was typed under.
-    fn pane_parts(
-        on: Option<Member>,
+    /// Send what `composer` reports to where `pane` points it now: the article
+    /// the pane shows, or the session the composer was last pointed at by
+    /// [`Cydonia::sync_composer`]. A pane's entry and what it shows change
+    /// over its life, so both are read at the event.
+    fn wire_composer(
+        pane: &Entity<Tab>,
+        composer: &Entity<Composer>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Entity<Composer> {
-        let composer = cx.new(Composer::new);
+    ) {
+        let pane = pane.downgrade();
         cx.subscribe_in(
-            &composer,
+            composer,
             window,
-            move |this, _, event: &ComposerEvent, window, cx| {
+            move |this, composer, event: &ComposerEvent, window, cx| {
+                let Some(pane) = pane.upgrade() else {
+                    return;
+                };
+                let on = pane.read(cx).entry.clone();
                 // Every one of these but a draft is somebody pressing in this
                 // pane's composer, and the focus goes there first so that what
                 // was typed is sent to the session it was typed under.
@@ -708,15 +712,14 @@ impl Cydonia {
                 {
                     this.focus_pane(&on, window, cx);
                 }
-                if let Some(path) = this.thread_article(on.as_ref(), cx) {
+                if let Some(path) = pane.read(cx).thread_article(cx) {
                     return this.thread_event(&path, event, window, cx);
                 }
-                let session = this.workspace.read(cx).active_id();
+                let session = composer.read(cx).session();
                 this.composer_event(session, event, window, cx);
             },
         )
         .detach();
-        composer
     }
 
     /// Reconcile the panes on screen with the open space.
