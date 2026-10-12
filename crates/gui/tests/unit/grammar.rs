@@ -1,3 +1,4 @@
+use super::super::Grammars as _;
 use super::*;
 
 fn fixture() -> Bundle {
@@ -9,8 +10,8 @@ fn fixture() -> Bundle {
 
 #[test]
 fn cached_grammar_round_trips_and_corruption_is_rejected() {
-    super::super::installed();
-    let spec = spec("json").unwrap();
+    super::super::installed::installed();
+    let spec = Spec::named("json").unwrap();
     let root = std::env::temp_dir().join(format!("cydonia-grammar-test-{}", std::process::id()));
     std::fs::create_dir_all(&root).unwrap();
     assert!(read_cached(spec, &root).unwrap().is_none());
@@ -18,7 +19,7 @@ fn cached_grammar_round_trips_and_corruption_is_rejected() {
     let (wasm, query) = read_cached(spec, &root).unwrap().unwrap();
     validate(spec, &wasm, &query).unwrap();
     register(spec, Some((wasm, query)));
-    let spans = super::super::highlight("json", r#"{"name": "cydonia", "n": 42}"#).unwrap();
+    let spans = super::super::Here::highlight("json", r#"{"name": "cydonia", "n": 42}"#).unwrap();
     assert!(!spans.is_empty());
     let mut bad = fixture();
     bad.queries[0].push(' ');
@@ -34,7 +35,7 @@ fn cached_grammar_round_trips_and_corruption_is_rejected() {
 
 #[test]
 fn incomplete_or_tampered_downloads_are_rejected() {
-    let spec = spec("json").unwrap();
+    let spec = Spec::named("json").unwrap();
     let mut bundle = fixture();
     bundle.queries.clear();
     assert!(unpack(spec, &bundle).is_err());
@@ -46,7 +47,7 @@ fn incomplete_or_tampered_downloads_are_rejected() {
 
 #[test]
 fn invalid_modules_and_queries_cannot_be_installed() {
-    let spec = spec("json").unwrap();
+    let spec = Spec::named("json").unwrap();
     assert!(validate(spec, b"invalid", "(string) @string").is_err());
     assert!(
         validate(
@@ -102,8 +103,8 @@ fn all_catalog_grammars_load_and_queries_compile() {
 
 #[test]
 fn concurrent_install_requests_share_progress_and_failures_allow_retry() {
-    super::super::installed();
-    let spec = spec("json").unwrap();
+    super::super::installed::installed();
+    let spec = Spec::named("json").unwrap();
     set_status("json", Status::Missing);
     assert!(begin_install(spec));
     assert!(!begin_install(spec));
@@ -117,8 +118,8 @@ fn concurrent_install_requests_share_progress_and_failures_allow_retry() {
 
 #[test]
 fn interrupted_install_does_not_publish_a_grammar_and_retry_succeeds() {
-    super::super::installed();
-    let spec = spec("json").unwrap();
+    super::super::installed::installed();
+    let spec = Spec::named("json").unwrap();
     let root = std::env::temp_dir().join(format!("cydonia-install-test-{}", std::process::id()));
     let wasm = include_bytes!("../fixtures/grammar/json.wasm");
     let result = install_with(spec, &root, |asset, progress| {
@@ -149,14 +150,14 @@ fn interrupted_install_does_not_publish_a_grammar_and_retry_succeeds() {
 #[test]
 #[ignore = "downloads the pinned JSON grammar from jsDelivr"]
 fn pinned_download_installs_and_highlights() {
-    super::super::installed();
-    let spec = spec("json").unwrap();
+    super::super::installed::installed();
+    let spec = Spec::named("json").unwrap();
     let root = std::env::temp_dir().join(format!("cydonia-grammar-network-{}", std::process::id()));
     install(spec, &root).unwrap();
     let (wasm, query) = read_cached(spec, &root).unwrap().unwrap();
     validate(spec, &wasm, &query).unwrap();
     assert!(
-        !super::super::highlight("json", r#"{"works": true}"#)
+        !super::super::Here::highlight("json", r#"{"works": true}"#)
             .unwrap()
             .is_empty()
     );

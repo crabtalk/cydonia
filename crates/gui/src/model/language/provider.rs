@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
-    io::{Read, Write},
+    io::Read,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, OnceLock},
     time::Duration,
@@ -20,6 +20,9 @@ const VERSION: &str = "2.0.1";
 const BASE: &str = "https://cdn.jsdelivr.net/npm/tree-sitter-wasm@2.0.1/out";
 const MAX_CACHE: u64 = 64 * 1024 * 1024;
 
+/// One poll loop at a time, however many fences ask for one.
+static WATCHING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 #[derive(Deserialize)]
 struct Asset {
     path: String,
@@ -27,10 +30,11 @@ struct Asset {
     sha256: String,
 }
 
-use super::Status;
+use super::{Installable, Status};
 
+/// A grammar the catalogue can install.
 #[derive(Deserialize)]
-struct Spec {
+pub struct Spec {
     name: String,
     symbol: String,
     aliases: Vec<String>,
@@ -52,24 +56,56 @@ fn catalog() -> &'static [Spec] {
     })
 }
 
-fn spec(name: &str) -> Option<&'static Spec> {
-    catalog().iter().find(|spec| spec.name == name)
+impl Installable for Spec {
+    fn named(name: &str) -> Option<&'static Self> {
+        catalog().iter().find(|spec| spec.name == name)
+    }
+
+    fn resolve(label: &str) -> Option<&'static Self> {
+        let label = label.trim().to_ascii_lowercase();
+        catalog()
+            .iter()
+            .find(|spec| spec.name == label || spec.aliases.contains(&label))
+    }
+
+    fn status(&self) -> Status {
+        super::installed::installed();
+        states()
+            .lock()
+            .unwrap()
+            .get(&self.name)
+            .cloned()
+            .unwrap_or(Status::Missing)
+    }
+
+    fn start_install(&'static self) {
+        super::installed::installed();
+        let spec = self;
+        if !begin_install(spec) {
+            return;
+        }
+        let started = std::thread::Builder::new()
+            .name(format!("grammar-{}", spec.name))
+            .spawn(move || {
+                let result = directory().and_then(|root| install(spec, &root));
+                set_status(
+                    &spec.name,
+                    match result {
+                        Ok(()) => Status::Ready,
+                        Err(error) => Status::Failed(format!("{error:#}")),
+                    },
+                );
+            });
+        if let Err(error) = started {
+            set_status(&spec.name, Status::Failed(error.to_string()));
+        }
+    }
 }
 
 /// Every language the catalogue can install, cached or not — what the fence
-/// picker offers. [`super::paintable`] is the cached subset.
+/// picker offers. [`super::Grammars::paintable`] is the cached subset.
 pub fn names() -> Vec<&'static str> {
     catalog().iter().map(|spec| spec.name.as_str()).collect()
-}
-
-/// The catalogue name a fence's label means, following aliases: a fence tagged
-/// `rs` or `sh` names a grammar under another name.
-pub fn resolve(label: &str) -> Option<&'static str> {
-    let label = label.trim().to_ascii_lowercase();
-    catalog()
-        .iter()
-        .find(|spec| spec.name == label || spec.aliases.contains(&label))
-        .map(|spec| spec.name.as_str())
 }
 
 /// Whether any download is still running. The poll that repaints a fence when
@@ -81,9 +117,6 @@ pub fn working() -> bool {
         .values()
         .any(|status| status.active())
 }
-
-/// One poll loop at a time, however many fences ask for one.
-static WATCHING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 pub(super) fn begin_watch() -> bool {
     !WATCHING.swap(true, std::sync::atomic::Ordering::SeqCst)
@@ -100,20 +133,6 @@ fn states() -> &'static Mutex<HashMap<String, Status>> {
 
 fn set_status(name: &str, status: Status) {
     states().lock().unwrap().insert(name.into(), status);
-}
-
-pub fn status(name: &str) -> Status {
-    super::installed();
-    states()
-        .lock()
-        .unwrap()
-        .get(name)
-        .cloned()
-        .unwrap_or(Status::Missing)
-}
-
-pub fn available(name: &str) -> bool {
-    spec(name).is_some()
 }
 
 fn directory() -> Result<PathBuf> {
@@ -231,21 +250,8 @@ fn read_cached(spec: &Spec, root: &Path) -> Result<Option<(Vec<u8>, String)>> {
 }
 
 fn save(spec: &Spec, root: &Path, bundle: &Bundle) -> Result<()> {
-    std::fs::create_dir_all(root)?;
     let target = root.join(format!("{}.json", spec.name));
-    let temporary = root.join(format!(".{}-{}.part", spec.name, std::process::id()));
-    let result = (|| -> Result<()> {
-        let mut file = std::fs::File::create(&temporary)?;
-        serde_json::to_writer(&mut file, bundle)?;
-        file.flush()?;
-        file.sync_all()?;
-        std::fs::rename(&temporary, target)?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(temporary);
-    }
-    result
+    Ok(artifact::fs::save(&target, serde_json::to_vec(bundle)?)?)
 }
 
 fn download(asset: &Asset, progress: &mut dyn FnMut(u64)) -> Result<Vec<u8>> {
@@ -327,32 +333,6 @@ fn begin_install(spec: &Spec) -> bool {
         },
     );
     true
-}
-
-/// Called only by the user's Install/Retry action. Concurrent views share one download.
-pub fn start_install(name: &str) {
-    super::installed();
-    let Some(spec) = spec(name) else {
-        return;
-    };
-    if !begin_install(spec) {
-        return;
-    }
-    let started = std::thread::Builder::new()
-        .name(format!("grammar-{}", spec.name))
-        .spawn(move || {
-            let result = directory().and_then(|root| install(spec, &root));
-            set_status(
-                &spec.name,
-                match result {
-                    Ok(()) => Status::Ready,
-                    Err(error) => Status::Failed(format!("{error:#}")),
-                },
-            );
-        });
-    if let Err(error) = started {
-        set_status(name, Status::Failed(error.to_string()));
-    }
 }
 
 #[cfg(test)]

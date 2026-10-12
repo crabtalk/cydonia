@@ -26,51 +26,6 @@ static OPEN_WITH: RwLock<OpenWith> = RwLock::new(OpenWith {
     },
 });
 
-/// Seed what files and pictures open in from the settings, at startup.
-pub(crate) fn init(open_with: OpenWith) {
-    if let Ok(mut held) = OPEN_WITH.write() {
-        *held = open_with;
-    }
-}
-
-/// What `opens` opens in now.
-pub(crate) fn opener(opens: Opens) -> Opener {
-    OPEN_WITH
-        .read()
-        .map(|held| held.get(opens).clone())
-        .unwrap_or_default()
-}
-
-/// Change what `opens` opens in, here and in `settings.toml`.
-pub(crate) fn change(opens: Opens, f: impl FnOnce(&mut Opener)) {
-    let Ok(mut held) = OPEN_WITH.write() else {
-        return;
-    };
-    let opener = held.get_mut(opens);
-    f(opener);
-    let _ = settings::set_opener(opens, opener);
-}
-
-/// Make `app` the default, shown in the menu again; `None` is the system's.
-pub(crate) fn choose(opens: Opens, app: Option<PathBuf>) {
-    change(opens, |opener| {
-        if let Some(app) = &app {
-            opener.hidden.retain(|hidden| hidden != app);
-        }
-        opener.app = app;
-    });
-}
-
-/// Leave `app` out of the menu, or put it back.
-pub(crate) fn hide(opens: Opens, app: &Path, hidden: bool) {
-    change(opens, |opener| {
-        opener.hidden.retain(|held| held != app);
-        if hidden {
-            opener.hidden.push(app.to_owned());
-        }
-    });
-}
-
 #[cfg(target_os = "macos")]
 const APPLICATIONS: &str = r#"
 ObjC.import('AppKit');
@@ -160,6 +115,65 @@ function run(argv) {
 }
 "#;
 
+/// Whether this platform lists the applications that open a file. Where it
+/// does not, a file opens in the system's default or is shown in its folder,
+/// and nothing is remembered or hidden.
+pub(crate) const LISTS: bool = cfg!(target_os = "macos");
+
+/// What showing a file in its folder is called here.
+pub(crate) const REVEAL: &str = if cfg!(target_os = "macos") {
+    "Reveal in Finder"
+} else if cfg!(windows) {
+    "Show in Explorer"
+} else {
+    "Open in File Manager"
+};
+
+/// Seed what files and pictures open in from the settings, at startup.
+pub(crate) fn init(open_with: OpenWith) {
+    if let Ok(mut held) = OPEN_WITH.write() {
+        *held = open_with;
+    }
+}
+
+/// What `opens` opens in now.
+pub(crate) fn opener(opens: Opens) -> Opener {
+    OPEN_WITH
+        .read()
+        .map(|held| held.get(opens).clone())
+        .unwrap_or_default()
+}
+
+/// Change what `opens` opens in, here and in `settings.toml`.
+pub(crate) fn change(opens: Opens, f: impl FnOnce(&mut Opener)) {
+    let Ok(mut held) = OPEN_WITH.write() else {
+        return;
+    };
+    let opener = held.get_mut(opens);
+    f(opener);
+    let _ = settings::set_opener(opens, opener);
+}
+
+/// Make `app` the default, shown in the menu again; `None` is the system's.
+pub(crate) fn choose(opens: Opens, app: Option<PathBuf>) {
+    change(opens, |opener| {
+        if let Some(app) = &app {
+            opener.hidden.retain(|hidden| hidden != app);
+        }
+        opener.app = app;
+    });
+}
+
+/// Leave `app` out of the menu, or put it back.
+pub(crate) fn hide(opens: Opens, app: &Path, hidden: bool) {
+    change(opens, |opener| {
+        opener.hidden.retain(|held| held != app);
+        if hidden {
+            opener.hidden.push(app.to_owned());
+        }
+    });
+}
+
 #[derive(Clone, serde::Deserialize)]
 pub(crate) struct Application {
     name: String,
@@ -230,75 +244,6 @@ pub(crate) enum Target {
     Folder,
 }
 
-#[cfg(target_os = "macos")]
-fn open_command(file: &Path, target: &Target) -> Command {
-    let mut command = Command::new("/usr/bin/open");
-    let path = match target {
-        Target::Application(app) => {
-            command.arg("-a").arg(app);
-            file
-        }
-        Target::Default => file,
-        Target::Terminal => {
-            command.args(["-a", "Terminal"]);
-            file.parent().unwrap_or(file)
-        }
-        Target::Folder => {
-            command.arg("-R");
-            file
-        }
-    };
-    command.arg("--").arg(path);
-    command
-}
-
-/// Off macOS there is no terminal to name: [`Target::Terminal`] opens the
-/// file's folder the way [`Target::Default`] opens a file.
-#[cfg(not(target_os = "macos"))]
-fn open_command(file: &Path, target: &Target) -> Command {
-    let folder = file.parent().unwrap_or(file);
-    #[cfg_attr(not(windows), allow(unused_mut))]
-    let mut command = match target {
-        Target::Application(app) => {
-            let mut command = Command::new(app);
-            command.arg(file);
-            command
-        }
-        #[cfg(windows)]
-        Target::Folder => {
-            use std::os::windows::process::CommandExt as _;
-            let mut command = Command::new("explorer.exe");
-            // Explorer reads `/select,` and the path as one argument, and
-            // takes the path in quotes of its own.
-            command.raw_arg(format!("/select,\"{}\"", file.display()));
-            command
-        }
-        #[cfg(not(windows))]
-        Target::Folder => system_open(folder),
-        Target::Default => system_open(file),
-        Target::Terminal => system_open(folder),
-    };
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt as _;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        command.creation_flags(CREATE_NO_WINDOW);
-    }
-    command
-}
-
-/// The desktop's own way to open `path` with whatever it is associated with.
-#[cfg(not(target_os = "macos"))]
-fn system_open(path: &Path) -> Command {
-    let mut command = Command::new(if cfg!(windows) {
-        "explorer.exe"
-    } else {
-        "xdg-open"
-    });
-    command.arg(path);
-    command
-}
-
 fn output(result: std::process::Output) -> Result<String> {
     if !result.status.success() {
         bail!("{}", String::from_utf8_lossy(&result.stderr).trim());
@@ -308,104 +253,197 @@ fn output(result: std::process::Output) -> Result<String> {
         .to_owned())
 }
 
-#[cfg(target_os = "macos")]
-fn applications(file: &Path) -> Result<Vec<Application>> {
-    let json = output(
-        Command::new("/usr/bin/osascript")
-            .args(["-l", "JavaScript", "-e", APPLICATIONS])
-            .arg(file)
-            .output()
-            .context("Could not find applications")?,
-    )?;
-    let mut apps: Vec<Application> = serde_json::from_str(&json)?;
-    apps.retain(|app| !app.name.eq_ignore_ascii_case("cydonia"));
-    apps.sort_by_cached_key(|app| {
-        (
-            !app.kind.is_empty(),
-            app.name != "Zed",
-            app.name.to_lowercase(),
-        )
-    });
-    decode_icons(&mut apps);
-    apps.dedup_by(|a, b| a.path == b.path);
-    Ok(apps)
+/// How this platform lists the applications that open a file, and opens one.
+trait Desktop {
+    fn open_command(file: &Path, target: &Target) -> Command;
+
+    /// The applications that open `file`.
+    fn applications(file: &Path) -> Result<Vec<Application>>;
+
+    /// The applications that open a picture like `file`, the system's default
+    /// first. `file` need not exist: only its extension is read.
+    fn image_applications(file: &Path) -> Result<Vec<Application>>;
 }
 
 #[cfg(target_os = "macos")]
-fn decode_icons(apps: &mut [Application]) {
-    for app in apps {
-        app.image = STANDARD
-            .decode(std::mem::take(&mut app.icon))
-            .ok()
-            .filter(|bytes| !bytes.is_empty())
-            .map(|bytes| Arc::new(gpui::Image::from_bytes(gpui::ImageFormat::Png, bytes)));
+type Current = MacOs;
+#[cfg(not(target_os = "macos"))]
+type Current = Elsewhere;
+
+#[cfg(target_os = "macos")]
+struct MacOs;
+
+#[cfg(target_os = "macos")]
+impl MacOs {
+    /// What `script` lists for `file`, cydonia left out and icons decoded.
+    fn listed(script: &str, file: &Path) -> Result<Vec<Application>> {
+        let json = output(
+            Command::new("/usr/bin/osascript")
+                .args(["-l", "JavaScript", "-e", script])
+                .arg(file)
+                .output()
+                .context("Could not find applications")?,
+        )?;
+        let mut apps: Vec<Application> = serde_json::from_str(&json)?;
+        apps.retain(|app| !app.name.eq_ignore_ascii_case("cydonia"));
+        Self::decode_icons(&mut apps);
+        Ok(apps)
+    }
+
+    fn decode_icons(apps: &mut [Application]) {
+        for app in apps {
+            app.image = STANDARD
+                .decode(std::mem::take(&mut app.icon))
+                .ok()
+                .filter(|bytes| !bytes.is_empty())
+                .map(|bytes| Arc::new(gpui::Image::from_bytes(gpui::ImageFormat::Png, bytes)));
+        }
     }
 }
 
-/// The applications that open a picture like `file`, the system's default
-/// first. `file` need not exist: only its extension is read.
 #[cfg(target_os = "macos")]
-pub(crate) fn image_applications(file: &Path) -> Result<Vec<Application>> {
-    let json = output(
-        Command::new("/usr/bin/osascript")
-            .args(["-l", "JavaScript", "-e", IMAGE_APPLICATIONS])
-            .arg(file)
-            .output()
-            .context("Could not find applications")?,
-    )?;
-    let mut apps: Vec<Application> = serde_json::from_str(&json)?;
-    apps.retain(|app| !app.name.eq_ignore_ascii_case("cydonia"));
-    decode_icons(&mut apps);
-    Ok(apps)
+impl Desktop for MacOs {
+    fn open_command(file: &Path, target: &Target) -> Command {
+        let mut command = Command::new("/usr/bin/open");
+        let path = match target {
+            Target::Application(app) => {
+                command.arg("-a").arg(app);
+                file
+            }
+            Target::Default => file,
+            Target::Terminal => {
+                command.args(["-a", "Terminal"]);
+                file.parent().unwrap_or(file)
+            }
+            Target::Folder => {
+                command.arg("-R");
+                file
+            }
+        };
+        command.arg("--").arg(path);
+        command
+    }
+
+    fn applications(file: &Path) -> Result<Vec<Application>> {
+        let mut apps = Self::listed(APPLICATIONS, file)?;
+        apps.sort_by_cached_key(|app| {
+            (
+                !app.kind.is_empty(),
+                app.name != "Zed",
+                app.name.to_lowercase(),
+            )
+        });
+        apps.dedup_by(|a, b| a.path == b.path);
+        Ok(apps)
+    }
+
+    fn image_applications(file: &Path) -> Result<Vec<Application>> {
+        Self::listed(IMAGE_APPLICATIONS, file)
+    }
 }
 
-/// Off macOS nothing lists what opens a picture: the desktop's default only.
+/// Windows and Linux.
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn image_applications(_: &Path) -> Result<Vec<Application>> {
-    Ok(vec![Application {
-        name: "Open".to_owned(),
-        path: PathBuf::new(),
-        kind: "default".to_owned(),
-        system: true,
-        image: None,
-    }])
+struct Elsewhere;
+
+#[cfg(not(target_os = "macos"))]
+impl Elsewhere {
+    /// The desktop's own way to open `path` with whatever it is associated with.
+    fn system_open(path: &Path) -> Command {
+        let mut command = Command::new(if cfg!(windows) {
+            "explorer.exe"
+        } else {
+            "xdg-open"
+        });
+        command.arg(path);
+        command
+    }
 }
 
-/// Editors found on `PATH`, then the desktop's default for the file. No
-/// application icons off macOS.
 #[cfg(not(target_os = "macos"))]
-fn applications(_: &Path) -> Result<Vec<Application>> {
-    const EDITORS: [(&str, &str); 4] = [
-        ("Zed", "zed"),
-        ("Visual Studio Code", "code"),
-        ("Cursor", "cursor"),
-        ("Sublime Text", "subl"),
-    ];
-    let path = std::env::var_os("PATH").unwrap_or_default();
-    #[cfg(windows)]
-    let find = {
-        let pathext = std::env::var("PATHEXT").unwrap_or_default();
-        move |program: &str| crate::agent::path::resolve(program, &path, &pathext, |p| p.is_file())
-    };
-    #[cfg(not(windows))]
-    let find = |program: &str| {
-        std::env::split_paths(&path)
-            .map(|dir| dir.join(program))
-            .find(|candidate| candidate.is_file())
-    };
-    let application = |name: &str, path: PathBuf, kind: &str| Application {
-        name: name.to_owned(),
-        path,
-        system: kind == "default",
-        kind: kind.to_owned(),
-        image: None,
-    };
-    let mut apps: Vec<Application> = EDITORS
-        .into_iter()
-        .filter_map(|(name, program)| Some(application(name, find(program)?, "")))
-        .collect();
-    apps.push(application("Default app", PathBuf::new(), "default"));
-    Ok(apps)
+impl Desktop for Elsewhere {
+    /// Off macOS there is no terminal to name: [`Target::Terminal`] opens the
+    /// file's folder the way [`Target::Default`] opens a file.
+    fn open_command(file: &Path, target: &Target) -> Command {
+        let folder = file.parent().unwrap_or(file);
+        #[cfg_attr(not(windows), allow(unused_mut))]
+        let mut command = match target {
+            Target::Application(app) => {
+                let mut command = Command::new(app);
+                command.arg(file);
+                command
+            }
+            #[cfg(windows)]
+            Target::Folder => {
+                use std::os::windows::process::CommandExt as _;
+                let mut command = Command::new("explorer.exe");
+                // Explorer reads `/select,` and the path as one argument, and
+                // takes the path in quotes of its own.
+                command.raw_arg(format!("/select,\"{}\"", file.display()));
+                command
+            }
+            #[cfg(not(windows))]
+            Target::Folder => Self::system_open(folder),
+            Target::Default => Self::system_open(file),
+            Target::Terminal => Self::system_open(folder),
+        };
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt as _;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            command.creation_flags(CREATE_NO_WINDOW);
+        }
+        command
+    }
+
+    /// Editors found on `PATH`, then the desktop's default for the file. No
+    /// application icons off macOS.
+    fn applications(_: &Path) -> Result<Vec<Application>> {
+        const EDITORS: [(&str, &str); 4] = [
+            ("Zed", "zed"),
+            ("Visual Studio Code", "code"),
+            ("Cursor", "cursor"),
+            ("Sublime Text", "subl"),
+        ];
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        #[cfg(windows)]
+        let find = {
+            let pathext = std::env::var("PATHEXT").unwrap_or_default();
+            move |program: &str| {
+                crate::agent::path::resolve(program, &path, &pathext, |p| p.is_file())
+            }
+        };
+        #[cfg(not(windows))]
+        let find = |program: &str| {
+            std::env::split_paths(&path)
+                .map(|dir| dir.join(program))
+                .find(|candidate| candidate.is_file())
+        };
+        let application = |name: &str, path: PathBuf, kind: &str| Application {
+            name: name.to_owned(),
+            path,
+            system: kind == "default",
+            kind: kind.to_owned(),
+            image: None,
+        };
+        let mut apps: Vec<Application> = EDITORS
+            .into_iter()
+            .filter_map(|(name, program)| Some(application(name, find(program)?, "")))
+            .collect();
+        apps.push(application("Default app", PathBuf::new(), "default"));
+        Ok(apps)
+    }
+
+    /// Off macOS nothing lists what opens a picture: the desktop's default only.
+    fn image_applications(_: &Path) -> Result<Vec<Application>> {
+        Ok(vec![Application {
+            name: "Open".to_owned(),
+            path: PathBuf::new(),
+            kind: "default".to_owned(),
+            system: true,
+            image: None,
+        }])
+    }
 }
 
 /// The file view's `Open with` menu.
@@ -413,19 +451,14 @@ fn menu(view: &mut FileView) -> &mut popover::Popup<()> {
     &mut view.external_menu.popup
 }
 
-/// Whether this platform lists the applications that open a file. Where it
-/// does not, a file opens in the system's default or is shown in its folder,
-/// and nothing is remembered or hidden.
-pub(crate) const LISTS: bool = cfg!(target_os = "macos");
-
-/// What showing a file in its folder is called here.
-pub(crate) const REVEAL: &str = if cfg!(target_os = "macos") {
-    "Show in Finder"
-} else if cfg!(windows) {
-    "Show in Explorer"
-} else {
-    "Open containing folder"
-};
+/// [`show`], off the main thread.
+pub(crate) fn reveal(path: std::path::PathBuf, cx: &bezel::gpui::App) {
+    cx.background_executor()
+        .spawn(async move {
+            let _ = show(&path);
+        })
+        .detach();
+}
 
 /// The menu row that shows a file in its folder.
 pub(crate) fn reveal_row(theme: &Theme, id: impl Into<ElementId>) -> Stateful<Div> {
@@ -474,8 +507,8 @@ pub(crate) fn listed_for(extension: &str, pictures: bool) -> Result<Vec<Applicat
     let probe = std::env::temp_dir().join(format!("cydonia-probe.{extension}"));
     std::fs::write(&probe, [])?;
     match pictures {
-        true => image_applications(&probe),
-        false => applications(&probe),
+        true => Current::image_applications(&probe),
+        false => Current::applications(&probe),
     }
 }
 
@@ -492,13 +525,13 @@ pub(crate) fn show(path: &Path) -> Result<()> {
 pub(super) fn open(file: &Path, target: &Target) -> Result<()> {
     // Explorer exits 1 when it has done what it was asked.
     if cfg!(windows) {
-        open_command(file, target)
+        Current::open_command(file, target)
             .spawn()
             .context("Could not open the selected destination")?;
         return Ok(());
     }
     output(
-        open_command(file, target)
+        Current::open_command(file, target)
             .output()
             .context("Could not open the selected destination")?,
     )?;
@@ -515,7 +548,7 @@ impl FileView {
             cx.spawn(async move |this, cx| {
                 let result = cx
                     .background_executor()
-                    .spawn(async move { applications(&path) })
+                    .spawn(async move { Current::applications(&path) })
                     .await;
                 let _ = this.update(cx, |this, cx| {
                     this.external_menu.loading = false;

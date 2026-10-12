@@ -6,30 +6,17 @@ use crate::model::{
 };
 use bezel::gpui::{self, Render};
 struct ChatView {
-    workspace: gpui::Entity<Workspace>,
-    _watch: gpui::Subscription,
+    view: gpui::Entity<SessionView>,
     width: f32,
 }
 impl Render for ChatView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let body = self.workspace.update(cx, |workspace, cx| {
-            super::render(
-                workspace.session(1).unwrap(),
-                None,
-                self.width,
-                |_, _| Some(div().h(px(30.)).child("Queued message").into_any_element()),
-                |_, _, _| {},
-                super::Drawn::Pane,
-                window,
-                cx,
-            )
-        });
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div()
             .w(px(self.width))
             .h(px(500.))
             .flex()
             .flex_col()
-            .child(body)
+            .child(self.view.clone())
     }
 }
 #[gpui::test]
@@ -38,19 +25,29 @@ fn long_session_renders_nearby_turns_and_navigates_without_losing_selection(
 ) {
     cx.update(|cx| Theme::install(bezel::theme::Appearance::Light, cx));
     let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));
-    workspace.update(cx, |workspace, _| {
+    workspace.update(cx, |workspace, cx| {
         let cwd = std::path::PathBuf::from("/nonexistent/cydonia-virtual-test");
-        let mut project = Project::new(cwd.clone());
+        let mut project = Project::new(cwd.clone(), cx);
         let record = serde_json::from_value(serde_json::json!({"id":"test", "agent":"test", "title":"", "name":null, "updated":1, "items":[]})).unwrap();
         let mut chat = ChatSession::restore(1, cwd, Agent {name:"test".into(), id:None, command:String::new(), args:vec![], env:Default::default()}, record);
         for i in 0..1000 { chat.items.push(ChatItem::User(format!("Question {i}"))); chat.items.push(ChatItem::Agent(format!("Answer {i}\n\nAnother paragraph with **bold** text."))); }
-        project.sessions.push(chat); workspace.projects.push(project);
+        project.sessions.push(crate::model::project::HeldSession::new(chat, cx)); workspace.projects.push(project);
     });
     let window = cx.add_window(|_, cx| ChatView {
-        _watch: cx.observe(&workspace, |_, _, cx| cx.notify()),
-        workspace: workspace.clone(),
+        view: cx.new(|cx| {
+            SessionView::new(
+                1,
+                None,
+                Drawn::Pane,
+                0.,
+                workspace.clone(),
+                gpui::WeakEntity::new_invalid(),
+                cx,
+            )
+        }),
         width: 600.,
     });
+    let view = window.read_with(cx, |chat, _| chat.view.clone()).unwrap();
     let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
     visual.run_until_parked();
     for width in [1000., 600.] {
@@ -62,12 +59,11 @@ fn long_session_renders_nearby_turns_and_navigates_without_losing_selection(
             .unwrap();
         visual.simulate_resize(gpui::size(px(width), px(500.)));
         visual.run_until_parked();
-        workspace.read_with(&visual, |workspace, _| {
-            let chat = workspace.session(1).unwrap();
-            let viewport = chat.transcript.list.state.viewport_bounds();
+        view.read_with(&visual, |view, _| {
+            let viewport = view.state.list.state.viewport_bounds();
             assert_eq!(viewport.left(), px(0.));
             assert_eq!(viewport.right(), px(width));
-            let (position, _) = chat.transcript.layouts.borrow()[&1999]
+            let (position, _) = view.state.layouts.borrow()[&1999]
                 .position(
                     markdown::Cursor::new(0, markdown::Part::Body, 0),
                     markdown::Affinity::Downstream,
@@ -79,19 +75,17 @@ fn long_session_renders_nearby_turns_and_navigates_without_losing_selection(
             );
         });
     }
-    workspace.read_with(&visual, |workspace, _| {
-        let chat = workspace.session(1).unwrap();
-        assert!(chat.transcript.layouts.borrow().len() < 100);
-        assert!(chat.transcript.list.state.is_following_tail());
-        chat.transcript.list.scroll_to(300);
+    view.read_with(&visual, |view, _| {
+        assert!(view.state.layouts.borrow().len() < 100);
+        assert!(view.state.list.state.is_following_tail());
+        view.state.list.scroll_to(300);
     });
     visual.update(|window, _| window.refresh());
     visual.run_until_parked();
-    workspace.read_with(&visual, |workspace, _| {
-        let chat = workspace.session(1).unwrap();
-        assert!(chat.transcript.layouts.borrow().contains_key(&600));
-        assert!(chat.transcript.layouts.borrow().len() < 100);
-        assert_eq!(chat.transcript.list.state.logical_scroll_top().item_ix, 300);
+    view.read_with(&visual, |view, _| {
+        assert!(view.state.layouts.borrow().contains_key(&600));
+        assert!(view.state.layouts.borrow().len() < 100);
+        assert_eq!(view.state.list.state.logical_scroll_top().item_ix, 300);
     });
     workspace.update(&mut visual, |workspace, cx| {
         workspace.with_session(1, cx, |chat| {
@@ -99,23 +93,13 @@ fn long_session_renders_nearby_turns_and_navigates_without_losing_selection(
         })
     });
     visual.run_until_parked();
-    workspace.read_with(&visual, |workspace, _| {
-        assert_eq!(
-            workspace
-                .session(1)
-                .unwrap()
-                .transcript
-                .list
-                .state
-                .logical_scroll_top()
-                .item_ix,
-            300
-        )
+    view.read_with(&visual, |view, _| {
+        assert_eq!(view.state.list.state.logical_scroll_top().item_ix, 300)
     });
-    let focus = workspace.update(&mut visual, |workspace, cx| {
-        workspace.with_session(1, cx, |chat| {
+    let focus = view.update(&mut visual, |view, _| {
+        {
             let doc = std::rc::Rc::new(markdown::parse("a selectable reply"));
-            chat.transcript.point(
+            view.state.point(
                 600,
                 selectable::Pointer::Down(
                     markdown::Cursor::new(0, markdown::Part::Body, 0),
@@ -123,28 +107,18 @@ fn long_session_renders_nearby_turns_and_navigates_without_losing_selection(
                 ),
                 &doc,
             );
-            chat.transcript.point(
+            view.state.point(
                 600,
                 selectable::Pointer::Move(markdown::Cursor::new(0, markdown::Part::Body, 8)),
                 &doc,
             );
-            chat.transcript.point(600, selectable::Pointer::Up, &doc);
-        });
-        workspace
-            .session(1)
-            .unwrap()
-            .transcript
-            .focus
-            .borrow()
-            .get(&600)
-            .unwrap()
-            .clone()
+            view.state.point(600, selectable::Pointer::Up, &doc);
+        }
+        view.state.focus.borrow().get(&600).unwrap().clone()
     });
     visual.update(|window, cx| window.focus(&focus, cx));
     visual.run_until_parked();
-    workspace.read_with(&visual, |workspace, _| {
-        workspace.session(1).unwrap().transcript.list.scroll_to(800)
-    });
+    view.read_with(&visual, |view, _| view.state.list.scroll_to(800));
     visual.update(|window, _| window.refresh());
     visual.run_until_parked();
     visual.simulate_keystrokes("cmd-c");

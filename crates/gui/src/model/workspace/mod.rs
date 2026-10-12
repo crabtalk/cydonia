@@ -12,7 +12,6 @@
 use crate::{agent, model::update};
 use crate::{
     data::{ColType, Column, Data, Edit, Page, Table},
-    memory,
     model::{
         article::{self, Article},
         fonts,
@@ -27,13 +26,12 @@ use artifact::board::Board;
 use bezel::theme::AppExt as _;
 use bezel::ui::AppExt as _;
 use bezel::{
-    gpui::{App, ClipboardItem, Context, EntityId, EventEmitter, Window},
+    gpui::{App, AppContext as _, Context, EntityId, EventEmitter},
     theme::{Brand, Tint, Vibrancy, appearance::AppearanceMode},
     ui::icons::Icon,
 };
 use cacp::schema::SessionConfigOptionValue;
 use editor::AppExt as _;
-use editor::Mode;
 use futures::{StreamExt as _, channel::mpsc};
 use markdown::AppExt as _;
 use mcp::rail::{self, Change};
@@ -70,6 +68,9 @@ const UNTITLED: &str = "Untitled";
 /// And a column.
 const COLUMN: &str = "Column";
 
+/// Commands the palette remembers running.
+const RECENT_COMMANDS: usize = 20;
+
 /// A project was re-read off disk and something a pane was showing has been
 /// replaced — see [`crate::model::watch`].
 ///
@@ -82,18 +83,14 @@ pub struct Reloaded;
 pub struct Resident {
     pub projects: usize,
     pub articles: usize,
-    /// Articles holding an open [`editor::Editor`]. Built on first open and
-    /// never dropped, so this only climbs.
-    pub editors: usize,
-    /// Covers decoded and held. Bounded — see [`crate::memory`].
-    pub covers: usize,
+    /// Articles holding an open [`editor::Document`].
+    pub documents: usize,
+    /// Sessions whose transcript is in memory. A closed one's is dropped once
+    /// its file matches, and read back when it is opened.
     pub sessions: usize,
-    /// Transcript entries across every one of them, read back whole at launch.
+    /// Transcript entries across those sessions.
     pub items: usize,
 }
-
-/// Commands the palette remembers running.
-const RECENT_COMMANDS: usize = 20;
 
 pub struct Workspace {
     pub settings: Settings,
@@ -174,7 +171,7 @@ impl Workspace {
             .into_iter()
             .map(|path| {
                 let expanded = !state.collapsed.contains(&path);
-                let mut project = Project::new(path);
+                let mut project = Project::new(path, cx);
                 project.expanded = expanded;
                 project
             })
@@ -215,7 +212,10 @@ impl Workspace {
             pinned: state.pinned,
             sort: state.sort,
             window: state.window,
-            spaces: Self::in_order(crate::model::spaces::all(), &state.spaces),
+            spaces: Self::in_order(
+                <crate::model::spaces::Shelf as crate::model::spaces::Store>::all(),
+                &state.spaces,
+            ),
             space: None,
             folded_spaces: state.folded_spaces.iter().cloned().collect(),
             space_order: state.space_order,
@@ -228,7 +228,7 @@ impl Workspace {
             .space
             .and_then(|id| this.spaces.iter().position(|space| space.id == id));
         for ix in restore {
-            this.restore_sessions(ix);
+            this.restore_sessions(ix, cx);
             this.watch_project(ix, cx);
         }
         this.open_last_entry(cx);
@@ -337,6 +337,7 @@ impl Workspace {
             chroma: self.tint.chroma,
             wide_pages: self.wide_pages,
             outline: self.settings.appearance.outline,
+            comments: self.settings.appearance.comments,
             board_view: self.board_view,
             indent_project_rows: self.indent_project_rows,
             settings_sidebar_fits: self.settings.appearance.settings_sidebar_fits,
@@ -435,8 +436,8 @@ impl Workspace {
     /// moves under it — an agent uninstalled leaves a session pointing at a
     /// command that is gone, and handing that back opens a second session
     /// that cannot start either.
-    pub fn preferred_agent(&self) -> Option<settings::Agent> {
-        self.active_session()
+    pub fn preferred_agent(&self, cx: &App) -> Option<settings::Agent> {
+        self.active_session(cx)
             .and_then(|chat| self.agent_for(&chat.entry))
             .or_else(|| self.settings.agents.first())
             .cloned()
@@ -469,7 +470,7 @@ impl Workspace {
             self.settings = settings;
             cx.set_global(self.settings.browser.clone());
             rail::set_agents(self.rail_agents());
-            self.readopt_agents();
+            self.readopt_agents(cx);
             self.load_agent_icons(cx);
         }
         cx.notify();
@@ -477,11 +478,12 @@ impl Workspace {
 
     /// Hand every session the file's copy of the agent it names — see
     /// [`readopt`], which is the rule for one of them.
-    fn readopt_agents(&mut self) {
+    fn readopt_agents(&self, cx: &mut App) {
         let agents = &self.settings.agents;
-        for project in &mut self.projects {
-            for chat in &mut project.sessions {
-                readopt(agents, &mut chat.entry);
+        for project in &self.projects {
+            for held in &project.sessions {
+                held.chat
+                    .update(cx, |chat, _| readopt(agents, &mut chat.entry));
             }
         }
     }
@@ -610,10 +612,9 @@ impl Workspace {
     }
 
     pub fn set_mcp_serve(&mut self, on: bool, cx: &mut Context<Self>) {
-        if settings::set_mcp("serve", on).is_err() {
+        if self.settings.mcp.set_serve(on).is_err() {
             return;
         }
-        self.settings.mcp.serve = on;
         self.refresh_door();
         cx.notify();
     }
@@ -621,20 +622,18 @@ impl Workspace {
     /// Offer the tools that change a project, or withhold them. No rebind —
     /// what is offered is read off the switch on every call.
     pub fn set_mcp_write(&mut self, on: bool, cx: &mut Context<Self>) {
-        if settings::set_mcp("write", on).is_err() {
+        if self.settings.mcp.set_write(on).is_err() {
             return;
         }
-        self.settings.mcp.write = on;
         self.refresh_door();
         cx.notify();
     }
 
     /// Offer the tools that delete an entry, or withhold them.
     pub fn set_mcp_delete(&mut self, on: bool, cx: &mut Context<Self>) {
-        if settings::set_mcp("delete", on).is_err() {
+        if self.settings.mcp.set_delete(on).is_err() {
             return;
         }
-        self.settings.mcp.delete = on;
         self.refresh_door();
         cx.notify();
     }
@@ -643,20 +642,18 @@ impl Workspace {
 
     /// What a new browser tab opens on.
     pub fn set_browser_home(&mut self, home: String, cx: &mut Context<Self>) {
-        if settings::set_browser("home", home.as_str()).is_err() {
+        if self.settings.browser.set_home(home).is_err() {
             return;
         }
-        self.settings.browser.home = home;
         cx.set_global(self.settings.browser.clone());
         cx.notify();
     }
 
     /// Offer agents the browser tools that read pages, or withhold them.
     pub fn set_browser_agents_read(&mut self, on: bool, cx: &mut Context<Self>) {
-        if settings::set_browser("agents_read", on).is_err() {
+        if self.settings.browser.set_agents_read(on).is_err() {
             return;
         }
-        self.settings.browser.agents_read = on;
         cx.set_global(self.settings.browser.clone());
         self.refresh_door();
         cx.notify();
@@ -664,10 +661,9 @@ impl Workspace {
 
     /// Offer agents the browser tools that click and type, or withhold them.
     pub fn set_browser_agents_act(&mut self, on: bool, cx: &mut Context<Self>) {
-        if settings::set_browser("agents_act", on).is_err() {
+        if self.settings.browser.set_agents_act(on).is_err() {
             return;
         }
-        self.settings.browser.agents_act = on;
         cx.set_global(self.settings.browser.clone());
         self.refresh_door();
         cx.notify();
@@ -675,31 +671,27 @@ impl Workspace {
 
     /// The hosts agents may not read or act on.
     pub fn set_browser_agents_blocked(&mut self, hosts: Vec<String>, cx: &mut Context<Self>) {
-        let list: toml_edit::Array = hosts.iter().map(String::as_str).collect();
-        if settings::set_browser("agents_blocked", list).is_err() {
+        if self.settings.browser.set_agents_blocked(hosts).is_err() {
             return;
         }
-        self.settings.browser.agents_blocked = hosts;
         cx.set_global(self.settings.browser.clone());
         cx.notify();
     }
 
     /// Whether pages built from now on keep what they store across restarts.
     pub fn set_browser_keep_signed_in(&mut self, on: bool, cx: &mut Context<Self>) {
-        if settings::set_browser("keep_signed_in", on).is_err() {
+        if self.settings.browser.set_keep_signed_in(on).is_err() {
             return;
         }
-        self.settings.browser.keep_signed_in = on;
         cx.set_global(self.settings.browser.clone());
         cx.notify();
     }
 
     /// Where the address field's searches go, as a `%s` template.
     pub fn set_browser_search(&mut self, search: String, cx: &mut Context<Self>) {
-        if settings::set_browser("search", search.as_str()).is_err() {
+        if self.settings.browser.set_search(search).is_err() {
             return;
         }
-        self.settings.browser.search = search;
         cx.set_global(self.settings.browser.clone());
         cx.notify();
     }
@@ -768,22 +760,8 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Move the cover ceiling. Written through to `settings.toml` first, for
-    /// the reason [`Self::set_feature`] is, then applied to the cache
-    /// that is already holding pictures under the old one.
-    pub fn set_cover_memory(&mut self, mb: u64, window: &mut Window, cx: &mut Context<Self>) {
-        if settings::set_cover_memory(mb).is_err() {
-            return;
-        }
-        self.settings.cover_memory = mb;
-        memory::covers(cx).update(cx, |covers, cx| {
-            covers.set_limit(mb * 1_000_000, window, cx);
-        });
-        cx.notify();
-    }
-
     /// Move the watch's bounce. Written through to `settings.toml` first, for
-    /// the reason [`Self::set_cover_memory`] is, and clamped on the way in for
+    /// the reason [`Self::set_feature`] is, and clamped on the way in for
     /// the reason [`crate::model::watch::bounce`] clamps on the way out.
     ///
     /// Nothing is re-armed. The pump reads the interval on each pass, so the
@@ -850,9 +828,6 @@ impl Workspace {
     pub fn set_text_size(&mut self, points: f32, cx: &mut Context<Self>) {
         self.text_size = points;
         cx.set_base_text_size(points);
-        if self.article_font_size.is_none() {
-            self.apply_article_font_size(cx);
-        }
         self.save_appearance();
         cx.notify();
     }
@@ -861,21 +836,8 @@ impl Workspace {
         self.article_font_size.unwrap_or(self.text_size)
     }
 
-    fn apply_article_font_size(&self, cx: &mut Context<Self>) {
-        let points = self.article_font_size();
-        for editor in self
-            .projects
-            .iter()
-            .flat_map(|project| &project.articles)
-            .filter_map(|article| article.editor.as_ref())
-        {
-            editor.update(cx, |editor, cx| editor.set_text_size(points, cx));
-        }
-    }
-
     pub fn set_article_font_size(&mut self, points: f32, cx: &mut Context<Self>) {
         self.article_font_size = Some(settings::clamp_content_text_size(points));
-        self.apply_article_font_size(cx);
         self.save_appearance();
         cx.notify();
     }
@@ -904,6 +866,12 @@ impl Workspace {
     /// the rest follow this.
     pub fn set_wide_pages(&mut self, wide: bool, cx: &mut Context<Self>) {
         self.wide_pages = wide;
+        self.save_appearance();
+        cx.notify();
+    }
+
+    pub fn set_comments(&mut self, comments: settings::Comments, cx: &mut Context<Self>) {
+        self.settings.appearance.comments = comments;
         self.save_appearance();
         cx.notify();
     }
@@ -948,7 +916,7 @@ impl Workspace {
 
     pub fn set_highlight(&mut self, value: settings::Paint, cx: &mut Context<Self>) {
         self.settings.appearance.highlight = value;
-        crate::view::article::set_highlight(value);
+        crate::model::palette::Washes::of(&self.settings.appearance).install();
         self.save_appearance();
         cx.refresh_windows();
         cx.notify();
@@ -970,7 +938,7 @@ impl Workspace {
 
     pub fn set_search(&mut self, value: Option<settings::Paint>, cx: &mut Context<Self>) {
         self.settings.appearance.search = value;
-        crate::view::article::set_search(value);
+        crate::model::palette::Washes::of(&self.settings.appearance).install();
         self.save_appearance();
         cx.refresh_windows();
         cx.notify();
@@ -997,14 +965,13 @@ impl Workspace {
     /// disagree with what is actually resident.
     pub fn resident(&self, cx: &App) -> Resident {
         let articles = || self.projects.iter().flat_map(|project| &project.articles);
-        let sessions = || self.projects.iter().flat_map(|project| &project.sessions);
+        let sessions = || self.chats(cx).filter(|chat| chat.history_loaded());
         Resident {
             projects: self.projects.len(),
             articles: articles().count(),
-            editors: articles()
-                .filter(|article| article.editor.is_some())
+            documents: articles()
+                .filter(|article| article.document.is_some())
                 .count(),
-            covers: memory::covers(cx).read(cx).len(),
             sessions: sessions().count(),
             items: sessions().map(|chat| chat.items.len()).sum(),
         }

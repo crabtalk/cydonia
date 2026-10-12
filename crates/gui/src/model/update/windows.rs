@@ -4,66 +4,71 @@
 //! The installer is unsigned. What is fetched is trusted as far as the HTTPS
 //! connection to GitHub's release host.
 
+use super::{Platform, Version};
 use anyhow::{Context as _, Result};
 use bezel::gpui::App;
 use std::path::{Path, PathBuf};
 
-pub(super) const SUPPORTED: bool = cfg!(target_arch = "x86_64");
+pub(super) struct Windows;
 
-/// The installer's name after the version. The release file itself carries no
-/// version, so the version is added for the copy kept on disk.
-pub(super) const SUFFIX: &str = "-windows-x86_64-setup.exe";
+impl Platform for Windows {
+    const SUPPORTED: bool = cfg!(target_arch = "x86_64");
 
-/// The release file, as `bundle/windows/cydonia.iss` names it.
-pub(super) fn remote(_: &str) -> String {
-    "cydonia-windows-x86_64-setup.exe".into()
-}
+    /// The installer's name after the version. The release file itself carries no
+    /// version, so the version is added for the copy kept on disk.
+    const SUFFIX: &'static str = "-windows-x86_64-setup.exe";
 
-/// The directory this process runs from, when the installer put it there: Inno
-/// Setup leaves `unins000.exe` beside what it installed. A bare exe out of a
-/// zip or `cargo install` is a build the installer would not replace.
-pub(super) fn bundle(_: &App) -> Option<PathBuf> {
-    let exe = std::env::current_exe().ok()?;
-    let dir = exe.parent()?;
-    dir.join("unins000.exe")
-        .is_file()
-        .then(|| dir.to_path_buf())
-}
-
-/// The installer, downloaded. Nothing is unpacked: running it is the swap.
-pub(super) fn stage(version: &str, _: &Path) -> Result<PathBuf> {
-    super::download(version)
-}
-
-/// Start the installer and leave it to close this process and relaunch the new
-/// one — `/RELAUNCH` is `cydonia.iss`'s own switch for that.
-/// With a backup to `restore`, the installer is run by a copy of this binary
-/// outside the install directory instead — see [`super::restore_mode`].
-pub(super) fn swap_on_exit(_: &Path, setup: &Path, restore: Option<&str>) -> Result<()> {
-    if let Some(version) = restore {
-        let exe = std::env::current_exe().context("this binary has no path")?;
-        let helper = std::env::temp_dir().join("cydonia-restore.exe");
-        std::fs::copy(&exe, &helper).context("the restore helper could not be copied")?;
-        std::process::Command::new(helper)
-            .arg("--restore-backup")
-            .arg(version)
-            .arg("--install")
-            .arg(setup)
-            .arg("--launch")
-            .arg(exe)
-            .spawn()
-            .context("the restore helper did not start")?;
-        return Ok(());
+    /// The release file, as `bundle/windows/cydonia.iss` names it.
+    fn remote(_: &Version) -> String {
+        "cydonia-windows-x86_64-setup.exe".into()
     }
-    std::process::Command::new(setup)
-        .args([
-            "/VERYSILENT",
-            "/SUPPRESSMSGBOXES",
-            "/NORESTART",
-            "/CLOSEAPPLICATIONS",
-            "/RELAUNCH",
-        ])
-        .spawn()
-        .context("the installer did not start")?;
-    Ok(())
+
+    /// The directory this process runs from, when the installer put it there: Inno
+    /// Setup leaves `unins000.exe` beside what it installed. A bare exe out of a
+    /// zip or `cargo install` is a build the installer would not replace.
+    fn bundle(_: &App) -> Option<PathBuf> {
+        let exe = std::env::current_exe().ok()?;
+        let dir = exe.parent()?;
+        dir.join("unins000.exe")
+            .is_file()
+            .then(|| dir.to_path_buf())
+    }
+
+    /// The installer, downloaded. Nothing is unpacked: running it is the swap.
+    fn stage(version: &Version, _: &Path) -> Result<PathBuf> {
+        super::download(version)
+    }
+
+    /// Start the installer and leave it to close this process and relaunch the new
+    /// one — `/RELAUNCH` is `cydonia.iss`'s own switch for that.
+    /// With a backup to `restore`, the installer is run by a copy of this binary
+    /// outside the install directory instead — see [`super::restore_mode`].
+    fn swap_on_exit(_: &Path, setup: &Path, restore: Option<&str>) -> Result<()> {
+        if let Some(version) = restore {
+            let exe = std::env::current_exe().context("this binary has no path")?;
+            let helper = std::env::temp_dir().join("cydonia-restore.exe");
+            std::fs::copy(&exe, &helper).context("the restore helper could not be copied")?;
+            std::process::Command::new(helper)
+                .arg("--restore-backup")
+                .arg(version)
+                .arg("--install")
+                .arg(setup)
+                .arg("--launch")
+                .arg(exe)
+                .spawn()
+                .context("the restore helper did not start")?;
+            return Ok(());
+        }
+        std::process::Command::new(setup)
+            .args([
+                "/VERYSILENT",
+                "/SUPPRESSMSGBOXES",
+                "/NORESTART",
+                "/CLOSEAPPLICATIONS",
+                "/RELAUNCH",
+            ])
+            .spawn()
+            .context("the installer did not start")?;
+        Ok(())
+    }
 }

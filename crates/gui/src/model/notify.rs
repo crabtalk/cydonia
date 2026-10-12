@@ -10,12 +10,13 @@
 //! build running outside an app bundle — `cargo run` — has no identity to post
 //! under, so nothing arrives. Nothing here treats any of that as an error.
 
-use crate::{model::session::ChatSession, view::root::Cydonia};
+use crate::model::session::ChatSession;
 use bezel::gpui::{App, SharedString, SystemNotification};
 
 /// The prefix a session's notification is tagged with. The tag is the session,
 /// so a second turn replaces the first rather than stacking a centre full of
-/// them, and the response carries it back — see [`on_response`].
+/// them, and the response carries it back — see
+/// [`crate::view::window::root::on_notification`].
 const TAG: &str = "session:";
 
 /// How much of the agent's last word the body carries.
@@ -61,30 +62,5 @@ fn body(chat: &ChatSession) -> String {
 
 /// The first line of `text`, short enough for a notification to show whole.
 fn clipped(text: &str) -> String {
-    let line = text.trim().lines().next().unwrap_or_default().trim();
-    match line.char_indices().nth(BODY) {
-        Some((at, _)) => format!("{}…", &line[..at]),
-        None => line.to_owned(),
-    }
-}
-
-/// What a press on one of these does: bring the app back, and open the session
-/// that finished.
-///
-/// Registered once, at startup. The window it lands on is whichever one is
-/// showing the project that session is in; a notification whose session has
-/// since gone opens nothing but the app.
-pub fn on_response(cx: &mut App) {
-    cx.on_system_notification_response(|response, cx| {
-        let Some(id) = session_of(&response.tag) else {
-            return;
-        };
-        cx.activate(true);
-        for window in cx.windows() {
-            let Some(window) = window.downcast::<Cydonia>() else {
-                continue;
-            };
-            let _ = window.update(cx, |root, window, cx| root.select_session(id, window, cx));
-        }
-    });
+    artifact::text::clip(text.trim().lines().next().unwrap_or_default(), BODY)
 }

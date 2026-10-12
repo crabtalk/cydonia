@@ -17,6 +17,9 @@
 //! Parsing only. Which directory `foo` is, what kind of entry `#43` is, and
 //! whether a span or an anchor fits that kind, are the caller's to settle.
 
+/// The scheme an entry link is written behind.
+pub const SCHEME: &str = "cydonia://";
+
 /// A parsed reference.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reference<'a> {
@@ -64,8 +67,76 @@ impl std::fmt::Display for Span {
     }
 }
 
-/// The scheme an entry link is written behind.
-pub const SCHEME: &str = "cydonia://";
+impl<'a> Reference<'a> {
+    /// Entry `number` of `project`, or of the project it is written in.
+    pub fn entry(project: Option<&'a str>, number: u64, within: Option<Within<'a>>) -> Self {
+        Self {
+            project,
+            target: Target::Entry { number, within },
+        }
+    }
+
+    /// The reference behind [`SCHEME`]: `cydonia://foo#43`.
+    pub fn link(&self) -> String {
+        format!("{SCHEME}{self}")
+    }
+}
+
+/// Written the way [`parse`] reads it.
+impl std::fmt::Display for Reference<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(project) = self.project {
+            write!(f, "{project}#")?;
+        }
+        match self.target {
+            Target::Entry { number, within } => {
+                if self.project.is_none() {
+                    f.write_str("#")?;
+                }
+                write!(f, "{number}")?;
+                match within {
+                    Some(Within::Span(span)) => write!(f, ":{span}"),
+                    Some(Within::Heading(anchor)) => write!(f, "#{anchor}"),
+                    None => Ok(()),
+                }
+            }
+            Target::Card { key, handle } => write!(f, "{key}-{handle}"),
+        }
+    }
+}
+
+/// Refuses a part `kind` does not have: turns are a session's, lines and
+/// headings an article's. `named` is the reference as written.
+pub fn fits(
+    named: &str,
+    kind: crate::kind::Kind,
+    within: Option<Within<'_>>,
+) -> Result<(), crate::error::Error> {
+    use crate::{error::Error, kind::Kind};
+    match (within, kind) {
+        (None, _)
+        | (Some(Within::Span(_)), Kind::Session | Kind::Article)
+        | (Some(Within::Heading(_)), Kind::Article) => Ok(()),
+        (Some(Within::Heading(_)), Kind::Session) => Err(Error::HeadingNotHeld {
+            named: named.to_owned(),
+        }),
+        (Some(_), kind) => Err(Error::PartNotHeld {
+            named: named.to_owned(),
+            kind,
+        }),
+    }
+}
+
+/// The name a project goes by in a reference: its directory's.
+pub fn project_name(path: &std::path::Path) -> Option<std::borrow::Cow<'_, str>> {
+    path.file_name().map(|name| name.to_string_lossy())
+}
+
+/// Whether `name`, as written before a `#`, names the project at `path`.
+/// Compared exactly.
+pub fn names(path: &std::path::Path, name: &str) -> bool {
+    path.file_name().is_some_and(|last| last == name)
+}
 
 /// Read one reference, or nothing for text that is not one. Surrounding
 /// whitespace is not trimmed.
@@ -120,11 +191,14 @@ pub enum Prefix<'a> {
     Number(&'a str),
     /// The leading letters and digits of a board's key, before any `-`.
     Key(&'a str),
+    /// A board's whole key and the leading digits of a card's number on it,
+    /// empty right after the `-`. The key is as written.
+    Card { key: &'a str, handle: &'a str },
 }
 
-/// Read the start of a reference: `#`, `#4`, `foo#`, `foo#4`, `4`, `DE`.
-/// Nothing for text no reference starts with. A bare key prefix carries no
-/// project; a bare number is an entry's.
+/// Read the start of a reference: `#`, `#4`, `foo#`, `foo#4`, `4`, `DE`,
+/// `DEV-`, `DEV-1`. Nothing for text no reference starts with. A bare key or
+/// card prefix carries no project; a bare number is an entry's.
 pub fn partial(text: &str) -> Option<Partial<'_>> {
     let text = text.strip_prefix(SCHEME).unwrap_or(text);
     let (project, rest) = match text.split_once('#') {
@@ -137,6 +211,12 @@ pub fn partial(text: &str) -> Option<Partial<'_>> {
         Prefix::Number(rest)
     } else if rest.chars().all(|c| c.is_ascii_alphanumeric()) {
         Prefix::Key(rest)
+    } else if let Some((key, handle)) = rest.rsplit_once('-')
+        && !key.is_empty()
+        && key.chars().all(|c| c.is_ascii_alphanumeric())
+        && handle.bytes().all(|b| b.is_ascii_digit())
+    {
+        Prefix::Card { key, handle }
     } else {
         return None;
     };

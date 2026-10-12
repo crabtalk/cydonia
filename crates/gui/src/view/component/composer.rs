@@ -11,7 +11,7 @@ use crate::{
         session::{Command, Usage},
         settings::PanelTabs,
     },
-    view::{mention, root},
+    view::{kit::link::mention, window::root},
 };
 use bezel::ui::scroll as scrollbars;
 use bezel::{
@@ -22,22 +22,18 @@ use bezel::{
     },
     theme::{Glass, SurfaceStyle, TextStyle, Theme, Typeset},
     ui::{
+        context_menu::{ContextMenu, Place},
         icons::{self, Icon},
         input::{self, Chip, FieldEvent, Shape, TextField},
         menu::{self, Cursor, Hit, Item},
         popover,
         surface::{self, Surfaced as _},
         tooltip::Tooltip,
-        widgets::Controls as _,
+        widgets::{Controls as _, Layout as _},
     },
 };
 use editor::Mention;
 use std::{collections::HashMap, sync::Arc};
-
-actions!(
-    cydonia_composer,
-    [Send, CommandNext, CommandPrevious, CommandDismiss]
-);
 
 /// Claimed on top of `TextField`/`TextArea`, so `enter` sends here and stays a
 /// newline in every other multi-line field.
@@ -58,13 +54,9 @@ const WARN_AT: f32 = 0.8;
 /// of it.
 const PICKER_HEIGHT: f32 = 320.;
 
-/// The most options a switch drops as a submenu. A menu panel has no height
-/// cap of its own, so a longer list — a catalog of models — opens as a flat
-/// list clamped at [`PICKER_HEIGHT`] instead.
-const SUBMENU_ROWS: usize = 12;
-
 /// The side of a picture waiting in the composer.
 const THUMB: f32 = 64.;
+
 const THUMB_RADIUS: f32 = 8.;
 
 /// The side of a thumb's remove button, which sits centred on its corner.
@@ -72,6 +64,11 @@ const REMOVE: f32 = 14.;
 
 /// How much of the window an opened picture may take, either way.
 const PREVIEW_SHARE: f32 = 0.8;
+
+actions!(
+    cydonia_composer,
+    [Send, CommandNext, CommandPrevious, CommandDismiss]
+);
 
 fn picture(attachment: &Attachment) -> gpui::Img {
     match attachment {
@@ -187,7 +184,7 @@ fn set_to(name: &str, value: Option<SharedString>) -> SharedString {
 ///
 /// Every line marked, blank ones included — a blockquote broken by an unmarked
 /// blank line is two blockquotes with the rest of the passage between them.
-fn blockquote(quote: &str) -> String {
+pub(crate) fn blockquote(quote: &str) -> String {
     quote
         .lines()
         .map(|line| match line.trim().is_empty() {
@@ -246,7 +243,7 @@ fn mention_chips(text: &str, cx: &App) -> Vec<Chip> {
 }
 
 /// `label` linking `url` as a chip, in the Markdown an article writes for one.
-fn mention_chip(label: &str, url: &str) -> String {
+pub(crate) fn mention_chip(label: &str, url: &str) -> String {
     let chip = markdown::Text {
         text: label.to_owned(),
         marks: vec![markdown::MarkSpan {
@@ -261,6 +258,34 @@ fn mention_chip(label: &str, url: &str) -> String {
         blocks: vec![markdown::Block::new(markdown::BlockKind::Paragraph(chip))],
     };
     markdown::serialize(&doc).trim_end().to_owned()
+}
+
+/// A round button beside the pill, the agent mark's size: the tools button,
+/// and the chevron in its place. Its glyph and its surface are the caller's.
+fn side_button(id: &'static str, theme: &Theme) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .debug_selector(move || id.into())
+        .flex_none()
+        .size(px(root::composer_height()))
+        .rounded_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .cursor_pointer()
+        .hover(|s| s.bg(theme.element_hover))
+}
+
+/// `row` ruled off from the field under it, the rule running through the
+/// pill's padding while its content keeps the pill's inset.
+fn ruled_off(row: gpui::Div, theme: &Theme, right_inset: f32) -> gpui::Div {
+    row.ml(px(-12.))
+        .mr(px(-right_inset))
+        .pl(px(12.))
+        .pr(px(right_inset))
+        .pb(px(6.))
+        .border_b_1()
+        .border_color(theme.border.opacity(0.7))
 }
 
 pub struct Composer {
@@ -291,8 +316,12 @@ pub struct Composer {
     last_asked: Option<String>,
     /// Whether the session tools are on offer. Off beside a space: all three
     /// of them open the window's own panels, which a space divides the room
-    /// for — see [`crate::view::arrangement`].
+    /// for — see [`crate::view::pane::arrangement`].
     tools: bool,
+    /// A conversation drawn in the pill over the field, opened by the chevron
+    /// in the tools' place: an article's thread.
+    thread: Option<gpui::AnyView>,
+    thread_open: bool,
     /// Whether there is a field to type into. Off, the composer is the turn's
     /// activity alone, with Stop while one runs.
     input: bool,
@@ -308,22 +337,19 @@ pub struct Composer {
     switches: Vec<Switch>,
     /// Context spent, when the agent counts it.
     usage: Option<Usage>,
-    /// Whether the agent mark's menu is up.
-    menu: bool,
-    menu_pressed: bool,
-    tools_menu: bool,
-    tools_cursor: Cursor,
+    /// The agent mark's menu or the tools menu, whichever is up.
+    menu: ContextMenu<Self, ComposerMenu>,
     /// Which of the right panel's tabs the tools menu offers.
     panel_tabs: PanelTabs,
-    /// Where that menu is being worked: which of its rows is live, and which
-    /// of them has its own panel down. One cursor for both devices, so a
-    /// submenu can only ever hang off the row the pointer is on.
-    cursor: Cursor,
-    /// The switch whose options are open as a flat list, in place of the menu
-    /// — see [`SUBMENU_ROWS`].
-    picking: Option<usize>,
-    picking_cursor: Cursor,
-    picking_scroll: ScrollHandle,
+}
+
+/// The composer's two menus.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ComposerMenu {
+    /// The agent mark's: what the session can be switched between.
+    Agent,
+    /// The `+` beside the field: the session's tools.
+    Tools,
 }
 
 impl EventEmitter<ComposerEvent> for Composer {}
@@ -374,6 +400,8 @@ impl Composer {
             streaming: false,
             last_asked: None,
             tools: true,
+            thread: None,
+            thread_open: false,
             input: true,
             activity: None,
             activity_open: false,
@@ -383,15 +411,8 @@ impl Composer {
             agent: None,
             switches: Vec::new(),
             usage: None,
-            menu: false,
-            menu_pressed: false,
-            tools_menu: false,
-            tools_cursor: Cursor::default(),
+            menu: ContextMenu::default(),
             panel_tabs: PanelTabs::default(),
-            cursor: Cursor::default(),
-            picking: None,
-            picking_cursor: Cursor::default(),
-            picking_scroll: ScrollHandle::new(),
         }
     }
 
@@ -479,6 +500,18 @@ impl Composer {
         }
     }
 
+    /// The conversation the chevron opens over the field. Another one, or
+    /// none, closes it.
+    pub fn set_thread(&mut self, thread: Option<gpui::AnyView>, cx: &mut Context<Self>) {
+        let id = |thread: &Option<gpui::AnyView>| thread.as_ref().map(gpui::AnyView::entity_id);
+        if id(&self.thread) == id(&thread) {
+            return;
+        }
+        self.thread = thread;
+        self.thread_open = false;
+        cx.notify();
+    }
+
     pub fn set_input(&mut self, input: bool, cx: &mut Context<Self>) {
         if self.input != input {
             self.input = input;
@@ -504,7 +537,7 @@ impl Composer {
         }
         self.agents = agents.to_vec();
         self.agent = current;
-        self.close_menu();
+        self.close_menu(cx);
         cx.notify();
     }
 
@@ -818,6 +851,8 @@ impl Composer {
         }
         self.field.update(cx, |field, cx| field.clear(cx));
         self.completing = None;
+        // What was sent is answered in the thread.
+        self.thread_open |= self.thread.is_some();
         cx.emit(ComposerEvent::Submit(
             content.to_string(),
             std::mem::take(&mut self.attachments),
@@ -847,18 +882,16 @@ impl Composer {
     }
 
     /// Escape backs out of whatever is happening, outermost first: the agent
-    /// menu, then the picker, and the turn in flight once there is nothing
-    /// left to close.
+    /// menu, then the picker, then the thread, and the turn in flight once
+    /// there is nothing left to close.
     fn command_dismiss(&mut self, _: &CommandDismiss, _: &mut Window, cx: &mut Context<Self>) {
         if self.preview.take().is_some() {
             // The open picture is the outermost thing there is.
-        } else if self.tools_menu {
-            self.tools_menu = false;
-        } else if self.cursor.ascend() {
-            // A submenu shuts before the menu holding it — one press, one level.
-        } else if self.menu || self.picking.is_some() {
-            self.close_menu();
-        } else if self.completing.take().is_none() {
+        } else if self.completing.take().is_some() {
+            // The picker shuts.
+        } else if self.thread_open {
+            self.thread_open = false;
+        } else {
             cx.emit(ComposerEvent::Cancel);
         }
         cx.notify();
@@ -968,12 +1001,9 @@ impl Composer {
         ))
     }
 
-    /// Shut the menu, and whatever it had a panel down over.
-    fn close_menu(&mut self) {
-        self.menu = false;
-        self.cursor.clear();
-        self.picking = None;
-        self.picking_cursor.clear();
+    /// Shut whichever menu is up.
+    fn close_menu(&mut self, cx: &mut Context<Self>) {
+        ContextMenu::close(self, |this| &mut this.menu, cx);
     }
 
     /// The agent the session runs on, as the mark that opens the rest — the
@@ -1009,16 +1039,18 @@ impl Composer {
                     .text_color(theme.text_muted)
                     .into_any_element(),
             })
-            // Outside-click dismissal runs before the trigger's click handler.
-            .capture_any_mouse_down(cx.listener(|composer, _, _, _| {
-                composer.menu_pressed = composer.menu || composer.picking.is_some();
-            }))
-            .on_click(cx.listener(|composer, _, _, cx| {
-                composer.tools_menu = false;
-                composer.menu = !(std::mem::take(&mut composer.menu_pressed) || composer.menu);
-                composer.cursor.clear();
-                cx.notify();
+            .on_click(cx.listener(|composer, _, window, cx| {
+                ContextMenu::toggle(
+                    composer,
+                    |this| &mut this.menu,
+                    ComposerMenu::Agent,
+                    Place::Above,
+                    |composer, _, _| (composer.menu_items(), Self::switch),
+                    window,
+                    cx,
+                );
             }));
+        let button = ContextMenu::trigger(button, |this| &mut this.menu, ComposerMenu::Agent, cx);
         Some(
             div()
                 .relative()
@@ -1041,101 +1073,15 @@ impl Composer {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        if let Some(row) = self.picking {
-            return self.options_card(row, theme, window, cx);
-        }
-        if !self.menu {
+        if !self.menu.showing(&ComposerMenu::Agent) {
             return None;
         }
-        let items = self.menu_items();
-        // The card reports a row by its path; what stands behind those paths
-        // is the list it was built from, so the handler is given it.
-        let rows = items.clone();
-        let card = menu::card(
-            theme,
-            "composer-menu",
-            &items,
-            &self.cursor,
-            window,
-            cx,
-            move |composer, hit, window, cx| composer.hit(&rows, hit, window, cx),
-        )
-        .child(popover::divider(theme))
-        .child(self.usage_row(theme));
-        Some(popover::anchored_menu_above(
-            "composer-menu",
-            card.into_any_element(),
-            None,
-        ))
-    }
-
-    /// A long switch's options, one level, clamped at [`PICKER_HEIGHT`] and
-    /// scrolled — the command picker's shape.
-    fn options_card(
-        &self,
-        row: usize,
-        theme: &Theme,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        let switch = self.switches.get(row)?;
-        let items: Vec<Item> = switch
-            .options
-            .iter()
-            .map(|option| {
-                Item::action(option.name.clone())
-                    .checked(switch.current.as_ref() == Some(&option.id))
-            })
-            .collect();
-        let rows = items.clone();
-        let card = menu::card(
-            theme,
-            "composer-options",
-            &items,
-            &self.picking_cursor,
-            window,
-            cx,
-            move |composer, hit, window, cx| match hit {
-                Hit::Point(path) => {
-                    if composer.picking_cursor.point_at(&rows, &path) {
-                        cx.notify();
-                    }
-                }
-                Hit::Choose(path) => {
-                    let Some(&at) = path.first() else { return };
-                    composer.close_menu();
-                    window.focus(&composer.focus_handle(cx), cx);
-                    if let Some(switch) = composer.switches.get(row)
-                        && let Some(option) = switch.options.get(at)
-                    {
-                        cx.emit(ComposerEvent::Switch(switch.id.clone(), option.id.clone()));
-                    }
-                    cx.notify();
-                }
-                Hit::Dismiss => {
-                    composer.close_menu();
-                    window.focus(&composer.focus_handle(cx), cx);
-                    cx.notify();
-                }
-            },
-        )
-        .id("composer-options-list")
-        .max_h(px(PICKER_HEIGHT))
-        .map(|el| scrollbars::scrolls(el, scrollbars::Axes::Vertical))
-        .track_scroll(&self.picking_scroll);
-        Some(popover::anchored_menu_above(
-            "composer-options",
-            div()
-                .relative()
-                .child(card)
-                .child(scrollbars::Overlay::new(
-                    "composer-options-bar",
-                    &self.picking_scroll,
-                    bezel::gpui::Axis::Vertical,
-                ))
-                .into_any_element(),
-            None,
-        ))
+        let card = self
+            .menu
+            .card("composer-menu", |this| &mut this.menu, window, cx)?
+            .child(popover::divider(theme))
+            .child(self.usage_row(theme));
+        Some(self.menu.place("composer-menu", card))
     }
 
     /// The menu's rows: whatever the live session offers, one submenu each.
@@ -1153,10 +1099,6 @@ impl Composer {
         self.switches
             .iter()
             .map(|switch| {
-                if switch.options.len() > SUBMENU_ROWS {
-                    return Item::action(set_to(&switch.name, self.value_of(switch)))
-                        .with_keystroke("›");
-                }
                 Item::submenu(
                     set_to(&switch.name, self.value_of(switch)),
                     switch
@@ -1172,53 +1114,17 @@ impl Composer {
             .collect()
     }
 
-    /// What the pointer did to that menu. A path is one row per level — the
-    /// top-level row, then which of its alternatives — so reading one is
-    /// [`Self::menu_items`] taken backwards.
-    fn hit(&mut self, items: &[Item], hit: Hit, window: &mut Window, cx: &mut Context<Self>) {
-        match hit {
-            Hit::Point(path) => {
-                if self.cursor.point_at(items, &path) {
-                    cx.notify();
-                }
-            }
-            Hit::Choose(path) => {
-                if let [row] = path[..] {
-                    // A long switch: its options open as their own list.
-                    self.close_menu();
-                    self.picking = Some(row);
-                    if let Some(at) = self.switches.get(row).and_then(|switch| {
-                        switch
-                            .options
-                            .iter()
-                            .position(|option| switch.current.as_ref() == Some(&option.id))
-                    }) {
-                        self.picking_scroll.scroll_to_item(at);
-                    }
-                    cx.notify();
-                    return;
-                }
-                let [row, at] = path[..] else { return };
-                // Picking anything shuts the menu: every choice here is the
-                // session's, and none of them is made twice in a row.
-                self.close_menu();
-                // Opening a menu takes the caret off what its rows act on —
-                // see bezel's `menu`. Nothing else puts it back, and a
-                // composer without the caret takes neither typing nor Enter.
-                window.focus(&self.focus_handle(cx), cx);
-                if let Some(switch) = self.switches.get(row)
-                    && let Some(option) = switch.options.get(at)
-                {
-                    cx.emit(ComposerEvent::Switch(switch.id.clone(), option.id.clone()));
-                }
-                cx.notify();
-            }
-            Hit::Dismiss => {
-                self.close_menu();
-                window.focus(&self.focus_handle(cx), cx);
-                cx.notify();
-            }
+    /// Pick the option at `path` in the agent menu: one row per level, the
+    /// switch and then which of its options — [`Self::menu_items`] taken
+    /// backwards.
+    fn switch(&mut self, path: &[usize], _: &mut Window, cx: &mut Context<Self>) {
+        let [row, at] = path[..] else { return };
+        if let Some(switch) = self.switches.get(row)
+            && let Some(option) = switch.options.get(at)
+        {
+            cx.emit(ComposerEvent::Switch(switch.id.clone(), option.id.clone()));
         }
+        cx.notify();
     }
 
     /// The name of the value a switch is on, when it is on one the agent still
@@ -1351,28 +1257,51 @@ impl Composer {
     }
 
     fn tools(&self, theme: &Theme, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let button = div()
-            .id("composer-tools")
-            .size(px(root::composer_height()))
-            .rounded_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .cursor_pointer()
-            .hover(|s| s.bg(theme.element_hover))
+        let button = side_button("composer-tools", theme)
             .tooltip(|window, cx| Tooltip::text("Session tools", window, cx))
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.tools_menu = !this.tools_menu;
-                this.close_menu();
-                this.tools_cursor.clear();
-                cx.notify();
-            }))
+            .on_click(cx.listener(|this, _, window, cx| {
+                ContextMenu::toggle(
+                    this,
+                    |this| &mut this.menu,
+                    ComposerMenu::Tools,
+                    Place::AboveEnd,
+                    Self::tools_menu,
+                    window,
+                    cx,
+                );
+            }));
+        let button = ContextMenu::trigger(button, |this| &mut this.menu, ComposerMenu::Tools, cx)
             .child(
                 icons::icon(icons::math::Plus)
                     .size(px(18.))
                     .text_color(theme.text_muted),
             )
             .surface(theme, SURFACE);
+        div()
+            .relative()
+            .flex_none()
+            .child(button)
+            .children(self.menu.render_for(
+                &ComposerMenu::Tools,
+                "composer-tools-menu",
+                |this| &mut this.menu,
+                window,
+                cx,
+            ))
+            .into_any_element()
+    }
+
+    /// The tools menu: the right panel's tabs this session can open, and what
+    /// choosing one asks for.
+    #[allow(clippy::type_complexity)]
+    fn tools_menu(
+        &mut self,
+        window: &mut Window,
+        _: &mut Context<Self>,
+    ) -> (
+        Vec<Item>,
+        impl Fn(&mut Self, &[usize], &mut Window, &mut Context<Self>) + use<>,
+    ) {
         let tabs = self.panel_tabs;
         let (items, events): (Vec<Item>, Vec<Emit>) = [
             Some((
@@ -1401,50 +1330,42 @@ impl Composer {
         .into_iter()
         .flatten()
         .unzip();
-        let rows = items.clone();
-        let popup = self.tools_menu.then(|| {
-            menu::card(
-                theme,
-                "composer-tools-menu",
-                &items,
-                &self.tools_cursor,
-                window,
-                cx,
-                move |this, hit, window, cx| {
-                    match hit {
-                        Hit::Point(path) => {
-                            this.tools_cursor.point_at(&rows, &path);
-                        }
-                        Hit::Choose(path) => {
-                            this.tools_menu = false;
-                            if let [ix] = path.as_slice()
-                                && let Some(event) = events.get(*ix)
-                            {
-                                cx.emit(event());
-                            }
-                        }
-                        // A menu backed out of leaves the caret where it took
-                        // it from, which is the field.
-                        Hit::Dismiss => {
-                            this.tools_menu = false;
-                            window.focus(&this.focus_handle(cx), cx);
-                        }
-                    }
-                    cx.notify();
-                },
-            )
+        let choose = move |_: &mut Self, path: &[usize], _: &mut Window, cx: &mut Context<Self>| {
+            if let [ix] = path
+                && let Some(event) = events.get(*ix)
+            {
+                cx.emit(event());
+            }
+        };
+        (items, choose)
+    }
+
+    /// The chevron opening the thread over the field, in the tools button's
+    /// place and cut the same.
+    fn thread_button(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        let open = self.thread_open;
+        side_button("composer-thread", theme)
+            .tooltip(move |window, cx| {
+                Tooltip::text(if open { "Hide chat" } else { "Show chat" }, window, cx)
+            })
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.thread_open = !this.thread_open;
+                cx.notify();
+            }))
+            .child(theme.disclosure(open))
+            .surface(theme, SURFACE)
             .into_any_element()
-        });
-        div()
-            .relative()
-            .flex_none()
-            .child(button)
-            .children(
-                popup.map(|card| {
-                    popover::anchored_menu_above_end("composer-tools-menu", card, None)
-                }),
-            )
-            .into_any_element()
+    }
+
+    /// The open thread, ruled off from what is under it through the capsule's
+    /// padding, as the activity row is.
+    fn thread_panel(&self, theme: &Theme, right_inset: f32) -> Option<AnyElement> {
+        let thread = self.thread.clone().filter(|_| self.thread_open)?;
+        Some(
+            ruled_off(div(), theme, right_inset)
+                .child(thread)
+                .into_any_element(),
+        )
     }
 
     /// The turn's activity alone, and Stop while it runs: the composer with
@@ -1527,6 +1448,7 @@ impl Composer {
                                     .flex()
                                     .flex_col()
                                     .gap(px(root::COMPOSER_INSET))
+                                    .children(self.thread_panel(&theme, right_inset))
                                     .children(self.activity_row(&theme, true, right_inset, cx))
                                     .children(tray)
                                     .child(
@@ -1550,7 +1472,10 @@ impl Composer {
                             )
                             .children(picker),
                     )
-                    .children(self.tools.then(|| self.tools(&theme, window, cx))),
+                    .children(match self.thread.is_some() {
+                        true => Some(self.thread_button(&theme, cx)),
+                        false => self.tools.then(|| self.tools(&theme, window, cx)),
+                    }),
             )
             .children(self.lightbox(window, cx))
             .into_any_element()

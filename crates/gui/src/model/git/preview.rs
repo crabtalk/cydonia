@@ -2,6 +2,7 @@
 
 use super::{Area, Change, PATCH_LIMIT, command, output};
 use crate::model::language;
+use crate::model::language::Grammars as _;
 use bezel::theme::HighlightKind;
 use std::{
     collections::HashSet,
@@ -12,8 +13,9 @@ use std::{
     sync::Arc,
 };
 
-type Spans = Vec<(Range<usize>, HighlightKind)>;
 const LINE_LIMIT: usize = 4096;
+
+type Spans = Vec<(Range<usize>, HighlightKind)>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -49,7 +51,7 @@ impl Preview {
 
     /// Reuse highlighting only when the patch and both source snapshots match.
     pub fn load(root: &Path, file: &Change, patch: String, previous: Arc<Self>) -> Arc<Self> {
-        let (old, new) = if language::of(&file.path).is_some() {
+        let (old, new) = if language::Here::of(&file.path).is_some() {
             versions(root, file)
         } else {
             (None, None)

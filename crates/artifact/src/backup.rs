@@ -18,6 +18,10 @@
 use anyhow::{Context as _, Result};
 use std::path::{Path, PathBuf};
 
+/// The file beside a project's backup naming the board the legacy
+/// `board.toml` became, so a restore can take that board away again.
+pub const LEGACY_BOARD_ID: &str = "legacy-board-id";
+
 /// Cydonia's data directory: `$XDG_DATA_HOME/cydonia`, defaulting to
 /// `~/.local/share/cydonia`. Installed agents, caches and backups.
 pub fn data_dir() -> Result<PathBuf> {
@@ -265,10 +269,6 @@ pub fn restore(version: &str) -> Result<()> {
     }
     Ok(())
 }
-
-/// The file beside a project's backup naming the board the legacy
-/// `board.toml` became, so a restore can take that board away again.
-pub const LEGACY_BOARD_ID: &str = "legacy-board-id";
 
 /// Note in `version`'s backup of `project` which board the legacy
 /// `board.toml` became.

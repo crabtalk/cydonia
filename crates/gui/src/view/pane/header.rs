@@ -1,0 +1,273 @@
+//! The band across the top of the detail column: what the pane is showing, and
+//! the `···` that acts on it.
+//!
+//! Pulled, not pushed: [`Cydonia::detail`] already builds the body, so it asks
+//! the pane rather than having each register itself into a shared slot the way
+//! `../desktop` must. Two panes showing at once is this called twice — see
+//! `todos/panels.md`.
+
+use crate::model::workspace::Showing;
+use crate::view::{
+    component::panel::changes_toggle,
+    kit::menu::Menu,
+    sidebar::{Renaming, Row},
+    window::chrome,
+    window::entry::Host,
+    window::root::{self, Cydonia},
+};
+use artifact::kind::Kind;
+use bezel::{
+    gpui::{AnyElement, App, Context, FontWeight, SharedString, Window, div, prelude::*, px},
+    motion::Painter,
+    theme::{TextStyle, Theme, Typeset},
+    ui::{context_menu::Place, icons, titlebar::CaptionSide},
+};
+/// What a pane puts in the band.
+pub(crate) struct Toolbar {
+    /// What the pane is showing, by the name the sidebar would list it under.
+    pub title: String,
+    pub number: Option<u64>,
+    /// The entry that name belongs to. Every pane has one today; the field is
+    /// an option because a pane standing in for something not yet made — see
+    /// [`Cydonia::launch`] — has a band and nothing to act on.
+    pub entry: Option<Entry>,
+}
+
+/// The thing the title names: what to put a menu on, whether that menu offers
+/// Archive or Unarchive, and how the thing is renamed.
+pub(crate) struct Entry {
+    pub row: Row,
+    pub archived: bool,
+    pub naming: Naming,
+}
+
+/// Where an entry is renamed — one place per kind, never two.
+pub(crate) enum Naming {
+    /// In a field where its name is drawn. See [`Cydonia::header_renaming`].
+    Inline(Renaming),
+    /// In the board's identity panel, by id: a board is named by its name *and*
+    /// its key, so one place edits both. See [`Cydonia::toggle_info`].
+    Panel(String),
+    /// In the page itself: an article's title is the first line of the
+    /// document, so the pane already holds the field — see
+    /// [`crate::view::article`]. Nothing for the band to draw or offer.
+    Page,
+}
+
+impl Cydonia {
+    /// What the pane showing in `pane` puts in the band. Takes the pane rather
+    /// than reading [`Cydonia::showing`], so a second panel is a second call.
+    pub(crate) fn toolbar(&self, pane: Kind, cx: &App) -> Option<Toolbar> {
+        let workspace = self.workspace.read(cx);
+        let project = workspace.active?;
+        let showing = workspace.projects.get(project)?.selected(pane)?;
+        self.toolbar_of(project, showing, cx)
+    }
+
+    /// The same, for an entry named outright rather than read off the
+    /// project's selection — what a pane of a space puts in its own bar,
+    /// which is some entry other than the one in front.
+    pub(crate) fn toolbar_of(&self, project: usize, showing: Showing, cx: &App) -> Option<Toolbar> {
+        let workspace = self.workspace.read(cx);
+        let open = workspace.projects.get(project)?;
+        let row = Row::Entry {
+            project: open.path.clone(),
+            showing: showing.clone(),
+        };
+        let facts = open.facts(&showing, cx)?;
+        let naming = match showing {
+            Showing::Session(id) => Naming::Inline(Renaming::Session(id)),
+            Showing::Board(id) => Naming::Panel(id),
+            Showing::Article(_) => Naming::Page,
+            Showing::Table(key) => Naming::Inline(Renaming::Table(key)),
+        };
+        Some(Toolbar {
+            title: facts.label,
+            number: facts.number,
+            entry: Some(Entry {
+                row,
+                archived: facts.archived,
+                naming,
+            }),
+        })
+    }
+
+    /// Which rename the band is drawing its name field for: the band's own,
+    /// while the entry it names is the one the band shows. A space and the
+    /// library draw no band.
+    pub(crate) fn header_renaming(&self, cx: &App) -> Option<&Renaming> {
+        if self.workspace.read(cx).active_space().is_some() || self.library.is_some() {
+            return None;
+        }
+        let at = self.renaming.as_ref()?;
+        let showing = self.toolbar(self.showing(cx)?, cx)?;
+        let Naming::Inline(shown) = showing.entry?.naming else {
+            return None;
+        };
+        (shown == *at).then_some(at)
+    }
+
+    /// The band, drawn over the pane rather than above it — the composer sits
+    /// on the other edge the same way.
+    pub(crate) fn pane_header(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let toolbar = match self.library.is_some() {
+            true => Some(Toolbar {
+                title: "Library".to_owned(),
+                number: None,
+                entry: None,
+            }),
+            false => self.showing(cx).and_then(|pane| self.toolbar(pane, cx)),
+        };
+        // The lights belong to the window, not a pane, so their clearance is
+        // taken here and nowhere a pane can see it.
+        let inset = match self.sidebar_open {
+            true => root::HEADER_INSET,
+            false => root::toolbar_inset(window, cx),
+        };
+        // The window's corners, when this band is the one at them: the
+        // sidebar holds the left one while it is open, and the right panel
+        // the right one.
+        let left = !self.sidebar_open && chrome::has(CaptionSide::Left, window, cx);
+        let right = self.changes.is_none() && chrome::has(CaptionSide::Right, window, cx);
+        let bare = toolbar.is_none();
+        let renaming = self.header_renaming(cx).is_some();
+        // Which board the band is showing, if any — the only entry with a
+        // panel.
+        let board = toolbar.as_ref().and_then(|toolbar| match &toolbar.entry {
+            Some(Entry {
+                naming: Naming::Panel(id),
+                ..
+            }) => Some(id.clone()),
+            _ => None,
+        });
+        root::band()
+            .absolute()
+            .top_0()
+            .left_0()
+            .right_0()
+            .gap(px(8.))
+            // Past the lights, which are the window's and are drawn over
+            // whatever is at its top left.
+            .pl(px(if left { 0. } else { inset }))
+            .when(right, |band| band.pr_0())
+            .children(
+                left.then(|| chrome::caption(CaptionSide::Left, window, cx))
+                    .flatten(),
+            )
+            // Above the pane, which runs under it.
+            // The fold belongs to whichever column runs along the window's
+            // left edge, so with the sidebar gone it is this one's.
+            .children((!self.sidebar_open).then(|| self.fold_controls(cx)))
+            .children(toolbar.map(|toolbar| {
+                match renaming {
+                    true => div().flex_1().min_w_0().child(self.name_field(cx)),
+                    false => div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(6.))
+                        // A board's name opens its identity panel; the other
+                        // panes have one field and rename from the `···`.
+                        .child(
+                            div()
+                                .relative()
+                                .min_w_0()
+                                .flex_1()
+                                // A row, so the name is only as wide as it
+                                // reads — stretched, it would swallow presses
+                                // on the empty half of the band.
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .child(
+                                    div()
+                                        .id("header-title")
+                                        .min_w_0()
+                                        .truncate()
+                                        .line_clamp(1)
+                                        .text_style(TextStyle::Subheadline)
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .text_color(theme.text)
+                                        .when_some(board.clone(), |title, _| title.cursor_pointer())
+                                        .child(toolbar.title)
+                                        .when_some(board.clone(), |title, id| {
+                                            // Noted on the way down, ahead of
+                                            // the panel's own dismiss — see
+                                            // [`Cydonia::toggle_info`].
+                                            let opened = id.clone();
+                                            title
+                                                .capture_any_mouse_down(cx.listener(
+                                                    move |this, _, _, _| {
+                                                        this.info_pressed =
+                                                            this.info.as_ref().is_some_and(
+                                                                |info| info.board == opened,
+                                                            );
+                                                    },
+                                                ))
+                                                .on_click(cx.listener(
+                                                    move |this, _, window, cx| {
+                                                        this.toggle_info(&id, window, cx);
+                                                    },
+                                                ))
+                                        }),
+                                )
+                                .children(toolbar.number.map(|number| {
+                                    div()
+                                        .id("header-entry-number")
+                                        .flex_none()
+                                        .ml(px(6.))
+                                        .text_style(TextStyle::Caption)
+                                        .font_weight(FontWeight::NORMAL)
+                                        .text_color(theme.text_muted)
+                                        .child(format!("#{number}"))
+                                }))
+                                .children(board.as_deref().and_then(|id| self.info_panel(id, cx)))
+                                .child(chrome::grip("header-grip", &self.drag, window)),
+                        )
+                        .children(toolbar.entry.map(|entry| {
+                            self.menu_button(
+                                SharedString::from("header-menu"),
+                                // On show: hiding a trigger until the pointer
+                                // finds it is what a list of rows needs, not a
+                                // band with one control.
+                                None,
+                                icons::layout::Ellipsis,
+                                Menu::Header,
+                                Place::BelowEnd,
+                                {
+                                    let (row, archived) = (entry.row, entry.archived);
+                                    Box::new(move |this, _, cx| {
+                                        this.entry_rows(Host::Header, &row, archived, cx)
+                                    })
+                                },
+                                cx,
+                            )
+                            .children(self.menu_here(
+                                &Menu::Header,
+                                "header-menu-card",
+                                window,
+                                cx,
+                            ))
+                        })),
+                }
+            }))
+            .children(
+                // Nothing to open it on where there is no directory in front
+                // — see [`Cydonia::shell_cwd`].
+                (!self.changes_open && self.shell_cwd(cx).is_some())
+                    .then(|| changes_toggle("Show right panel", Painter::of(cx), Theme::of(cx))),
+            )
+            .when(bare, |band| {
+                band.child(chrome::grip("header-grip", &self.drag, window))
+            })
+            .children(
+                right
+                    .then(|| chrome::caption(CaptionSide::Right, window, cx))
+                    .flatten(),
+            )
+            .into_any_element()
+    }
+}

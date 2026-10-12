@@ -26,10 +26,10 @@ fn pending_image_only_message_has_a_gallery_and_retains_preview(cx: &mut gpui::T
         let root =
             cx.new(|cx| Cydonia::new(Settings::default(), state::State::default(), window, cx));
         root.update(cx, |root, cx| {
-            root.workspace.update(cx, |workspace, _| {
+            root.workspace.update(cx, |workspace, cx| {
                 workspace.settings.features.sessions = true;
                 let cwd = std::path::PathBuf::from("/nonexistent/cydonia-queue-test");
-                let mut project = Project::new(cwd.clone());
+                let mut project = Project::new(cwd.clone(), cx);
                 let record = serde_json::from_value(serde_json::json!({
                     "id":"test", "agent":"test", "title":"", "name":null, "updated":1, "items":[]
                 }))
@@ -47,7 +47,9 @@ fn pending_image_only_message_has_a_gallery_and_retains_preview(cx: &mut gpui::T
                     record,
                 );
                 chat.queue.push_back("![](</tmp/queued.png>)".into());
-                project.sessions.push(chat);
+                project
+                    .sessions
+                    .push(crate::model::project::HeldSession::new(chat, cx));
                 project.active = Some(1);
                 workspace.projects.push(project);
                 workspace.active = Some(0);
@@ -83,10 +85,10 @@ fn a_queue_is_drawn_only_under_the_session_it_is_waiting_in(cx: &mut gpui::TestA
         let root =
             cx.new(|cx| Cydonia::new(Settings::default(), state::State::default(), window, cx));
         root.update(cx, |root, cx| {
-            root.workspace.update(cx, |workspace, _| {
+            root.workspace.update(cx, |workspace, cx| {
                 workspace.settings.features.sessions = true;
                 let cwd = std::path::PathBuf::from("/nonexistent/cydonia-queue-test");
-                let mut project = Project::new(cwd.clone());
+                let mut project = Project::new(cwd.clone(), cx);
                 for id in [1, 2] {
                     let record = serde_json::from_value(serde_json::json!({
                         "id":"test", "agent":"test", "title":"", "name":null,
@@ -109,7 +111,9 @@ fn a_queue_is_drawn_only_under_the_session_it_is_waiting_in(cx: &mut gpui::TestA
                     if id == 1 {
                         chat.queue.push_back("hold this".into());
                     }
-                    project.sessions.push(chat);
+                    project
+                        .sessions
+                        .push(crate::model::project::HeldSession::new(chat, cx));
                 }
                 // And the window is on the one that is.
                 project.active = Some(1);

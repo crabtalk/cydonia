@@ -24,6 +24,7 @@ fn record(url: &str, base: Option<&Path>, _: &mut gpui::Window, _: &mut gpui::Ap
 
 struct LinkedTranscript {
     workspace: gpui::Entity<Workspace>,
+    held: super::State,
     focus: gpui::FocusHandle,
     _observe: gpui::Subscription,
 }
@@ -34,9 +35,16 @@ impl gpui::Render for LinkedTranscript {
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) -> impl gpui::IntoElement {
-        let prose = self.workspace.update(cx, |workspace, cx| {
+        let held = &self.held;
+        let chat = self.workspace.read(cx).session_entity(1).unwrap().clone();
+        let prose = chat.update(cx, |chat, cx| {
             super::prose(
-                workspace.session(1).unwrap(),
+                chat,
+                &super::Hold {
+                    state: held,
+                    view: gpui::WeakEntity::new_invalid(),
+                    workspace: gpui::WeakEntity::new_invalid(),
+                },
                 0,
                 "Read [source](src/main.rs:12).",
                 window,
@@ -57,26 +65,31 @@ fn a_clicked_session_link_reaches_the_handler_with_the_session_folder(
     });
     let window = cx.add_window(|window, cx| {
         let workspace = cx.new(|cx| Workspace::new(Settings::default(), State::default(), cx));
-        workspace.update(cx, |workspace, _| {
+        workspace.update(cx, |workspace, cx| {
             let cwd = PathBuf::from("/work/project");
-            let mut project = Project::new(cwd.clone());
+            let mut project = Project::new(cwd.clone(), cx);
             let record = serde_json::from_value(serde_json::json!({
                 "id": "test", "agent": "test", "title": "", "name": null,
                 "updated": 1, "items": []
             }))
             .unwrap();
-            project.sessions.push(ChatSession::restore(
-                1,
-                cwd,
-                Agent {
-                    name: "test".into(),
-                    id: None,
-                    command: String::new(),
-                    args: vec![],
-                    env: Default::default(),
-                },
-                record,
-            ));
+            project
+                .sessions
+                .push(crate::model::project::HeldSession::new(
+                    ChatSession::restore(
+                        1,
+                        cwd,
+                        Agent {
+                            name: "test".into(),
+                            id: None,
+                            command: String::new(),
+                            args: vec![],
+                            env: Default::default(),
+                        },
+                        record,
+                    ),
+                    cx,
+                ));
             workspace.projects.push(project);
         });
         let observe = cx.observe(&workspace, |_, _, cx| cx.notify());
@@ -84,6 +97,7 @@ fn a_clicked_session_link_reaches_the_handler_with_the_session_folder(
         window.focus(&focus, cx);
         LinkedTranscript {
             workspace,
+            held: super::State::default(),
             focus,
             _observe: observe,
         }
@@ -92,13 +106,8 @@ fn a_clicked_session_link_reaches_the_handler_with_the_session_folder(
     visual.run_until_parked();
     let point = window
         .update(&mut visual, |view, _, cx| {
-            let layouts = view
-                .workspace
-                .read(cx)
-                .session(1)
-                .unwrap()
-                .transcript
-                .layouts(0);
+            let _ = cx;
+            let layouts = view.held.layouts(0);
             let from = markdown::Cursor::new(0, markdown::Part::default(), 5);
             let to = markdown::Cursor { offset: 6, ..from };
             layouts.rects(markdown::Selection::new(from, to))[0].center()

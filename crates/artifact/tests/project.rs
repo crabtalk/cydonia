@@ -3,7 +3,7 @@
 mod common;
 
 use common::Scratch;
-use cydonia_artifact::{article::properties::Properties, project::Project as _, space::Kind};
+use cydonia_artifact::{article::properties::Properties, kind::Kind, project::Project as _};
 use std::fs;
 
 #[test]
@@ -72,23 +72,23 @@ fn removing_an_article_retires_its_number() {
     let scratch = Scratch::new("project-remove");
     let store = scratch.store();
     let made = store.create_article("").unwrap();
-    let number = store.number("article", &made.id).unwrap();
+    let number = store.number(Kind::Article, &made.id).unwrap();
     assert_eq!(
-        store.resolve("article", number).unwrap().as_deref(),
+        store.resolve(Kind::Article, number).unwrap().as_deref(),
         Some(made.id.as_str())
     );
     store.remove_article(&made.id).unwrap();
     assert!(store.articles().is_empty());
-    assert_eq!(store.resolve("article", number).unwrap(), None);
+    assert_eq!(store.resolve(Kind::Article, number).unwrap(), None);
 }
 
 #[test]
 fn a_retired_number_is_not_reissued() {
     let scratch = Scratch::new("project-retire");
     let store = scratch.store();
-    let first = store.number("board", "a").unwrap();
-    store.retire("board", "a").unwrap();
-    assert_ne!(store.number("board", "a").unwrap(), first);
+    let first = store.number(Kind::Board, "a").unwrap();
+    store.retire(Kind::Board, "a").unwrap();
+    assert_ne!(store.number(Kind::Board, "a").unwrap(), first);
 }
 
 #[test]
@@ -117,6 +117,19 @@ fn place_is_an_articles_directory_and_a_boards_directory() {
     );
     assert_eq!(store.place(Kind::Board, "missing"), None);
     assert_eq!(store.place(Kind::Table, &board.id), None);
+}
+
+#[test]
+fn files_is_an_articles_folder_and_a_cards_folder() {
+    let scratch = Scratch::new("project-files");
+    let store = scratch.store();
+    let cydonia = scratch.path().join(".cydonia");
+    assert!(store.files(&cydonia.join("articles/1790089015001")));
+    assert!(store.files(&cydonia.join("boards/1790266971001/cards/1790252301417")));
+    assert!(!store.files(&cydonia.join("articles")));
+    assert!(!store.files(&cydonia.join("boards/1790266971001")));
+    assert!(!store.files(&cydonia.join("worktrees/fix")));
+    assert!(!store.files(scratch.path()));
 }
 
 #[test]

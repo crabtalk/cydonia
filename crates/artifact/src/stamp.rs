@@ -9,12 +9,25 @@ use std::{
 /// The last stamp [`fresh`] handed out in this process.
 static LAST: AtomicU64 = AtomicU64::new(0);
 
+/// Now, in whole seconds.
+pub fn seconds() -> u64 {
+    u64::try_from(now() / 1000).unwrap_or(u64::MAX)
+}
+
 /// Now.
 pub fn now() -> u128 {
     web_time::SystemTime::now()
         .duration_since(web_time::UNIX_EPOCH)
         .map(|since| since.as_millis())
         .unwrap_or_default()
+}
+
+/// `stamp` as an id, or the first stamp after it that `taken` does not hold.
+pub fn free(stamp: u128, taken: impl Fn(&str) -> bool) -> String {
+    (stamp..)
+        .map(|stamp| stamp.to_string())
+        .find(|id| !taken(id))
+        .unwrap_or_else(|| stamp.to_string())
 }
 
 /// Now, or one past the last stamp this returned, whichever is later: no two

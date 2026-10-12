@@ -5,9 +5,8 @@ use crate::{
     tool::{Answer, Args, Outcome, Tool},
     tools::fields,
 };
-use artifact::article;
+use artifact::{kind::Kind, project::fs};
 use serde_json::{Value, json};
-use std::path::{Path, PathBuf};
 
 pub static TOOLS: [Tool; 1] = [Tool {
     name: "workspace_focus",
@@ -74,8 +73,12 @@ fn described(shown: &Shown) -> Value {
                 .into_iter()
                 .find(|entry| entry.kind == shown.kind && entry.id == shown.id)
         });
-    let content = (shown.kind == "article")
-        .then(|| article_content(&shown.project, &shown.id))
+    let content = (shown.kind == Kind::Article)
+        .then(|| {
+            fs::Project::new(&shown.project)
+                .article_file(&shown.id)
+                .ok()
+        })
         .flatten();
     json!({
         "project": shown.project,
@@ -86,12 +89,4 @@ fn described(shown: &Shown) -> Value {
         "focused": shown.focused,
         "path": content,
     })
-}
-
-fn article_content(project: &Path, id: &str) -> Option<PathBuf> {
-    std::fs::read_dir(article::dir(project))
-        .ok()?
-        .filter_map(|item| item.ok())
-        .map(|item| article::content(&item.path()))
-        .find(|content| content.is_file() && article::id_of(content) == id)
 }

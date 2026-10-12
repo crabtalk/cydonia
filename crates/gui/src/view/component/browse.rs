@@ -9,7 +9,7 @@
 //! built the page: a tab whose panel is not on screen has none.
 
 use super::{browser::Browser, panel::Panel};
-use crate::{model::settings::Browsing, view::root::Cydonia};
+use crate::{model::settings::Browsing, view::window::root::Cydonia};
 use bezel::gpui::{AnyWindowHandle, AsyncApp, Context, Entity, WeakEntity, Window};
 use browser::WebView;
 use futures::{StreamExt as _, channel::mpsc};
@@ -34,24 +34,6 @@ const BUILT: Duration = Duration::from_secs(3);
 const SETTLE: Duration = Duration::from_secs(10);
 
 const STEP: Duration = Duration::from_millis(100);
-
-#[derive(Deserialize)]
-struct Page {
-    url: String,
-    title: String,
-    text: String,
-    #[serde(default)]
-    truncated: bool,
-    elements: Vec<Element>,
-}
-
-#[derive(Deserialize)]
-struct Element {
-    i: usize,
-    tag: String,
-    kind: Option<String>,
-    name: String,
-}
 
 const FIND: &str = r#"const found = (() => {
   const pick = 'a[href], button, input, select, textarea, summary, [role=button], [role=link], [role=tab], [role=checkbox], [role=menuitem], [role=textbox], [contenteditable=""], [contenteditable=true], [onclick]';
@@ -129,6 +111,24 @@ const SCROLL: &str = r#"(() => { try {
   return 'ok';
 } catch (e) { return String(e); } })()"#;
 
+#[derive(Deserialize)]
+struct Page {
+    url: String,
+    title: String,
+    text: String,
+    #[serde(default)]
+    truncated: bool,
+    elements: Vec<Element>,
+}
+
+#[derive(Deserialize)]
+struct Element {
+    i: usize,
+    tag: String,
+    kind: Option<String>,
+    name: String,
+}
+
 fn script(js: &str) -> String {
     js.replace("$FIND", FIND)
         .replace("$MAX_ELEMENTS", &MAX_ELEMENTS.to_string())
@@ -163,17 +163,14 @@ impl Cydonia {
     }
 
     /// The right panel of the open project at `path`.
-    fn project_panel(&mut self, path: &Path, cx: &mut Context<Self>) -> Option<Entity<Panel>> {
-        let settled = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-        let project = self
-            .workspace
-            .read(cx)
-            .projects
-            .iter()
-            .find(|open| {
-                open.path == path || open.path.canonicalize().is_ok_and(|held| held == settled)
-            })
-            .map(|open| open.path.clone())?;
+    fn project_panel(
+        &mut self,
+        path: &Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<Panel>> {
+        let workspace = self.workspace.read(cx);
+        let project = workspace.projects[workspace.project_at(path)?].path.clone();
         let cwd = if self
             .workspace
             .read(cx)
@@ -184,7 +181,7 @@ impl Cydonia {
         } else {
             project
         };
-        Some(self.right_panel(cwd, cx))
+        Some(self.right_panel(cwd, window, cx))
     }
 }
 
@@ -196,9 +193,12 @@ async fn serve(
     act: Act,
     cx: &mut AsyncApp,
 ) -> Result<String, String> {
-    let panel = this
-        .update(cx, |this, cx| this.project_panel(project, cx))
+    let panel = window
+        .update(cx, |_, window, cx| {
+            this.update(cx, |this, cx| this.project_panel(project, window, cx))
+        })
         .ok()
+        .and_then(Result::ok)
         .flatten()
         .ok_or_else(|| format!("cydonia does not have {} open", project.display()))?;
     let browsing = cx.update(|cx| cx.try_global::<Browsing>().cloned().unwrap_or_default());

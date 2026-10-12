@@ -7,11 +7,11 @@
 //! point the config directory somewhere of their own.
 
 use super::*;
-use crate::model::spaces as store;
+use crate::model::spaces::Shelf;
 use crate::model::workspace::Showing;
 use crate::model::{settings::Settings, state};
+use artifact::kind::Kind;
 use artifact::space::{Member, Side};
-use gpui::AppContext as _;
 
 /// A scratch project or two, torn down when the test ends — and a config
 /// directory beside them that the test's writes land in.
@@ -120,7 +120,7 @@ fn a_space_is_written_beside_the_config(cx: &mut gpui::TestAppContext) {
         workspace.active_space().expect("open").id.clone()
     });
 
-    let read = store::read(&id).expect("on disk");
+    let read = Shelf::read(&id).expect("on disk");
     assert_eq!(read.entries().len(), 2);
     assert!(
         !scratch.0.join("one/.cydonia/spaces").exists(),
@@ -149,12 +149,12 @@ fn a_space_can_span_projects(cx: &mut gpui::TestAppContext) {
         let space = workspace.active_space().expect("open");
         assert_eq!(space.leaves(), 2);
         // Both resolve, each to the project it is in.
-        assert_eq!(workspace.showing_of(&here).map(|(at, _)| at), Some(0));
-        assert_eq!(workspace.showing_of(&there).map(|(at, _)| at), Some(1));
+        assert_eq!(workspace.showing_of(&here, cx).map(|(at, _)| at), Some(0));
+        assert_eq!(workspace.showing_of(&there, cx).map(|(at, _)| at), Some(1));
         space.id.clone()
     });
 
-    let read = store::read(&id).expect("on disk");
+    let read = Shelf::read(&id).expect("on disk");
     let projects: Vec<_> = read
         .entries()
         .into_iter()
@@ -171,14 +171,10 @@ fn a_member_in_a_shut_project_resolves_to_nothing(cx: &mut gpui::TestAppContext)
     let (workspace, a, _) = two_boards(&scratch, cx);
 
     workspace.update(cx, |workspace, cx| {
-        let elsewhere = Member::new(
-            scratch.project("two"),
-            artifact::space::Kind::Board,
-            a.id.clone(),
-        );
-        assert!(workspace.showing_of(&elsewhere).is_none());
+        let elsewhere = Member::new(scratch.project("two"), Kind::Board, a.id.clone());
+        assert!(workspace.showing_of(&elsewhere, cx).is_none());
         // The same id in a project that *is* open still resolves.
-        assert!(workspace.showing_of(&a).is_some());
+        assert!(workspace.showing_of(&a, cx).is_some());
         let _ = cx;
     });
 }
@@ -253,7 +249,7 @@ fn closing_down_to_one_pane_closes_the_space(cx: &mut gpui::TestAppContext) {
         assert_eq!(workspace.projects[0].board, Some(0));
         id
     });
-    assert!(store::read(&id).is_none(), "the file goes too");
+    assert!(Shelf::read(&id).is_none(), "the file goes too");
 }
 
 /// Moving a pane exchanges it with the one across the seam and is written back.
@@ -276,7 +272,7 @@ fn moving_a_pane_swaps_it_and_is_written(cx: &mut gpui::TestAppContext) {
         workspace.active_space().expect("open").id.clone()
     });
 
-    assert_eq!(store::read(&id).expect("on disk").entries(), vec![b, a]);
+    assert_eq!(Shelf::read(&id).expect("on disk").entries(), vec![b, a]);
 }
 
 /// Archiving a space is archiving what it arranges, and the arrangement goes
@@ -307,7 +303,7 @@ fn a_space_is_dropped_by_the_id_it_was_named_with(cx: &mut gpui::TestAppContext)
         id
     });
 
-    assert!(store::read(&id).is_none(), "the file goes too");
+    assert!(Shelf::read(&id).is_none(), "the file goes too");
 }
 
 /// An entry is in one space at a time, and that holds for the pane dropped
@@ -359,7 +355,7 @@ fn a_rename_is_written(cx: &mut gpui::TestAppContext) {
         id
     });
 
-    assert_eq!(store::read(&id).expect("on disk").name, "Auth work");
+    assert_eq!(Shelf::read(&id).expect("on disk").name, "Auth work");
 }
 
 /// A member whose entry has gone leaves the space, so no pane is left on a
@@ -444,10 +440,13 @@ fn sending_into_a_pane_stays_in_the_space(cx: &mut gpui::TestAppContext) {
         let path = workspace.projects[0].path.clone();
         workspace.projects[0]
             .sessions
-            .push(resting_session(7, &path));
+            .push(crate::model::project::HeldSession::new(
+                resting_session(7, &path),
+                cx,
+            ));
         workspace.projects[0].active = Some(7);
         let chat = workspace
-            .member_of(0, Showing::Session(7))
+            .member_of(0, Showing::Session(7), cx)
             .expect("a member");
 
         workspace.arrange(&board, &chat, Side::Right, cx);
@@ -669,7 +668,7 @@ fn a_pane_put_on_an_article_opens_it(cx: &mut gpui::TestAppContext) {
             workspace
                 .article_in(0, 0)
                 .expect("an article")
-                .editor
+                .document
                 .is_none(),
             "listed, never opened",
         );
@@ -683,7 +682,7 @@ fn a_pane_put_on_an_article_opens_it(cx: &mut gpui::TestAppContext) {
             workspace
                 .article_in(0, 0)
                 .expect("an article")
-                .editor
+                .document
                 .is_some(),
             "the pane opened it",
         );
@@ -833,16 +832,18 @@ fn a_session_with_no_file_can_be_given_one_and_arranged(cx: &mut gpui::TestAppCo
         let path = workspace.projects[0].path.clone();
         let mut chat = resting_session(7, &path);
         chat.record = None;
-        workspace.projects[0].sessions.push(chat);
+        workspace.projects[0]
+            .sessions
+            .push(crate::model::project::HeldSession::new(chat, cx));
 
         assert!(
-            workspace.member_of_session(7).is_none(),
+            workspace.member_of_session(7, cx).is_none(),
             "nothing for a space to name yet",
         );
 
         workspace.retain_session(7, cx).expect("a file is minted");
         let session = workspace
-            .member_of_session(7)
+            .member_of_session(7, cx)
             .expect("and now it names one");
 
         workspace.arrange(&board, &session, Side::Right, cx);
@@ -865,7 +866,7 @@ fn a_pane_holding_one_tab_closes(cx: &mut gpui::TestAppContext) {
         workspace.close_pane(&b, cx);
         assert!(workspace.active_space().is_none(), "the space goes too");
         assert!(
-            workspace.active_board().is_some(),
+            workspace.active_board(cx).is_some(),
             "landing on the survivor"
         );
     });
@@ -985,34 +986,42 @@ fn a_pane_answers_for_its_own_board(cx: &mut gpui::TestAppContext) {
         workspace.arrange(&a, &b, Side::Right, cx);
 
         // Whatever the project is pointed at, each pane answers for itself.
-        let on_a = workspace.board_of(Some(&a)).expect("a board").id.clone();
-        let on_b = workspace.board_of(Some(&b)).expect("a board").id.clone();
+        let on_a = workspace
+            .board_of(Some(&a), cx)
+            .expect("a board")
+            .id
+            .clone();
+        let on_b = workspace
+            .board_of(Some(&b), cx)
+            .expect("a board")
+            .id
+            .clone();
         assert_ne!(on_a, on_b, "two panes, two boards");
         assert_eq!(
-            workspace.board_of(None).map(|board| board.id.clone()),
-            workspace.active_board().map(|board| board.id.clone()),
+            workspace.board_of(None, cx).map(|board| board.id.clone()),
+            workspace.active_board(cx).map(|board| board.id.clone()),
             "and no pane falls back to the project's own",
         );
 
         let column = workspace
-            .write_board(&on_a, |board| board.add_column("Todo").id.clone())
+            .write_board(&on_a, cx, |board| board.add_column("Todo").id.clone())
             .expect("the pane's board");
         workspace
-            .write_board(&on_a, |board| {
+            .write_board(&on_a, cx, |board| {
                 board.add_card(&column, "written in the left pane".into());
             })
             .expect("the pane's board");
 
         assert_eq!(
             workspace
-                .board_at(&on_a)
+                .board_at(&on_a, cx)
                 .and_then(|board| board.column(&column))
                 .map(|column| column.cards.len()),
             Some(1),
         );
         assert!(
             workspace
-                .board_at(&on_b)
+                .board_at(&on_b, cx)
                 .expect("still there")
                 .columns
                 .is_empty(),
@@ -1035,9 +1044,9 @@ fn a_stale_board_write_lands_on_the_other_writers_board(cx: &mut gpui::TestAppCo
         let path = scratch.project("one");
         workspace.open_project(path.clone(), cx);
         workspace.new_board(0, "Plans".into(), "PLAN", cx).ok();
-        let id = workspace.active_board().expect("a board").id.clone();
+        let id = workspace.active_board(cx).expect("a board").id.clone();
         let column = workspace
-            .write_board(&id, |board| board.add_column("Todo").id.clone())
+            .write_board(&id, cx, |board| board.add_column("Todo").id.clone())
             .expect("the board");
 
         // The other writer, straight through the backend, unseen by the window.
@@ -1047,7 +1056,7 @@ fn a_stale_board_write_lands_on_the_other_writers_board(cx: &mut gpui::TestAppCo
         other.save_board(&mut theirs).expect("their save");
 
         workspace
-            .write_board(&id, |board| {
+            .write_board(&id, cx, |board| {
                 board.add_card(&column, "mine".into());
             })
             .expect("the board");
@@ -1064,7 +1073,7 @@ fn a_stale_board_write_lands_on_the_other_writers_board(cx: &mut gpui::TestAppCo
         let saved = other.board(&id).expect("on disk");
         assert_eq!(texts(&saved), ["theirs", "mine"]);
         assert_eq!(
-            texts(workspace.active_board().expect("held")),
+            texts(workspace.active_board(cx).expect("held")),
             ["theirs", "mine"]
         );
     });
@@ -1105,7 +1114,7 @@ fn an_article_made_in_a_pane_stays_in_the_space(cx: &mut gpui::TestAppContext) {
         let ix = workspace.create_article().expect("made");
         let id = workspace.projects[0].articles[ix].id.clone();
         let member = workspace
-            .member_of(0, Showing::Article(id))
+            .member_of(0, Showing::Article(id), cx)
             .expect("a member");
         workspace.stack_pane(&b, &member, cx);
         assert_eq!(workspace.space, Some(0));

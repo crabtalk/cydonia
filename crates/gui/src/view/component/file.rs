@@ -1,6 +1,11 @@
 //! Small text-file buffers with explicit saves and external-change detection.
 
-use crate::model::{typography, workspace::Workspace};
+use crate::model::language::{Grammars as _, Installable as _};
+use crate::model::{
+    disk::{Files as _, Here},
+    typography,
+    workspace::Workspace,
+};
 use bezel::{
     gpui::{
         self, Context, Entity, Focusable, Render, Subscription, Task, WeakEntity, Window, div,
@@ -11,8 +16,6 @@ use bezel::{
     ui::widgets::{ButtonStyle, Buttons as _, Controls as _},
 };
 use markdown::AppExt as _;
-#[cfg(feature = "desktop")]
-use std::io::{Read, Write};
 use std::{
     cell::Cell,
     ops::Range,
@@ -34,16 +37,7 @@ gpui::actions!(
 );
 
 pub(crate) fn read_text(path: &Path) -> anyhow::Result<String> {
-    #[cfg(feature = "desktop")]
-    let bytes = {
-        anyhow::ensure!(std::fs::metadata(path)?.is_file(), "Choose a regular file");
-        let file = std::fs::File::open(path)?;
-        let mut bytes = Vec::new();
-        file.take(LIMIT + 1).read_to_end(&mut bytes)?;
-        bytes
-    };
-    #[cfg(not(feature = "desktop"))]
-    let bytes = crate::model::disk::read(path)?;
+    let bytes = Here::read(path, LIMIT)?;
     anyhow::ensure!(
         bytes.len() as u64 <= LIMIT,
         "Files larger than 256 KiB must be opened externally"
@@ -71,45 +65,20 @@ pub(crate) fn write_text(
         source.len() as u64 <= LIMIT,
         "Files larger than 256 KiB must be edited externally"
     );
-    replace(path, saved, source, overwrite)
-}
-
-/// Put `source` where `path` is, through a temporary beside it so a failed
-/// write leaves the file as it was.
-#[cfg(feature = "desktop")]
-fn replace(path: &Path, saved: &str, source: &str, overwrite: bool) -> anyhow::Result<()> {
-    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let sequence = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let temporary = path.with_file_name(format!(".cydonia-save-{}-{sequence}", std::process::id()));
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temporary)?;
-    let result = (|| -> anyhow::Result<()> {
-        if let Ok(metadata) = std::fs::metadata(path) {
-            file.set_permissions(metadata.permissions())?;
-        }
-        file.write_all(source.as_bytes())?;
-        file.sync_all()?;
-        if !overwrite {
-            anyhow::ensure!(
-                read_text(path)? == saved,
-                "File changed on disk. Reload or overwrite to continue."
-            );
-        }
-        std::fs::rename(&temporary, path)?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&temporary);
-    }
-    result
-}
-
-#[cfg(not(feature = "desktop"))]
-fn replace(path: &Path, saved: &str, source: &str, overwrite: bool) -> anyhow::Result<()> {
-    let _ = (saved, overwrite);
-    Ok(crate::model::disk::write(path, source.as_bytes())?)
+    Ok(Here::replace(
+        path,
+        source.as_bytes(),
+        || match overwrite {
+            true => Ok(()),
+            false => match read_text(path) {
+                Ok(text) if text == saved => Ok(()),
+                Ok(_) => Err(std::io::Error::other(
+                    "File changed on disk. Reload or overwrite to continue.",
+                )),
+                Err(err) => Err(std::io::Error::other(format!("{err:#}"))),
+            },
+        },
+    )?)
 }
 
 fn normalized(source: &str) -> String {
@@ -219,7 +188,8 @@ impl FileView {
                     this.update(cx, |this, cx| {
                         this.refresh_grammar(cx);
                         this.unpainted()
-                            .is_some_and(crate::model::language::available)
+                            .and_then(crate::model::language::Spec::named)
+                            .is_some()
                     }),
                     Ok(true)
                 ) {
@@ -250,7 +220,7 @@ impl FileView {
         Self {
             root,
             focus: cx.focus_handle(),
-            language: crate::model::language::of(&path),
+            language: crate::model::language::Here::of(&path),
             path,
             field,
             saved: String::new(),
@@ -403,8 +373,11 @@ impl FileView {
         let Some(name) = self.unpainted() else {
             return;
         };
-        let status = crate::model::language::status(name);
-        let language = crate::model::language::of(&self.path);
+        let status = crate::model::language::Spec::named(name)
+            .map_or(crate::model::language::Status::Missing, |spec| {
+                spec.status()
+            });
+        let language = crate::model::language::Here::of(&self.path);
         if self.language != language {
             self.language = language;
             self.grammar_status = None;
@@ -419,7 +392,7 @@ impl FileView {
     fn grammar_notice(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
         use crate::model::language::{self, Status};
         let name = self.unpainted()?;
-        if !self.ready || self.grammar_dismissed || !language::available(name) {
+        if !self.ready || self.grammar_dismissed || language::Spec::named(name).is_none() {
             return None;
         }
         let status = self.grammar_status.clone().unwrap_or(Status::Missing);
@@ -480,7 +453,9 @@ impl FileView {
                         .debug_selector(|| "install-grammar".into())
                         .flex_none()
                         .on_click(cx.listener(move |this, _, _, cx| {
-                            language::start_install(name);
+                            if let Some(spec) = language::Spec::named(name) {
+                                spec.start_install();
+                            }
                             this.refresh_grammar(cx);
                         })),
                 )
@@ -550,10 +525,10 @@ impl FileView {
             root_name,
             relative.display().to_string().replace('/', "  ›  ")
         );
-        let markdown = self
-            .path
-            .extension()
-            .is_some_and(|ext| ext == "md" || ext == "markdown");
+        let markdown = matches!(
+            self.language,
+            Some(crate::model::language::Language::Markdown)
+        );
         let bar = super::status::bar(&theme)
             .child(super::status::path(&self.path, breadcrumb))
             .when(markdown && self.ready, |row| {
@@ -610,7 +585,7 @@ impl FileView {
 
     fn open_external(&mut self, target: external::Target, cx: &mut Context<Self>) {
         if cfg!(not(feature = "desktop")) {
-            cx.emit(crate::view::desktop::DesktopOnly(
+            cx.emit(crate::view::modals::desktop::DesktopOnly(
                 "Opening a file in another app",
             ));
             return;
@@ -722,7 +697,7 @@ impl FileView {
                             scroll.set_offset(gpui::point(offset.x, y));
                             target_line.set(None);
                             reveal.set(false);
-                            window.refresh();
+                            window.request_animation_frame();
                         }
                         if reveal.replace(false)
                             && field.focus_handle(cx).is_focused(window)
@@ -807,7 +782,7 @@ impl Focusable for FileView {
     }
 }
 
-impl gpui::EventEmitter<crate::view::desktop::DesktopOnly> for FileView {}
+impl gpui::EventEmitter<crate::view::modals::desktop::DesktopOnly> for FileView {}
 
 impl Render for FileView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -820,10 +795,10 @@ impl Render for FileView {
                 cx,
             );
         });
-        let markdown = self
-            .path
-            .extension()
-            .is_some_and(|ext| ext == "md" || ext == "markdown");
+        let markdown = matches!(
+            self.language,
+            Some(crate::model::language::Language::Markdown)
+        );
         let preview_doc = (markdown && self.preview && self.ready).then(|| {
             Rc::new(markdown::parse_with(
                 self.field.read(cx).content(),

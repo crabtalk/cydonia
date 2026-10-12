@@ -7,22 +7,14 @@
 //! an instrument you can watch, an inventory belongs on a page you open.
 
 use crate::{
-    model::{cover, watch, workspace::Resident},
-    view::settings::{self, SettingsWindow, Switch},
+    model::{watch, workspace::Resident},
+    view::settings::{self, SettingsWindow, Switch, group, labelled},
 };
 use bezel::{
-    gpui::{AnyElement, Context, Window, div, prelude::*, px},
+    gpui::{AnyElement, Context, div, prelude::*, px},
     theme::{TextStyle, Theme, Typeset},
-    ui::widgets::{Buttons, Scaffolding},
+    ui::widgets::{Controls, Scaffolding},
 };
-
-/// The least the ceiling may be set to: one cover, rounded up to whole
-/// megabytes. Below it the open article would be evicted as it is drawn.
-const FLOOR: u64 = cover::RASTER_BYTES / 1_000_000 + 1;
-
-/// How wide a dialog the settings window stands over its body. Shared with
-/// [`super::agents`], so the two land on the same shape.
-pub(super) const DIALOG_WIDTH: f32 = 320.;
 
 /// The watch delays the row offers, named for what they buy rather than for
 /// what they are. The middle one is [`watch::BOUNCE`], which is what a file
@@ -32,15 +24,6 @@ const BOUNCES: [(u64, &str); 3] = [
     (watch::BOUNCE, "Balanced"),
     (500, "Relaxed"),
 ];
-
-/// How many covers a ceiling of `mb` admits — the capacity the cache runs at,
-/// which is the ceiling floored to whole pictures.
-fn covers_under(mb: u64) -> String {
-    match mb * 1_000_000 / cover::RASTER_BYTES {
-        1 => "one cover".to_owned(),
-        n => format!("{n} covers"),
-    }
-}
 
 impl SettingsWindow {
     pub(super) fn performance_body(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -53,7 +36,6 @@ impl SettingsWindow {
                 theme
                     .group_box()
                     .child(self.meter_row(cx))
-                    .child(self.cover_memory_row(cx))
                     .child(self.watch_bounce_row(cx)),
             )
             .child(self.resident_group(cx))
@@ -80,45 +62,6 @@ impl SettingsWindow {
         )
     }
 
-    /// The ceiling decoded covers run under. Typed rather than stepped: the
-    /// useful values are far apart, and a press each way reaches none of them.
-    fn cover_memory_row(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let theme = Theme::of(cx).clone();
-        let mb = self.workspace.read(cx).settings.cover_memory;
-        theme
-            .card_row(false)
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(theme.row_title("Cover memory"))
-                    .child(
-                        div()
-                            .mt(px(4.))
-                            .text_style(TextStyle::Subheadline)
-                            .text_color(theme.text_muted)
-                            .child(format!("Room for {}.", covers_under(mb))),
-                    ),
-            )
-            .child(
-                theme
-                    .ghost("cover-memory")
-                    .px(px(10.))
-                    .py(px(3.))
-                    .border_1()
-                    .border_color(theme.border)
-                    .bg(theme.input_bg)
-                    .text_style(TextStyle::Callout)
-                    .text_color(theme.text)
-                    .child(format!("{mb} MB"))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.edit_field(settings::Field::CoverMemory, mb.to_string(), window, cx)
-                    })),
-            )
-    }
-
     /// How long a project's `.cydonia/` has to go quiet before the watch
     /// re-reads it — see [`crate::model::watch`].
     ///
@@ -134,72 +77,30 @@ impl SettingsWindow {
         let ms = watch::bounce(self.workspace.read(cx).settings.watch_bounce).as_millis();
         theme
             .card_row(false)
+            .child(labelled(
+                &theme,
+                "Watch delay",
+                format!("Changes on disk show after {ms} ms of quiet."),
+                false,
+            ))
             .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(theme.row_title("Watch delay"))
-                    .child(
-                        div()
-                            .mt(px(4.))
-                            .text_style(TextStyle::Subheadline)
-                            .text_color(theme.text_muted)
-                            .child(format!("Changes on disk show after {ms} ms of quiet.")),
-                    ),
+                theme
+                    .segmented(
+                        "watch-bounce",
+                        BOUNCES.map(|(_, label)| label),
+                        BOUNCES
+                            .iter()
+                            .position(|(value, _)| u128::from(*value) == ms)
+                            .unwrap_or(usize::MAX),
+                        cx.listener(|this, ix: &usize, _, cx| {
+                            this.workspace.update(cx, |workspace, cx| {
+                                workspace.set_watch_bounce(BOUNCES[*ix].0, cx)
+                            });
+                            cx.notify();
+                        }),
+                    )
+                    .flex_none(),
             )
-            .child(
-                div()
-                    .flex_none()
-                    .flex()
-                    .flex_row()
-                    .gap(px(2.))
-                    .p(px(2.))
-                    .rounded(px(Theme::button_radius()))
-                    .border_1()
-                    .border_color(theme.border)
-                    .children(BOUNCES.into_iter().map(|(value, label)| {
-                        let selected = u128::from(value) == ms;
-                        div()
-                            .id(("watch-bounce", value as usize))
-                            .px(px(10.))
-                            .py(px(4.))
-                            .rounded(px(Theme::control_radius()))
-                            .text_style(TextStyle::Callout)
-                            .cursor_pointer()
-                            .when(selected, |el| {
-                                el.bg(theme.element_active).text_color(theme.text)
-                            })
-                            .when(!selected, |el| {
-                                el.text_color(theme.text_muted)
-                                    .hover(|el| el.bg(theme.element_hover))
-                            })
-                            .child(label)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.workspace.update(cx, |workspace, cx| {
-                                    workspace.set_watch_bounce(value, cx)
-                                });
-                                cx.notify();
-                            }))
-                    })),
-            )
-    }
-
-    /// Take what was typed, if it is a number. Anything else leaves the
-    /// ceiling where it was rather than guessing at what was meant.
-    pub(super) fn save_cover_memory(
-        &mut self,
-        typed: &str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Ok(mb) = typed.trim().parse::<u64>() {
-            let mb = mb.max(FLOOR);
-            self.workspace.update(cx, |workspace, cx| {
-                workspace.set_cover_memory(mb, window, cx)
-            });
-        }
     }
 
     /// What is in memory, counted when the page is drawn. Read-only: this is
@@ -209,16 +110,11 @@ impl SettingsWindow {
         let Resident {
             projects,
             articles,
-            editors,
-            covers,
+            documents,
             sessions,
             items,
         } = self.workspace.read(cx).resident(cx);
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(settings::LABEL_GAP))
-            .child(theme.field_label("Resident"))
+        group(&theme, "Resident")
             .child(
                 theme
                     .group_box()
@@ -232,15 +128,8 @@ impl SettingsWindow {
                     .child(self.stat_row(
                         false,
                         "Articles",
-                        "Holding an editor, of those listed.",
-                        format!("{editors} of {articles}"),
-                        cx,
-                    ))
-                    .child(self.stat_row(
-                        false,
-                        "Covers",
-                        "Decoded and held, at twice their declared size.",
-                        format!("{covers} · {} MB each", cover::RASTER_BYTES / 1_000_000),
+                        "Holding a document, of those listed.",
+                        format!("{documents} of {articles}"),
                         cx,
                     ))
                     .child(self.stat_row(
@@ -265,21 +154,7 @@ impl SettingsWindow {
         let theme = Theme::of(cx).clone();
         theme
             .card_row(first)
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(theme.row_title(title))
-                    .child(
-                        div()
-                            .mt(px(4.))
-                            .text_style(TextStyle::Subheadline)
-                            .text_color(theme.text_muted)
-                            .child(note),
-                    ),
-            )
+            .child(labelled(&theme, title, note, false))
             .child(
                 div()
                     .flex_none()

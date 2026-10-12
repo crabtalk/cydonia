@@ -71,7 +71,7 @@ fn the_order_is_keyed_by_identity(cx: &mut gpui::TestAppContext) {
         let entries: Vec<state::Entry> = (0..3)
             .map(|ix| {
                 workspace
-                    .entry_of(0, board(workspace, ix))
+                    .entry_of(0, board(workspace, ix), cx)
                     .expect("an entry")
             })
             .collect();
@@ -79,8 +79,8 @@ fn the_order_is_keyed_by_identity(cx: &mut gpui::TestAppContext) {
         let reversed: Vec<state::Entry> = entries.iter().rev().cloned().collect();
         workspace.set_order(0, reversed, cx);
 
-        assert_eq!(workspace.rank_of(0, board(workspace, 0)), Some(2));
-        assert_eq!(workspace.rank_of(0, board(workspace, 2)), Some(0));
+        assert_eq!(workspace.rank_of(0, board(workspace, 0), cx), Some(2));
+        assert_eq!(workspace.rank_of(0, board(workspace, 2), cx), Some(0));
     });
 }
 
@@ -95,7 +95,7 @@ fn a_new_entry_has_no_rank(cx: &mut gpui::TestAppContext) {
         let held: Vec<state::Entry> = (0..3)
             .map(|ix| {
                 workspace
-                    .entry_of(0, board(workspace, ix))
+                    .entry_of(0, board(workspace, ix), cx)
                     .expect("an entry")
             })
             .collect();
@@ -103,10 +103,10 @@ fn a_new_entry_has_no_rank(cx: &mut gpui::TestAppContext) {
         workspace.new_board(0, "Fourth".into(), "FOU", cx).ok();
 
         let fresh = (0..4)
-            .find(|ix| workspace.rank_of(0, board(workspace, *ix)).is_none())
+            .find(|ix| workspace.rank_of(0, board(workspace, *ix), cx).is_none())
             .expect("the new one is unranked");
         assert_eq!(
-            workspace.rank_of(0, board(workspace, fresh)),
+            workspace.rank_of(0, board(workspace, fresh), cx),
             None,
             "made since the order was written"
         );
@@ -126,7 +126,7 @@ fn the_order_survives_a_relaunch(cx: &mut gpui::TestAppContext) {
             .rev()
             .map(|ix| {
                 workspace
-                    .entry_of(0, board(workspace, ix))
+                    .entry_of(0, board(workspace, ix), cx)
                     .expect("an entry")
             })
             .collect();
@@ -139,8 +139,8 @@ fn the_order_survives_a_relaunch(cx: &mut gpui::TestAppContext) {
 
     // And read back into a workspace that never saw the drag.
     let next = cx.new(|cx| Workspace::new(Settings::default(), restored, cx));
-    next.update(cx, |workspace, _| {
-        assert_eq!(workspace.rank_of(0, board(workspace, 0)), Some(2));
+    next.update(cx, |workspace, cx| {
+        assert_eq!(workspace.rank_of(0, board(workspace, 0), cx), Some(2));
     });
 }
 
@@ -156,23 +156,23 @@ fn a_pin_is_held_apart_from_the_order(cx: &mut gpui::TestAppContext) {
         let held: Vec<state::Entry> = (0..3)
             .map(|ix| {
                 workspace
-                    .entry_of(0, board(workspace, ix))
+                    .entry_of(0, board(workspace, ix), cx)
                     .expect("an entry")
             })
             .collect();
         workspace.set_order(0, held, cx);
 
-        assert!(!workspace.is_pinned(0, board(workspace, 2)));
+        assert!(!workspace.is_pinned(0, board(workspace, 2), cx));
         workspace.pin(0, board(workspace, 2), true, cx);
-        assert_eq!(workspace.pin_rank(0, board(workspace, 2)), Some(0));
+        assert_eq!(workspace.pin_rank(0, board(workspace, 2), cx), Some(0));
         assert_eq!(
-            workspace.rank_of(0, board(workspace, 2)),
+            workspace.rank_of(0, board(workspace, 2), cx),
             Some(2),
             "and keeps the place it had, for when it is let back down"
         );
 
         workspace.pin(0, board(workspace, 2), false, cx);
-        assert_eq!(workspace.pin_rank(0, board(workspace, 2)), None);
+        assert_eq!(workspace.pin_rank(0, board(workspace, 2), cx), None);
     });
 }
 
@@ -187,8 +187,8 @@ fn a_new_pin_goes_under_the_ones_already_there(cx: &mut gpui::TestAppContext) {
         workspace.pin(0, board(workspace, 0), true, cx);
         workspace.pin(0, board(workspace, 1), true, cx);
 
-        assert_eq!(workspace.pin_rank(0, board(workspace, 0)), Some(0));
-        assert_eq!(workspace.pin_rank(0, board(workspace, 1)), Some(1));
+        assert_eq!(workspace.pin_rank(0, board(workspace, 0), cx), Some(0));
+        assert_eq!(workspace.pin_rank(0, board(workspace, 1), cx), Some(1));
     });
 }
 
@@ -205,7 +205,7 @@ fn pinning_twice_holds_one_pin(cx: &mut gpui::TestAppContext) {
         workspace.pin(0, board(workspace, 1), true, cx);
 
         assert_eq!(
-            workspace.pin_rank(0, board(workspace, 1)),
+            workspace.pin_rank(0, board(workspace, 1), cx),
             Some(1),
             "one pin ahead of it, not two"
         );
@@ -233,8 +233,8 @@ fn pins_survive_a_relaunch(cx: &mut gpui::TestAppContext) {
     );
 
     let next = cx.new(|cx| Workspace::new(Settings::default(), restored, cx));
-    next.update(cx, |workspace, _| {
-        assert!(workspace.is_pinned(0, board(workspace, 1)));
+    next.update(cx, |workspace, cx| {
+        assert!(workspace.is_pinned(0, board(workspace, 1), cx));
     });
 }
 
@@ -250,7 +250,7 @@ fn sorting_by_name_leaves_the_arrangement_alone(cx: &mut gpui::TestAppContext) {
         let entries: Vec<state::Entry> = (0..3)
             .map(|ix| {
                 workspace
-                    .entry_of(0, board(workspace, ix))
+                    .entry_of(0, board(workspace, ix), cx)
                     .expect("an entry")
             })
             .collect();
@@ -261,13 +261,13 @@ fn sorting_by_name_leaves_the_arrangement_alone(cx: &mut gpui::TestAppContext) {
         workspace.set_sort(0, state::Sort::Name, cx);
         assert_eq!(workspace.sort_of(0), state::Sort::Name);
         assert_eq!(
-            workspace.rank_of(0, board(workspace, 0)),
+            workspace.rank_of(0, board(workspace, 0), cx),
             Some(2),
             "the drags are still written down"
         );
 
         workspace.set_sort(0, state::Sort::Manual, cx);
-        assert_eq!(workspace.rank_of(0, board(workspace, 2)), Some(0));
+        assert_eq!(workspace.rank_of(0, board(workspace, 2), cx), Some(0));
     });
 }
 

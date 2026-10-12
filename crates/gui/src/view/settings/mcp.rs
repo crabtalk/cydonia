@@ -9,10 +9,10 @@
 
 use crate::{
     model::workspace::Workspace,
-    view::settings::{SettingsWindow, Switch},
+    view::settings::{SettingsWindow, Switch, labelled},
 };
 use bezel::{
-    gpui::{AnyElement, ClipboardItem, Context, div, prelude::*, px},
+    gpui::{AnyElement, ClipboardItem, Context, div, prelude::*},
     motion::{Fade, Painter},
     theme::{TextStyle, Theme, Typeset},
     ui::{
@@ -120,22 +120,7 @@ impl SettingsWindow {
         Some(
             theme
                 .card_row(false)
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .flex()
-                        .flex_col()
-                        .child(theme.row_title("Address"))
-                        .child(
-                            div()
-                                .mt(px(4.))
-                                .truncate()
-                                .text_style(TextStyle::Subheadline)
-                                .text_color(theme.text_muted)
-                                .child(url),
-                        ),
-                )
+                .child(labelled(&theme, "Address", url, true))
                 .child(
                     theme
                         .button(

@@ -10,25 +10,17 @@ use bezel::gpui::{self, Render};
 use bezel::ui::AppExt as _;
 
 struct ChatView {
-    workspace: gpui::Entity<Workspace>,
-    _watch: gpui::Subscription,
+    view: gpui::Entity<SessionView>,
 }
 
 impl Render for ChatView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let body = self.workspace.update(cx, |workspace, cx| {
-            super::render(
-                workspace.session(1).unwrap(),
-                None,
-                800.,
-                |_, _| None,
-                |_, _, _| {},
-                super::Drawn::Pane,
-                window,
-                cx,
-            )
-        });
-        div().w(px(800.)).h(px(500.)).flex().flex_col().child(body)
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .w(px(800.))
+            .h(px(500.))
+            .flex()
+            .flex_col()
+            .child(self.view.clone())
     }
 }
 
@@ -49,9 +41,9 @@ fn a_settled_transcript_hides_its_thumb(cx: &mut gpui::TestAppContext) {
         cx.set_scrollbar_visibility(bezel::ui::scroll::Visibility::Scrolling);
     });
     let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));
-    workspace.update(cx, |workspace, _| {
+    workspace.update(cx, |workspace, cx| {
         let cwd = std::path::PathBuf::from("/nonexistent/cydonia-scrollbar-test");
-        let mut project = Project::new(cwd.clone());
+        let mut project = Project::new(cwd.clone(), cx);
         let record = serde_json::from_value(serde_json::json!({"id":"test", "agent":"test", "title":"", "name":null, "updated":1, "items":[]})).unwrap();
         let mut chat = ChatSession::restore(
             1,
@@ -71,12 +63,21 @@ fn a_settled_transcript_hides_its_thumb(cx: &mut gpui::TestAppContext) {
                 "Answer {i}\n\nAnother paragraph with **bold** text."
             )));
         }
-        project.sessions.push(chat);
+        project.sessions.push(crate::model::project::HeldSession::new(chat, cx));
         workspace.projects.push(project);
     });
     let window = cx.add_window(|_, cx| ChatView {
-        _watch: cx.observe(&workspace, |_, _, cx| cx.notify()),
-        workspace: workspace.clone(),
+        view: cx.new(|cx| {
+            SessionView::new(
+                1,
+                None,
+                Drawn::Pane,
+                0.,
+                workspace.clone(),
+                gpui::WeakEntity::new_invalid(),
+                cx,
+            )
+        }),
     });
     let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
     visual.run_until_parked();

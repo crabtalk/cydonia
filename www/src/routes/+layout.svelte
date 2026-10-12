@@ -5,7 +5,7 @@
 	import Brand from '$lib/Brand.svelte';
 	import Logo from '$lib/Logo.svelte';
 	import Crab from '$lib/Crab.svelte';
-	import Glyphs from '$lib/Glyphs.svelte';
+	import Terrain from '$lib/Terrain.svelte';
 	import Signature from '$lib/Signature.svelte';
 	import { crabtalk, discord, repo } from '$lib/meta.js';
 	import { page } from '$app/state';
@@ -17,7 +17,7 @@
 	// The docs are as wide as the bar, 1400px; the home page 1200px, the other
 	// pages 1080px. The foot follows the page's width.
 	const docs = $derived(page.url.pathname.startsWith('/docs'));
-	const home = $derived(page.url.pathname === `${base}/` || page.url.pathname === base);
+	const home = $derived(page.route.id === '/');
 	const shell = $derived(docs ? '1400px' : home ? '1200px' : '1080px');
 
 	// One delegated handler for the whole site: every `.code-block` gets a working
@@ -49,8 +49,11 @@
 			Cydonia
 		</a>
 
-		<nav>
+		<nav class="pages">
 			<a class="docs" href="{base}/docs/">Docs</a>
+		</nav>
+
+		<nav class="actions">
 			<span class="icons">
 				<a href={repo} aria-label="Cydonia on GitHub"><Brand icon={siGithub} size={15} /></a>
 				<a href={discord} target="_blank" rel="noreferrer" aria-label="Cydonia on Discord">
@@ -66,7 +69,7 @@
 
 {#if home}
 	<Signature />
-	<Glyphs />
+	<Terrain />
 {/if}
 
 <div class="page">
@@ -199,8 +202,15 @@
 		display: flex;
 		align-items: center;
 		gap: 20px;
-		margin-left: auto;
 		font-size: 14.5px;
+	}
+
+	.pages {
+		margin-left: 28px;
+	}
+
+	.actions {
+		margin-left: auto;
 	}
 
 	.docs {
@@ -221,7 +231,6 @@
 		display: flex;
 		align-items: center;
 		gap: 2px;
-		margin-left: -8px;
 		padding-right: 12px;
 		border-right: 1px solid var(--line);
 		color: var(--muted);

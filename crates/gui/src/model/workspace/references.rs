@@ -3,10 +3,11 @@
 
 use super::{Showing, Workspace};
 use crate::model::{article::Disk, project::Project};
+use artifact::error::Error;
 use artifact::{
     article::anchor,
+    kind::Kind,
     reference::{self, Span, Target, Within},
-    search::Kind,
 };
 use bezel::gpui::{App, Entity, Global, WeakEntity};
 use std::{ops::Range, path::PathBuf, rc::Rc};
@@ -72,20 +73,29 @@ impl Workspace {
 
     /// The entry a reference names, or why it names none. A reference with
     /// no project is read in the active one.
-    pub fn resolve(&self, text: &str) -> Result<Resolved, String> {
+    pub fn resolve(&self, text: &str, cx: &App) -> Result<Resolved, String> {
         let Some(reference) = reference::parse(text) else {
             return Err(format!("{text} is not a reference"));
         };
         let Some(project) = self.named_project(reference.project) else {
-            return Err(format!("No open project for {text}"));
+            return Err(Error::NoProjectNamed {
+                name: reference.project.unwrap_or_default().to_owned(),
+                open: self.projects.iter().map(|open| open.path.clone()).collect(),
+            }
+            .to_string());
         };
         let (number, within) = match reference.target {
             Target::Entry { number, within } => (number, within),
-            Target::Card { key, handle } => return card(project, key, handle, text),
+            Target::Card { key, handle } => return card(project, key, handle, text, cx),
         };
-        let Some((kind, showing, title)) = entry(project, number) else {
-            return Err(format!("Nothing is {text}"));
+        let Some((kind, showing, title)) = entry(project, number, cx) else {
+            return Err(Error::NotFound {
+                what: "entry",
+                named: text.to_owned(),
+            }
+            .to_string());
         };
+        reference::fits(text, kind, within).map_err(|e| e.to_string())?;
         let part = match (within, &showing) {
             (None, _) => None,
             (Some(Within::Span(turns)), Showing::Session(_)) => Some(Part::Turns(turns)),
@@ -94,10 +104,7 @@ impl Workspace {
                 let disk = article.map(|article| article.disk()).unwrap_or_default();
                 Some(Part::Passage(passage(disk, within, text)?))
             }
-            (Some(Within::Heading(_)), Showing::Session(_)) => {
-                return Err(format!("{text} names a heading, which only an article has"));
-            }
-            (Some(_), _) => return Err(format!("{text} names part of an entry that has none")),
+            (Some(_), _) => unreachable!("refused by `reference::fits`"),
         };
         Ok(Resolved {
             project: project.path.clone(),
@@ -114,7 +121,7 @@ impl Workspace {
             Some(name) => self
                 .projects
                 .iter()
-                .find(|project| project.path.file_name().is_some_and(|last| last == name)),
+                .find(|project| reference::names(&project.path, name)),
             None => self.active_project(),
         }
     }
@@ -122,10 +129,9 @@ impl Workspace {
 
 /// The entry `number` names in `project`: its kind, what shows it, and its
 /// own title.
-fn entry(project: &Project, number: u64) -> Option<(Kind, Showing, String)> {
+fn entry(project: &Project, number: u64, cx: &App) -> Option<(Kind, Showing, String)> {
     project
-        .sessions
-        .iter()
+        .chats(cx)
         .find(|chat| chat.number == Some(number))
         .map(|chat| (Kind::Session, Showing::Session(chat.id), chat.title.clone()))
         .or_else(|| {
@@ -145,6 +151,7 @@ fn entry(project: &Project, number: u64) -> Option<(Kind, Showing, String)> {
             project
                 .boards
                 .iter()
+                .map(|held| held.board.read(cx))
                 .find(|board| board.number == Some(number))
                 .map(|board| {
                     (
@@ -171,21 +178,31 @@ fn entry(project: &Project, number: u64) -> Option<(Kind, Showing, String)> {
 
 /// The card `key-handle` names in `project`, as a part of its board. `text`
 /// is the reference, for the refusal.
-fn card(project: &Project, key: &str, handle: u64, text: &str) -> Result<Resolved, String> {
+fn card(
+    project: &Project,
+    key: &str,
+    handle: u64,
+    text: &str,
+    cx: &App,
+) -> Result<Resolved, String> {
     let Some(board) = project
         .boards
         .iter()
-        .find(|board| board.key.eq_ignore_ascii_case(key))
+        .map(|held| held.board.read(cx))
+        .find(|board| board.keyed(key))
     else {
-        return Err(format!("No board has the key {key}"));
+        return Err(Error::NotFound {
+            what: "board",
+            named: key.to_owned(),
+        }
+        .to_string());
     };
-    let Some(found) = board
-        .columns
-        .iter()
-        .flat_map(|column| column.cards.iter())
-        .find(|card| card.handle == Some(handle))
-    else {
-        return Err(format!("Nothing is {text}"));
+    let Some(found) = board.card_at(handle) else {
+        return Err(Error::NotFound {
+            what: "card",
+            named: text.to_owned(),
+        }
+        .to_string());
     };
     let Some(number) = board.number else {
         return Err(format!("{text} is on a board with no number"));
@@ -209,25 +226,12 @@ fn card(project: &Project, key: &str, handle: u64, text: &str) -> Result<Resolve
 /// The blocks of `disk` a span of lines or a heading names. `text` is the
 /// reference, for the refusal.
 fn passage(disk: Rc<Disk>, within: Within<'_>, text: &str) -> Result<Passage, String> {
-    let (bytes, label) = match within {
-        Within::Span(span) => {
-            let bytes = anchor::lines(&disk.text, span).ok_or_else(|| {
-                format!(
-                    "{text} starts past the article's last line, {}",
-                    disk.text.lines().count()
-                )
-            })?;
-            let label = match span.from == span.to {
-                true => format!("line {span}"),
-                false => format!("lines {span}"),
-            };
-            (bytes, label)
-        }
-        Within::Heading(name) => {
-            let (heading, bytes) = anchor::section(&disk.text, name)
-                .ok_or_else(|| format!("{text} names a heading the article does not have"))?;
-            (bytes, heading.text)
-        }
+    let (bytes, heading) = anchor::excerpt(&disk.text, within, text).map_err(|e| e.to_string())?;
+    let label = match (heading, within) {
+        (Some(heading), _) => heading.text,
+        (None, Within::Span(span)) if span.from == span.to => format!("line {span}"),
+        (None, Within::Span(span)) => format!("lines {span}"),
+        (None, Within::Heading(name)) => name.to_owned(),
     };
     let first = disk
         .blocks
@@ -250,8 +254,12 @@ fn passage(disk: Rc<Disk>, within: Within<'_>, text: &str) -> Result<Passage, St
 
 /// [`Workspace::resolve`] on the installed workspace.
 pub fn resolve_in(text: &str, cx: &App) -> Option<Resolved> {
-    let workspace = cx.try_global::<Current>()?.0.upgrade()?;
-    workspace.read(cx).resolve(text).ok()
+    current(cx)?.read(cx).resolve(text, cx).ok()
+}
+
+/// The workspace [`Workspace::install`] made current.
+pub fn current(cx: &App) -> Option<Entity<Workspace>> {
+    cx.try_global::<Current>()?.0.upgrade()
 }
 
 #[cfg(test)]

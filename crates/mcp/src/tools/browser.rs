@@ -58,11 +58,7 @@ pub static TOOLS: [Tool; 7] = [
             With `tab` it loads the URL in that tab. Without one it brings forward a tab \
             already at the URL, unreloaded, or else opens a new tab in the project's right \
             panel. A plain fetch is cheaper for an ordinary public page.",
-        schema: |bound| {
-            let mut schema = fields(bound, &[PROJECT, URL]);
-            schema["properties"][TAB.name] = json!({ "type": "integer", "description": TAB.about });
-            schema
-        },
+        schema: |bound| with_tab(fields(bound, &[PROJECT, URL])),
         writes: false,
         deletes: false,
         call: open,
@@ -121,8 +117,7 @@ pub static TOOLS: [Tool; 7] = [
         schema: |bound| {
             let mut schema = with_tab(fields(bound, &[PROJECT, TEXT]));
             number(&mut schema, ELEMENT, "integer");
-            schema["properties"][ENTER.name] =
-                json!({ "type": "boolean", "description": ENTER.about });
+            super::optional(&mut schema, ENTER, "boolean");
             schema
         },
         writes: false,
@@ -143,7 +138,7 @@ pub fn acting() -> &'static [Tool] {
 }
 
 fn with_tab(mut schema: Value) -> Value {
-    schema["properties"][TAB.name] = json!({ "type": "integer", "description": TAB.about });
+    super::optional(&mut schema, TAB, "integer");
     schema
 }
 
@@ -174,13 +169,7 @@ fn element(args: &Args<'_>) -> Result<usize, Trouble> {
 }
 
 fn ask(args: &Args<'_>, tab: Option<u64>, act: Act) -> Outcome {
-    let project = root(args)?.to_path_buf();
-    if !rail::is_open(&project) {
-        return Err(Trouble::Refused(format!(
-            "cydonia does not have {} open, so it has no browser there",
-            project.display()
-        )));
-    }
+    let project = super::on_the_rail(root(args)?)?.to_path_buf();
     rail::browse(project, tab, act).map(Answer::said)
 }
 

@@ -1,7 +1,7 @@
 //! Auto-generated settings — written with defaults on first run, read on
 //! launch. Editable, but never requires user maintenance.
 
-use crate::{memory, model::watch};
+use crate::model::watch;
 use anyhow::{Context, Result};
 use bezel::theme::{TextStyle, appearance::AppearanceMode};
 use serde::{Deserialize, Serialize};
@@ -10,16 +10,40 @@ use std::{collections::BTreeMap, path::PathBuf};
 /// What the file is called inside [`dir`].
 const FILE: &str = "settings.toml";
 
+/// What the body size may be set to, in points: the ladder's smallest measured
+/// role to Title3's. Applied when settings are read as well as by the control.
+pub const TEXT_SIZE: (f32, f32) = (11., 17.);
+
+/// What content text may be set to, in points.
+pub const CONTENT_TEXT_SIZE: (f32, f32) = (8., 40.);
+
+/// Monospace text, where nothing else has been said — the terminal's size.
+pub const MONO_TEXT_SIZE: f32 = 13.;
+
+/// The range [`Appearance::vibrancy`] is held to: how opaque the tint over
+/// the frosted window may be.
+pub const VIBRANCY: (f32, f32) = (0.5, 0.95);
+
+/// The range [`Appearance::blur`] is held to, in native filter pixels.
+pub const BLUR: (f32, f32) = (0., 120.);
+
+/// The engines Settings offers, by name, as [`Browsing::search`] templates.
+pub const SEARCH_ENGINES: [(&str, &str); 4] = [
+    ("DuckDuckGo", "https://duckduckgo.com/?q=%s"),
+    ("Google", "https://www.google.com/search?q=%s"),
+    ("Bing", "https://www.bing.com/search?q=%s"),
+    ("Kagi", "https://kagi.com/search?q=%s"),
+];
+
+/// The launchers that resolve a package name on every run.
+const RUNNERS: [&str; 3] = ["npx", "bunx", "pnpx"];
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Settings {
-    /// The ceiling decoded covers run under, in megabytes. A bare key, so it
-    /// is declared above `features`: one written after that table would belong
-    /// to it.
-    #[serde(default = "cover_memory")]
-    pub cover_memory: u64,
     /// How long a project's `.cydonia/` has to go quiet before the watch
-    /// re-reads it, in milliseconds — see [`crate::model::watch`]. Bare, so it
-    /// belongs above `features` for the reason above.
+    /// re-reads it, in milliseconds — see [`crate::model::watch`]. A bare key,
+    /// so it is declared above `features`: one written after that table would
+    /// belong to it.
     ///
     /// Read through [`watch::bounce`] and never used raw: this file is edited
     /// by hand, and the ends of the range are what a hand cannot reach past.
@@ -98,25 +122,6 @@ pub struct Settings {
     pub agents: Vec<Agent>,
 }
 
-/// What the body size may be set to, in points: the ladder's smallest measured
-/// role to Title3's, so bezel's fixed chrome heights hold at either end. Read
-/// on the way in as well as by the control, because a size out of range paints
-/// an interface nobody can read the settings window to fix.
-pub const TEXT_SIZE: (f32, f32) = (11., 17.);
-
-/// Content sizes have a wider range than interface chrome.
-pub const CONTENT_TEXT_SIZE: (f32, f32) = (8., 40.);
-
-/// Monospace text, where nothing else has been said — the terminal's size.
-pub const MONO_TEXT_SIZE: f32 = 13.;
-
-/// The range [`Appearance::vibrancy`] is held to: how opaque the tint over
-/// the frosted window may be.
-pub const VIBRANCY: (f32, f32) = (0.5, 0.95);
-
-/// The range [`Appearance::blur`] is held to, in native filter pixels.
-pub const BLUR: (f32, f32) = (0., 120.);
-
 pub fn clamp_content_text_size(points: f32) -> f32 {
     if points.is_finite() {
         points.clamp(CONTENT_TEXT_SIZE.0, CONTENT_TEXT_SIZE.1)
@@ -186,6 +191,9 @@ pub struct Appearance {
     pub wide_pages: bool,
     /// Whether an article offers its floating outline button.
     pub outline: bool,
+    /// How an article's margin shows its comments. A pane too narrow for the
+    /// notes beside the column shows [`Comments::Minimal`] whatever this says.
+    pub comments: Comments,
     /// How a new board is laid out. Every board carries its own answer from the
     /// moment it is made — see [`artifact::board::Board::view`] — so this seeds
     /// one and never steers it afterwards.
@@ -446,6 +454,36 @@ impl CaretShape {
     }
 }
 
+/// How an article's margin shows its comments.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Comments {
+    /// Each note beside its line, a few lines of it.
+    #[default]
+    Full,
+    /// A mark with a count beside each commented line; pressing it opens the
+    /// note.
+    Minimal,
+}
+
+impl Comments {
+    pub const ALL: [Self; 2] = [Self::Full, Self::Minimal];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Full => "Full",
+            Self::Minimal => "Minimal",
+        }
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::Minimal => "minimal",
+        }
+    }
+}
+
 /// When overflowing panes show their scrollbars.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -504,6 +542,7 @@ impl Default for Appearance {
             chroma: 0.,
             wide_pages: false,
             outline: true,
+            comments: Comments::default(),
             board_view: artifact::board::View::List,
             indent_project_rows: true,
             settings_sidebar_fits: false,
@@ -683,6 +722,28 @@ pub struct Mcp {
     pub delete: bool,
 }
 
+/// Each setter writes its key to the file, then changes the field; a failed
+/// write leaves both as they were.
+impl Mcp {
+    pub fn set_serve(&mut self, on: bool) -> Result<()> {
+        set_key("mcp", "serve", on)?;
+        self.serve = on;
+        Ok(())
+    }
+
+    pub fn set_write(&mut self, on: bool) -> Result<()> {
+        set_key("mcp", "write", on)?;
+        self.write = on;
+        Ok(())
+    }
+
+    pub fn set_delete(&mut self, on: bool) -> Result<()> {
+        set_key("mcp", "delete", on)?;
+        self.delete = on;
+        Ok(())
+    }
+}
+
 impl Default for Mcp {
     fn default() -> Self {
         Self {
@@ -717,13 +778,46 @@ pub struct Browsing {
 
 impl bezel::gpui::Global for Browsing {}
 
-/// The engines Settings offers, by name, as [`Browsing::search`] templates.
-pub const SEARCH_ENGINES: [(&str, &str); 4] = [
-    ("DuckDuckGo", "https://duckduckgo.com/?q=%s"),
-    ("Google", "https://www.google.com/search?q=%s"),
-    ("Bing", "https://www.bing.com/search?q=%s"),
-    ("Kagi", "https://kagi.com/search?q=%s"),
-];
+/// Each setter writes its key to the file, then changes the field; a failed
+/// write leaves both as they were.
+impl Browsing {
+    pub fn set_home(&mut self, home: String) -> Result<()> {
+        set_key("browser", "home", home.as_str())?;
+        self.home = home;
+        Ok(())
+    }
+
+    pub fn set_search(&mut self, search: String) -> Result<()> {
+        set_key("browser", "search", search.as_str())?;
+        self.search = search;
+        Ok(())
+    }
+
+    pub fn set_agents_read(&mut self, on: bool) -> Result<()> {
+        set_key("browser", "agents_read", on)?;
+        self.agents_read = on;
+        Ok(())
+    }
+
+    pub fn set_agents_act(&mut self, on: bool) -> Result<()> {
+        set_key("browser", "agents_act", on)?;
+        self.agents_act = on;
+        Ok(())
+    }
+
+    pub fn set_agents_blocked(&mut self, hosts: Vec<String>) -> Result<()> {
+        let list: toml_edit::Array = hosts.iter().map(String::as_str).collect();
+        set_key("browser", "agents_blocked", list)?;
+        self.agents_blocked = hosts;
+        Ok(())
+    }
+
+    pub fn set_keep_signed_in(&mut self, on: bool) -> Result<()> {
+        set_key("browser", "keep_signed_in", on)?;
+        self.keep_signed_in = on;
+        Ok(())
+    }
+}
 
 impl Default for Browsing {
     fn default() -> Self {
@@ -782,9 +876,19 @@ pub struct Features {
     pub sessions: bool,
     pub boards: bool,
     pub tables: bool,
+    /// A session under each article, asked about its passages. Nothing of it
+    /// shows while [`Features::sessions`] is off.
+    pub article_threads: bool,
     /// `[features.panel]`: the right panel's tabs. A table, so it follows
     /// every bare key above.
     pub panel: PanelTabs,
+}
+
+impl Features {
+    /// Whether articles carry a session of their own: on, and sessions on.
+    pub fn threads(&self) -> bool {
+        self.sessions && self.article_threads
+    }
 }
 
 impl Default for Features {
@@ -793,6 +897,7 @@ impl Default for Features {
             sessions: true,
             boards: true,
             tables: false,
+            article_threads: true,
             panel: PanelTabs::default(),
         }
     }
@@ -825,6 +930,7 @@ pub enum Feature {
     Sessions,
     Boards,
     Tables,
+    ArticleThreads,
     Review,
     Files,
     Browser,
@@ -833,7 +939,12 @@ pub enum Feature {
 impl Feature {
     /// The order the Features section lists them in. Sessions first: it is the
     /// one that decides whether anything runs on this machine.
-    pub const ALL: [Self; 3] = [Self::Sessions, Self::Boards, Self::Tables];
+    pub const ALL: [Self; 4] = [
+        Self::Sessions,
+        Self::ArticleThreads,
+        Self::Boards,
+        Self::Tables,
+    ];
 
     /// The right panel's tabs, listed as a group of their own.
     pub const PANEL: [Self; 3] = [Self::Review, Self::Files, Self::Browser];
@@ -845,6 +956,7 @@ impl Feature {
             Self::Sessions => "sessions",
             Self::Boards => "boards",
             Self::Tables => "tables",
+            Self::ArticleThreads => "article_threads",
             Self::Review => "review",
             Self::Files => "files",
             Self::Browser => "browser",
@@ -865,6 +977,7 @@ impl Feature {
             Self::Sessions => features.sessions,
             Self::Boards => features.boards,
             Self::Tables => features.tables,
+            Self::ArticleThreads => features.article_threads,
             Self::Review => features.panel.review,
             Self::Files => features.panel.files,
             Self::Browser => features.panel.browser,
@@ -876,6 +989,7 @@ impl Feature {
             Self::Sessions => features.sessions = on,
             Self::Boards => features.boards = on,
             Self::Tables => features.tables = on,
+            Self::ArticleThreads => features.article_threads = on,
             Self::Review => features.panel.review = on,
             Self::Files => features.panel.files = on,
             Self::Browser => features.panel.browser = on,
@@ -896,11 +1010,6 @@ pub struct Agent {
     pub args: Vec<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
-}
-
-/// What the cover ceiling is when the file does not say.
-fn cover_memory() -> u64 {
-    memory::DEFAULT_LIMIT / 1_000_000
 }
 
 /// And the watch's bounce, which the watch itself owns.
@@ -931,10 +1040,6 @@ fn paste_images_in_source() -> bool {
 fn drawer_composer() -> bool {
     true
 }
-
-/// The launchers that resolve a package name on every run. An installed
-/// agent's command is a path to an unpacked executable, which resolves nothing.
-const RUNNERS: [&str; 3] = ["npx", "bunx", "pnpx"];
 
 impl Agent {
     /// Whether every npm package this entry names carries an exact version.
@@ -968,7 +1073,6 @@ impl Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            cover_memory: cover_memory(),
             watch_bounce: watch_bounce(),
             auto_update: auto_update(),
             notify_turns: notify_turns(),
@@ -1013,6 +1117,19 @@ pub fn dir() -> Result<PathBuf> {
     artifact::backup::config_dir()
 }
 
+/// What the TOML file at `path` holds, or the default for one that is missing
+/// or does not read.
+pub(crate) fn read_toml<T: serde::de::DeserializeOwned + Default>(path: Option<PathBuf>) -> T {
+    path.and_then(|path| std::fs::read_to_string(path).ok())
+        .and_then(|body| toml::from_str(&body).ok())
+        .unwrap_or_default()
+}
+
+/// `value` as TOML at `path`, written whole — see [`artifact::fs::save`].
+pub(crate) fn write_toml(path: &std::path::Path, value: &impl Serialize) -> Result<()> {
+    Ok(artifact::fs::save(path, toml::to_string_pretty(value)?)?)
+}
+
 /// `~/.config/cydonia/settings.toml`.
 pub(crate) fn path() -> Result<PathBuf> {
     Ok(dir()?.join(FILE))
@@ -1041,37 +1158,56 @@ pub fn load() -> Result<Settings> {
     Ok(settings)
 }
 
-/// Read `settings.toml`, hand it to `change`, and write it back when `change`
-/// says there is something to write.
-///
-/// Edited with `toml_edit` rather than re-serialised: the file is meant to be
-/// opened and changed by hand, and a round trip through a value tree would
-/// silently delete every comment in it.
+/// Where this build keeps the settings document.
 #[cfg(feature = "desktop")]
-fn edit(change: impl FnOnce(&mut toml_edit::DocumentMut) -> Result<bool>) -> Result<()> {
-    let path = path()?;
-    let body = std::fs::read_to_string(&path).unwrap_or_default();
-    let mut doc: toml_edit::DocumentMut =
-        body.parse().context("settings.toml is not valid toml")?;
-    if !change(&mut doc)? {
-        return Ok(());
-    }
-    std::fs::write(&path, doc.to_string())?;
-    Ok(())
+type Here = OnDisk;
+#[cfg(not(feature = "desktop"))]
+type Here = InMemory;
+
+/// The settings document, edited in place.
+trait Document {
+    /// Hand the document to `change`, and keep the result when `change` says
+    /// there is something to keep.
+    fn edit(change: impl FnOnce(&mut toml_edit::DocumentMut) -> Result<bool>) -> Result<()>;
 }
 
-/// The same without the `desktop` feature, which has no config directory:
-/// the document is held for as long as the process runs.
-#[cfg(not(feature = "desktop"))]
-fn edit(change: impl FnOnce(&mut toml_edit::DocumentMut) -> Result<bool>) -> Result<()> {
-    static HELD: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
-    let mut held = HELD.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    let mut doc: toml_edit::DocumentMut =
-        held.parse().context("settings.toml is not valid toml")?;
-    if change(&mut doc)? {
-        *held = doc.to_string();
+/// `settings.toml` in the config directory, edited with `toml_edit` so the
+/// comments in it survive.
+#[cfg(feature = "desktop")]
+struct OnDisk;
+
+#[cfg(feature = "desktop")]
+impl Document for OnDisk {
+    fn edit(change: impl FnOnce(&mut toml_edit::DocumentMut) -> Result<bool>) -> Result<()> {
+        let path = path()?;
+        let body = std::fs::read_to_string(&path).unwrap_or_default();
+        let mut doc: toml_edit::DocumentMut =
+            body.parse().context("settings.toml is not valid toml")?;
+        if !change(&mut doc)? {
+            return Ok(());
+        }
+        std::fs::write(&path, doc.to_string())?;
+        Ok(())
     }
-    Ok(())
+}
+
+/// A document held for as long as the process runs: this build has no config
+/// directory.
+#[cfg(not(feature = "desktop"))]
+struct InMemory;
+
+#[cfg(not(feature = "desktop"))]
+impl Document for InMemory {
+    fn edit(change: impl FnOnce(&mut toml_edit::DocumentMut) -> Result<bool>) -> Result<()> {
+        static HELD: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+        let mut held = HELD.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut doc: toml_edit::DocumentMut =
+            held.parse().context("settings.toml is not valid toml")?;
+        if change(&mut doc)? {
+            *held = doc.to_string();
+        }
+        Ok(())
+    }
 }
 
 /// One named table of the document, made if it is not there. Put in explicitly
@@ -1149,7 +1285,7 @@ impl Opener {
 
 /// Write one of `[open_with]`'s tables whole.
 pub fn set_opener(opens: Opens, opener: &Opener) -> Result<()> {
-    edit(|doc| {
+    Here::edit(|doc| {
         let open_with = table(doc, "open_with")?;
         let item = open_with[opens.key()].or_insert(toml_edit::table());
         let Some(held) = item.as_table_mut() else {
@@ -1180,7 +1316,7 @@ pub fn set_opener(opens: Opens, opener: &Opener) -> Result<()> {
 /// any of them can move in a frame. Key by key through [`table`] all the same,
 /// so a comment somebody wrote beside one of them survives the write.
 pub fn set_appearance(appearance: &Appearance) -> Result<()> {
-    edit(|doc| {
+    Here::edit(|doc| {
         write_appearance(doc, appearance)?;
         Ok(true)
     })
@@ -1238,6 +1374,7 @@ fn write_appearance(doc: &mut toml_edit::DocumentMut, appearance: &Appearance) -
     held["chroma"] = toml_edit::value(f64::from(appearance.chroma));
     held["wide_pages"] = toml_edit::value(appearance.wide_pages);
     held["outline"] = toml_edit::value(appearance.outline);
+    held["comments"] = toml_edit::value(appearance.comments.key());
     held["board_view"] = toml_edit::value(appearance.board_view.key());
     held["indent_project_rows"] = toml_edit::value(appearance.indent_project_rows);
     held["traffic_lights"] = toml_edit::value(appearance.traffic_lights);
@@ -1267,7 +1404,7 @@ fn write_appearance(doc: &mut toml_edit::DocumentMut, appearance: &Appearance) -
 
 /// Switch a feature on or off in the file.
 pub fn set_feature(feature: Feature, on: bool) -> Result<()> {
-    edit(|doc| {
+    Here::edit(|doc| {
         let features = table(doc, "features")?;
         let held = match feature.in_panel() {
             true => {
@@ -1293,7 +1430,7 @@ pub fn set_feature(feature: Feature, on: bool) -> Result<()> {
 /// table says what differs, and a command sitting on its default differs in
 /// nothing.
 pub fn set_shortcut(key: &str, chord: Option<&str>) -> Result<()> {
-    edit(|doc| {
+    Here::edit(|doc| {
         let held = table(doc, "shortcuts")?;
         match chord {
             Some(chord) => held[key] = toml_edit::value(chord),
@@ -1307,7 +1444,7 @@ pub fn set_shortcut(key: &str, chord: Option<&str>) -> Result<()> {
 
 /// Enable Emacs word shortcuts without replacing the platform defaults.
 pub fn set_emacs_shortcuts(on: bool) -> Result<()> {
-    edit(|doc| {
+    Here::edit(|doc| {
         let held = table(doc, "shortcuts")?;
         if on {
             held["emacs"] = toml_edit::value(true);
@@ -1318,34 +1455,18 @@ pub fn set_emacs_shortcuts(on: bool) -> Result<()> {
     })
 }
 
-/// Write one key of `[mcp]`.
-pub fn set_mcp(key: &str, on: bool) -> Result<()> {
-    edit(|doc| {
-        table(doc, "mcp")?[key] = toml_edit::value(on);
-        Ok(true)
-    })
-}
-
-/// Write one key of `[browser]`.
-pub fn set_browser(key: &str, value: impl Into<toml_edit::Value>) -> Result<()> {
+/// One key of one table, written to the file.
+fn set_key(table_name: &str, key: &str, value: impl Into<toml_edit::Value>) -> Result<()> {
     let value = value.into();
-    edit(|doc| {
-        table(doc, "browser")?[key] = toml_edit::value(value);
-        Ok(true)
-    })
-}
-
-/// Move the cover ceiling in the file, in megabytes.
-pub fn set_cover_memory(mb: u64) -> Result<()> {
-    edit(|doc| {
-        doc["cover_memory"] = toml_edit::value(mb as i64);
+    Here::edit(|doc| {
+        table(doc, table_name)?[key] = toml_edit::value(value);
         Ok(true)
     })
 }
 
 /// Move the watch's bounce in the file, in milliseconds.
 pub fn set_watch_bounce(ms: u64) -> Result<()> {
-    edit(|doc| {
+    Here::edit(|doc| {
         doc["watch_bounce"] = toml_edit::value(ms as i64);
         Ok(true)
     })
@@ -1353,7 +1474,7 @@ pub fn set_watch_bounce(ms: u64) -> Result<()> {
 
 /// Switch the release check on or off in the file.
 pub fn set_auto_update(on: bool) -> Result<()> {
-    edit(|doc| {
+    Here::edit(|doc| {
         doc["auto_update"] = toml_edit::value(on);
         Ok(true)
     })
@@ -1361,7 +1482,7 @@ pub fn set_auto_update(on: bool) -> Result<()> {
 
 /// Switch the finished-turn notification on or off in the file.
 pub fn set_notify_turns(on: bool) -> Result<()> {
-    edit(|doc| {
+    Here::edit(|doc| {
         doc["notify_turns"] = toml_edit::value(on);
         Ok(true)
     })
@@ -1369,7 +1490,7 @@ pub fn set_notify_turns(on: bool) -> Result<()> {
 
 /// Switch downloading pasted web pictures on or off in the file.
 pub fn set_download_web_images(on: bool) -> Result<()> {
-    edit(|doc| {
+    Here::edit(|doc| {
         doc["download_web_images"] = toml_edit::value(on);
         Ok(true)
     })
@@ -1377,7 +1498,7 @@ pub fn set_download_web_images(on: bool) -> Result<()> {
 
 /// Switch the composer under a drawer's session on or off in the file.
 pub fn set_drawer_composer(on: bool) -> Result<()> {
-    edit(|doc| {
+    Here::edit(|doc| {
         doc["drawer_composer"] = toml_edit::value(on);
         Ok(true)
     })
@@ -1385,7 +1506,7 @@ pub fn set_drawer_composer(on: bool) -> Result<()> {
 
 /// Switch pasting pictures in source mode on or off in the file.
 pub fn set_paste_images_in_source(on: bool) -> Result<()> {
-    edit(|doc| {
+    Here::edit(|doc| {
         doc["paste_images_in_source"] = toml_edit::value(on);
         Ok(true)
     })
@@ -1402,7 +1523,7 @@ pub fn set_paste_images_in_source(on: bool) -> Result<()> {
 /// Recorded before the install runs, not after: what is being agreed to is the
 /// fetch, and an install that fails is one that was still allowed to try.
 pub fn trust_agent(id: &str, mark: &str) -> Result<()> {
-    edit(|doc| {
+    Here::edit(|doc| {
         let held = table(doc, "trusted_agents")?;
         if held.get(id).and_then(|held| held.as_str()) == Some(mark) {
             return Ok(false);
@@ -1413,7 +1534,7 @@ pub fn trust_agent(id: &str, mark: &str) -> Result<()> {
 }
 
 pub fn put_agent(agent: &Agent, supersedes: Option<&str>) -> Result<()> {
-    edit(|doc| {
+    Here::edit(|doc| {
         // A freshly generated file serialises no agents as `agents = []`, which
         // toml_edit will not convert to an array of tables.
         if doc
@@ -1484,7 +1605,7 @@ pub fn put_agent(agent: &Agent, supersedes: Option<&str>) -> Result<()> {
 
 /// Drop the entry installed from registry agent `id`.
 pub fn remove_agent(id: &str) -> Result<()> {
-    edit(|doc| {
+    Here::edit(|doc| {
         let Some(agents) = doc
             .get_mut("agents")
             .and_then(|a| a.as_array_of_tables_mut())

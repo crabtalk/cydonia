@@ -108,9 +108,14 @@ fn agent_icon_closes_its_open_popover_and_can_open_it_again(cx: &mut TestAppCont
         visual.simulate_click(point, gpui::Modifiers::default());
         visual.run_until_parked();
         assert_eq!(
-            composer.read_with(&visual, |composer, _| composer.menu),
+            composer.read_with(&visual, |composer, _| composer.menu.is_open()),
             open
         );
+        // Past the closing menu's exit, as the pause between two clicks is.
+        visual
+            .executor()
+            .advance_clock(std::time::Duration::from_secs(1));
+        visual.run_until_parked();
     }
 }
 
@@ -187,4 +192,47 @@ fn editing_queued_images_restores_attachments_and_preserves_draft(cx: &mut TestA
             assert!(!composer.is_empty(cx));
         });
     });
+}
+
+struct Thread;
+
+impl Render for Thread {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .debug_selector(|| "thread-body".into())
+            .h(px(40.))
+            .w_full()
+    }
+}
+
+#[gpui::test]
+fn the_chevron_opens_the_thread_and_escape_folds_it(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        Theme::install(Appearance::Light, cx);
+        crate::view::keymap::bind_all(&crate::model::settings::Shortcuts::default(), cx);
+    });
+    let thread = cx.new(|_| Thread);
+    let composer = cx.new(|cx| {
+        let mut composer = Composer::new(cx);
+        composer.set_thread(Some(thread.into()), cx);
+        composer
+    });
+    let window = cx.add_window(|window, cx| {
+        window.focus(&composer.focus_handle(cx), cx);
+        PopoverComposer(composer.clone())
+    });
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.run_until_parked();
+    assert!(visual.debug_bounds("thread-body").is_none());
+    let chevron = visual
+        .debug_bounds("composer-thread")
+        .expect("the chevron is painted");
+    visual.simulate_click(chevron.center(), gpui::Modifiers::default());
+    visual.run_until_parked();
+    assert!(visual.debug_bounds("thread-body").is_some());
+    let field = composer.read_with(&visual, |composer, cx| composer.focus_handle(cx));
+    visual.update(|window, cx| window.focus(&field, cx));
+    visual.simulate_keystrokes("escape");
+    visual.run_until_parked();
+    assert!(!composer.read_with(&visual, |composer, _| composer.thread_open));
 }

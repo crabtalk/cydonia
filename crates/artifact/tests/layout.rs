@@ -3,7 +3,8 @@ mod common;
 use common::Scratch;
 use cydonia_artifact::{
     board::{self, Status},
-    project::{Project as _, Stale},
+    error::Error,
+    project::Project as _,
 };
 use std::fs;
 
@@ -75,7 +76,10 @@ fn edits_to_the_same_card_are_stale() {
     first.set_card_status(&one, Some(Status::Done));
     store.save_board(&mut first).unwrap();
     second.set_card_status(&one, Some(Status::Blocked));
-    assert!(store.save_board(&mut second).unwrap_err().is::<Stale>());
+    assert!(matches!(
+        store.save_board(&mut second).unwrap_err(),
+        Error::Stale
+    ));
 }
 
 #[test]
@@ -106,7 +110,10 @@ fn a_card_edit_survives_a_reorder_elsewhere_but_not_its_removal() {
         .join(&one);
     assert!(!file.exists());
     late.set_card_status(&one, Some(Status::Busy));
-    assert!(store.save_board(&mut late).unwrap_err().is::<Stale>());
+    assert!(matches!(
+        store.save_board(&mut late).unwrap_err(),
+        Error::Stale
+    ));
 }
 
 #[test]

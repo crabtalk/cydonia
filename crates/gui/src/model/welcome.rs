@@ -8,6 +8,7 @@
 
 use crate::model::state::State;
 use crate::model::{settings, state};
+use artifact::kind::Kind;
 use artifact::project::fs;
 use std::{
     io::{self, Write as _},
@@ -39,7 +40,21 @@ macro_rules! file {
 /// — every file of one seed is created inside the same millisecond, which is
 /// the resolution the sort reads.
 const SEED: &[&[File]] = &[
-    &[file!("boards/1789958240578.toml")],
+    &[
+        file!("boards/1789958240578/board.toml"),
+        file!("boards/1789958240578/cards/1789958255848/content.md"),
+        file!("boards/1789958240578/cards/1789958255848/properties.toml"),
+        file!("boards/1789958240578/cards/1789958255848-2/content.md"),
+        file!("boards/1789958240578/cards/1789958255848-2/properties.toml"),
+        file!("boards/1789958240578/cards/1789958255848-3/content.md"),
+        file!("boards/1789958240578/cards/1789958255848-3/properties.toml"),
+        file!("boards/1789958240578/cards/1789958255848-4/content.md"),
+        file!("boards/1789958240578/cards/1789958255848-4/properties.toml"),
+        file!("boards/1789958240578/cards/1789958255848-5/content.md"),
+        file!("boards/1789958240578/cards/1789958255848-5/properties.toml"),
+        file!("boards/1789958240578/cards/1789958255848-6/content.md"),
+        file!("boards/1789958240578/cards/1789958255848-6/properties.toml"),
+    ],
     &[
         file!("articles/1789958235652/content.md"),
         file!("articles/1789958235652/properties.toml"),
@@ -51,20 +66,18 @@ const SEED: &[&[File]] = &[
     ],
 ];
 
-/// Every file of the welcome project, named under `.cydonia/`.
-pub fn files() -> impl Iterator<Item = File> {
-    SEED.iter().flat_map(|entry| entry.iter().copied())
-}
-
-/// The entry a first run lands on, under `.cydonia/`. An article is remembered
-/// by the path of its document rather than by its id — see
-/// `workspace::articles`. It is the newest entry, so it is also the top of the
-/// sidebar.
+/// The document of the entry a first run lands on, under `.cydonia/`. It is
+/// the newest entry, so it is also the top of the sidebar.
 const LANDING: &str = "articles/1789958219063/content.md";
 
 /// A second between entries: far coarser than the millisecond the sort reads,
 /// and coarse enough that a filesystem storing whole seconds still orders them.
 const APART: Duration = Duration::from_secs(1);
+
+/// Every file of the welcome project, named under `.cydonia/`.
+pub fn files() -> impl Iterator<Item = File> {
+    SEED.iter().flat_map(|entry| entry.iter().copied())
+}
 
 /// `~/.local/share/cydonia/welcome`, beside the agents and the grammars.
 ///
@@ -98,20 +111,16 @@ pub fn seed(state: &mut State) {
     // Straight into the first article rather than the front door: a project
     // with something to read in it that opens on `Nothing open` reads as an
     // empty one.
-    state.last.insert(root.clone(), landing(&root));
+    state.last.insert(root.clone(), landing());
     state.projects.insert(0, root);
     state.active = 0;
 }
 
-/// The entry a welcome project at `root` opens on.
-pub fn landing(root: &Path) -> state::Entry {
+/// The entry a welcome project opens on.
+pub fn landing() -> state::Entry {
     state::Entry {
-        kind: state::Kind::Article,
-        id: fs::Project::new(root)
-            .cydonia()
-            .join(LANDING)
-            .to_string_lossy()
-            .into_owned(),
+        kind: Kind::Article,
+        id: artifact::article::id_of(Path::new(LANDING)),
     }
 }
 

@@ -1,0 +1,1 @@
+Install an agent: press ⌘N, or ⌘, → Agents

@@ -7,8 +7,12 @@ use anyhow::Result;
 use bezel::{gpui::App, gpui_platform};
 use gui::{
     agent, boot,
-    model::{media, migrate, notify, settings, state, update, welcome},
-    view::{hotkey, menubar, root},
+    model::{media, migrate, settings, state, update, welcome},
+    view::{
+        keymap::hotkey::{self, Hotkey as _},
+        window::menubar,
+        window::root,
+    },
 };
 
 /// What the system knows this app as, matching `CFBundleIdentifier` in
@@ -55,11 +59,11 @@ fn main() -> Result<()> {
         // Before any window or notification: it is the name and identity the
         // system presents this app under — see [`gui::model::notify`].
         cx.set_app_identity(BUNDLE_ID, "Cydonia");
-        notify::on_response(cx);
+        root::on_notification(cx);
         boot::init(&settings, cx);
         // And the one key the app does not hold itself, which is nothing at
-        // all until somebody asks for one — see [`gui::view::hotkey`].
-        hotkey::apply(settings.shortcuts.activate(), cx);
+        // all until somebody asks for one — see [`gui::view::keymap::hotkey`].
+        hotkey::Here::apply(settings.shortcuts.activate(), cx);
         // Where a pasted screenshot's bytes go, which is the app's to say.
         media::init(settings.pasting(), cx);
         // Ahead of the menu bar, which asks whether this build has an updater

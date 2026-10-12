@@ -24,7 +24,6 @@ use editor::{Editor, ImageStore, Mode, PasteContent, PasteContext, Source};
 use image::{ImageFormat, imageops::FilterType};
 use markdown::BlockKind;
 use std::{
-    borrow::Cow,
     io::Cursor,
     path::{Path, PathBuf},
     sync::Arc,
@@ -37,6 +36,10 @@ const MARK: &str = "media-";
 /// down on the way out, since a model reads no more than this and the base64
 /// of a retina screenshot is megabytes of prompt.
 pub const LONG_EDGE: u32 = 1568;
+
+/// The most a picture fetched off the web may weigh.
+#[cfg(feature = "desktop")]
+const FETCH_LIMIT: u64 = 25 * 1024 * 1024;
 
 /// A picture picked in the composer, held until the message is sent — the
 /// composer does not know which project the session it feeds is in.
@@ -134,9 +137,25 @@ fn paste(
     Some(PasteContent::Literal(lines.join("\n")))
 }
 
-/// The most a picture fetched off the web may weigh.
+/// The picture at `url`: refused past [`FETCH_LIMIT`], after thirty seconds,
+/// or for bytes that are no picture format.
 #[cfg(feature = "desktop")]
-const FETCH_LIMIT: u64 = 25 * 1024 * 1024;
+pub(crate) fn download(url: &str) -> anyhow::Result<Vec<u8>> {
+    use anyhow::Context as _;
+    let agent = ureq::Agent::config_builder()
+        .timeout_global(Some(std::time::Duration::from_secs(30)))
+        .build()
+        .new_agent();
+    let bytes = agent
+        .get(url)
+        .call()?
+        .body_mut()
+        .with_config()
+        .limit(FETCH_LIMIT)
+        .read_to_vec()?;
+    image::guess_format(&bytes).context("Not a picture")?;
+    Ok(bytes)
+}
 
 /// Fetch the picture at `url` into the assets beside `base`, then point every
 /// picture in `editor` still at `url` at the copy. A fetch that fails
@@ -151,20 +170,7 @@ fn fetch_into(url: String, base: PathBuf, editor: WeakEntity<Editor>, cx: &mut A
                 async move {
                     let path = url.split(['?', '#']).next().unwrap_or(&url);
                     let extension = extension(Path::new(path))?;
-                    let agent = ureq::Agent::config_builder()
-                        .timeout_global(Some(std::time::Duration::from_secs(30)))
-                        .build()
-                        .new_agent();
-                    let bytes = agent
-                        .get(&url)
-                        .call()
-                        .ok()?
-                        .body_mut()
-                        .with_config()
-                        .limit(FETCH_LIMIT)
-                        .read_to_vec()
-                        .ok()?;
-                    image::guess_format(&bytes).ok()?;
+                    let bytes = download(&url).ok()?;
                     let dir = artifact::article::assets(&artifact::article::content(&base));
                     let file = store(&dir, &bytes, &extension)?;
                     let file = file.strip_prefix(&base).unwrap_or(&file).to_owned();
@@ -198,8 +204,13 @@ pub fn store(dir: &Path, bytes: &[u8], extension: &str) -> Option<PathBuf> {
 pub fn keep_attachment(dir: &Path, attachment: &Attachment) -> Option<PathBuf> {
     match attachment {
         Attachment::Bytes(image) => store(dir, &image.bytes, image.format.extension()),
-        Attachment::File(path) => store(dir, &std::fs::read(path).ok()?, &extension(path)?),
+        Attachment::File(path) => store_file(dir, path),
     }
+}
+
+/// The picture file at `path`, copied into `dir` — see [`store`].
+fn store_file(dir: &Path, path: &Path) -> Option<PathBuf> {
+    store(dir, &std::fs::read(path).ok()?, &extension(path)?)
 }
 
 /// A picture as a message line. The destination is bracketed, since a
@@ -208,40 +219,43 @@ pub fn line(path: &Path) -> String {
     format!("![](<{}>)", path.display())
 }
 
+/// `text` parsed with its picture blocks whose URL `taken` holds lifted out,
+/// and those URLs, in order.
+pub fn lift_pictures(text: &str, taken: impl Fn(&str) -> bool) -> (markdown::Doc, Vec<String>) {
+    let mut doc = markdown::parse(text);
+    let mut urls = Vec::new();
+    doc.blocks.retain(|block| match &block.kind {
+        BlockKind::Image { url, .. } if taken(url) => {
+            urls.push(url.clone());
+            false
+        }
+        _ => true,
+    });
+    (doc, urls)
+}
+
+/// Whether a picture's URL is a path on this machine.
+fn local(url: &str) -> bool {
+    !url.is_empty() && !url.contains("://")
+}
+
 /// The local pictures a message points at, in order.
 pub fn attached(text: &str) -> Vec<PathBuf> {
-    markdown::parse(text)
-        .blocks
+    lift_pictures(text, local)
+        .1
         .into_iter()
-        .filter_map(|block| match block.kind {
-            BlockKind::Image { url, .. } if !url.is_empty() && !url.contains("://") => {
-                Some(PathBuf::from(url))
-            }
-            _ => None,
-        })
+        .map(PathBuf::from)
         .collect()
 }
 
 /// Restore local image blocks as composer attachments.
 pub fn detach(text: &str) -> (String, Vec<PathBuf>) {
-    let mut doc = markdown::parse(text);
-    let mut attachments = Vec::new();
-    doc.blocks.retain(|block| {
-        if let BlockKind::Image { url, .. } = &block.kind
-            && !url.is_empty()
-            && !url.contains("://")
-        {
-            attachments.push(PathBuf::from(url));
-            return false;
-        }
-        true
-    });
-    let text = if attachments.is_empty() {
-        text.to_owned()
-    } else {
-        markdown::serialize(&doc)
+    let (doc, urls) = lift_pictures(text, local);
+    let text = match urls.is_empty() {
+        true => text.to_owned(),
+        false => markdown::serialize(&doc),
     };
-    (text, attachments)
+    (text, urls.into_iter().map(PathBuf::from).collect())
 }
 
 /// A picture as an agent is handed one: base64 and its MIME type. Sent as it
@@ -288,14 +302,10 @@ fn extension(path: &Path) -> Option<String> {
 fn keep(source: Source, _: &Entity<Editor>, base: Option<&Path>, _: &App) -> Option<String> {
     let base = base?.to_path_buf();
     let dir = artifact::article::assets(&artifact::article::content(&base));
-    let (bytes, extension) = match source {
-        Source::Bytes(image) => (
-            Cow::Borrowed(image.bytes.as_slice()),
-            image.format.extension().to_owned(),
-        ),
-        Source::File(path) => (Cow::Owned(std::fs::read(path).ok()?), extension(path)?),
+    let file = match source {
+        Source::Bytes(image) => store(&dir, &image.bytes, image.format.extension())?,
+        Source::File(path) => store_file(&dir, path)?,
     };
-    let file = store(&dir, &bytes, &extension)?;
     let file = file.strip_prefix(&base).unwrap_or(&file);
     Some(file.to_string_lossy().into_owned())
 }

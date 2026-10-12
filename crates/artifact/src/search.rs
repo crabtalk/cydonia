@@ -10,6 +10,7 @@
 use crate::{
     article::Article,
     board::Board,
+    kind::Kind,
     project::fs,
     session::{chat::ChatItem, record::Record},
 };
@@ -74,27 +75,6 @@ fn literal(text: &str) -> Regex {
         .case_insensitive(true)
         .build()
         .expect("an escaped literal is a valid pattern")
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Kind {
-    Article,
-    Board,
-    Session,
-    Table,
-}
-
-impl Kind {
-    /// The word entry numbers are issued under — see
-    /// [`crate::project::Project::number`].
-    pub fn key(self) -> &'static str {
-        match self {
-            Self::Article => "article",
-            Self::Board => "board",
-            Self::Session => "session",
-            Self::Table => "table",
-        }
-    }
 }
 
 /// The artifact a match is in.
@@ -186,7 +166,7 @@ impl Searchable for Record {
     }
 
     fn blocks(&self, each: &mut dyn FnMut(Block, &str)) {
-        each(Block::Title, self.name.as_deref().unwrap_or(&self.title));
+        each(Block::Title, self.label());
         for (ix, item) in self.items.iter().enumerate() {
             if let Some(text) = searchable(item) {
                 each(Block::Chat(ix), text);

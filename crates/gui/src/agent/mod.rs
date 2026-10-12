@@ -31,6 +31,9 @@ pub mod mcp;
 pub mod path;
 pub mod serve;
 
+/// How many of an installer's last output lines are kept.
+pub const OUTPUT_KEEP: usize = 40;
+
 /// Where the fetched catalog and the icons beside it are kept — a cache under
 /// the config directory, not among the files a person edits.
 pub fn cache_dir() -> Option<PathBuf> {
@@ -167,10 +170,6 @@ pub fn prefetch_icons() {
         }
     }
 }
-
-/// How many of an installer's lines are kept. Enough that a failure's last
-/// words are all there, and not so many that a chatty `npm` is held in full.
-pub const OUTPUT_KEEP: usize = 40;
 
 /// Add one line to what an installer has printed, keeping the tail.
 ///

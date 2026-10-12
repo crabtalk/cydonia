@@ -1,6 +1,6 @@
 use super::*;
 use crate::model::session::{ChatSession, Connection};
-use crate::view::component::transcript;
+use crate::view::{component::transcript, kit::text::elapsed};
 use artifact::session::chat::{ChatItem, ToolStatus};
 use bezel::agent::orbs::OrbState;
 use std::time::Duration;
@@ -86,14 +86,6 @@ impl Activity {
 
 /// A running turn's age. Seconds alone under a minute; the minutes are padded
 /// once there are any, so the row does not shuffle as the count climbs.
-fn elapsed(duration: Duration) -> String {
-    let seconds = duration.as_secs();
-    match seconds < 60 {
-        true => format!("{seconds}s"),
-        false => format!("{:02}m {:02}s", seconds / 60, seconds % 60),
-    }
-}
-
 impl Composer {
     pub fn set_activity(&mut self, activity: Option<Activity>, cx: &mut Context<Self>) {
         if self.activity == activity {
@@ -142,15 +134,7 @@ impl Composer {
                 .flex_col()
                 .min_w_0()
                 // Extend the divider through the capsule's padding, keeping content inset.
-                .when(ruled, |row| {
-                    row.ml(px(-12.))
-                        .mr(px(-right_inset))
-                        .pl(px(12.))
-                        .pr(px(right_inset))
-                        .pb(px(6.))
-                        .border_b_1()
-                        .border_color(theme.border.opacity(0.7))
-                })
+                .when(ruled, |row| ruled_off(row, theme, right_inset))
                 .child(
                     div()
                         .id("composer-activity")

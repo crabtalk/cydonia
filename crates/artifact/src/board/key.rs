@@ -25,6 +25,30 @@ pub fn normalize(raw: &str) -> Option<String> {
     (!key.is_empty()).then_some(key)
 }
 
+/// `written`, normalized, where none of `boards` but `own` holds it — the key
+/// a board may take or be renamed to. Refused in words.
+pub fn claim(
+    written: &str,
+    boards: &[super::Board],
+    own: Option<&str>,
+) -> Result<String, crate::error::Error> {
+    use crate::error::Error;
+    let key = normalize(written).ok_or(Error::KeyEmpty)?;
+    match boards
+        .iter()
+        .any(|board| Some(board.id.as_str()) != own && board.key == key)
+    {
+        true => Err(Error::KeyTaken { key }),
+        false => Ok(key),
+    }
+}
+
+/// `written`, normalized, or — where nothing usable was written — one derived
+/// from `name` clear of the keys `taken` reads. `taken` is only called then.
+pub fn or_derived(written: &str, name: &str, taken: impl FnOnce() -> HashSet<String>) -> String {
+    normalize(written).unwrap_or_else(|| derive(name, &taken()))
+}
+
 /// A key for a board of this name, clear of the ones its neighbours hold:
 /// `Why CrabTalk` → `WC`, `Roadmap` → `ROA`. Unique by a trailing digit, which
 /// is why a handle splits off its *last* `-` — `ROA2-5` is a card on the second

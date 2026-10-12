@@ -6,22 +6,30 @@
 //! Tables (`data.db`) are not part of it. Article covers are not carried: an
 //! [`Article`] from here has no cover.
 
+use crate::error::Error;
+use crate::kind::Kind;
 use crate::{
     article::{
         Article,
+        comments::Comments,
         properties::{self, Properties},
     },
     board::{Board, key},
     id,
+    project::layout,
     session::record::Record,
     stamp,
 };
-use anyhow::{Result, anyhow, bail};
+use anyhow::anyhow;
 use std::{
     cmp::Reverse,
     collections::{BTreeMap, HashMap, HashSet},
     sync::{Mutex, MutexGuard},
 };
+
+/// A seeded board directory: its `board.toml`, and each card's `content.md`
+/// and `properties.toml` by the card's id.
+type Seeded = (String, BTreeMap<String, (String, String)>);
 
 #[derive(Default)]
 pub struct Project(Mutex<State>);
@@ -34,9 +42,9 @@ struct State {
     sessions: BTreeMap<String, Record>,
     articles: BTreeMap<String, Held>,
     /// `(kind, id)` to the number issued to it.
-    numbers: HashMap<(String, String), u64>,
+    numbers: HashMap<(Kind, String), u64>,
     /// Every number issued, with the id it is on, or `None` once retired.
-    issued: BTreeMap<u64, (String, Option<String>)>,
+    issued: BTreeMap<u64, (Kind, Option<String>)>,
 }
 
 #[derive(Default)]
@@ -45,6 +53,8 @@ struct Held {
     /// The text of its `properties.toml`, kept whole so keys this crate does
     /// not know about survive a save.
     properties: String,
+    /// Its comments, held against `markdown`.
+    comments: Comments,
     assets: BTreeMap<String, Vec<u8>>,
     touched: u128,
 }
@@ -61,6 +71,9 @@ impl Project {
         let this = Self::new();
         {
             let mut state = this.state();
+            // A board directory's `board.toml` and its cards' files, assembled
+            // once every file is in.
+            let mut dirs: BTreeMap<String, Seeded> = BTreeMap::new();
             for (path, bytes) in files {
                 let parts: Vec<&str> = path.split('/').collect();
                 let text = || String::from_utf8_lossy(bytes).into_owned();
@@ -77,6 +90,27 @@ impl Project {
                         }
                         board.created = stamp::named(stem);
                         state.boards.insert(board.id.clone(), board);
+                    }
+                    ["boards", id, "board.toml"] => {
+                        dirs.entry((*id).to_owned()).or_default().0 = text();
+                    }
+                    [
+                        "boards",
+                        id,
+                        "cards",
+                        card,
+                        file @ ("content.md" | "properties.toml"),
+                    ] => {
+                        let held = dirs
+                            .entry((*id).to_owned())
+                            .or_default()
+                            .1
+                            .entry((*card).to_owned())
+                            .or_default();
+                        match *file {
+                            "content.md" => held.0 = text(),
+                            _ => held.1 = text(),
+                        }
                     }
                     ["sessions", file] => {
                         let Some(stem) = file.strip_suffix(".json") else {
@@ -115,6 +149,22 @@ impl Project {
                     _ => {}
                 }
             }
+            for (id, (body, cards)) in dirs {
+                let cards = cards
+                    .iter()
+                    .map(|(card, (content, properties))| {
+                        layout::parse_card(card, content, properties)
+                    })
+                    .collect();
+                let Some(mut board) = layout::assemble(&body, cards) else {
+                    continue;
+                };
+                if board.id.is_empty() {
+                    board.id = id.clone();
+                }
+                board.created = stamp::named(&id);
+                state.boards.insert(board.id.clone(), board);
+            }
             let now = stamp::now();
             for held in state.articles.values_mut() {
                 held.touched = now;
@@ -145,14 +195,13 @@ impl Project {
 }
 
 impl State {
-    fn number(&mut self, kind: &str, id: &str) -> u64 {
-        let key = (kind.to_owned(), id.to_owned());
+    fn number(&mut self, kind: Kind, id: &str) -> u64 {
+        let key = (kind, id.to_owned());
         if let Some(number) = self.numbers.get(&key) {
             return *number;
         }
         let number = self.issued.keys().next_back().map_or(1, |last| last + 1);
-        self.issued
-            .insert(number, (kind.to_owned(), Some(id.to_owned())));
+        self.issued.insert(number, (kind, Some(id.to_owned())));
         self.numbers.insert(key, number);
         number
     }
@@ -165,18 +214,18 @@ impl State {
             .to_string()
     }
 
-    fn retire(&mut self, kind: &str, id: &str) {
-        if let Some(number) = self.numbers.remove(&(kind.to_owned(), id.to_owned()))
+    fn retire(&mut self, kind: Kind, id: &str) {
+        if let Some(number) = self.numbers.remove(&(kind, id.to_owned()))
             && let Some(entry) = self.issued.get_mut(&number)
         {
             entry.1 = None;
         }
     }
 
-    fn article(&mut self, id: &str) -> Result<&mut Held> {
+    fn article(&mut self, id: &str) -> super::Result<&mut Held> {
         self.articles
             .get_mut(id)
-            .ok_or_else(|| anyhow!("no article {id}"))
+            .ok_or_else(|| not_found("article", id))
     }
 
     fn describe(&self, id: &str, held: &Held) -> Article {
@@ -200,7 +249,7 @@ impl super::Project for Project {
         let mut boards: Vec<Board> = ids
             .into_iter()
             .map(|id| {
-                let number = state.number("board", &id);
+                let number = state.number(Kind::Board, &id);
                 let mut board = state.boards[&id].clone();
                 board.number = Some(number);
                 board.version = Some(state.version(&id));
@@ -214,39 +263,35 @@ impl super::Project for Project {
     fn board(&self, id: &str) -> Option<Board> {
         let mut state = self.state();
         let mut board = state.boards.get(id)?.clone();
-        board.number = Some(state.number("board", id));
+        board.number = Some(state.number(Kind::Board, id));
         board.version = Some(state.version(id));
         Some(board)
     }
 
-    fn create_board(&self, name: &str, key: &str) -> Result<Board> {
+    fn create_board(&self, name: &str, key: &str) -> super::Result<Board> {
         let mut state = self.state();
         let mut board = Board::new(id::mint(), name);
         board.created = stamp::named(&board.id);
-        board.key = match key::normalize(key) {
-            Some(key) => key,
-            None => {
-                let taken: HashSet<String> = state
-                    .boards
-                    .values()
-                    .map(|board| board.key.clone())
-                    .collect();
-                key::derive(&board.name, &taken)
-            }
-        };
+        board.key = key::or_derived(key, &board.name, || {
+            state
+                .boards
+                .values()
+                .map(|board| board.key.clone())
+                .collect()
+        });
         board.touched = stamp::now();
-        board.number = Some(state.number("board", &board.id));
+        board.number = Some(state.number(Kind::Board, &board.id));
         board.version = Some(state.version(&board.id));
         state.boards.insert(board.id.clone(), board.clone());
         Ok(board)
     }
 
-    fn save_board(&self, board: &mut Board) -> Result<()> {
+    fn save_board(&self, board: &mut Board) -> super::Result<()> {
         let mut state = self.state();
         if let Some(seen) = &board.version
             && (!state.boards.contains_key(&board.id) || *seen != state.version(&board.id))
         {
-            return Err(super::Stale.into());
+            return Err(crate::error::Error::Stale);
         }
         *state.writes.entry(board.id.clone()).or_default() += 1;
         board.touched = stamp::now();
@@ -255,13 +300,13 @@ impl super::Project for Project {
         Ok(())
     }
 
-    fn remove_board(&self, id: &str) -> Result<()> {
+    fn remove_board(&self, id: &str) -> super::Result<()> {
         let mut state = self.state();
         state
             .boards
             .remove(id)
-            .ok_or_else(|| anyhow!("no board {id}"))?;
-        state.retire("board", id);
+            .ok_or_else(|| not_found("board", id))?;
+        state.retire(Kind::Board, id);
         Ok(())
     }
 
@@ -271,7 +316,7 @@ impl super::Project for Project {
         let mut found: Vec<Record> = ids
             .into_iter()
             .map(|id| {
-                let number = state.number("session", &id);
+                let number = state.number(Kind::Session, &id);
                 let mut record = state.sessions[&id].clone();
                 record.number = Some(number);
                 record
@@ -284,28 +329,28 @@ impl super::Project for Project {
     fn session(&self, id: &str) -> Option<Record> {
         let mut state = self.state();
         let mut record = state.sessions.get(id)?.clone();
-        record.number = Some(state.number("session", id));
+        record.number = Some(state.number(Kind::Session, id));
         Some(record)
     }
 
-    fn create_session(&self) -> Result<String> {
+    fn create_session(&self) -> super::Result<String> {
         Ok(stamp::fresh().to_string())
     }
 
-    fn save_session(&self, record: &Record) -> Result<()> {
+    fn save_session(&self, record: &Record) -> super::Result<()> {
         self.state()
             .sessions
             .insert(record.id.clone(), record.clone());
         Ok(())
     }
 
-    fn remove_session(&self, id: &str) -> Result<()> {
+    fn remove_session(&self, id: &str) -> super::Result<()> {
         let mut state = self.state();
         state
             .sessions
             .remove(id)
-            .ok_or_else(|| anyhow!("no session {id}"))?;
-        state.retire("session", id);
+            .ok_or_else(|| not_found("session", id))?;
+        state.retire(Kind::Session, id);
         Ok(())
     }
 
@@ -325,12 +370,9 @@ impl super::Project for Project {
         state.articles.get(id).map(|held| state.describe(id, held))
     }
 
-    fn create_article(&self, markdown: &str) -> Result<Article> {
+    fn create_article(&self, markdown: &str) -> super::Result<Article> {
         let mut state = self.state();
-        let id = (stamp::now()..)
-            .map(|stamp| stamp.to_string())
-            .find(|id| !state.articles.contains_key(id))
-            .unwrap_or_else(id::mint);
+        let id = stamp::free(stamp::now(), |id| state.articles.contains_key(id));
         let held = Held {
             markdown: markdown.to_owned(),
             touched: stamp::now(),
@@ -341,15 +383,32 @@ impl super::Project for Project {
         Ok(article)
     }
 
-    fn read_article(&self, id: &str) -> Result<String> {
+    fn read_article(&self, id: &str) -> super::Result<String> {
         Ok(self.state().article(id)?.markdown.clone())
     }
 
-    fn write_article(&self, id: &str, markdown: &str) -> Result<()> {
+    fn write_article(&self, id: &str, markdown: &str) -> super::Result<()> {
         let mut state = self.state();
         let held = state.article(id)?;
+        held.comments.remap(&held.markdown, markdown);
         held.markdown = markdown.to_owned();
         held.touched = stamp::now();
+        Ok(())
+    }
+
+    fn comments(&self, id: &str) -> Comments {
+        let mut state = self.state();
+        state
+            .article(id)
+            .map(|held| held.comments.clone())
+            .unwrap_or_default()
+    }
+
+    fn save_comments(&self, id: &str, comments: &Comments) -> super::Result<()> {
+        let mut state = self.state();
+        let held = state.article(id)?;
+        held.comments = comments.clone();
+        held.comments.stamp(&held.markdown);
         Ok(())
     }
 
@@ -361,7 +420,7 @@ impl super::Project for Project {
             .unwrap_or_default()
     }
 
-    fn save_properties(&self, id: &str, properties: &Properties) -> Result<()> {
+    fn save_properties(&self, id: &str, properties: &Properties) -> super::Result<()> {
         let mut state = self.state();
         let held = state.article(id)?;
         held.properties = properties::apply(&held.properties, properties).unwrap_or_default();
@@ -369,29 +428,29 @@ impl super::Project for Project {
         Ok(())
     }
 
-    fn remove_article(&self, id: &str) -> Result<()> {
+    fn remove_article(&self, id: &str) -> super::Result<()> {
         let mut state = self.state();
         state
             .articles
             .remove(id)
-            .ok_or_else(|| anyhow!("no article {id}"))?;
-        state.retire("article", id);
+            .ok_or_else(|| not_found("article", id))?;
+        state.retire(Kind::Article, id);
         Ok(())
     }
 
-    fn asset(&self, id: &str, name: &str) -> Result<Vec<u8>> {
+    fn asset(&self, id: &str, name: &str) -> super::Result<Vec<u8>> {
         let mut state = self.state();
         state
             .article(id)?
             .assets
             .get(name)
             .cloned()
-            .ok_or_else(|| anyhow!("no asset {name} in article {id}"))
+            .ok_or_else(|| not_found("asset", name))
     }
 
-    fn put_asset(&self, id: &str, name: &str, bytes: &[u8]) -> Result<()> {
+    fn put_asset(&self, id: &str, name: &str, bytes: &[u8]) -> super::Result<()> {
         if name.is_empty() || name.contains(['/', '\\']) || name == "." || name == ".." {
-            bail!("{name:?} is not a name");
+            return Err(anyhow!("{name:?} is not a name").into());
         }
         let mut state = self.state();
         state
@@ -401,21 +460,28 @@ impl super::Project for Project {
         Ok(())
     }
 
-    fn number(&self, kind: &str, id: &str) -> Result<u64> {
+    fn number(&self, kind: Kind, id: &str) -> super::Result<u64> {
         Ok(self.state().number(kind, id))
     }
 
-    fn resolve(&self, kind: &str, number: u64) -> Result<Option<String>> {
+    fn resolve(&self, kind: Kind, number: u64) -> super::Result<Option<String>> {
         Ok(self
             .state()
             .issued
             .get(&number)
-            .filter(|(issued, _)| issued == kind)
+            .filter(|(issued, _)| *issued == kind)
             .and_then(|(_, id)| id.clone()))
     }
 
-    fn retire(&self, kind: &str, id: &str) -> Result<()> {
+    fn retire(&self, kind: Kind, id: &str) -> super::Result<()> {
         self.state().retire(kind, id);
         Ok(())
+    }
+}
+
+fn not_found(what: &'static str, named: &str) -> Error {
+    Error::NotFound {
+        what,
+        named: named.to_owned(),
     }
 }

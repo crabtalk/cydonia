@@ -7,6 +7,8 @@
 		class="media"
 		src={media.src}
 		poster={media.poster}
+		width={media.w}
+		height={media.h}
 		preload="metadata"
 		controls
 		loop
@@ -18,6 +20,8 @@
 	<img
 		class="media"
 		src={media.src}
+		width={media.w}
+		height={media.h}
 		draggable="false"
 		loading="lazy"
 		decoding="async"
@@ -34,6 +38,7 @@
 		margin: 20px 0 0;
 		border: 1px solid var(--line);
 		border-radius: var(--radius-lg);
+		background: var(--panel);
 		/* Safari ignores the attribute on its own. */
 		-webkit-user-drag: none;
 	}

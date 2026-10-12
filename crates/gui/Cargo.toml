@@ -14,7 +14,7 @@ categories = ["gui", "development-tools"]
 name = "cydonia_gui"
 
 [dependencies]
-artifact.workspace = true
+artifact = { workspace = true, features = ["pictures"] }
 anyhow.workspace = true
 base64.workspace = true
 bezel.workspace = true
@@ -75,7 +75,7 @@ desktop = [
 developer = []
 
 [dev-dependencies]
-syntax-std = { version = "0.2.12", package = "bezel-syntax-std" }
+syntax-std = { version = "0.2.13", package = "bezel-syntax-std" }
 gpui = { version = "0.3.19", package = "bezel-gpui", features = ["test-support"] }
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]

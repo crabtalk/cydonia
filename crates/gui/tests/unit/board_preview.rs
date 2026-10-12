@@ -18,9 +18,18 @@ fn a_card_taller_than_the_exposed_lane_aligns_at_the_top() {
     assert_eq!(reveal_delta(px(20.), px(200.), px(20.), px(100.)), px(0.));
 }
 
-#[test]
-fn closing_restores_automatic_scrolling_but_preserves_manual_scrolling() {
+#[gpui::test]
+fn closing_restores_automatic_scrolling_but_preserves_manual_scrolling(cx: &mut TestAppContext) {
     let scroll = ScrollHandle::new();
+    let window = cx.add_window({
+        let scroll = scroll.clone();
+        |_, _| Lane { scroll }
+    });
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    cx.simulate_resize(size(px(300.), px(400.)));
+    cx.update(|window, _| window.refresh());
+    cx.run_until_parked();
+
     let before = gpui::point(px(0.), px(-30.));
     let after = gpui::point(px(0.), px(-120.));
     let adjustment = LaneAdjustment {
@@ -36,6 +45,22 @@ fn closing_restores_automatic_scrolling_but_preserves_manual_scrolling() {
     scroll.set_offset(manual);
     adjustment.restore();
     assert_eq!(scroll.offset(), manual);
+}
+
+/// A lane 100px tall over 500px of cards, so its offsets have room to move.
+struct Lane {
+    scroll: ScrollHandle,
+}
+
+impl Render for Lane {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("lane")
+            .h(px(100.))
+            .overflow_y_scroll()
+            .track_scroll(&self.scroll)
+            .child(div().h(px(500.)))
+    }
 }
 
 struct Preview {

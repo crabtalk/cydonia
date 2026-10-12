@@ -15,8 +15,9 @@ use crate::{
     },
 };
 use artifact::board::Board;
+use artifact::kind::Kind;
 use artifact::project::Project as _;
-use bezel::gpui::Context;
+use bezel::gpui::{App, AppContext as _, Context, Entity};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -26,11 +27,59 @@ use std::{
 /// table's own, so a window that does not reach the end says so.
 const PAGE: i64 = 200;
 
+/// What every entry has, whatever its kind. `touched` is in milliseconds.
+pub struct Facts {
+    pub showing: Showing,
+    pub label: String,
+    pub number: Option<u64>,
+    pub touched: u128,
+    pub created: Option<u128>,
+    pub archived: bool,
+    /// Empty for a table, which carries none.
+    pub labels: Vec<String>,
+    /// The agent a session runs on; `None` for every other kind.
+    pub agent: Option<String>,
+}
+
+/// A board a project holds: its id, which never changes, and the board, which
+/// every view drawing any of it observes.
+#[derive(Clone)]
+pub struct HeldBoard {
+    pub id: String,
+    pub board: Entity<Board>,
+}
+
+impl HeldBoard {
+    pub fn new(board: Board, cx: &mut App) -> Self {
+        Self {
+            id: board.id.clone(),
+            board: cx.new(|_| board),
+        }
+    }
+}
+
+/// A session a project holds: its id, which never changes, and the session,
+/// which every view drawing any of it observes.
+#[derive(Clone)]
+pub struct HeldSession {
+    pub id: u64,
+    pub chat: Entity<ChatSession>,
+}
+
+impl HeldSession {
+    pub fn new(chat: ChatSession, cx: &mut App) -> Self {
+        Self {
+            id: chat.id,
+            chat: cx.new(|_| chat),
+        }
+    }
+}
+
 pub struct Project {
     pub path: PathBuf,
-    pub sessions: Vec<ChatSession>,
+    pub sessions: Vec<HeldSession>,
     pub active: Option<u64>,
-    pub boards: Vec<Board>,
+    pub boards: Vec<HeldBoard>,
     unloaded_boards: std::collections::HashSet<String>,
     /// Which board the board pane shows.
     pub board: Option<usize>,
@@ -67,9 +116,23 @@ pub struct Project {
 }
 
 impl Project {
-    pub fn new(path: PathBuf) -> Self {
+    /// The entry of `kind` this project has selected.
+    pub fn selected(&self, kind: Kind) -> Option<Showing> {
+        Some(match kind {
+            Kind::Session => Showing::Session(self.active?),
+            Kind::Board => Showing::Board(self.boards.get(self.board?)?.id.clone()),
+            Kind::Article => Showing::Article(self.articles.get(self.article?)?.id.clone()),
+            Kind::Table => Showing::Table(self.tables.get(self.table?)?.key.clone()),
+        })
+    }
+
+    pub fn new(path: PathBuf, cx: &mut App) -> Self {
         let mut this = Self {
-            boards: store::open(&path).boards(),
+            boards: store::open(&path)
+                .boards()
+                .into_iter()
+                .map(|board| HeldBoard::new(board, cx))
+                .collect(),
             unloaded_boards: Default::default(),
             articles: article::list(&path),
             data: Data::attach(&path),
@@ -88,40 +151,49 @@ impl Project {
             watch: None,
         };
         this.reload_tables();
-        this.unload_boards(None);
+        this.unload_boards(None, cx);
         this
     }
 
-    pub fn load_board(&mut self, id: &str) -> bool {
+    pub fn load_board(&mut self, id: &str, cx: &mut App) -> bool {
         if !self.unloaded_boards.contains(id) {
             return true;
         }
         let Some(fresh) = self.store().board(id) else {
             return false;
         };
-        let Some(board) = self.boards.iter_mut().find(|board| board.id == id) else {
+        let Some(held) = self.boards.iter().find(|held| held.id == id) else {
             return false;
         };
-        *board = fresh;
+        held.board.update(cx, |board, cx| {
+            *board = fresh;
+            cx.notify();
+        });
         self.unloaded_boards.remove(id);
         true
     }
 
-    pub fn unload_boards(&mut self, visible: Option<usize>) {
+    pub fn unload_boards(&mut self, visible: Option<usize>, cx: &mut App) {
         let store = self.store();
-        for (ix, board) in self.boards.iter_mut().enumerate() {
-            if !board.archived || visible == Some(ix) || self.unloaded_boards.contains(&board.id) {
+        for (ix, held) in self.boards.iter().enumerate() {
+            let board = held.board.read(cx);
+            if !board.archived || visible == Some(ix) || self.unloaded_boards.contains(&held.id) {
                 continue;
             }
-            let Some(saved) = store.board(&board.id) else {
+            let Some(saved) = store.board(&held.id) else {
                 continue;
             };
-            if serde_json::to_value(&saved).ok() != serde_json::to_value(&*board).ok() {
+            if serde_json::to_value(&saved).ok() != serde_json::to_value(board).ok() {
                 continue;
             }
-            board.columns = Vec::new();
-            self.unloaded_boards.insert(board.id.clone());
+            held.board.update(cx, |board, _| board.columns = Vec::new());
+            self.unloaded_boards.insert(held.id.clone());
         }
+    }
+
+    /// The board listed at `ix`.
+    pub fn board<'a>(&self, ix: usize, cx: &'a App) -> Option<&'a Board> {
+        Some(self.boards.get(ix)?.board.read(cx))
     }
 
     /// Re-read everything on disk and reconcile it with what is held. The
@@ -129,8 +201,7 @@ impl Project {
     /// why the event itself is never read for more than where it landed.
     ///
     /// Answers whether anything a view holds *about* an entry moved: a card's
-    /// place on a board, a column's place in a table, the editor a document was
-    /// being read in. Everything else is drawn off the model each frame and
+    /// place on a board, a column's place in a table. Everything else is drawn off the model each frame and
     /// nobody keeps a handle on it, so a re-read that only changed those has
     /// nothing to announce — and announcing it would drop the edit somebody has
     /// open over the echo of their own save.
@@ -140,11 +211,11 @@ impl Project {
         if self.data.is_none() {
             self.data = Data::attach(&self.path);
         }
-        let articles = self.reload_articles(cx);
-        let boards = self.reload_boards();
+        self.reload_articles(cx);
+        let boards = self.reload_boards(cx);
         let before = self.shape();
         self.reload_tables();
-        articles || boards || before != self.shape()
+        boards || before != self.shape()
     }
 
     /// What the table pane addresses by position: which tables there are, and
@@ -163,31 +234,26 @@ impl Project {
     /// Held by path across the merge, not by index, and for the reason
     /// [`Self::reload_tables`] holds by key: the list is ordered by when each
     /// was last written, so one article changing can move every other one.
-    ///
-    /// Carries out [`Article::adopt`]'s answer — an open document rebuilt over
-    /// what the file now says has taken the caret with it.
-    fn reload_articles(&mut self, cx: &mut Context<Workspace>) -> bool {
+    fn reload_articles(&mut self, cx: &mut Context<Workspace>) {
         let open = self.open_article().map(Path::to_path_buf);
         let mut held: HashMap<PathBuf, Article> = self
             .articles
             .drain(..)
             .map(|article| (article.path.clone(), article))
             .collect();
-        let mut rebuilt = false;
         self.articles = article::list(&self.path)
             .into_iter()
             .map(|fresh| match held.remove(&fresh.path) {
-                // Already on screen — the editor over it, its scroll and its
-                // undo history stay where they are.
+                // Already on screen — the document under it and its undo
+                // history stay where they are.
                 Some(mut article) => {
-                    rebuilt |= article.adopt(&fresh, cx);
+                    article.adopt(&fresh, cx);
                     article
                 }
                 None => fresh,
             })
             .collect();
         self.article = open.and_then(|path| self.articles.iter().position(|at| at.path == path));
-        rebuilt
     }
 
     /// The file the article pane is showing, if it is showing one.
@@ -199,32 +265,36 @@ impl Project {
     /// The same, for boards. Nothing here is a live surface, so the merge is
     /// only about not disturbing a board the re-read did not change — see
     /// [`Board::adopt`], whose answer is carried out of here.
-    fn reload_boards(&mut self) -> bool {
+    fn reload_boards(&mut self, cx: &mut App) -> bool {
         let open = self
             .board
             .and_then(|ix| self.boards.get(ix))
-            .map(|board| board.id.clone());
-        let mut held: HashMap<String, Board> = self
+            .map(|held| held.id.clone());
+        let mut held: HashMap<String, HeldBoard> = self
             .boards
             .drain(..)
-            .map(|board| (board.id.clone(), board))
+            .map(|held| (held.id.clone(), held))
             .collect();
         self.unloaded_boards.clear();
         let mut moved = false;
-        self.boards = self
-            .store()
-            .boards()
+        let fresh = self.store().boards();
+        self.boards = fresh
             .into_iter()
             .map(|fresh| match held.remove(&fresh.id) {
-                Some(mut board) => {
-                    moved |= board.adopt(fresh);
-                    board
+                // The entity stays, so every view drawing the board keeps
+                // drawing it: what changes is what it holds.
+                Some(kept) => {
+                    kept.board.update(cx, |board, cx| {
+                        moved |= board.adopt(fresh);
+                        cx.notify();
+                    });
+                    kept
                 }
-                None => fresh,
+                None => HeldBoard::new(fresh, cx),
             })
             .collect();
         self.board = open.and_then(|id| self.boards.iter().position(|at| at.id == id));
-        self.unload_boards(self.board);
+        self.unload_boards(self.board, cx);
         moved
     }
 
@@ -243,15 +313,11 @@ impl Project {
             .as_ref()
             .and_then(|data| data.list().ok())
             .unwrap_or_default();
-        self.table = match open.and_then(|key| self.position(&key)) {
+        self.table = match open.and_then(|key| self.table_ix(&key)) {
             found @ Some(_) => found,
             None => self.table.filter(|ix| *ix < self.tables.len()),
         };
         self.reload_page();
-    }
-
-    fn position(&self, key: &str) -> Option<usize> {
-        self.tables.iter().position(|table| table.key == key)
     }
 
     /// Read the open table's rows.
@@ -306,18 +372,115 @@ impl Project {
             .unwrap_or_else(|| self.path.display().to_string())
     }
 
-    pub fn session(&self, id: u64) -> Option<&ChatSession> {
-        self.sessions.iter().find(|chat| chat.id == id)
+    pub fn session<'a>(&self, id: u64, cx: &'a App) -> Option<&'a ChatSession> {
+        Some(self.session_entity(id)?.read(cx))
     }
 
-    pub fn session_mut(&mut self, id: u64) -> Option<&mut ChatSession> {
-        self.sessions.iter_mut().find(|chat| chat.id == id)
+    pub fn session_entity(&self, id: u64) -> Option<&Entity<ChatSession>> {
+        self.sessions
+            .iter()
+            .find(|held| held.id == id)
+            .map(|held| &held.chat)
+    }
+
+    /// The sessions, read.
+    pub fn chats<'a>(&'a self, cx: &'a App) -> impl Iterator<Item = &'a ChatSession> + 'a {
+        self.sessions.iter().map(|held| held.chat.read(cx))
     }
 
     /// Where the entry `showing` names is listed among its kind.
+    /// The entry a stored id names: a session by its record, every other kind
+    /// by its id or key.
+    pub fn stored(&self, kind: Kind, id: &str, cx: &App) -> Option<Showing> {
+        Some(match kind {
+            Kind::Session => Showing::Session(
+                self.chats(cx)
+                    .find(|chat| chat.record.as_deref() == Some(id))?
+                    .id,
+            ),
+            Kind::Board => Showing::Board(self.boards[self.board_ix(id)?].id.clone()),
+            Kind::Article => Showing::Article(self.articles[self.article_ix(id)?].id.clone()),
+            Kind::Table => Showing::Table(self.tables[self.table_ix(id)?].key.clone()),
+        })
+    }
+
+    /// What the entry `showing` names carries, whatever its kind.
+    pub fn facts(&self, showing: &Showing, cx: &App) -> Option<Facts> {
+        Some(self.facts_at(showing.kind(), self.ix_of(showing)?, cx))
+    }
+
+    /// Every entry of `kind`, in list order.
+    pub fn every<'a>(&'a self, kind: Kind, cx: &'a App) -> impl Iterator<Item = Facts> + 'a {
+        let len = match kind {
+            Kind::Session => self.sessions.len(),
+            Kind::Board => self.boards.len(),
+            Kind::Article => self.articles.len(),
+            Kind::Table => self.tables.len(),
+        };
+        (0..len).map(move |ix| self.facts_at(kind, ix, cx))
+    }
+
+    /// The facts of the `ix`th entry of `kind`. Panics past the end.
+    pub fn facts_at(&self, kind: Kind, ix: usize, cx: &App) -> Facts {
+        match kind {
+            Kind::Session => {
+                let chat = self.sessions[ix].chat.read(cx);
+                Facts {
+                    showing: Showing::Session(chat.id),
+                    label: chat.label(),
+                    number: chat.number,
+                    touched: chat.touched(),
+                    created: None,
+                    archived: chat.closed,
+                    labels: chat.labels.clone(),
+                    agent: Some(chat.entry.name.clone()),
+                }
+            }
+            Kind::Board => {
+                let board = self.boards[ix].board.read(cx);
+                Facts {
+                    showing: Showing::Board(board.id.clone()),
+                    label: board.label().to_owned(),
+                    number: board.number,
+                    touched: board.touched,
+                    created: board.created,
+                    archived: board.archived,
+                    labels: board.labels.clone(),
+                    agent: None,
+                }
+            }
+            Kind::Article => {
+                let article = &self.articles[ix];
+                Facts {
+                    showing: Showing::Article(article.id.clone()),
+                    label: article.label().to_owned(),
+                    number: article.number,
+                    touched: article.touched,
+                    created: article.created,
+                    archived: article.archived,
+                    labels: article.labels.clone(),
+                    agent: None,
+                }
+            }
+            Kind::Table => {
+                let table = &self.tables[ix];
+                Facts {
+                    showing: Showing::Table(table.key.clone()),
+                    label: table.name.clone(),
+                    number: table.number,
+                    touched: table.touched_ms(),
+                    created: Some(table.created_ms()),
+                    archived: table.archived,
+                    labels: Vec::new(),
+                    agent: None,
+                }
+            }
+        }
+    }
+
     pub fn ix_of(&self, showing: &Showing) -> Option<usize> {
         match showing {
-            Showing::Session(id) => self.sessions.iter().position(|chat| chat.id == *id),
+            Showing::Session(id) => self.sessions.iter().position(|held| held.id == *id),
             Showing::Board(id) => self.board_ix(id),
             Showing::Article(id) => self.article_ix(id),
             Showing::Table(key) => self.table_ix(key),
@@ -339,8 +502,8 @@ impl Project {
         self.tables.iter().position(|table| table.key == key)
     }
 
-    pub fn active_session(&self) -> Option<&ChatSession> {
-        self.active.and_then(|id| self.session(id))
+    pub fn active_session<'a>(&self, cx: &'a App) -> Option<&'a ChatSession> {
+        self.active.and_then(|id| self.session(id, cx))
     }
 }
 

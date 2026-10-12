@@ -2,6 +2,7 @@
 
 mod common;
 
+use artifact::kind::Kind;
 use common::{Scratch, said};
 use cydonia_mcp::rail::{self, Shown};
 use serde_json::json;
@@ -9,7 +10,7 @@ use serde_json::json;
 fn shown(scratch: &Scratch, id: &str, focused: bool) -> Shown {
     Shown {
         project: scratch.path().to_path_buf(),
-        kind: "board",
+        kind: Kind::Board,
         id: id.to_owned(),
         focused,
     }

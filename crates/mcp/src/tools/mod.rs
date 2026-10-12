@@ -24,6 +24,7 @@ use crate::{
     rail,
     tool::{Arg, Args, Trouble},
 };
+use artifact::error::{Act, Error};
 use artifact::reference::{Reference, Target, Within};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -67,16 +68,11 @@ pub(crate) fn on_the_rail(path: &Path) -> Result<&Path, Trouble> {
     if rail::is_open(path) {
         return Ok(path);
     }
-    Err(Trouble::Refused(match held() {
-        None => format!(
-            "cydonia has no project open, so {} is not one to work in",
-            path.display()
-        ),
-        Some(open) => format!(
-            "cydonia does not have {} open — it has {open}",
-            path.display()
-        ),
-    }))
+    Err(Error::ProjectClosed {
+        path: path.to_path_buf(),
+        open: rail::open(),
+    }
+    .into())
 }
 
 /// The project a reference names: the one written before its `#`, else the
@@ -92,7 +88,7 @@ pub fn project_of(args: &Args<'_>, reference: &Reference<'_>) -> Result<PathBuf,
     let open = rail::open();
     let mut named = open
         .iter()
-        .filter(|path| path.file_name().is_some_and(|last| last == name));
+        .filter(|path| artifact::reference::names(path, name));
     match (named.next(), named.next()) {
         (Some(one), None) => Ok(one.clone()),
         (Some(_), Some(_)) => Err(Trouble::Refused(format!(
@@ -103,11 +99,32 @@ pub fn project_of(args: &Args<'_>, reference: &Reference<'_>) -> Result<PathBuf,
                 .collect::<Vec<_>>()
                 .join(", ")
         ))),
-        (None, _) => Err(Trouble::Refused(match held() {
-            None => format!("no open project is named {name}, and cydonia has none open"),
-            Some(open) => format!("no open project is named {name} — cydonia has {open}"),
-        })),
+        (None, _) => Err(Error::NoProjectNamed {
+            name: name.to_owned(),
+            open,
+        }
+        .into()),
     }
+}
+
+/// Entry `number` of the project at `project`. `named` is the reference as
+/// written, for the refusal.
+pub(crate) fn entry_numbered(
+    project: &Path,
+    number: u64,
+    named: &str,
+) -> Result<artifact::entry::Entry, Trouble> {
+    artifact::entry::list(project)
+        .map_err(|e| Error::failed("this project's entries", Act::Read, e))?
+        .into_iter()
+        .find(|entry| entry.number == number)
+        .ok_or_else(|| {
+            Error::NotFound {
+                what: "entry",
+                named: named.to_owned(),
+            }
+            .into()
+        })
 }
 
 /// The entry number `needle` names in `project`, and the part of it named
@@ -125,7 +142,7 @@ pub(crate) fn part_in<'a>(
         return Ok(None);
     };
     if let Some(name) = named
-        && project.file_name().is_none_or(|last| last != name)
+        && !artifact::reference::names(project, name)
     {
         return Err(Trouble::Refused(format!(
             "{needle} is in project {name}, not {} — pass that project",
@@ -199,6 +216,17 @@ pub(crate) fn many(schema: &mut Value, arg: Arg) {
     });
 }
 
+/// Offer `arg` as an optional property of JSON type `kind`.
+pub(crate) fn optional(schema: &mut Value, arg: Arg, kind: &str) {
+    schema["properties"][arg.name] = json!({ "type": kind, "description": arg.about });
+}
+
+/// [`optional`], with the value a call that leaves it out gets.
+pub(crate) fn defaulted(schema: &mut Value, arg: Arg, kind: &str, default: Value) {
+    optional(schema, arg, kind);
+    schema["properties"][arg.name]["default"] = default;
+}
+
 /// An object schema over required strings. Tools can add optional fields.
 ///
 /// `bound` is whether the caller already has a project, in which case the
@@ -224,4 +252,13 @@ pub(crate) fn fields(bound: bool, args: &[Arg]) -> Value {
         "properties": properties,
         "required": required,
     })
+}
+
+/// `names` joined for a refusal to list, or `none at all`.
+pub(crate) fn listing(names: impl Iterator<Item = String>) -> String {
+    let names: Vec<String> = names.collect();
+    match names.is_empty() {
+        true => "none at all".to_owned(),
+        false => names.join(", "),
+    }
 }

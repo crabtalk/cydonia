@@ -21,9 +21,11 @@ use crate::{
     tool::{Answer, Arg, Args, Outcome, Tool, Trouble},
     tools::{PROJECT, fields, many, on_the_rail, root},
 };
+use artifact::error::{Act, Error};
 use artifact::{
     board::Board,
     project::{Project, fs},
+    reference::{self, Reference, Target},
 };
 use serde_json::{Value, json};
 use std::path::Path;
@@ -192,11 +194,7 @@ pub static TOOLS: [Tool; 16] = [
         schema: |bound| {
             let mut schema = fields(bound, &[PROJECT, BOARDS]);
             many(&mut schema, BOARDS);
-            schema["properties"][ARCHIVED.name] = json!({
-                "type": "boolean",
-                "description": ARCHIVED.about,
-                "default": true,
-            });
+            super::defaulted(&mut schema, ARCHIVED, "boolean", json!(true));
             schema
         },
         writes: true,
@@ -252,13 +250,10 @@ pub static TOOLS: [Tool; 16] = [
         name: "board_move_card",
         description: "Carry a card or several to the end of another column, another board, or a board in another project. Moving to another board gives each a new handle and clears the session it was dispatched to.",
         schema: |bound| {
-            let mut schema = fields(bound, &[PROJECT, CARDS, COLUMN, TO_BOARD, TO_PROJECT]);
-            schema["required"] = json!(
-                [PROJECT.name, CARDS.name]
-                    .iter()
-                    .filter(|name| !bound || **name != PROJECT.name)
-                    .collect::<Vec<_>>()
-            );
+            let mut schema = fields(bound, &[PROJECT, CARDS]);
+            for arg in [COLUMN, TO_BOARD, TO_PROJECT] {
+                super::optional(&mut schema, arg, "string");
+            }
             many(&mut schema, CARDS);
             schema
         },
@@ -327,6 +322,10 @@ pub static TOOLS: [Tool; 16] = [
     },
 ];
 
+/// What a caller says to take a status off. Not a [`Status`] — the absence of
+/// one is what it means.
+const NONE: &str = "none";
+
 // ── the tools ────────────────────────────────────────────────────
 
 fn add(args: Args<'_>) -> Outcome {
@@ -335,16 +334,8 @@ fn add(args: Args<'_>) -> Outcome {
     if name.is_empty() {
         return Err(Trouble::Refused("A board needs a name.".into()));
     }
-    let key = artifact::board::key::normalize(args.text(KEY)?)
-        .ok_or_else(|| Trouble::Refused("A key needs at least one letter or digit.".into()))?;
-    if project.boards().iter().any(|board| board.key == key) {
-        return Err(Trouble::Refused(format!(
-            "{key} is another board's key here."
-        )));
-    }
-    let board = project
-        .create_board(name, &key)
-        .map_err(|e| Trouble::Refused(format!("The board could not be written — {e}.")))?;
+    let key = artifact::board::key::claim(args.text(KEY)?, &project.boards(), None)?;
+    let board = project.create_board(name, &key).map_err(unwritten)?;
     Ok(Answer::said(outline(&board)).with(shape(&board)))
 }
 
@@ -360,23 +351,11 @@ fn rename(args: Args<'_>) -> Outcome {
         return Err(Trouble::Refused("A board needs a name.".into()));
     }
     let key = match args.maybe(KEY_NOW) {
-        Some(given) => {
-            let key = artifact::board::key::normalize(given).ok_or_else(|| {
-                Trouble::Refused("A key needs at least one letter or digit.".into())
-            })?;
-            // Among this project's boards and no further, which is as far as a
-            // handle carries — and never against this board's own.
-            if project
-                .boards()
-                .iter()
-                .any(|other| other.id != board.id && other.key == key)
-            {
-                return Err(Trouble::Refused(format!(
-                    "{key} is another board's key here."
-                )));
-            }
-            Some(key)
-        }
+        Some(given) => Some(artifact::board::key::claim(
+            given,
+            &project.boards(),
+            Some(&board.id),
+        )?),
         None => None,
     };
     let was = match board.name.is_empty() {
@@ -484,9 +463,11 @@ fn search(args: Args<'_>) -> Outcome {
     let mut data = Vec::new();
     for needle in args.list(SOUGHT)? {
         let needle = needle.trim();
-        // A handle's key is before its last dash, as in [`locate`].
-        let key = match needle.rsplit_once('-') {
-            Some((key, number)) if number.parse::<u64>().is_ok() => key,
+        let key = match reference::parse(needle) {
+            Some(Reference {
+                target: Target::Card { key, .. },
+                ..
+            }) => key,
             _ => needle,
         };
         let found: Vec<&(std::path::PathBuf, Board)> = boards
@@ -574,10 +555,6 @@ fn statuses() -> Vec<&'static str> {
         .collect()
 }
 
-/// What a caller says to take a status off. Not a [`Status`] — the absence of
-/// one is what it means.
-const NONE: &str = "none";
-
 /// One card or a run of them, which may sit on different boards. Every card is
 /// located, tagged and written in turn: a refusal on any of them is the whole
 /// call refused, so a caller is never left guessing which half of a list took.
@@ -599,17 +576,7 @@ fn set_card_status(args: Args<'_>) -> Outcome {
         .into_iter()
         .map(|needle| locate(project, needle))
         .collect::<Result<_, _>>()?;
-    // Two cards on one board arrive as two reads of it, and saving each copy in
-    // turn would put back one that predates the other's edit — the last write
-    // would drop every tag before it. A board is gathered once and written once,
-    // however many of its cards were named.
-    let mut boards: Vec<(Board, Vec<String>)> = Vec::new();
-    for (board, id) in found {
-        match boards.iter_mut().find(|(held, _)| held.id == board.id) {
-            Some((_, ids)) => ids.push(id),
-            None => boards.push((board, vec![id])),
-        }
-    }
+    let boards = by_board(found);
     let mut tagged: Vec<Value> = Vec::new();
     let mut handles: Vec<String> = Vec::new();
     for (mut board, ids) in boards {
@@ -676,17 +643,7 @@ fn move_card(args: Args<'_>) -> Outcome {
         }
         (Some(needle), _) => Some(needle),
     };
-    // Two cards on one board arrive as two reads of it, and saving each copy in
-    // turn would put back one that predates the other's edit — the last write
-    // would undo every move before it. A board is gathered once and written
-    // once, however many of its cards were named.
-    let mut sources: Vec<(Board, Vec<String>)> = Vec::new();
-    for (board, id) in found {
-        match sources.iter_mut().find(|(held, _)| held.id == board.id) {
-            Some((_, ids)) => ids.push(id),
-            None => sources.push((board, vec![id])),
-        }
-    }
+    let sources = by_board(found);
     let Some(needle) = elsewhere else {
         return within(project, sources, args.text(COLUMN)?, &spoken);
     };
@@ -804,13 +761,7 @@ fn remove_card(args: Args<'_>) -> Outcome {
         .into_iter()
         .map(|needle| locate(project, needle))
         .collect::<Result<_, _>>()?;
-    let mut boards: Vec<(Board, Vec<String>)> = Vec::new();
-    for (board, id) in found {
-        match boards.iter_mut().find(|(held, _)| held.id == board.id) {
-            Some((_, ids)) => ids.push(id),
-            None => boards.push((board, vec![id])),
-        }
-    }
+    let boards = by_board(found);
     let mut gone: Vec<String> = Vec::new();
     for (mut board, ids) in boards {
         for id in &ids {
@@ -939,7 +890,13 @@ fn board(project: &fs::Project, needle: &str) -> Result<Board, Trouble> {
             .iter()
             .position(|board| board.number == Some(number))
             .map(|at| boards.swap_remove(at))
-            .ok_or_else(|| Trouble::Refused(format!("no board {needle} in this project")));
+            .ok_or_else(|| {
+                Error::NotFound {
+                    what: "board",
+                    named: needle.to_owned(),
+                }
+                .into()
+            });
     }
     let found = boards
         .iter()
@@ -958,21 +915,23 @@ fn board(project: &fs::Project, needle: &str) -> Result<Board, Trouble> {
 /// The board a card is on, and the card's id on it. A handle names one card
 /// across the whole project, so the board is an answer here rather than an
 /// argument.
-fn locate(project: &impl Project, needle: &str) -> Result<(Board, String), Trouble> {
+fn locate(project: &fs::Project, needle: &str) -> Result<(Board, String), Trouble> {
     let mut boards = project.boards();
-    // `ROA2-5` is card 5 on board ROA2, so the split is the *last* dash — a
-    // key may carry a digit, and boards.md settled which side it falls on.
-    if let Some((key, number)) = needle.rsplit_once('-')
-        && let Ok(handle) = number.parse::<u64>()
-        && let Some(at) = boards.iter().position(|board| same(&board.key, key))
+    if let Some(Reference {
+        project: named,
+        target: Target::Card { key, handle },
+    }) = reference::parse(needle)
+        && let Some(at) = boards.iter().position(|board| board.keyed(key))
     {
+        if let Some(name) = named
+            && !reference::names(project.root(), name)
+        {
+            return Err(Trouble::Refused(format!(
+                "{needle} is in project {name}, not this one — name that project"
+            )));
+        }
         let board = boards.swap_remove(at);
-        let found = board
-            .columns
-            .iter()
-            .flat_map(|column| &column.cards)
-            .find(|card| card.handle == Some(handle))
-            .map(|card| card.id.clone());
+        let found = board.card_at(handle).map(|card| card.id.clone());
         return match found {
             Some(id) => Ok((board, id)),
             None => Err(Trouble::Refused(format!(
@@ -990,6 +949,20 @@ fn locate(project: &impl Project, needle: &str) -> Result<(Board, String), Troub
     Err(Trouble::Refused(format!(
         "no card {needle} in this project"
     )))
+}
+
+/// Located cards, one entry a board. Two cards on one board arrive as two
+/// reads of it, and saving each read in turn writes back one that predates the
+/// other's edit.
+fn by_board(found: Vec<(Board, String)>) -> Vec<(Board, Vec<String>)> {
+    let mut boards: Vec<(Board, Vec<String>)> = Vec::new();
+    for (board, id) in found {
+        match boards.iter_mut().find(|(held, _)| held.id == board.id) {
+            Some((_, ids)) => ids.push(id),
+            None => boards.push((board, vec![id])),
+        }
+    }
+    boards
 }
 
 /// The id of the column a needle names. Nothing stops two columns sharing a
@@ -1143,14 +1116,11 @@ fn count(board: &Board) -> usize {
 }
 
 fn keys(boards: &[Board]) -> String {
-    match boards.is_empty() {
-        true => "none at all".to_owned(),
-        false => boards
+    super::listing(
+        boards
             .iter()
-            .map(|board| format!("{} ({})", board.key, board.label()))
-            .collect::<Vec<_>>()
-            .join(", "),
-    }
+            .map(|board| format!("{} ({})", board.key, board.label())),
+    )
 }
 
 fn columns(board: &Board) -> String {
@@ -1166,6 +1136,6 @@ fn columns(board: &Board) -> String {
 }
 
 /// A write the backend refused, as the answer the agent reads.
-fn unwritten(error: impl std::fmt::Display) -> Trouble {
-    Trouble::Refused(format!("The board could not be written — {error}."))
+fn unwritten(error: impl Into<anyhow::Error>) -> Trouble {
+    Error::failed("the board", Act::Written, error).into()
 }

@@ -1,7 +1,7 @@
 use super::*;
 
 fn preview(patch: &str, old: &str, new: &str) -> Preview {
-    crate::model::language::paintable();
+    crate::model::language::Here::paintable();
     syntax_std::install();
     Preview::build(
         Path::new("file.rs"),

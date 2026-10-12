@@ -1,5 +1,4 @@
-//! The pieces a screen hangs in itself. Nothing here answers to
-//! [`crate::view::root::Pane`]: these are not places you can be.
+//! The pieces a screen hangs in itself. None of them is a place you can be.
 
 #[cfg(not(target_os = "linux"))]
 pub mod browse;
@@ -7,7 +6,6 @@ pub mod browse;
 pub mod browser;
 pub mod changes;
 pub mod composer;
-pub mod menu;
 pub mod meter;
 pub mod ribbon;
 #[cfg(feature = "desktop")]
@@ -20,6 +18,8 @@ pub mod panel;
 pub mod files;
 
 pub mod divider;
+
+pub mod margin;
 
 pub mod status;
 

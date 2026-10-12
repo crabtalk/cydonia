@@ -1,4 +1,4 @@
-use artifact::entry;
+use artifact::{entry, kind::Kind};
 use cydonia_gui::{
     data::{ColType, Column, Data},
     model::article,
@@ -70,10 +70,13 @@ fn app_and_agent_catalog_share_article_and_table_numbers() {
     let catalog = entry::list(&scratch.0).unwrap();
     let found = catalog
         .iter()
-        .find(|entry| entry.kind == "article")
+        .find(|entry| entry.kind == Kind::Article)
         .unwrap();
     assert_eq!(Some(found.number), article.number);
-    let found = catalog.iter().find(|entry| entry.kind == "table").unwrap();
+    let found = catalog
+        .iter()
+        .find(|entry| entry.kind == Kind::Table)
+        .unwrap();
     assert_eq!(Some(found.number), table.number);
     let content = entry::read(&scratch.0, found).unwrap();
     assert_eq!(content["rows"][0][0], "hello");

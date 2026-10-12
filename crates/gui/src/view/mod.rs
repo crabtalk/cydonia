@@ -2,37 +2,20 @@
 //! [`crate::model::workspace::Workspace`] and writes to it by name; none of
 //! them owns app state.
 
-pub mod arrangement;
 pub mod article;
 pub mod board;
-pub mod chrome;
 pub mod component;
-pub mod confirm;
-pub mod create;
-pub mod desktop;
 pub mod detail;
-pub mod drawer;
-pub mod entry_link;
-pub mod find;
-pub mod header;
-pub mod history;
-#[cfg(feature = "desktop")]
-pub mod hotkey;
-pub mod info;
 pub mod keymap;
-pub mod labels;
-pub mod leaf;
+pub mod kit;
 pub mod library;
-pub mod lights;
-pub mod mention;
-pub mod menubar;
-pub mod root;
+pub mod modals;
+pub mod pane;
 pub mod search;
-pub mod section;
 pub mod settings;
 pub mod sidebar;
-pub mod stamp;
 pub mod table;
+pub mod window;
 
 #[cfg(test)]
 #[path = "../../tests/unit/clipboard.rs"]

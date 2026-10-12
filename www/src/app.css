@@ -1,15 +1,13 @@
 :root {
-	/* Light, and almost colourless. The page is a frame around three things the
-	   visitor came for — the sentence, the app, the install line — so nothing
-	   here competes with them. */
-	--bg: #fff;
-	--panel: #fafafa;
-	--panel-high: #f4f4f5;
-	--line: #e6e6e6;
-	--line-strong: #d4d4d4;
-	--text: #0b0b0c;
-	--muted: #5c5f66;
-	--faint: #8b8f96;
+	/* Dark only, and almost colourless. */
+	--bg: #0b0b0c;
+	--panel: #141416;
+	--panel-high: #1c1c1f;
+	--line: #26262a;
+	--line-strong: #3a3a3f;
+	--text: #f2f2f3;
+	--muted: #a2a4ab;
+	--faint: #74767d;
 	--mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
 
 	/* Boxes and media are square. Only controls and inline marks round, and
@@ -33,30 +31,12 @@
 	/* The bar's height, and what anything sticky below it has to clear. */
 	--header: 56px;
 
-	/* The filled button: its own ink and hover, because in dark the surface it
-	   sits on is the text colour and `#fff` on it would be invisible. */
-	--accent: #0b0b0c;
-	--accent-ink: #fff;
-	--accent-hover: #333;
-	--ok: #12833a;
-	color-scheme: light dark;
-}
-
-@media (prefers-color-scheme: dark) {
-	:root {
-		--bg: #0b0b0c;
-		--panel: #141416;
-		--panel-high: #1c1c1f;
-		--line: #26262a;
-		--line-strong: #3a3a3f;
-		--text: #f2f2f3;
-		--muted: #a2a4ab;
-		--faint: #74767d;
-		--accent: #f2f2f3;
-		--accent-ink: #0b0b0c;
-		--accent-hover: #d6d6d8;
-		--ok: #4ade80;
-	}
+	/* The filled button: its own ink and hover. */
+	--accent: #f2f2f3;
+	--accent-ink: #0b0b0c;
+	--accent-hover: #d6d6d8;
+	--ok: #4ade80;
+	color-scheme: dark;
 }
 
 @media (max-width: 720px) {
@@ -129,21 +109,12 @@ pre code {
 	font-size: inherit;
 }
 
-/* Shiki paints the tokens and ships both themes on every span, as
-   `--shiki-light` and `--shiki-dark`; which one is read is this site's answer
-   about appearance rather than the highlighter's. The block keeps the surface
-   and border `pre` already has. */
+/* Shiki paints each token as `--shiki-dark` and sets no colour of its own.
+   The block keeps the surface and border `pre` already has. */
 .shiki,
 .shiki span {
-	color: var(--shiki-light);
+	color: var(--shiki-dark);
 	background: none;
-}
-
-@media (prefers-color-scheme: dark) {
-	.shiki,
-	.shiki span {
-		color: var(--shiki-dark);
-	}
 }
 
 h1,

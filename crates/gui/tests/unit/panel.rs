@@ -72,9 +72,9 @@ fn launcher_and_popover_render(cx: &mut gpui::TestAppContext) {
     visual.simulate_resize(gpui::size(px(440.), px(600.)));
     visual.run_until_parked();
     window
-        .update(&mut visual, |panel, _, cx| {
-            panel.menu = true;
-            cx.notify();
+        .update(&mut visual, |panel, window, cx| {
+            let (items, choose) = panel.launch_menu(window, cx);
+            panel.menu.open((), Place::Below, items, choose, window, cx);
         })
         .unwrap();
     visual.run_until_parked();

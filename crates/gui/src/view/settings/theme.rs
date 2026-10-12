@@ -6,7 +6,7 @@ use crate::model::{
 };
 use crate::{
     model::workspace::Workspace,
-    view::settings::{self, SettingsWindow, Switch},
+    view::settings::{self, SettingsWindow, Switch, group, labelled},
 };
 use artifact::board::View;
 use bezel::theme::AppExt as _;
@@ -38,6 +38,9 @@ const MODES: [AppearanceMode; 3] = [
     AppearanceMode::Light,
     AppearanceMode::Dark,
 ];
+
+/// Swatches a row of the colour popover holds.
+const SWATCH_COLUMNS: usize = 6;
 
 impl SettingsWindow {
     /// The whole page: the mode it paints in, then the colours it mixes and the
@@ -72,56 +75,31 @@ impl SettingsWindow {
         let current = cx.appearance_mode();
         theme
             .card_row(true)
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(theme.row_title("Theme"))
-                    .child(
-                        div()
-                            .mt(px(4.))
-                            .text_style(TextStyle::Subheadline)
-                            .text_color(theme.text_muted)
-                            .child("Follow the system, or pick one."),
-                    ),
-            )
+            .child(labelled(
+                &theme,
+                "Theme",
+                "Follow the system, or pick one.",
+                false,
+            ))
             .child(
                 // A segmented control rather than a select: three options that
                 // all fit are worth showing at once.
-                div()
-                    .flex_none()
-                    .flex()
-                    .flex_row()
-                    .gap(px(2.))
-                    .p(px(2.))
-                    .rounded(px(Theme::button_radius()))
-                    .border_1()
-                    .border_color(theme.border)
-                    .children(MODES.into_iter().enumerate().map(|(ix, mode)| {
-                        let selected = mode == current;
-                        div()
-                            .id(("appearance", ix))
-                            .px(px(10.))
-                            .py(px(4.))
-                            .rounded(px(Theme::control_radius()))
-                            .text_style(TextStyle::Callout)
-                            .cursor_pointer()
-                            .when(selected, |el| {
-                                el.bg(theme.element_active).text_color(theme.text)
-                            })
-                            .when(!selected, |el| {
-                                el.text_color(theme.text_muted)
-                                    .hover(|el| el.bg(theme.element_hover))
-                            })
-                            .child(mode.label())
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.workspace
-                                    .update(cx, |workspace, cx| workspace.set_appearance(mode, cx));
-                                cx.notify();
-                            }))
-                    })),
+                theme
+                    .segmented(
+                        "appearance",
+                        MODES.map(|mode| mode.label()),
+                        MODES
+                            .iter()
+                            .position(|mode| *mode == current)
+                            .unwrap_or(usize::MAX),
+                        cx.listener(|this, ix: &usize, _, cx| {
+                            this.workspace.update(cx, |workspace, cx| {
+                                workspace.set_appearance(MODES[*ix], cx)
+                            });
+                            cx.notify();
+                        }),
+                    )
+                    .flex_none(),
             )
     }
 
@@ -188,7 +166,7 @@ impl SettingsWindow {
         };
         theme
             .card_row(false)
-            .child(div().flex_1().min_w_0().child(theme.row_title(title)))
+            .child(theme.row_title(title).flex_1())
             .child(div().flex_none().w(px(220.)).child(picker))
     }
 
@@ -202,11 +180,7 @@ impl SettingsWindow {
                 .into_iter()
                 .any(|appearance| workspace.theme(appearance).is_none())
         };
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(settings::LABEL_GAP))
-            .child(theme.field_label("Colors"))
+        group(&theme, "Colors")
             .child(
                 theme
                     .group_box()
@@ -221,11 +195,7 @@ impl SettingsWindow {
 
     fn scrollbars_group(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(settings::LABEL_GAP))
-            .child(theme.field_label("Scrollbars"))
+        group(&theme, "Scrollbars")
             .child(
                 theme
                     .group_box()
@@ -246,43 +216,36 @@ impl SettingsWindow {
         };
         theme
             .card_row(sidebar)
-            .child(div().flex_1().min_w_0().child(theme.row_title(if sidebar {
-                "Sidebar scrollbars"
-            } else {
-                "Content scrollbars"
-            })))
             .child(
-                div()
-                    .flex()
-                    .gap(px(2.))
-                    .children(Scrollbars::ALL.into_iter().enumerate().map(|(ix, value)| {
-                        div()
-                            .id((
-                                if sidebar {
-                                    "sidebar-scrollbars"
-                                } else {
-                                    "content-scrollbars"
-                                },
-                                ix,
-                            ))
-                            .px(px(8.))
-                            .py(px(4.))
-                            .rounded(px(Theme::control_radius()))
-                            .text_style(TextStyle::Callout)
-                            .cursor_pointer()
-                            .when(current == value, |el| el.bg(theme.element_active))
-                            .when(current != value, |el| {
-                                el.text_color(theme.text_muted)
-                                    .hover(|el| el.bg(theme.element_hover))
-                            })
-                            .child(value.label())
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.workspace.update(cx, |workspace, cx| {
-                                    workspace.set_scrollbars(value, sidebar, cx)
-                                });
-                                cx.notify();
-                            }))
-                    })),
+                theme
+                    .row_title(if sidebar {
+                        "Sidebar scrollbars"
+                    } else {
+                        "Content scrollbars"
+                    })
+                    .flex_1(),
+            )
+            .child(
+                theme
+                    .segmented(
+                        if sidebar {
+                            "sidebar-scrollbars"
+                        } else {
+                            "content-scrollbars"
+                        },
+                        Scrollbars::ALL.map(|value| value.label()),
+                        Scrollbars::ALL
+                            .iter()
+                            .position(|value| *value == current)
+                            .unwrap_or(usize::MAX),
+                        cx.listener(move |this, ix: &usize, _, cx| {
+                            this.workspace.update(cx, |workspace, cx| {
+                                workspace.set_scrollbars(Scrollbars::ALL[*ix], sidebar, cx)
+                            });
+                            cx.notify();
+                        }),
+                    )
+                    .flex_none(),
             )
             .into_any_element()
     }
@@ -293,11 +256,7 @@ impl SettingsWindow {
         let on = workspace.indent_project_rows;
         let fits = workspace.settings.appearance.settings_sidebar_fits;
         let lights = workspace.settings.appearance.traffic_lights;
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(settings::LABEL_GAP))
-            .child(theme.field_label("Sidebar"))
+        group(&theme, "Sidebar")
             .child(
                 theme
                     .group_box()
@@ -366,11 +325,7 @@ impl SettingsWindow {
         }
         let on = workspace.board_view == View::List;
         Some(
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(settings::LABEL_GAP))
-                .child(theme.field_label("Boards"))
+            group(&theme, "Boards")
                 .child(
                     theme.group_box().child(
                         self.switch_row(
@@ -402,19 +357,14 @@ impl SettingsWindow {
     /// the editor alone.
     pub(super) fn editor_body(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        let group = |label: &'static str, rows: Vec<AnyElement>| {
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(settings::LABEL_GAP))
-                .child(theme.field_label(label))
-                .child(theme.group_box().children(rows))
+        let boxed = |label: &'static str, rows: Vec<AnyElement>| {
+            group(&theme, label).child(theme.group_box().children(rows))
         };
         div()
             .flex()
             .flex_col()
             .gap(px(settings::GROUP_GAP))
-            .child(group("Cursor", {
+            .child(boxed("Cursor", {
                 let block = self.workspace.read(cx).settings.appearance.caret_shape
                     == crate::model::settings::CaretShape::Block;
                 let mut rows = vec![self.cursor_row(cx), self.caret_shape_row(cx)];
@@ -424,11 +374,16 @@ impl SettingsWindow {
                 rows.extend([self.caret_row(cx), self.terminal_caret_row(cx)]);
                 rows
             }))
-            .child(group(
+            .child(boxed(
                 "Layout",
-                vec![self.pages_row(cx), self.outline_row(cx), self.wrap_row(cx)],
+                vec![
+                    self.pages_row(cx),
+                    self.outline_row(cx),
+                    self.comments_row(cx),
+                    self.wrap_row(cx),
+                ],
             ))
-            .child(group(
+            .child(boxed(
                 "Colours",
                 vec![
                     self.highlight_row(cx),
@@ -436,7 +391,7 @@ impl SettingsWindow {
                     self.find_row(cx),
                 ],
             ))
-            .child(group(
+            .child(boxed(
                 "Pasting",
                 vec![self.source_paste_row(cx), self.download_web_row(cx)],
             ))
@@ -465,6 +420,36 @@ impl SettingsWindow {
                     .update(cx, |workspace, cx| workspace.set_outline(!on, cx));
             },
         )
+    }
+
+    pub(super) fn comments_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        use crate::model::settings::Comments;
+        let theme = Theme::of(cx).clone();
+        let current = self.workspace.read(cx).settings.appearance.comments;
+        theme
+            .card_row(false)
+            .child(
+                labelled(&theme, "Comments", "Notes beside an article's lines, or a mark to open each one. A narrow pane shows marks.", false),
+            )
+            .child(
+                theme
+                    .segmented(
+                        "article-comments",
+                        Comments::ALL.map(|value| value.label()),
+                        Comments::ALL
+                            .iter()
+                            .position(|value| *value == current)
+                            .unwrap_or(usize::MAX),
+                        cx.listener(|this, ix: &usize, _, cx| {
+                            this.workspace.update(cx, |workspace, cx| {
+                                workspace.set_comments(Comments::ALL[*ix], cx)
+                            });
+                            cx.notify();
+                        }),
+                    )
+                    .flex_none(),
+            )
+            .into_any_element()
     }
 
     pub(super) fn wrap_row(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -612,12 +597,7 @@ impl SettingsWindow {
         });
         theme
             .card_row(false)
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .child(theme.row_title("Cursor shape")),
-            )
+            .child(theme.row_title("Cursor shape").flex_1())
             .child(trigger.children(card))
             .into_any_element()
     }
@@ -848,7 +828,7 @@ impl SettingsWindow {
         });
         theme
             .card_row(first)
-            .child(div().flex_1().min_w_0().child(theme.row_title(title)))
+            .child(theme.row_title(title).flex_1())
             .child(well.children(card))
             .into_any_element()
     }
@@ -992,21 +972,7 @@ impl SettingsWindow {
         let theme = Theme::of(cx).clone();
         theme
             .card_row(first)
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(theme.row_title(title))
-                    .child(
-                        div()
-                            .mt(px(4.))
-                            .text_style(TextStyle::Subheadline)
-                            .text_color(theme.text_muted)
-                            .child(note),
-                    ),
-            )
+            .child(labelled(&theme, title, note, false))
             .child(
                 div()
                     .id(id)
@@ -1028,9 +994,6 @@ impl SettingsWindow {
             .into_any_element()
     }
 }
-
-/// Swatches a row of the colour popover holds.
-const SWATCH_COLUMNS: usize = 6;
 
 /// A theme family's face in the picker: "Aa" in its accent on its background,
 /// as the variant for the appearance being painted.

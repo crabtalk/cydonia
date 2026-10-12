@@ -5,7 +5,6 @@
 pub mod article;
 pub mod cover;
 pub mod disk;
-pub mod document;
 pub mod file_url;
 pub mod git;
 pub mod language;

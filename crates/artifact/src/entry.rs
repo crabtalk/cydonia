@@ -1,5 +1,6 @@
 //! Stable, project-wide numbers alongside each entry's storage identity.
 
+use crate::kind::Kind;
 use crate::project::Project;
 #[cfg(feature = "sqlite")]
 use crate::project::fs;
@@ -31,12 +32,12 @@ impl Registry {
         Ok(Self(connection))
     }
 
-    pub fn number(&mut self, kind: &str, id: &str) -> Result<u64> {
+    pub fn number(&mut self, kind: Kind, id: &str) -> Result<u64> {
         if let Some(number) = self
             .0
             .query_row(
                 "SELECT number FROM entries WHERE kind = ?1 AND id = ?2",
-                [kind, id],
+                [kind.key(), id],
                 |row| row.get::<_, i64>(0).map(|number| number as u64),
             )
             .optional()?
@@ -48,57 +49,49 @@ impl Registry {
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         tx.execute(
             "INSERT INTO entries (kind, id) VALUES (?1, ?2) ON CONFLICT DO NOTHING",
-            [kind, id],
+            [kind.key(), id],
         )?;
         let number = tx.query_row(
             "SELECT number FROM entries WHERE kind = ?1 AND id = ?2",
-            [kind, id],
+            [kind.key(), id],
             |row| row.get::<_, i64>(0).map(|number| number as u64),
         )?;
         tx.commit()?;
         Ok(number)
     }
 
-    pub fn resolve(&self, kind: &str, number: u64) -> Result<Option<String>> {
+    pub fn resolve(&self, kind: Kind, number: u64) -> Result<Option<String>> {
         Ok(self
             .0
             .query_row(
                 "SELECT id FROM entries WHERE kind = ?1 AND number = ?2 AND id IS NOT NULL",
-                params![kind, i64::try_from(number)?],
+                params![kind.key(), i64::try_from(number)?],
                 |row| row.get(0),
             )
             .optional()?)
     }
 
-    pub fn rename(&self, kind: &str, old: &str, new: &str) -> Result<()> {
+    pub fn rename(&self, kind: Kind, old: &str, new: &str) -> Result<()> {
         self.0.execute(
             "UPDATE entries SET id = ?3 WHERE kind = ?1 AND id = ?2",
-            [kind, old, new],
+            [kind.key(), old, new],
         )?;
         Ok(())
     }
 
     /// Retain the number as a tombstone so a recreated key gets a fresh one.
-    pub fn remove(&self, kind: &str, id: &str) -> Result<()> {
+    pub fn remove(&self, kind: Kind, id: &str) -> Result<()> {
         self.0.execute(
             "UPDATE entries SET id = NULL WHERE kind = ?1 AND id = ?2",
-            [kind, id],
+            [kind.key(), id],
         )?;
         Ok(())
     }
 }
 
 #[cfg(feature = "sqlite")]
-pub fn number(project: &Path, kind: &str, id: &str) -> Result<u64> {
+pub fn number(project: &Path, kind: Kind, id: &str) -> Result<u64> {
     Registry::open(project)?.number(kind, id)
-}
-
-/// Only `#N` is a short reference; numeric titles and existing IDs keep working.
-pub fn reference(text: &str) -> Option<u64> {
-    text.strip_prefix('#')?
-        .parse()
-        .ok()
-        .filter(|number| *number > 0)
 }
 
 pub fn label(number: Option<u64>, title: &str) -> String {
@@ -111,12 +104,15 @@ pub fn label(number: Option<u64>, title: &str) -> String {
 #[derive(serde::Serialize)]
 pub struct Entry {
     pub number: u64,
-    pub kind: &'static str,
+    pub kind: Kind,
     pub id: String,
     pub title: String,
     pub archived: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub labels: Vec<String>,
+    /// For an article's own session, the article's number.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub article: Option<u64>,
 }
 
 /// A backend's boards, articles and sessions as entries, in no order.
@@ -124,32 +120,39 @@ pub fn catalog(store: &impl Project) -> Result<Vec<Entry>> {
     let mut entries = Vec::new();
     for board in store.boards() {
         entries.push(Entry {
-            number: store.number("board", &board.id)?,
+            number: store.number(Kind::Board, &board.id)?,
             title: board.label().to_owned(),
-            kind: "board",
+            kind: Kind::Board,
             id: board.id,
             archived: board.archived,
             labels: board.labels,
+            article: None,
         });
     }
     for article in store.articles() {
         entries.push(Entry {
-            number: store.number("article", &article.id)?,
-            kind: "article",
+            number: store.number(Kind::Article, &article.id)?,
+            kind: Kind::Article,
             id: article.id,
             title: article.title,
             archived: article.archived,
             labels: article.labels,
+            article: None,
         });
     }
     for session in store.sessions() {
+        let article = match &session.article {
+            Some(article) => Some(store.number(Kind::Article, article)?),
+            None => None,
+        };
         entries.push(Entry {
-            number: store.number("session", &session.id)?,
-            kind: "session",
+            number: store.number(Kind::Session, &session.id)?,
+            kind: Kind::Session,
+            title: session.label().to_owned(),
             id: session.id,
-            title: session.name.unwrap_or(session.title),
             archived: session.closed,
             labels: session.labels,
+            article,
         });
     }
     Ok(entries)
@@ -159,13 +162,13 @@ pub fn catalog(store: &impl Project) -> Result<Vec<Entry>> {
 /// backend does not hold.
 pub fn open(store: &impl Project, entry: &Entry) -> Result<Option<serde_json::Value>> {
     Ok(Some(match entry.kind {
-        "article" => serde_json::json!({"markdown": store.read_article(&entry.id)?}),
-        "board" => serde_json::to_value(
+        Kind::Article => serde_json::json!({"markdown": store.read_article(&entry.id)?}),
+        Kind::Board => serde_json::to_value(
             store
                 .board(&entry.id)
                 .ok_or_else(|| anyhow::anyhow!("board no longer exists"))?,
         )?,
-        "session" => serde_json::to_value(
+        Kind::Session => serde_json::to_value(
             store
                 .session(&entry.id)
                 .ok_or_else(|| anyhow::anyhow!("session no longer exists"))?,
@@ -195,12 +198,13 @@ pub fn list(project: &Path) -> Result<Vec<Entry>> {
                 )
                 .unwrap_or_else(|_| (id.clone(), false));
             entries.push(Entry {
-                number: store.number("table", &id)?,
-                kind: "table",
+                number: store.number(Kind::Table, &id)?,
+                kind: Kind::Table,
                 id,
                 title,
                 archived,
                 labels: Vec::new(),
+                article: None,
             });
         }
     }
@@ -226,10 +230,10 @@ pub fn read(project: &Path, entry: &Entry) -> Result<serde_json::Value> {
         return Ok(value);
     }
     Ok(match entry.kind {
-        "table" => {
+        Kind::Table => {
             use rusqlite::types::ValueRef;
             let connection = data(project)?;
-            let key = format!("\"{}\"", entry.id.replace('"', "\"\""));
+            let key = crate::table::quote(&entry.id);
             let total: i64 =
                 connection
                     .query_row(&format!("SELECT count(*) FROM {key}"), [], |row| row.get(0))?;

@@ -2,22 +2,27 @@
 //! holds its own; the set of labels is whatever the entries carry.
 
 use super::{Showing, Workspace};
-use bezel::gpui::Context;
+use bezel::gpui::{App, Context};
 use std::collections::BTreeMap;
 
 impl Workspace {
     /// The labels the entry `showing` carries in the project at `project`.
     /// `None` for an entry that cannot carry any, which is a table.
-    pub fn labels_of(&self, project: usize, showing: &Showing) -> Option<&[String]> {
+    pub fn labels_of<'a>(
+        &'a self,
+        project: usize,
+        showing: &Showing,
+        cx: &'a App,
+    ) -> Option<&'a [String]> {
         let open = self.projects.get(project)?;
         match showing {
-            Showing::Session(id) => open.session(*id).map(|chat| chat.labels.as_slice()),
+            Showing::Session(id) => open.session(*id, cx).map(|chat| chat.labels.as_slice()),
             Showing::Article(id) => open
                 .article_ix(id)
                 .map(|ix| open.articles[ix].labels.as_slice()),
             Showing::Board(id) => open
                 .board_ix(id)
-                .map(|ix| open.boards[ix].labels.as_slice()),
+                .map(|ix| open.boards[ix].board.read(cx).labels.as_slice()),
             Showing::Table(_) => None,
         }
     }
@@ -31,7 +36,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         let labels = artifact::label::normalize_all(labels);
-        if self.labels_of(project, showing) == Some(labels.as_slice()) {
+        if self.labels_of(project, showing, cx) == Some(labels.as_slice()) {
             return;
         }
         match showing {
@@ -46,7 +51,7 @@ impl Workspace {
                 }
             }
             Showing::Board(id) => {
-                self.with_board(id, |board| board.labels = labels.clone());
+                self.with_board(id, cx, |board| board.labels = labels.clone());
             }
             Showing::Table(_) => return,
         }
@@ -55,7 +60,7 @@ impl Workspace {
 
     /// An agent's labelling of the session filed under `record`.
     pub fn label_record(&mut self, record: &str, labels: Vec<String>, cx: &mut Context<Self>) {
-        let Some(id) = self.session_by_record(record).map(|chat| chat.id) else {
+        let Some(id) = self.session_by_record(record, cx).map(|chat| chat.id) else {
             return;
         };
         let Some(project) = self.project_of(id) else {
@@ -104,25 +109,24 @@ impl Workspace {
 
     /// The labels the project at `project` carries, with how many of its
     /// entries carry each, in name order.
-    pub fn project_label_counts(&self, project: usize) -> BTreeMap<String, usize> {
-        let mut counts = BTreeMap::new();
-        for (at, showing) in self.labelled() {
-            if at != project {
-                continue;
-            }
-            for label in self.labels_of(at, &showing).unwrap_or_default() {
-                *counts.entry(label.clone()).or_default() += 1;
-            }
-        }
-        counts
+    pub fn project_label_counts(&self, project: usize, cx: &App) -> BTreeMap<String, usize> {
+        self.counted(Some(project), cx)
     }
 
     /// Every label carried in any open project, with how many entries carry
     /// it, in name order.
-    pub fn label_counts(&self) -> BTreeMap<String, usize> {
+    pub fn label_counts(&self, cx: &App) -> BTreeMap<String, usize> {
+        self.counted(None, cx)
+    }
+
+    /// The labels carried in `project`, or in every open project for none.
+    fn counted(&self, project: Option<usize>, cx: &App) -> BTreeMap<String, usize> {
         let mut counts = BTreeMap::new();
         for (at, showing) in self.labelled() {
-            for label in self.labels_of(at, &showing).unwrap_or_default() {
+            if project.is_some_and(|project| project != at) {
+                continue;
+            }
+            for label in self.labels_of(at, &showing, cx).unwrap_or_default() {
                 *counts.entry(label.clone()).or_default() += 1;
             }
         }
@@ -150,19 +154,33 @@ impl Workspace {
             }
         }
         for (at, showing) in self.labelled() {
-            let Some(held) = self.labels_of(at, &showing) else {
+            let Some(held) = self.labels_of(at, &showing, cx) else {
                 continue;
             };
-            if !held.iter().any(|label| label == from) {
-                continue;
+            if held.iter().any(|label| label == from) {
+                self.swap_label(at, &showing, from, to.clone(), cx);
             }
-            let labels = held
-                .iter()
-                .filter(|label| *label != from)
-                .cloned()
-                .chain(to.clone())
-                .collect();
-            self.set_labels(at, &showing, labels, cx);
         }
+    }
+
+    /// Take `from` off one entry and put `to` on in its place.
+    pub fn swap_label(
+        &mut self,
+        project: usize,
+        showing: &Showing,
+        from: &str,
+        to: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(held) = self.labels_of(project, showing, cx) else {
+            return;
+        };
+        let labels = held
+            .iter()
+            .filter(|label| *label != from)
+            .cloned()
+            .chain(to)
+            .collect();
+        self.set_labels(project, showing, labels, cx);
     }
 }

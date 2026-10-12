@@ -18,10 +18,29 @@
 
 #[cfg(feature = "http")]
 use crate::tool::Trouble;
+use artifact::kind::Kind;
 use std::{
     path::{Path, PathBuf},
     sync::RwLock,
 };
+
+/// What the app does about a change.
+static HAND: RwLock<Option<Hand>> = RwLock::new(None);
+
+/// What the app is holding, as it last left it.
+static OPEN: RwLock<Vec<PathBuf>> = RwLock::new(Vec::new());
+
+/// The agents configured, as the app last pushed them.
+static AGENTS: RwLock<Vec<Agent>> = RwLock::new(Vec::new());
+
+/// The entries on screen, as the window last pushed them.
+static SHOWN: RwLock<Vec<Shown>> = RwLock::new(Vec::new());
+
+static BROWSER: RwLock<Option<Browser>> = RwLock::new(None);
+
+/// How long a browser call waits for the window's answer.
+#[cfg(feature = "http")]
+const BROWSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
 
 /// What a tool asks of the rail. Closing takes a project off it and stops the
 /// agents running in it; nothing on disk is touched either way.
@@ -75,27 +94,14 @@ impl Agent {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Shown {
     pub project: PathBuf,
-    /// `article`, `board` or `table`, as [`artifact::entry::Entry::kind`]
-    /// spells it.
-    pub kind: &'static str,
+    /// Never [`Kind::Session`].
+    pub kind: Kind,
     pub id: String,
     /// Whether it is the pane with the focus. Always set on a lone entry.
     pub focused: bool,
 }
 
 type Hand = Box<dyn Fn(Change) + Send + Sync>;
-
-/// What the app does about a change.
-static HAND: RwLock<Option<Hand>> = RwLock::new(None);
-
-/// What the app is holding, as it last left it.
-static OPEN: RwLock<Vec<PathBuf>> = RwLock::new(Vec::new());
-
-/// The agents configured, as the app last pushed them.
-static AGENTS: RwLock<Vec<Agent>> = RwLock::new(Vec::new());
-
-/// The entries on screen, as the window last pushed them.
-static SHOWN: RwLock<Vec<Shown>> = RwLock::new(Vec::new());
 
 /// Hand the rail over. The app calls this once, at launch.
 pub fn install(hand: impl Fn(Change) + Send + Sync + 'static) {
@@ -209,18 +215,12 @@ pub struct Browse {
 
 type Browser = Box<dyn Fn(Browse) + Send + Sync>;
 
-static BROWSER: RwLock<Option<Browser>> = RwLock::new(None);
-
 /// Hand the browser over. The app calls this once, at launch.
 pub fn install_browser(hand: impl Fn(Browse) + Send + Sync + 'static) {
     if let Ok(mut held) = BROWSER.write() {
         *held = Some(Box::new(hand));
     }
 }
-
-/// How long a browser call waits for the window's answer.
-#[cfg(feature = "http")]
-const BROWSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
 
 /// Ask the window's browser, and wait for its answer.
 ///

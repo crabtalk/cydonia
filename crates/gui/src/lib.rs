@@ -5,6 +5,5 @@ pub mod agent;
 pub mod assets;
 pub mod boot;
 pub mod data;
-pub mod memory;
 pub mod model;
 pub mod view;

@@ -8,6 +8,7 @@ use std::path::Path;
 pub fn prompt(
     cwd: &Path,
     session: Option<u64>,
+    article: Option<&str>,
     mcp_available: bool,
     embedded_context: bool,
     mut blocks: Vec<ContentBlock>,
@@ -15,6 +16,7 @@ pub fn prompt(
     let mut context = prompts::session_context(
         cwd,
         session,
+        article,
         mcp_available,
         &super::serve::hidden_resources(),
     );

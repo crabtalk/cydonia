@@ -1,9 +1,14 @@
 //! Window-independent right-panel tabs and unsaved file buffers.
 
 use super::*;
+use artifact::kind::Kind;
 use bezel::gpui::App;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+
+/// How long a drag stands still before its width is written down. A resize is
+/// a burst of moves, and the file is rewritten whole each time.
+const SETTLE: std::time::Duration = std::time::Duration::from_millis(400);
 
 #[derive(Clone, Serialize, Deserialize)]
 enum SavedTab {
@@ -65,9 +70,7 @@ pub(super) fn remove_saved_browsers() -> std::io::Result<()> {
     for panel in saved.projects.values_mut() {
         panel.remove_browsers();
     }
-    let temporary = path.with_extension("json.tmp");
-    std::fs::write(&temporary, serde_json::to_vec(&saved)?)?;
-    std::fs::rename(temporary, path)
+    artifact::fs::save(&path, serde_json::to_vec(&saved)?)
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -198,10 +201,6 @@ impl Panel {
     }
 }
 
-/// How long a drag stands still before its width is written down. A resize is
-/// a burst of moves, and the file is rewritten whole each time.
-const SETTLE: std::time::Duration = std::time::Duration::from_millis(400);
-
 impl Cydonia {
     /// Write the layout once the drag it came from has settled.
     ///
@@ -235,7 +234,7 @@ impl Cydonia {
         // The session in front is kept on disk and remembered as its
         // project's last entry here, which is the one write that still happens
         // per session rather than per directory.
-        if self.showing(cx) == Some(Pane::Chat)
+        if self.showing(cx) == Some(Kind::Session)
             && let Some(id) = self.workspace.read(cx).active_id()
         {
             self.workspace
@@ -255,14 +254,8 @@ impl Cydonia {
         let Some(path) = path() else {
             return;
         };
-        if let Ok(bytes) = serde_json::to_vec(&saved)
-            && let Some(dir) = path.parent()
-            && std::fs::create_dir_all(dir).is_ok()
-        {
-            let temporary = path.with_extension("json.tmp");
-            if std::fs::write(&temporary, bytes).is_ok() {
-                let _ = std::fs::rename(temporary, path);
-            }
+        if let Ok(bytes) = serde_json::to_vec(&saved) {
+            let _ = artifact::fs::save(&path, bytes);
         }
     }
 }

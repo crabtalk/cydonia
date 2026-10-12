@@ -1,0 +1,1 @@
+Open a project of your own with ⌘O — this one is a demonstration

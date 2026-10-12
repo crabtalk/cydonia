@@ -13,7 +13,12 @@ use bezel::{
     motion,
     theme::{TextStyle, Theme, Typeset},
     ui::{
-        AppExt as _, context_menu::ContextMenu, icons, input, menu::Item, tabs, tooltip::Tooltip,
+        AppExt as _,
+        context_menu::{ContextMenu, Place},
+        icons, input,
+        menu::Item,
+        tabs,
+        tooltip::Tooltip,
     },
 };
 use futures::{SinkExt, StreamExt, channel::mpsc};
@@ -37,6 +42,14 @@ const CONTEXT: &str = "CydoniaTerminal";
 /// Half the cursor's blink period, the text caret's own.
 const BLINK: Duration = Duration::from_millis(500);
 
+/// How often a selection drag held past the grid's top or bottom edge
+/// scrolls the scrollback.
+const EDGE_SCROLL_TICK: Duration = Duration::from_millis(50);
+
+/// Most lines one edge-scroll tick moves, however far past the edge the
+/// pointer is.
+const EDGE_SCROLL_MAX_LINES: i32 = 12;
+
 /// The app's caret as a terminal cursor, when terminals take it.
 fn caret_override(cx: &App) -> Option<CursorStyle> {
     if !fonts::terminal_caret() {
@@ -52,13 +65,6 @@ fn caret_override(cx: &App) -> Option<CursorStyle> {
         blinking: cx.caret_blink(),
     })
 }
-
-/// How often a selection drag held past the grid's top or bottom edge
-/// scrolls the scrollback.
-const EDGE_SCROLL_TICK: Duration = Duration::from_millis(50);
-/// Most lines one edge-scroll tick moves, however far past the edge the
-/// pointer is.
-const EDGE_SCROLL_MAX_LINES: i32 = 12;
 
 /// Paths as a shell reads them: each single-quoted where it needs to be,
 /// joined by spaces, with a trailing space so the next word starts clean.
@@ -325,7 +331,7 @@ pub struct Terminal {
     /// The blink, alive only while focused on a blinking cursor.
     blink: Option<Task<()>>,
     /// The right-click menu, while the program is not reporting the mouse.
-    menu: ContextMenu,
+    menu: ContextMenu<Self>,
     _pump: Option<Task<()>>,
 }
 
@@ -537,7 +543,18 @@ impl Terminal {
                 cx.read_from_clipboard().is_some(),
             ),
         ];
-        self.menu.open(at, items, window, cx);
+        self.menu.open(
+            (),
+            Place::At(at),
+            items,
+            |this, path, window, cx| match path {
+                [0] => this.copy(&input::Copy, window, cx),
+                [1] => this.paste(&input::Paste, window, cx),
+                _ => {}
+            },
+            window,
+            cx,
+        );
     }
 
     fn copy(&mut self, _: &input::Copy, _: &mut Window, cx: &mut Context<Self>) {
@@ -775,17 +792,10 @@ impl Render for Terminal {
                     .on_action(cx.listener(Self::copy))
                     .on_action(cx.listener(Self::paste))
                     .on_drop(cx.listener(Self::drop_paths))
-                    .children(self.menu.render(
-                        "terminal-menu",
-                        |this| &mut this.menu,
-                        |this, path, window, cx| match path {
-                            [0] => this.copy(&input::Copy, window, cx),
-                            [1] => this.paste(&input::Paste, window, cx),
-                            _ => {}
-                        },
-                        window,
-                        cx,
-                    ))
+                    .children(
+                        self.menu
+                            .render("terminal-menu", |this| &mut this.menu, window, cx),
+                    )
                     .on_mouse_down(
                         gpui::MouseButton::Left,
                         cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
@@ -1112,11 +1122,11 @@ impl Render for TerminalPanel {
                     this.add(window, cx);
                 }),
             )
-            .on_action(
-                cx.listener(|this, _: &crate::view::menubar::CloseWindow, window, cx| {
+            .on_action(cx.listener(
+                |this, _: &crate::view::window::menubar::CloseWindow, window, cx| {
                     this.close(this.active(), window, cx);
-                }),
-            )
+                },
+            ))
             .on_action(cx.listener(|this, _: &super::panel::CloseTab, window, cx| {
                 this.close(this.active(), window, cx);
             }))
@@ -1126,7 +1136,7 @@ impl Render for TerminalPanel {
             .on_action(cx.listener(|this, _: &super::panel::PrevTab, window, cx| {
                 this.cycle(-1, window, cx);
             }))
-            .bg(crate::view::root::content_bg(&theme))
+            .bg(theme.window_bg())
             .child(
                 div()
                     .h(px(40.))
@@ -1210,7 +1220,7 @@ impl Render for TerminalPanel {
                             .tooltip(|window, cx| Tooltip::text("Hide terminal panel", window, cx))
                             .on_click(|_, window, cx| {
                                 window.dispatch_action(
-                                    Box::new(crate::view::root::ToggleTerminal),
+                                    Box::new(crate::view::window::root::ToggleTerminal),
                                     cx,
                                 )
                             })

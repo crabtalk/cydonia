@@ -90,6 +90,20 @@ pub enum Trouble {
     Refused(String),
 }
 
+impl From<artifact::error::Error> for Trouble {
+    fn from(error: artifact::error::Error) -> Self {
+        use artifact::error::Error;
+        match error {
+            // The reference names a part this entry cannot have: the call is
+            // wrong, not the project.
+            Error::HeadingNotHeld { .. } | Error::PartNotHeld { .. } => {
+                Self::Invalid(error.to_string())
+            }
+            _ => Self::Refused(error.to_string()),
+        }
+    }
+}
+
 /// The `arguments` object of a `tools/call`, and the project the caller is
 /// working in when it has one.
 ///
@@ -139,20 +153,29 @@ impl<'a> Args<'a> {
     /// is one of them: a client with a single thing to name should not have to
     /// wrap it, and a tool that takes a list takes a list of one.
     pub fn list(&self, arg: Arg) -> Result<Vec<&'a str>, Trouble> {
-        let wrong = || {
-            Trouble::Invalid(format!(
-                "{} is required, as a string or a list of strings",
-                arg.name
-            ))
-        };
+        match self.any_list(arg)? {
+            many if many.is_empty() => Err(Self::not_a_list(arg)),
+            many => Ok(many),
+        }
+    }
+
+    /// [`Args::list`], with an empty list an answer.
+    pub fn any_list(&self, arg: Arg) -> Result<Vec<&'a str>, Trouble> {
         match self.arguments.get(arg.name) {
             Some(Value::String(one)) => Ok(vec![one.as_str()]),
-            Some(Value::Array(many)) if !many.is_empty() => many
+            Some(Value::Array(many)) => many
                 .iter()
-                .map(|value| value.as_str().ok_or_else(wrong))
+                .map(|value| value.as_str().ok_or_else(|| Self::not_a_list(arg)))
                 .collect(),
-            _ => Err(wrong()),
+            _ => Err(Self::not_a_list(arg)),
         }
+    }
+
+    fn not_a_list(arg: Arg) -> Trouble {
+        Trouble::Invalid(format!(
+            "{} is required, as a string or a list of strings",
+            arg.name
+        ))
     }
 
     /// The argument as it arrived, whatever its type.

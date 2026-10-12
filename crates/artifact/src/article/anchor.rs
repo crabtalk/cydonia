@@ -9,7 +9,7 @@ use std::ops::Range;
 
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
-use crate::reference::Span;
+use crate::reference::{Span, Within};
 
 /// The extensions bezel's markdown parser reads with. A heading is only a
 /// heading here if it is one there.
@@ -130,5 +130,33 @@ pub fn span_of(markdown: &str, range: Range<usize>) -> Span {
     Span {
         from: line(range.start),
         to: line(range.end.max(range.start + 1) - 1),
+    }
+}
+
+/// The bytes `within` names, and the heading it names if it names one.
+/// `named` is the reference as written.
+pub fn excerpt(
+    markdown: &str,
+    within: Within<'_>,
+    named: &str,
+) -> Result<(Range<usize>, Option<Heading>), crate::error::Error> {
+    use crate::error::Error;
+    match within {
+        Within::Span(span) => lines(markdown, span)
+            .map(|range| (range, None))
+            .ok_or_else(|| Error::PastLastLine {
+                named: named.to_owned(),
+                lines: markdown.lines().count(),
+            }),
+        Within::Heading(name) => match section(markdown, name) {
+            Some((heading, range)) => Ok((range, Some(heading))),
+            None => Err(Error::NoHeading {
+                named: named.to_owned(),
+                anchors: headings(markdown)
+                    .into_iter()
+                    .map(|heading| heading.anchor)
+                    .collect(),
+            }),
+        },
     }
 }

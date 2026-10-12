@@ -31,6 +31,7 @@ fn activity_comes_from_the_project_files() {
             closed: false,
             labels: Vec::new(),
             fork: None,
+            article: None,
             replay: None,
             draft: String::new(),
             items: Vec::new(),

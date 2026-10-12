@@ -126,7 +126,7 @@ fn source_uses_full_viewport_and_scrolls_long_files(cx: &mut gpui::TestAppContex
 /// `Changed` the field emits either way.
 #[gpui::test]
 fn source_files_are_coloured_and_recoloured(cx: &mut gpui::TestAppContext) {
-    crate::model::language::paintable();
+    crate::model::language::Here::paintable();
     syntax_std::install();
     let file = Temp::named(".rs");
     std::fs::write(&file.0, "fn main() { let x = 1; }\n").unwrap();
@@ -184,7 +184,7 @@ fn a_named_but_unpainted_language_reports_itself(cx: &mut gpui::TestAppContext) 
 /// Nothing to report for a file that paints, or for a name that names nothing.
 #[gpui::test]
 fn a_painted_or_unknown_file_reports_nothing(cx: &mut gpui::TestAppContext) {
-    crate::model::language::paintable();
+    crate::model::language::Here::paintable();
     syntax_std::install();
     let painted = Temp::named(".rs");
     let view = cx.new(|cx| FileView::new(painted.0.clone(), WeakEntity::new_invalid(), cx));
@@ -421,7 +421,9 @@ fn a_missing_grammar_asks_before_downloading_and_can_be_dismissed(cx: &mut gpui:
     visual.run_until_parked();
     assert!(visual.debug_bounds("install-grammar").is_some());
     assert_eq!(
-        crate::model::language::status("json"),
+        crate::model::language::Spec::named("json")
+            .unwrap()
+            .status(),
         crate::model::language::Status::Missing
     );
     let dismiss = visual.debug_bounds("dismiss-grammar").unwrap().center();
@@ -429,7 +431,9 @@ fn a_missing_grammar_asks_before_downloading_and_can_be_dismissed(cx: &mut gpui:
     visual.run_until_parked();
     assert!(visual.debug_bounds("install-grammar").is_none());
     assert_eq!(
-        crate::model::language::status("json"),
+        crate::model::language::Spec::named("json")
+            .unwrap()
+            .status(),
         crate::model::language::Status::Missing
     );
 }

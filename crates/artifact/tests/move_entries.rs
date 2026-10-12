@@ -3,6 +3,7 @@
 mod common;
 
 use common::Scratch;
+use cydonia_artifact::kind::Kind;
 use cydonia_artifact::{article, board, entry, project::fs::Project};
 use std::fs;
 
@@ -48,7 +49,7 @@ fn a_number_does_not_travel_with_the_article() {
     let id = article::id_of(&content);
     let was = entry::Registry::open(here.path())
         .unwrap()
-        .number("article", &id)
+        .number(Kind::Article, &id)
         .unwrap();
 
     let arrived = article::move_to(&content, there.path()).unwrap();
@@ -57,13 +58,13 @@ fn a_number_does_not_travel_with_the_article() {
     assert!(
         entry::Registry::open(here.path())
             .unwrap()
-            .resolve("article", was)
+            .resolve(Kind::Article, was)
             .unwrap()
             .is_none()
     );
     let now = entry::Registry::open(there.path())
         .unwrap()
-        .number("article", &article::id_of(&arrived))
+        .number(Kind::Article, &article::id_of(&arrived))
         .unwrap();
     assert_eq!(now, 1);
 }
@@ -135,8 +136,10 @@ fn board(name: &str, key: &str, columns: &[&str]) -> board::Board {
 /// came out of.
 #[test]
 fn a_card_takes_the_handle_of_the_board_it_lands_on() {
-    let mut from = board("Roadmap", "ROAD", &["TODO", "DOING"]);
+    // Made first: ids are minted from the clock, and a card minted in the
+    // millisecond `to`'s lanes were would collide with one and be renamed.
     let mut to = board("Plans", "PLAN", &["DOING", "TODO"]);
+    let mut from = board("Roadmap", "ROAD", &["TODO", "DOING"]);
     let doing = from.columns[1].id.clone();
     let card = from.add_card(&doing, "ship it".into()).unwrap().id.clone();
 

@@ -13,10 +13,10 @@ use bezel::{
     motion::{Fade, Painter},
     theme::Theme,
     ui::{
+        context_menu::{ContextMenu, Place},
         icons,
         input::TextField,
-        menu::{self, Hit, Item},
-        popover,
+        menu::Item,
         tooltip::Tooltip,
         widgets::{ButtonStyle, Buttons as _},
     },
@@ -24,13 +24,16 @@ use bezel::{
 use browser::{ConsoleMessage, DataStore, WebView, WebViewEvent};
 use std::collections::{HashMap, VecDeque};
 
-actions!(cydonia_browser, [Go, Reload, HardReload]);
-
 /// Claimed on the address field, so `enter` loads what it holds.
 const ADDRESS_CONTEXT: &str = "CydoniaAddress";
 
 /// Claimed on the whole tab, the address field included.
 const CONTEXT: &str = "CydoniaBrowser";
+
+/// Messages a tab's log keeps; older ones are dropped.
+const LOG_LIMIT: usize = 500;
+
+actions!(cydonia_browser, [Go, Reload, HardReload]);
 
 /// What a new tab opens on: the home page in Settings.
 pub fn home(cx: &App) -> String {
@@ -54,9 +57,6 @@ pub fn bindings() -> Vec<KeyBinding> {
 struct Pages(HashMap<u64, Entity<WebView>>);
 
 impl Global for Pages {}
-
-/// Messages a tab's log keeps; older ones are dropped.
-const LOG_LIMIT: usize = 500;
 
 /// What each live page has logged, by tab id, oldest first.
 #[derive(Default)]
@@ -119,9 +119,8 @@ pub struct Browser {
     pub(super) title: String,
     address: Entity<TextField>,
     focus: FocusHandle,
-    /// Where the reload button's menu was opened, while it is.
-    reload_menu: Option<Point<Pixels>>,
-    menu_cursor: menu::Cursor,
+    /// The reload button's right-press menu.
+    menu: ContextMenu<Self>,
     _page: Option<Subscription>,
 }
 
@@ -143,8 +142,7 @@ impl Browser {
             title,
             address,
             focus: cx.focus_handle(),
-            reload_menu: None,
-            menu_cursor: menu::Cursor::default(),
+            menu: ContextMenu::default(),
             _page: None,
         }
     }
@@ -280,52 +278,32 @@ impl Browser {
         page.update(cx, |page, _| page.reload_bypassing_cache());
     }
 
-    /// The reload button's right-press menu, at the press.
-    fn reload_menu(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let at = self.reload_menu?;
-        let theme = Theme::of(cx).clone();
-        let items = [
+    /// Open the reload button's menu at `at`.
+    fn open_reload_menu(&mut self, at: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+        let items = vec![
             Item::action("Reload").with_shortcut_in(&Reload, CONTEXT, window),
             Item::action("Hard Reload").with_shortcut_in(&HardReload, CONTEXT, window),
             Item::action("Web Inspector"),
         ];
-        let paths = items.to_vec();
-        let card = menu::card(
-            &theme,
-            "browser-reload-menu",
-            &items,
-            &self.menu_cursor,
+        self.menu.open(
+            (),
+            Place::At(at),
+            items,
+            |this, path, window, cx| match path.first() {
+                Some(0) => this.reload(&Reload, window, cx),
+                Some(1) => this.hard_reload(&HardReload, window, cx),
+                Some(2) => this.page(window, cx).read(cx).open_inspector(),
+                _ => {}
+            },
             window,
             cx,
-            move |this, hit, window, cx| {
-                match hit {
-                    Hit::Point(path) => {
-                        this.menu_cursor.point_at(&paths, &path);
-                    }
-                    Hit::Choose(path) => {
-                        this.reload_menu = None;
-                        this.menu_cursor.clear();
-                        match path.first() {
-                            Some(0) => this.reload(&Reload, window, cx),
-                            Some(1) => this.hard_reload(&HardReload, window, cx),
-                            Some(2) => this.page(window, cx).read(cx).open_inspector(),
-                            _ => {}
-                        }
-                    }
-                    Hit::Dismiss => {
-                        this.reload_menu = None;
-                        this.menu_cursor.clear();
-                    }
-                }
-                cx.notify();
-            },
         );
-        Some(popover::menu_at(
-            "browser-reload-menu",
-            at,
-            card.into_any_element(),
-            None,
-        ))
+    }
+
+    /// The reload button's menu, while it is open.
+    fn reload_menu(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        self.menu
+            .render("browser-reload-menu", |this| &mut this.menu, window, cx)
     }
 
     fn go(&mut self, _: &Go, window: &mut Window, cx: &mut Context<Self>) {
@@ -445,11 +423,9 @@ impl Render for Browser {
                         }))
                         .on_mouse_down(
                             MouseButton::Right,
-                            cx.listener(|this, press: &MouseDownEvent, _, cx| {
-                                this.reload_menu = Some(press.position);
-                                this.menu_cursor.clear();
+                            cx.listener(|this, press: &MouseDownEvent, window, cx| {
+                                this.open_reload_menu(press.position, window, cx);
                                 cx.stop_propagation();
-                                cx.notify();
                             }),
                         ),
                     )

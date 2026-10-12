@@ -181,8 +181,9 @@ fn a_cover_is_filed_in_the_articles_assets_and_replaced_whole() {
             .expect("the article's own assets"),
     );
 
+    // Twice as wide as a cover is kept: it comes in resampled.
     let drawn = scratch.path().join("drawn.png");
-    std::fs::write(&drawn, b"not really a png").unwrap();
+    image::RgbImage::new(3000, 1200).save(&drawn).unwrap();
     let text = said(server.call(
         "article_set_cover",
         json!({ "project": scratch.path(), "article": "Notes", "image": "drawn.png" }),
@@ -201,10 +202,12 @@ fn a_cover_is_filed_in_the_articles_assets_and_replaced_whole() {
     let first = covers(&folder);
     assert_eq!(first.len(), 1, "one cover: {first:?}");
     assert!(first[0].ends_with(".png"), "{first:?}");
+    let filed = image::image_dimensions(folder.join(&first[0])).unwrap();
+    assert_eq!(filed, (1500, 600));
 
     // A second one takes the first's place rather than standing beside it.
     let other = scratch.path().join("other.jpg");
-    std::fs::write(&other, b"nor this").unwrap();
+    image::RgbImage::new(40, 16).save(&other).unwrap();
     said(server.call(
         "article_set_cover",
         json!({ "project": scratch.path(), "article": "Notes", "image": "other.jpg" }),
@@ -242,6 +245,25 @@ fn a_cover_that_is_not_there_is_refused() {
         None,
     ));
     assert!(why.contains("no picture at"), "{why}");
+}
+
+/// A file that is no picture is refused, and the article keeps no cover.
+#[test]
+fn a_cover_that_is_no_picture_is_refused() {
+    let scratch = Scratch::new("cover-not-a-picture");
+    let server = scratch.server();
+    said(server.call(
+        "article_add",
+        json!({ "project": scratch.path(), "title": "Notes", "text": "# Notes" }),
+        None,
+    ));
+    std::fs::write(scratch.path().join("notes.png"), b"not a picture").unwrap();
+    let why = refused(server.call(
+        "article_set_cover",
+        json!({ "project": scratch.path(), "article": "Notes", "image": "notes.png" }),
+        None,
+    ));
+    assert!(why.contains("the cover cannot be written"), "{why}");
 }
 
 /// Archiving is reversible and deleting is not, which is the whole reason they
@@ -445,4 +467,98 @@ fn a_part_of_an_article_reads_alone() {
         Some(scratch.path()),
     ));
     assert!(why.contains("names part of an entry"), "{why}");
+}
+
+/// A note lands beside the article, on the passage it quotes, and an edit
+/// before the passage carries it along.
+#[test]
+fn a_comment_is_filed_beside_the_article_and_follows_an_edit() {
+    let scratch = Scratch::new("article-comment");
+    let server = scratch.server();
+    let made = server
+        .call(
+            "article_add",
+            json!({ "project": scratch.path(), "title": "Notes", "text": "One line. Two line." }),
+            None,
+        )
+        .unwrap_or_else(|_| panic!("article creation failed"));
+    let id = made.data.unwrap()["id"].as_str().unwrap().to_owned();
+
+    let ambiguous = refused(server.call(
+        "article_comment",
+        json!({ "project": scratch.path(), "article": "Notes", "quote": "line", "note": "?" }),
+        None,
+    ));
+    assert!(ambiguous.contains("2 occurrences"), "{ambiguous}");
+
+    said(server.call(
+        "article_comment",
+        json!({ "project": scratch.path(), "article": "Notes", "quote": "Two line", "note": "Why two?" }),
+        None,
+    ));
+    said(server.call(
+        "article_edit",
+        json!({ "project": scratch.path(), "article": "Notes", "old_string": "One", "new_string": "The first" }),
+        None,
+    ));
+
+    let content = scratch
+        .path()
+        .join(".cydonia/articles")
+        .join(&id)
+        .join("content.md");
+    let text = std::fs::read_to_string(&content).unwrap();
+    let held = artifact::article::comments::read(&content);
+    assert!(held.fits(&text));
+    let comment = &held.comments[0];
+    assert_eq!(&text[comment.range()], "Two line");
+    assert_eq!(comment.note, "Why two?");
+}
+
+/// An article answers the sessions opened under it, and the entry list
+/// names the article each is under.
+#[test]
+fn an_article_names_its_sessions() {
+    use artifact::project::Project as _;
+    let scratch = Scratch::new("article-sessions");
+    let server = scratch.server();
+    let made = server
+        .call(
+            "article_add",
+            json!({ "project": scratch.path(), "title": "Notes", "text": "Body" }),
+            None,
+        )
+        .unwrap_or_else(|_| panic!("article creation failed"));
+    let id = made.data.unwrap()["id"].as_str().unwrap().to_owned();
+    let none = structured(server.call(
+        "article_read",
+        json!({ "project": scratch.path(), "article": "Notes" }),
+        None,
+    ));
+    assert_eq!(none["sessions"], json!([]));
+
+    let store = artifact::project::fs::Project::new(scratch.path());
+    let filed = store.create_session().unwrap();
+    let record: artifact::session::record::Record = serde_json::from_value(json!({
+        "id": filed, "article": id, "agent": "claude", "title": "", "name": null,
+        "updated": 1, "items": [{"User": "why?"}]
+    }))
+    .unwrap();
+    store.save_session(&record).unwrap();
+
+    let read = structured(server.call(
+        "article_read",
+        json!({ "project": scratch.path(), "article": "Notes" }),
+        None,
+    ));
+    let number = read["sessions"][0].as_u64().expect("the session's number");
+    let listed = said(server.call(
+        "project_entries",
+        json!({ "project": scratch.path() }),
+        None,
+    ));
+    assert!(
+        listed.contains(&format!("#{number} [session]")) && listed.contains("under #1"),
+        "{listed}"
+    );
 }

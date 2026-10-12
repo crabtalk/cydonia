@@ -26,7 +26,7 @@ fn transcript_hits_skip_items_not_drawn_as_prose() {
         ChatItem::Agent("the *pump* runs".into()),
     ];
     let query = Query::literal("pump").unwrap();
-    let hits = transcript::hits(&items, &query);
+    let hits = crate::view::component::transcript::hits(&items, &query);
     let items: Vec<usize> = hits.iter().map(|(ix, _)| *ix).collect();
     assert_eq!(items, [0, 2]);
 }

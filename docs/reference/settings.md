@@ -18,7 +18,6 @@ that table.
 
 | Key | Default | What it is |
 | --- | --- | --- |
-| `cover_memory` | 100 | The ceiling decoded covers run under, in megabytes |
 | `watch_bounce` | — | How long a project's `.cydonia/` must go quiet before the watch re-reads it, in milliseconds |
 | `auto_update` | `true` | Whether Cydonia looks for a new release on its own |
 | `notify_turns` | `true` | Whether a turn finishing in the background is posted to the system |

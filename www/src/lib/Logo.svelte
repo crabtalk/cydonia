@@ -1,6 +1,6 @@
 <script>
-	// The mark alone, without the black plate the icon and favicon sit on: in the
-	// header it has to read on both themes, so it takes `currentColor` instead.
+	// The mark alone, without the black plate the icon and favicon sit on, in
+	// `currentColor`.
 	// The paths are the ones in `public/logo.svg`, with its `translate`/`scale`
 	// dropped in favour of a viewBox cropped to them.
 	let { size = 18 } = $props();

@@ -64,20 +64,13 @@ fn path() -> Option<PathBuf> {
 
 /// Every MCP server the user has added, enabled or not.
 pub fn servers() -> Vec<McpServer> {
-    path()
-        .and_then(|path| std::fs::read_to_string(path).ok())
-        .and_then(|body| toml::from_str::<Store>(&body).ok())
-        .map(|store| store.servers)
-        .unwrap_or_default()
+    settings::read_toml::<Store>(path()).servers
 }
 
 fn save(servers: Vec<McpServer>) -> Result<()> {
     let path = path().context("no config directory on this system")?;
-    let body = toml::to_string_pretty(&Store { servers })?;
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    std::fs::write(&path, body).with_context(|| format!("writing {}", path.display()))
+    settings::write_toml(&path, &Store { servers })
+        .with_context(|| format!("writing {}", path.display()))
 }
 
 /// Add `server`, or replace the one already under its name — the name is what

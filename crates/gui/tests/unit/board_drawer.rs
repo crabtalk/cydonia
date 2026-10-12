@@ -1,5 +1,6 @@
 use super::*;
 use crate::model::{project::Project, settings::Settings, state};
+use artifact::kind::Kind;
 use artifact::project::{Project as _, fs};
 use bezel::gpui::{Modifiers, MouseButton, TestAppContext, VisualTestContext, point, size};
 use bezel::ui::AppExt as _;
@@ -20,16 +21,11 @@ impl Drop for Scratch {
     }
 }
 
-struct BoardView(Entity<Cydonia>);
-impl Render for BoardView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // As a pane hosts it: the board, and its drawer over it.
-        let (board, drawer) = self.0.update(cx, |root, cx| {
-            (
-                root.board(0, 0, None, window, cx),
-                root.drawer_layer(None, window, cx),
-            )
-        });
+struct Host(Entity<Cydonia>);
+impl Render for Host {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // As a window hosts it: the pane, its board and its drawer over it.
+        let pane = self.0.read(cx).leaf().clone();
         div().size_full().flex().flex_col().child(
             div()
                 .relative()
@@ -37,10 +33,14 @@ impl Render for BoardView {
                 .min_h_0()
                 .flex()
                 .flex_col()
-                .child(board)
-                .children(drawer),
+                .child(pane),
         )
     }
+}
+
+/// The pane's view of the board.
+fn view(root: &Entity<Cydonia>, cx: &App) -> Entity<BoardView> {
+    root.read(cx).board_views(cx).into_iter().next().unwrap()
 }
 
 fn open(
@@ -70,29 +70,32 @@ fn open(
             .clone(),
     ];
     store.save_board(&mut board).unwrap();
-    let member = Member::new(&scratch.0, artifact::space::Kind::Board, board.id.clone());
+    let member = Member::new(&scratch.0, Kind::Board, board.id.clone());
     cx.update(|cx| {
         Theme::install(bezel::theme::Appearance::Dark, cx);
         input::init(cx);
         editor::init(cx);
         cx.bind_keys(bindings());
-        cx.bind_keys(crate::view::drawer::bindings());
+        cx.bind_keys(crate::view::pane::drawer::bindings());
     });
     let window = cx.add_window(|window, cx| {
         let root =
             cx.new(|cx| Cydonia::new(Settings::default(), state::State::default(), window, cx));
         root.update(cx, |root, cx| {
-            root.workspace.update(cx, |workspace, _| {
-                let mut project = Project::new(scratch.0.clone());
-                project.load_board(&board.id);
+            root.workspace.update(cx, |workspace, cx| {
+                let mut project = Project::new(scratch.0.clone(), cx);
+                project.load_board(&board.id, cx);
                 project.board = Some(0);
                 workspace.projects.push(project);
                 workspace.active = Some(0);
             });
+            root.leaf()
+                .clone()
+                .update(cx, |pane, _| pane.kind = Kind::Board);
             root.open_card(None, member.clone(), cards[0].clone(), window, cx);
         });
         cx.observe(&root, |_, _, cx| cx.notify()).detach();
-        BoardView(root)
+        Host(root)
     });
     let root = window
         .root(cx)
@@ -118,7 +121,7 @@ fn settle(cx: &mut VisualTestContext) {
 /// Replace the open card's text the way a person would: select all, type.
 fn type_card(root: &Entity<Cydonia>, text: &str, cx: &mut VisualTestContext) {
     cx.update(|window, cx| {
-        let editor = root.read(cx).draft_for(None).unwrap().editor.clone();
+        let editor = view(root, cx).read(cx).draft().unwrap().editor.clone();
         window.focus(&editor.focus_handle(cx), cx);
     });
     cx.simulate_keystrokes("cmd-a");
@@ -131,8 +134,9 @@ fn type_card(root: &Entity<Cydonia>, text: &str, cx: &mut VisualTestContext) {
 
 fn draft_text(root: &Entity<Cydonia>, cx: &mut VisualTestContext) -> String {
     cx.update(|_, cx| {
-        root.read(cx)
-            .draft_for(None)
+        view(root, cx)
+            .read(cx)
+            .draft()
             .unwrap()
             .editor
             .read(cx)
@@ -171,6 +175,7 @@ fn resizing_expanding_and_restoring_use_the_board_pane(cx: &mut TestAppContext) 
     assert!(cx.update(|_, cx| {
         root.read(cx)
             .leaf()
+            .read(cx)
             .drawer
             .as_ref()
             .unwrap()
@@ -197,7 +202,16 @@ fn resizing_expanding_and_restoring_use_the_board_pane(cx: &mut TestAppContext) 
     cx.simulate_resize(size(px(700.), px(120.)));
     settle(&mut cx);
     assert!(cx.debug_bounds("drawer").unwrap().size.height <= px(120.));
-    assert!(!cx.update(|_, cx| { root.read(cx).leaf().drawer.as_ref().unwrap().size.expanded }));
+    assert!(!cx.update(|_, cx| {
+        root.read(cx)
+            .leaf()
+            .read(cx)
+            .drawer
+            .as_ref()
+            .unwrap()
+            .size
+            .expanded
+    }));
     cx.simulate_resize(size(px(240.), px(400.)));
     settle(&mut cx);
     for selector in ["drawer-expand", "drawer-close"] {
@@ -255,7 +269,7 @@ fn switching_and_closing_save_at_once(cx: &mut TestAppContext) {
     type_card(&root, "Closed", &mut cx);
     click("drawer-close", &mut cx);
     assert_eq!(saved_text(&scratch, &member, &cards[1]).unwrap(), "Closed");
-    assert!(cx.update(|_, cx| root.read(cx).leaf().card_drafts.is_empty()));
+    assert!(cx.update(|_, cx| view(&root, cx).read(cx).drafts.is_empty()));
 }
 
 #[gpui::test]
@@ -280,7 +294,7 @@ fn save_preserves_agent_metadata_and_rejects_conflicting_text(cx: &mut TestAppCo
     board.rewrite_card(&cards[0], "Agent rewrite");
     store.save_board(&mut board).unwrap();
     type_card(&root, "New draft", &mut cx);
-    assert!(cx.update(|_, cx| root.read(cx).draft_for(None).unwrap().error.is_some()));
+    assert!(cx.update(|_, cx| view(&root, cx).read(cx).draft().unwrap().error.is_some()));
     assert_eq!(draft_text(&root, &mut cx), "New draft");
     assert_eq!(
         saved_text(&scratch, &member, &cards[0]).unwrap(),
@@ -288,7 +302,7 @@ fn save_preserves_agent_metadata_and_rejects_conflicting_text(cx: &mut TestAppCo
     );
     click("card-draft-discard", &mut cx);
     assert_eq!(draft_text(&root, &mut cx), "Agent rewrite");
-    assert!(cx.update(|_, cx| root.read(cx).draft_for(None).unwrap().error.is_none()));
+    assert!(cx.update(|_, cx| view(&root, cx).read(cx).draft().unwrap().error.is_none()));
 }
 
 #[gpui::test]
@@ -296,10 +310,13 @@ fn an_agent_rewrite_reloads_an_untouched_card(cx: &mut TestAppContext) {
     let (_scratch, root, _, cards, mut cx) = open("reload", cx);
     cx.update(|_, cx| {
         root.update(cx, |root, cx| {
-            root.workspace.update(cx, |workspace, cx| {
-                workspace.projects[0].boards[0].rewrite_card(&cards[0], "Agent rewrite");
-                cx.notify();
-            });
+            root.workspace.read(cx).projects[0].boards[0]
+                .board
+                .clone()
+                .update(cx, |board, cx| {
+                    board.rewrite_card(&cards[0], "Agent rewrite");
+                    cx.notify();
+                });
             cx.notify();
         })
     });
@@ -311,7 +328,7 @@ fn an_agent_rewrite_reloads_an_untouched_card(cx: &mut TestAppContext) {
 fn emptied_cards_are_kept_and_never_saved(cx: &mut TestAppContext) {
     let (scratch, root, member, cards, mut cx) = open("empty", cx);
     type_card(&root, "", &mut cx);
-    assert!(cx.update(|_, cx| root.read(cx).draft_for(None).unwrap().error.is_some()));
+    assert!(cx.update(|_, cx| view(&root, cx).read(cx).draft().unwrap().error.is_some()));
     assert_eq!(
         saved_text(&scratch, &member, &cards[0]).unwrap(),
         "First card"
@@ -319,7 +336,7 @@ fn emptied_cards_are_kept_and_never_saved(cx: &mut TestAppContext) {
     click("drawer-close", &mut cx);
     cx.update(|window, cx| {
         root.update(cx, |root, cx| {
-            assert!(root.leaf().drawer.is_none());
+            assert!(root.leaf().read(cx).drawer.is_none());
             root.open_card(None, member.clone(), cards[0].clone(), window, cx);
         })
     });
@@ -346,21 +363,33 @@ fn horizontal_scroll_keeps_offsets_and_lane_geometry_stable(cx: &mut TestAppCont
     cx.update(|window, cx| {
         root.update(cx, |root, cx| {
             root.close_drawer(None, window, cx);
-            root.workspace.update(cx, |workspace, cx| {
-                let board = &mut workspace.projects[0].boards[0];
-                for i in 0..4 {
-                    let column = board.add_column(&format!("Lane {i}")).id.clone();
-                    for _ in 0..6 {
-                        board.add_card(&column, format!("```\n{}\n```", "long_code ".repeat(20)));
+            root.workspace.read(cx).projects[0].boards[0]
+                .board
+                .clone()
+                .update(cx, |board, cx| {
+                    cx.notify();
+                    for i in 0..4 {
+                        let column = board.add_column(&format!("Lane {i}")).id.clone();
+                        for _ in 0..6 {
+                            board.add_card(
+                                &column,
+                                format!("```\n{}\n```", "long_code ".repeat(20)),
+                            );
+                        }
                     }
-                }
-                cx.notify();
-            });
+                    cx.notify();
+                });
             cx.notify();
         });
     });
     settle(&mut cx);
-    let scroll = cx.update(|_, cx| root.read(cx).boards.of(&member.id).across.clone());
+    let scroll = cx.update(|_, cx| {
+        root.read(cx)
+            .board_scroll(&member, cx)
+            .unwrap()
+            .across
+            .clone()
+    });
     let max = scroll.max_offset();
     for y in (60..160).step_by(10) {
         scroll.set_offset(point(px(0.), px(0.)));
@@ -378,8 +407,16 @@ fn horizontal_scroll_keeps_offsets_and_lane_geometry_stable(cx: &mut TestAppCont
     }
     let lane = cx.update(|_, cx| {
         let root = root.read(cx);
-        let id = &root.workspace.read(cx).projects[0].boards[0].columns[1].id;
-        root.boards.of(&member.id).lanes.of(id).scroller()
+        let id = &root.workspace.read(cx).projects[0].boards[0]
+            .board
+            .read(cx)
+            .columns[1]
+            .id;
+        root.board_scroll(&member, cx)
+            .unwrap()
+            .lanes
+            .of(id)
+            .scroller()
     });
     let horizontal = scroll.offset();
     cx.simulate_event(gpui::ScrollWheelEvent {
@@ -437,23 +474,32 @@ fn offscreen_lanes_do_not_build_markdown(cx: &mut TestAppContext) {
     cx.update(|window, cx| {
         root.update(cx, |root, cx| {
             root.close_drawer(None, window, cx);
-            root.workspace.update(cx, |workspace, _| {
-                let board = &mut workspace.projects[0].boards[0];
-                for i in 0..20 {
-                    let column = board.add_column(&format!("Lane {i}")).id.clone();
-                    for j in 0..5 {
-                        board.add_card(
-                            &column,
-                            format!("Lane {i} card {j}\n\n{}", "Paragraph.\n\n".repeat(20)),
-                        );
+            root.workspace.read(cx).projects[0].boards[0]
+                .board
+                .clone()
+                .update(cx, |board, cx| {
+                    cx.notify();
+                    for i in 0..20 {
+                        let column = board.add_column(&format!("Lane {i}")).id.clone();
+                        for j in 0..5 {
+                            board.add_card(
+                                &column,
+                                format!("Lane {i} card {j}\n\n{}", "Paragraph.\n\n".repeat(20)),
+                            );
+                        }
                     }
-                }
-            });
+                });
             cx.notify();
         })
     });
     settle(&mut cx);
-    let scroll = cx.update(|_, cx| root.read(cx).boards.of(&member.id).across.clone());
+    let scroll = cx.update(|_, cx| {
+        root.read(cx)
+            .board_scroll(&member, cx)
+            .unwrap()
+            .across
+            .clone()
+    });
     let max = scroll.max_offset();
     let parsed = cx.update(|_, cx| root.read(cx).card_docs.0.borrow().len());
     assert!(
@@ -462,8 +508,16 @@ fn offscreen_lanes_do_not_build_markdown(cx: &mut TestAppContext) {
     );
     let lane = cx.update(|_, cx| {
         let root = root.read(cx);
-        let id = &root.workspace.read(cx).projects[0].boards[0].columns[1].id;
-        root.boards.of(&member.id).lanes.of(id).scroller()
+        let id = &root.workspace.read(cx).projects[0].boards[0]
+            .board
+            .read(cx)
+            .columns[1]
+            .id;
+        root.board_scroll(&member, cx)
+            .unwrap()
+            .lanes
+            .of(id)
+            .scroller()
     });
     lane.set_offset(point(px(0.), px(-120.)));
     cx.update(|window, _| window.refresh());
@@ -515,22 +569,31 @@ fn list_scroll_builds_visible_rows_and_keeps_its_extent(cx: &mut TestAppContext)
     cx.update(|window, cx| {
         root.update(cx, |root, cx| {
             root.close_drawer(None, window, cx);
-            root.workspace.update(cx, |workspace, _| {
-                let board = &mut workspace.projects[0].boards[0];
-                board.view = View::List;
-                let column = board.columns[0].id.clone();
-                for i in 0..300 {
-                    board.add_card(
-                        &column,
-                        format!("List row {i}\n\n{}", "Long body\n".repeat(100)),
-                    );
-                }
-            });
+            root.workspace.read(cx).projects[0].boards[0]
+                .board
+                .clone()
+                .update(cx, |board, cx| {
+                    cx.notify();
+                    board.view = View::List;
+                    let column = board.columns[0].id.clone();
+                    for i in 0..300 {
+                        board.add_card(
+                            &column,
+                            format!("List row {i}\n\n{}", "Long body\n".repeat(100)),
+                        );
+                    }
+                });
             cx.notify();
         })
     });
     settle(&mut cx);
-    let scroll = cx.update(|_, cx| root.read(cx).boards.of(&member.id).down.clone());
+    let scroll = cx.update(|_, cx| {
+        root.read(cx)
+            .board_scroll(&member, cx)
+            .unwrap()
+            .down
+            .clone()
+    });
     let max = scroll.max_offset();
     assert!(max.y > px(10000.));
     let parsed = cx.update(|_, cx| root.read(cx).card_docs.0.borrow().len());
@@ -565,15 +628,15 @@ fn list_scroll_builds_visible_rows_and_keeps_its_extent(cx: &mut TestAppContext)
         assert_eq!(scroll.max_offset(), max);
     }
     cx.update(|window, cx| {
-        root.update(cx, |root, cx| {
-            root.edit(None, Editing::Card(cards[0].clone()), window, cx);
+        view(&root, cx).update(cx, |view, cx| {
+            view.start_edit(Editing::Card(cards[0].clone()), window, cx);
         })
     });
     settle(&mut cx);
     cx.simulate_input("Editing still works");
     assert!(cx.update(|_, cx| {
-        root.read(cx)
-            .leaf()
+        view(&root, cx)
+            .read(cx)
             .card_field
             .read(cx)
             .content()
@@ -587,24 +650,33 @@ fn list_window_tracks_group_folding_and_search(cx: &mut TestAppContext) {
     cx.update(|window, cx| {
         root.update(cx, |root, cx| {
             root.close_drawer(None, window, cx);
-            root.workspace.update(cx, |workspace, _| {
-                let board = &mut workspace.projects[0].boards[0];
-                board.view = View::List;
-                let first = board.columns[0].id.clone();
-                let second = board.add_column("Second").id.clone();
-                let hidden = board.add_column("Hidden").id.clone();
-                for i in 0..60 {
-                    board.add_card(&first, format!("First row {i}"));
-                    board.add_card(&second, format!("Second row {i}"));
-                    board.add_card(&hidden, format!("Hidden row {i}"));
-                }
-                board.columns[2].collapsed = true;
-            });
+            root.workspace.read(cx).projects[0].boards[0]
+                .board
+                .clone()
+                .update(cx, |board, cx| {
+                    cx.notify();
+                    board.view = View::List;
+                    let first = board.columns[0].id.clone();
+                    let second = board.add_column("Second").id.clone();
+                    let hidden = board.add_column("Hidden").id.clone();
+                    for i in 0..60 {
+                        board.add_card(&first, format!("First row {i}"));
+                        board.add_card(&second, format!("Second row {i}"));
+                        board.add_card(&hidden, format!("Hidden row {i}"));
+                    }
+                    board.columns[2].collapsed = true;
+                });
             cx.notify();
         })
     });
     settle(&mut cx);
-    let scroll = cx.update(|_, cx| root.read(cx).boards.of(&member.id).down.clone());
+    let scroll = cx.update(|_, cx| {
+        root.read(cx)
+            .board_scroll(&member, cx)
+            .unwrap()
+            .down
+            .clone()
+    });
     let max = scroll.max_offset().y;
     assert!(!cx.update(|_, cx| {
         root.read(cx)
@@ -615,9 +687,13 @@ fn list_window_tracks_group_folding_and_search(cx: &mut TestAppContext) {
     }));
     cx.update(|_, cx| {
         root.update(cx, |root, cx| {
-            root.workspace.update(cx, |workspace, _| {
-                workspace.projects[0].boards[0].columns[0].collapsed = true
-            });
+            root.workspace.read(cx).projects[0].boards[0]
+                .board
+                .clone()
+                .update(cx, |board, cx| {
+                    board.columns[0].collapsed = true;
+                    cx.notify();
+                });
             cx.notify();
         })
     });
@@ -632,10 +708,11 @@ fn list_window_tracks_group_folding_and_search(cx: &mut TestAppContext) {
     }));
     cx.update(|_, cx| {
         root.update(cx, |root, cx| {
-            root.leaf_mut().finding = true;
-            root.leaf()
-                .find_field
-                .update(cx, |field, cx| field.set_content("Hidden row 42", cx));
+            root.leaf().clone().update(cx, |pane, cx| {
+                pane.finding = true;
+                pane.find_field
+                    .update(cx, |field, cx| field.set_content("Hidden row 42", cx));
+            });
             cx.notify();
         })
     });
@@ -661,9 +738,13 @@ fn list_rows_open_drawer_and_group_controls_stay_independent(cx: &mut TestAppCon
     cx.update(|window, cx| {
         root.update(cx, |root, cx| {
             root.close_drawer(None, window, cx);
-            root.workspace.update(cx, |workspace, _| {
-                workspace.projects[0].boards[0].view = View::List
-            });
+            root.workspace.read(cx).projects[0].boards[0]
+                .board
+                .clone()
+                .update(cx, |board, cx| {
+                    board.view = View::List;
+                    cx.notify();
+                });
             cx.notify();
         })
     });
@@ -673,25 +754,18 @@ fn list_rows_open_drawer_and_group_controls_stay_independent(cx: &mut TestAppCon
     cx.simulate_mouse_up(first, MouseButton::Left, Modifiers::default());
     settle(&mut cx);
     assert!(cx.debug_bounds("drawer").is_some());
-    assert!(cx.update(|_, cx| root.read(cx).leaf().editing.is_none()));
+    assert!(cx.update(|_, cx| view(&root, cx).read(cx).editing.is_none()));
     assert_eq!(
-        cx.update(|_, cx| root
-            .read(cx)
-            .leaf()
-            .drawer
-            .as_ref()
-            .unwrap()
-            .card()
-            .unwrap()
-            .card
-            .clone()),
-        cards[0]
+        cx.update(|_, cx| view(&root, cx).read(cx).opened_card().map(str::to_owned)),
+        Some(cards[0].clone())
     );
     type_card(&root, "List text", &mut cx);
     click("drawer-close", &mut cx);
     assert_eq!(
         cx.update(
             |_, cx| root.read(cx).workspace.read(cx).projects[0].boards[0]
+                .board
+                .read(cx)
                 .card(&cards[0])
                 .unwrap()
                 .text
@@ -702,12 +776,16 @@ fn list_rows_open_drawer_and_group_controls_stay_independent(cx: &mut TestAppCon
     );
     click("list-group-toggle", &mut cx);
     assert!(cx.update(|_, cx| {
-        root.read(cx).workspace.read(cx).projects[0].boards[0].columns[0].collapsed
+        root.read(cx).workspace.read(cx).projects[0].boards[0]
+            .board
+            .read(cx)
+            .columns[0]
+            .collapsed
     }));
     assert!(cx.update(|_, cx| root.read(cx).renaming.is_none()));
     click("list-group-add", &mut cx);
     assert!(cx.update(|_, cx| matches!(
-        root.read(cx).leaf().editing,
+        view(&root, cx).read(cx).editing,
         Some(Editing::New(Place::Top, _))
     )));
 }
@@ -718,19 +796,28 @@ fn list_drawer_reveals_lower_rows_and_restores_scroll(cx: &mut TestAppContext) {
     cx.update(|window, cx| {
         root.update(cx, |root, cx| {
             root.close_drawer(None, window, cx);
-            root.workspace.update(cx, |workspace, _| {
-                let board = &mut workspace.projects[0].boards[0];
-                board.view = View::List;
-                let column = board.columns[0].id.clone();
-                for i in 0..30 {
-                    board.add_card(&column, format!("Task {i}"));
-                }
-            });
+            root.workspace.read(cx).projects[0].boards[0]
+                .board
+                .clone()
+                .update(cx, |board, cx| {
+                    cx.notify();
+                    board.view = View::List;
+                    let column = board.columns[0].id.clone();
+                    for i in 0..30 {
+                        board.add_card(&column, format!("Task {i}"));
+                    }
+                });
             cx.notify();
         })
     });
     settle(&mut cx);
-    let scroll = cx.update(|_, cx| root.read(cx).boards.of(&member.id).down.clone());
+    let scroll = cx.update(|_, cx| {
+        root.read(cx)
+            .board_scroll(&member, cx)
+            .unwrap()
+            .down
+            .clone()
+    });
     let before = scroll.offset();
     let position = point(px(180.), px(530.));
     cx.simulate_mouse_down(position, MouseButton::Left, Modifiers::default());
@@ -751,7 +838,7 @@ fn busy_orb_opens_its_session_without_opening_the_card(cx: &mut TestAppContext) 
     cx.update(|window, cx| {
         root.update(cx, |root, cx| {
             root.close_drawer(None, window, cx);
-            root.workspace.update(cx, |workspace, _| {
+            root.workspace.update(cx, |workspace, cx| {
                 workspace.settings.features.sessions = true;
                 let project = &mut workspace.projects[0];
                 let chat = ChatSession::restore(
@@ -770,25 +857,51 @@ fn busy_orb_opens_its_session_without_opening_the_card(cx: &mut TestAppContext) 
                     }))
                     .unwrap(),
                 );
-                project.sessions.push(chat);
-                project.boards[0].view = View::List;
-                project.boards[0].dispatch_card(&cards[0], "orb-session".into());
-                project.boards[0].set_card_status(&cards[0], None);
+                project
+                    .sessions
+                    .push(crate::model::project::HeldSession::new(chat, cx));
             });
+            root.workspace.read(cx).projects[0].boards[0]
+                .board
+                .clone()
+                .update(cx, |board, cx| {
+                    board.view = View::List;
+                    board.dispatch_card(&cards[0], "orb-session".into());
+                    board.set_card_status(&cards[0], None);
+                    cx.notify();
+                });
             // Linked and not busy: the session's number, not the orb.
-            let card = &root.workspace.read(cx).projects[0].boards[0].columns[0].cards[0];
-            let idle = root
-                .card_working(card, root.card_session(card, cx))
-                .unwrap();
+            let card = &root.workspace.read(cx).projects[0].boards[0]
+                .board
+                .read(cx)
+                .columns[0]
+                .cards[0];
+            let idle = card_working(
+                card,
+                card_session(card, root.workspace.read(cx), cx),
+                &root.card_marks,
+            )
+            .unwrap();
             assert!(!idle.busy);
             assert_eq!(idle.session, Some((77, "Polish boards".into())));
-            root.workspace.update(cx, |workspace, _| {
-                workspace.projects[0].boards[0].set_card_status(&cards[0], Some(Status::Busy));
-            });
-            let card = &root.workspace.read(cx).projects[0].boards[0].columns[0].cards[0];
-            let working = root
-                .card_working(card, root.card_session(card, cx))
-                .unwrap();
+            root.workspace.read(cx).projects[0].boards[0]
+                .board
+                .clone()
+                .update(cx, |board, cx| {
+                    board.set_card_status(&cards[0], Some(Status::Busy));
+                    cx.notify();
+                });
+            let card = &root.workspace.read(cx).projects[0].boards[0]
+                .board
+                .read(cx)
+                .columns[0]
+                .cards[0];
+            let working = card_working(
+                card,
+                card_session(card, root.workspace.read(cx), cx),
+                &root.card_marks,
+            )
+            .unwrap();
             assert!(working.busy);
             assert_eq!(working.session, Some((77, "Polish boards".into())));
             cx.notify();
@@ -799,8 +912,8 @@ fn busy_orb_opens_its_session_without_opening_the_card(cx: &mut TestAppContext) 
     cx.update(|_, cx| {
         let root = root.read(cx);
         assert_eq!(root.workspace.read(cx).projects[0].active, Some(77));
-        assert!(matches!(root.leaf().pane, Pane::Chat));
-        assert!(root.leaf().drawer.is_none());
+        assert!(matches!(root.leaf().read(cx).kind, Kind::Session));
+        assert!(root.leaf().read(cx).drawer.is_none());
     });
 }
 
@@ -816,10 +929,10 @@ fn list_cards_drop_into_a_collapsed_group_without_unfolding(cx: &mut TestAppCont
         let target = cx.update(|window, cx| {
             root.update(cx, |root, cx| {
                 root.close_drawer(None, window, cx);
-                let target = root.workspace.update(cx, |workspace, _| {
-                    let project = &mut workspace.projects[0];
-                    let store = project.store();
-                    let board = &mut project.boards[0];
+                let project = &root.workspace.read(cx).projects[0];
+                let (store, board) = (project.store(), project.boards[0].board.clone());
+                let target = board.update(cx, |board, cx| {
+                    cx.notify();
                     board.view = View::List;
                     let target = board.add_column("Later").id.clone();
                     if populated {
@@ -853,7 +966,11 @@ fn list_cards_drop_into_a_collapsed_group_without_unfolding(cx: &mut TestAppCont
         settle(&mut cx);
         cx.update(|_, cx| {
             let workspace = root.read(cx).workspace.read(cx);
-            let column = workspace.projects[0].boards[0].column(&target).unwrap();
+            let column = workspace.projects[0].boards[0]
+                .board
+                .read(cx)
+                .column(&target)
+                .unwrap();
             assert!(column.collapsed);
             assert_eq!(column.cards.len(), if populated { 2 } else { 1 });
             assert_eq!(column.cards[0].id, cards[0]);
@@ -867,13 +984,16 @@ fn a_long_lane_builds_only_the_cards_on_screen(cx: &mut TestAppContext) {
     cx.update(|window, cx| {
         root.update(cx, |root, cx| {
             root.close_drawer(None, window, cx);
-            root.workspace.update(cx, |workspace, _| {
-                let board = &mut workspace.projects[0].boards[0];
-                let column = board.columns[0].id.clone();
-                for i in 0..150 {
-                    board.add_card(&column, format!("Long card {i}\n\nParagraph."));
-                }
-            });
+            root.workspace.read(cx).projects[0].boards[0]
+                .board
+                .clone()
+                .update(cx, |board, cx| {
+                    cx.notify();
+                    let column = board.columns[0].id.clone();
+                    for i in 0..150 {
+                        board.add_card(&column, format!("Long card {i}\n\nParagraph."));
+                    }
+                });
             cx.notify();
         })
     });
@@ -893,8 +1013,12 @@ fn a_long_lane_builds_only_the_cards_on_screen(cx: &mut TestAppContext) {
     assert!(before < 40, "built {before} of 150 cards in one lane");
     let lane = cx.update(|_, cx| {
         let root = root.read(cx);
-        let id = &root.workspace.read(cx).projects[0].boards[0].columns[0].id;
-        root.boards.of(&member.id).lanes.of(id)
+        let id = &root.workspace.read(cx).projects[0].boards[0]
+            .board
+            .read(cx)
+            .columns[0]
+            .id;
+        root.board_scroll(&member, cx).unwrap().lanes.of(id)
     });
     // Both seeded cards, the 150, `Add a card` and the foot.
     assert_eq!(lane.list.item_count(), 154);
@@ -913,11 +1037,14 @@ fn a_long_lane_builds_only_the_cards_on_screen(cx: &mut TestAppContext) {
 
     cx.update(|_, cx| {
         root.update(cx, |root, cx| {
-            root.workspace.update(cx, |workspace, _| {
-                let board = &mut workspace.projects[0].boards[0];
-                let column = board.columns[0].id.clone();
-                board.add_card(&column, "Long card last".into());
-            });
+            root.workspace.read(cx).projects[0].boards[0]
+                .board
+                .clone()
+                .update(cx, |board, cx| {
+                    cx.notify();
+                    let column = board.columns[0].id.clone();
+                    board.add_card(&column, "Long card last".into());
+                });
             cx.notify();
         })
     });

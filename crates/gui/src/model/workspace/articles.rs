@@ -4,6 +4,7 @@
 //! `use super::*`: these methods work on the same struct and reach the same
 //! names as the rest of it.
 use super::*;
+use artifact::kind::Kind;
 
 impl Workspace {
     /// A fresh document in the active project, opened as it lands — an empty
@@ -34,6 +35,14 @@ impl Workspace {
         cx.notify();
     }
 
+    /// The article a file names, and the project it is open in.
+    pub fn article_at(&self, path: &Path) -> Option<(usize, &Article)> {
+        self.projects.iter().enumerate().find_map(|(ix, open)| {
+            let article = open.articles.iter().find(|article| article.path == path)?;
+            Some((ix, article))
+        })
+    }
+
     /// The article a file names, wherever it is open — what the sidebar
     /// addresses one by, since an index moves when a neighbour is made.
     pub fn article_at_mut(&mut self, path: &Path) -> Option<&mut Article> {
@@ -46,7 +55,6 @@ impl Workspace {
     /// Every project's articles are on show, so picking one brings its project
     /// forward with it.
     pub fn open_article(&mut self, project: usize, ix: usize, cx: &mut Context<Self>) {
-        let text_size = self.article_font_size();
         let Some(article) = self
             .projects
             .get_mut(project)
@@ -54,27 +62,23 @@ impl Workspace {
         else {
             return;
         };
-        article.open(text_size, cx);
+        article.open(cx);
         self.projects[project].article = Some(ix);
-        let id = self.projects[project].articles[ix]
-            .path
-            .to_string_lossy()
-            .into_owned();
+        let id = self.projects[project].articles[ix].id.clone();
         self.active = Some(project);
-        self.remember(project, state::Kind::Article, id, cx);
+        self.remember(project, Kind::Article, id, cx);
         cx.notify();
     }
 
     /// Give an article its editor without picking it, for a drawer that shows
     /// it over another entry's pane.
     pub fn load_article(&mut self, project: usize, ix: usize, cx: &mut Context<Self>) {
-        let text_size = self.article_font_size();
         if let Some(article) = self
             .projects
             .get_mut(project)
             .and_then(|open| open.articles.get_mut(ix))
         {
-            article.open(text_size, cx);
+            article.open(cx);
         }
     }
 
@@ -100,11 +104,30 @@ impl Workspace {
         };
         article.write(cx);
         let content = article.path.clone();
-        if artifact::article::move_to(&content, &target).is_err() {
+        let id = article.id.clone();
+        let Ok(arrived) = artifact::article::move_to(&content, &target) else {
             return;
+        };
+        // Its sessions went with it, and are held where it landed.
+        self.drop_article_sessions(from, &id, cx);
+        let landed = artifact::article::id_of(&arrived);
+        let carried = artifact::project::Project::sessions(&self.projects[to].store());
+        for stored in carried {
+            if stored.article.as_deref() == Some(landed.as_str()) {
+                self.restore_record(to, stored, cx);
+            }
         }
         self.reload_project(&source, cx);
         self.reload_project(&target, cx);
+    }
+
+    /// Let go of the sessions opened under article `id` in the project at
+    /// `project`.
+    fn drop_article_sessions(&mut self, project: usize, id: &str, cx: &App) {
+        if let Some(open) = self.projects.get_mut(project) {
+            open.sessions
+                .retain(|held| held.chat.read(cx).article.as_deref() != Some(id));
+        }
     }
 
     /// Drop the article: the file goes with it.
@@ -115,7 +138,11 @@ impl Workspace {
         if ix >= project.articles.len() {
             return;
         }
-        project.articles.remove(ix).remove();
+        let gone = project.articles.remove(ix);
+        gone.remove();
+        project
+            .sessions
+            .retain(|held| held.chat.read(cx).article.as_deref() != Some(gone.id.as_str()));
         project.article = project
             .article
             .filter(|open| *open != ix)
@@ -165,10 +192,33 @@ impl Workspace {
         }
     }
 
-    /// Put one document into the other form — see [`Article::set_mode`].
-    pub fn set_article_mode(&mut self, on: &Path, mode: Mode, cx: &mut Context<Self>) {
+    /// Open one comment's note in an article's margin, or close the one open.
+    pub fn activate_comment(&mut self, on: &Path, id: Option<u64>, cx: &mut Context<Self>) {
         if let Some(article) = self.article_at_mut(on) {
-            article.set_mode(mode, cx);
+            article.activate_comment(id, cx);
+            cx.notify();
+        }
+    }
+
+    /// The pointer came over one comment's note, or left them all.
+    pub fn hover_comment(&mut self, on: &Path, id: Option<u64>, cx: &mut Context<Self>) {
+        if let Some(article) = self.article_at_mut(on) {
+            article.hover_comment(id, cx);
+            cx.notify();
+        }
+    }
+
+    /// Resolve one comment, or open it again.
+    pub fn resolve_comment(&mut self, on: &Path, id: u64, resolved: bool, cx: &mut Context<Self>) {
+        if let Some(article) = self.article_at_mut(on) {
+            article.resolve_comment(id, resolved, cx);
+            cx.notify();
+        }
+    }
+
+    pub fn delete_comment(&mut self, on: &Path, id: u64, cx: &mut Context<Self>) {
+        if let Some(article) = self.article_at_mut(on) {
+            article.delete_comment(id, cx);
             cx.notify();
         }
     }
@@ -191,9 +241,9 @@ impl Workspace {
                     .as_ref()
                     .is_some_and(|field| field.entity_id() == changed)
                     || article
-                        .editor
+                        .document
                         .as_ref()
-                        .is_some_and(|editor| editor.entity_id() == changed)
+                        .is_some_and(|document| document.entity_id() == changed)
             })
         });
         if found.is_some_and(|article| article.write(cx)) {

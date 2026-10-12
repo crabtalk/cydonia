@@ -8,21 +8,25 @@
 //! Without the `desktop` feature there is one window, and this is drawn inside
 //! it — see [`embed`].
 
+#[cfg(not(target_os = "linux"))]
+use crate::view::kit::dialog::{answers, dialog};
 #[cfg(feature = "desktop")]
-use crate::{agent::Listing, model::update, view::root::traffic_lights};
-use crate::{model::workspace::Workspace, view::root::HEADER_HEIGHT};
+use crate::{agent::Listing, model::update, view::window::root::traffic_lights};
+use crate::{model::workspace::Workspace, view::window::root::HEADER_HEIGHT};
 use bezel::ui::scroll as scrollbars;
+#[cfg(not(target_os = "linux"))]
+use bezel::{gpui::Focusable as _, ui::popover};
 use bezel::{
     gpui::{
-        AnyElement, App, Context, ElementId, Entity, Focusable as _, Render, SharedString, Window,
-        div, prelude::*, px,
+        AnyElement, App, Context, ElementId, Entity, Render, SharedString, Window, div, prelude::*,
+        px,
     },
     motion::{Fade, Painter},
     theme::{TextStyle, Theme, Typeset},
     ui::{
         icons,
         input::{Shape, TextField},
-        widgets::{ButtonStyle, Buttons, Content, Controls, Layout, Scaffolding},
+        widgets::{Content, Controls, Layout, Scaffolding},
     },
 };
 #[cfg(feature = "desktop")]
@@ -77,7 +81,7 @@ const CONTENT_WIDTH: f32 = 640.;
 #[cfg(feature = "desktop")]
 const WINDOW_SIZE: (f32, f32) = (900., 620.);
 
-pub use super::section::Section;
+pub use super::window::section::Section;
 
 impl Section {
     /// Whether this section carries its own scroller, leaving the page still.
@@ -213,7 +217,7 @@ struct CustomColor {
 
 pub struct SettingsWindow {
     workspace: Entity<Workspace>,
-    /// The press on the window's [`crate::view::chrome::grip`].
+    /// The press on the window's [`crate::view::window::chrome::grip`].
     drag: bezel::ui::titlebar::DragState,
     section: Section,
     /// The catalog, once it has been fetched. `None` while it is in flight —
@@ -259,6 +263,7 @@ pub struct SettingsWindow {
     #[cfg(not(target_os = "linux"))]
     browser_data: browser::BrowserData,
     /// The field whose dialog is up — see [`SettingsWindow::field_dialog`].
+    #[cfg(not(target_os = "linux"))]
     editing: Option<(Field, Entity<TextField>)>,
     /// The statistics section's reading.
     #[cfg(feature = "desktop")]
@@ -311,12 +316,12 @@ pub fn open(
             // Opaque on purpose — see the module note. The root paints the
             // page's own background, so where the window frames itself the
             // surface is transparent and only the frame's band shows through.
-            window_background: match crate::view::chrome::decorations() {
+            window_background: match crate::view::window::chrome::decorations() {
                 Some(_) => WindowBackgroundAppearance::Transparent,
                 None => WindowBackgroundAppearance::Opaque,
             },
             app_id: Some("cydonia".into()),
-            window_decorations: crate::view::chrome::decorations(),
+            window_decorations: crate::view::window::chrome::decorations(),
             app_owns_titlebar_drag: true,
             ..Default::default()
         },
@@ -326,7 +331,7 @@ pub fn open(
             // onto every window on each appearance switch, which is what keeps
             // the main window's frost alive and would frost this one with it.
             appearance::keep_background(window, cx);
-            crate::view::lights::fit(window, cx);
+            crate::view::window::lights::fit(window, cx);
             cx.new(|cx| SettingsWindow::new(workspace, section, cx))
         },
     )
@@ -413,6 +418,7 @@ impl SettingsWindow {
             apps: Default::default(),
             #[cfg(not(target_os = "linux"))]
             browser_data: Default::default(),
+            #[cfg(not(target_os = "linux"))]
             editing: None,
             #[cfg(feature = "desktop")]
             statistics: Default::default(),
@@ -520,35 +526,19 @@ impl SettingsWindow {
         theme
             .card_row(switch.first)
             .children(switch.glyph.map(|glyph| {
-                div()
-                    .flex_none()
-                    .size(px(18.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(
-                        icons::icon(glyph)
-                            .size(px(16.))
-                            .flex_none()
-                            .text_color(theme.text_muted),
-                    )
+                lead().child(
+                    icons::icon(glyph)
+                        .size(px(16.))
+                        .flex_none()
+                        .text_color(theme.text_muted),
+                )
             }))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(theme.row_title(switch.title))
-                    .child(
-                        div()
-                            .mt(px(4.))
-                            .when(switch.truncate, |el| el.truncate())
-                            .text_style(TextStyle::Subheadline)
-                            .text_color(theme.text_muted)
-                            .child(switch.blurb),
-                    ),
-            )
+            .child(labelled(
+                &theme,
+                switch.title,
+                switch.blurb,
+                switch.truncate,
+            ))
             .children(switch.badge.map(|label| theme.badge(label)))
             .child(
                 div()
@@ -564,38 +554,75 @@ impl SettingsWindow {
     }
 }
 
+/// A row's title over a line of explanation, filling the row's free width.
+/// `truncate` holds the line to one.
+pub(super) fn labelled(
+    theme: &Theme,
+    title: impl Into<SharedString>,
+    blurb: impl IntoElement,
+    truncate: bool,
+) -> bezel::gpui::Div {
+    div()
+        .flex_1()
+        .min_w_0()
+        .flex()
+        .flex_col()
+        .child(theme.row_title(title))
+        .child(
+            div()
+                .mt(px(4.))
+                .when(truncate, |el| el.truncate())
+                .text_style(TextStyle::Subheadline)
+                .text_color(theme.text_muted)
+                .child(blurb),
+        )
+}
+
+/// A group's label over the column it heads; the caller adds its group box.
+pub(super) fn group(theme: &Theme, label: impl Into<SharedString>) -> bezel::gpui::Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(LABEL_GAP))
+        .child(theme.field_label(label))
+}
+
+/// The 18px column down a row's left that holds its mark.
+pub(super) fn lead() -> bezel::gpui::Div {
+    div()
+        .flex_none()
+        .size(px(18.))
+        .flex()
+        .items_center()
+        .justify_center()
+}
+
 /// A value typed into a dialog rather than switched on its row.
+#[cfg(not(target_os = "linux"))]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Field {
-    CoverMemory,
-    #[cfg(not(target_os = "linux"))]
     BrowserHome,
-    #[cfg(not(target_os = "linux"))]
     BrowserBlocked,
 }
 
+#[cfg(not(target_os = "linux"))]
 impl Field {
     fn title(self) -> &'static str {
         match self {
-            Self::CoverMemory => "Cover memory",
-            #[cfg(not(target_os = "linux"))]
             Self::BrowserHome => "Home page",
-            #[cfg(not(target_os = "linux"))]
             Self::BrowserBlocked => "Sites agents may not use",
         }
     }
 
     fn note(self) -> &'static str {
         match self {
-            Self::CoverMemory => "In megabytes.",
-            #[cfg(not(target_os = "linux"))]
             Self::BrowserHome => "The address a new browser tab opens on.",
-            #[cfg(not(target_os = "linux"))]
             Self::BrowserBlocked => "Hosts, separated by commas. A host covers its subdomains.",
         }
     }
 }
 
+#[cfg(not(target_os = "linux"))]
 impl SettingsWindow {
     /// Put `field` in a dialog, seeded with `current`.
     pub(super) fn edit_field(
@@ -615,89 +642,48 @@ impl SettingsWindow {
         cx.notify();
     }
 
-    fn save_field(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn save_field(&mut self, cx: &mut Context<Self>) {
         let Some((field, input)) = self.editing.take() else {
             return;
         };
         let typed = input.read(cx).content().to_owned();
         match field {
-            Field::CoverMemory => self.save_cover_memory(&typed, window, cx),
-            #[cfg(not(target_os = "linux"))]
             Field::BrowserHome => self.save_browser_home(&typed, cx),
-            #[cfg(not(target_os = "linux"))]
             Field::BrowserBlocked => self.save_browser_blocked(&typed, cx),
         }
         cx.notify();
     }
 
     /// The open field's dialog, over a scrim that takes the press that
-    /// dismisses it. Rendered by the window, so it sits above the scrolling
-    /// body.
-    fn field_dialog(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    /// dismisses it.
+    fn field_dialog(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let (field, input) = self.editing.clone()?;
         let theme = Theme::of(cx).clone();
-        Some(
-            div()
-                .id("field-scrim")
-                .absolute()
-                .inset_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .bg(theme.scrim())
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.editing = None;
-                    cx.notify();
-                }))
-                .child(
-                    div()
-                        .id("field-dialog")
-                        .w(px(performance::DIALOG_WIDTH))
-                        .flex()
-                        .flex_col()
-                        .gap(px(LABEL_GAP))
-                        .p(px(20.))
-                        .rounded(px(Theme::panel_radius()))
-                        .border_1()
-                        .border_color(theme.border)
-                        .bg(theme.surface)
-                        // The press that opens a field must not reach the scrim.
-                        .on_click(|_, _, cx| cx.stop_propagation())
-                        .child(theme.row_title(field.title()))
-                        .child(
-                            div()
-                                .text_style(TextStyle::Subheadline)
-                                .text_color(theme.text_muted)
-                                .child(field.note()),
-                        )
-                        .child(input)
-                        .child(
-                            div()
-                                .flex()
-                                .flex_row()
-                                .justify_end()
-                                .gap(px(8.))
-                                .child(
-                                    theme
-                                        .button("Cancel", ButtonStyle::Ghost, None)
-                                        .id("field-cancel")
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.editing = None;
-                                            cx.notify();
-                                        })),
-                                )
-                                .child(
-                                    theme
-                                        .button("Save", ButtonStyle::Prominent, None)
-                                        .id("field-save")
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.save_field(window, cx)
-                                        })),
-                                ),
-                        ),
+        Some(dialog(
+            "field-dialog",
+            &theme,
+            window,
+            [
+                popover::dialog_title(&theme, field.title()).into_any_element(),
+                popover::dialog_body(&theme, field.note()).into_any_element(),
+                input.into_any_element(),
+                answers(
+                    &theme,
+                    "field",
+                    Some(Box::new(cx.listener(|this, _, _, cx| {
+                        this.editing = None;
+                        cx.notify();
+                    }))),
+                    "Save",
+                    Box::new(cx.listener(|this, _, _, cx| this.save_field(cx))),
                 )
                 .into_any_element(),
-        )
+            ],
+            cx.listener(|this, _, _, cx| {
+                this.editing = None;
+                cx.notify();
+            }),
+        ))
     }
 }
 
@@ -799,7 +785,7 @@ impl SettingsWindow {
 
 impl Render for SettingsWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        use crate::view::chrome;
+        use crate::view::window::chrome;
         use bezel::ui::titlebar::CaptionSide;
         let theme = Theme::of(cx).clone();
         let owns_scroll = self.section.owns_scroll();
@@ -913,8 +899,9 @@ impl Render for SettingsWindow {
                     }),
             )
             .children(strip)
-            .children(self.field_dialog(cx))
-            .children(self.trust_dialog(cx));
+            .children(self.trust_dialog(window, cx));
+        #[cfg(not(target_os = "linux"))]
+        let root = root.children(self.field_dialog(window, cx));
         #[cfg(feature = "desktop")]
         return bezel::ui::window::frame(root, window, cx);
         #[cfg(not(feature = "desktop"))]

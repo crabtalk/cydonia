@@ -5,13 +5,13 @@
 //! the backend: the memory project [`seed`] put at a path, else the files
 //! there.
 
-use anyhow::Result;
+use artifact::project::Result;
 use artifact::{
-    article::{Article, properties::Properties},
+    article::{Article, comments::Comments, properties::Properties},
     board::Board,
+    kind::Kind,
     project::{Project, Watching, fs, memory},
     session::record::Record,
-    space::Kind,
 };
 use std::{
     collections::HashMap,
@@ -69,6 +69,13 @@ impl Store {
     ) {
         if let (Store::Fs(from), Store::Fs(to)) = (self, to) {
             let _ = from.carry_card_files(board, card, to, to_board, to_card);
+        }
+    }
+
+    pub fn files(&self, dir: &Path) -> bool {
+        match self {
+            Store::Fs(store) => store.files(dir),
+            Store::Memory(_) => false,
         }
     }
 
@@ -151,6 +158,14 @@ impl Project for Store {
         each!(self, store => store.write_article(id, markdown))
     }
 
+    fn comments(&self, id: &str) -> Comments {
+        each!(self, store => store.comments(id))
+    }
+
+    fn save_comments(&self, id: &str, comments: &Comments) -> Result<()> {
+        each!(self, store => store.save_comments(id, comments))
+    }
+
     fn properties(&self, id: &str) -> Properties {
         each!(self, store => store.properties(id))
     }
@@ -175,15 +190,15 @@ impl Project for Store {
         each!(self, store => store.watch(knock))
     }
 
-    fn number(&self, kind: &str, id: &str) -> Result<u64> {
+    fn number(&self, kind: Kind, id: &str) -> Result<u64> {
         each!(self, store => store.number(kind, id))
     }
 
-    fn resolve(&self, kind: &str, number: u64) -> Result<Option<String>> {
+    fn resolve(&self, kind: Kind, number: u64) -> Result<Option<String>> {
         each!(self, store => store.resolve(kind, number))
     }
 
-    fn retire(&self, kind: &str, id: &str) -> Result<()> {
+    fn retire(&self, kind: Kind, id: &str) -> Result<()> {
         each!(self, store => store.retire(kind, id))
     }
 }

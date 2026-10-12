@@ -8,9 +8,8 @@ use super::browser::Browser;
 use super::terminal::{DirectoryChanged, Exited, Terminal};
 use super::{changes::Changes, file::FileView, files::Files};
 use crate::model::{settings::PanelTabs, workspace::Workspace};
-use crate::view::leaf::Pane;
-use crate::view::root::{Cydonia, ToggleChanges};
-use crate::view::{chrome, desktop::DesktopOnly};
+use crate::view::window::root::{Cydonia, ToggleChanges};
+use crate::view::{modals::desktop::DesktopOnly, window::chrome};
 use bezel::{
     gpui::{
         self, AnyElement, Axis, Context, DragMoveEvent, Empty, Entity, Focusable, Render,
@@ -19,9 +18,10 @@ use bezel::{
     motion::{Fade, Painter},
     theme::{TextStyle, Theme, Typeset},
     ui::{
+        context_menu::{ContextMenu, Place},
         icons,
-        menu::{self, Cursor, Hit, Item},
-        popover, tabs,
+        menu::Item,
+        tabs,
         titlebar::{self, CaptionSide},
         tooltip::Tooltip,
         widgets::{ButtonStyle, Buttons as _},
@@ -121,8 +121,8 @@ pub struct Panel {
     /// so the order is arithmetic the strip can do without a window.
     contents: HashMap<usize, Tab>,
     next_id: usize,
-    menu: bool,
-    cursor: Cursor,
+    /// The `+` menu.
+    menu: ContextMenu<Self>,
     closing: Option<usize>,
     focus_pending: bool,
     restore_pending: Option<persistence::SavedPanel>,
@@ -154,8 +154,7 @@ impl Panel {
             reorder: tabs::Reorder::new(Painter::of(cx)),
             contents: HashMap::new(),
             next_id: 0,
-            menu: false,
-            cursor: Cursor::default(),
+            menu: ContextMenu::default(),
             closing: None,
             focus_pending: false,
             restore_pending: None,
@@ -542,7 +541,6 @@ impl Panel {
     }
 
     fn choose(&mut self, launch: Launch, window: &mut Window, cx: &mut Context<Self>) {
-        self.menu = false;
         match launch {
             Launch::Review => self.review(cx),
             Launch::Terminal => self.terminal(window, cx),
@@ -553,17 +551,42 @@ impl Panel {
         cx.notify();
     }
 
+    /// The `+` menu: a row per kind of tab, and what choosing one opens.
+    #[allow(clippy::type_complexity)]
+    fn launch_menu(
+        &mut self,
+        window: &mut Window,
+        _: &mut Context<Self>,
+    ) -> (
+        Vec<Item>,
+        impl Fn(&mut Self, &[usize], &mut Window, &mut Context<Self>) + use<>,
+    ) {
+        let launchers = self.launchers();
+        let items = Self::items(&launchers, window);
+        let choose =
+            move |this: &mut Self, path: &[usize], window: &mut Window, cx: &mut Context<Self>| {
+                if let Some(launch) = path.first().and_then(|ix| launchers.get(*ix)) {
+                    this.choose(*launch, window, cx);
+                }
+            };
+        (items, choose)
+    }
+
     fn items(launchers: &[Launch], window: &Window) -> Vec<Item> {
         launchers
             .iter()
             .map(|launch| {
                 let item = Item::action(launch.label()).with_icon(launch.icon());
                 match launch {
-                    Launch::Review => item.with_shortcut(&crate::view::root::OpenReview, window),
+                    Launch::Review => {
+                        item.with_shortcut(&crate::view::window::root::OpenReview, window)
+                    }
                     Launch::Terminal => item.with_shortcut_in(&NewTerminal, "SessionPanel", window),
                     #[cfg(not(target_os = "linux"))]
                     Launch::Browser => item,
-                    Launch::Files => item.with_shortcut(&crate::view::root::OpenFiles, window),
+                    Launch::Files => {
+                        item.with_shortcut(&crate::view::window::root::OpenFiles, window)
+                    }
                 }
             })
             .collect()
@@ -609,33 +632,9 @@ impl Render for Panel {
         let theme = Theme::of(cx).clone();
         let right = chrome::has(CaptionSide::Right, window, cx);
         let launchers = self.launchers();
-        let items = Self::items(&launchers, window);
-        let rows = items.clone();
-        let chosen = launchers.clone();
-        let popup = self.menu.then(|| {
-            menu::card(
-                &theme,
-                "panel-menu",
-                &items,
-                &self.cursor,
-                window,
-                cx,
-                move |this, hit, window, cx| {
-                    match hit {
-                        Hit::Point(path) => {
-                            this.cursor.point_at(&rows, &path);
-                        }
-                        Hit::Choose(path) => {
-                            if let Some(launch) = path.first().and_then(|ix| chosen.get(*ix)) {
-                                this.choose(*launch, window, cx);
-                            }
-                        }
-                        Hit::Dismiss => this.menu = false,
-                    }
-                    cx.notify();
-                },
-            )
-        });
+        let popup = self
+            .menu
+            .render("panel-menu", |this| &mut this.menu, window, cx);
         let active_file = self.front().and_then(|tab| {
             if let Content::File(file) = &tab.content {
                 Some(file.clone())
@@ -749,7 +748,7 @@ impl Render for Panel {
             .size_full()
             .flex()
             .flex_col()
-            .bg(crate::view::root::content_bg(&theme))
+            .bg(theme.window_bg())
             .key_context("SessionPanel")
             .track_focus(&self.focus)
             .on_mouse_down(
@@ -778,13 +777,13 @@ impl Render for Panel {
             }))
             .on_action(cx.listener(|this, _: &OpenFile, window, cx| this.files(window, cx)))
             .on_action(cx.listener(|this, _: &NewTerminal, window, cx| this.terminal(window, cx)))
-            .on_action(
-                cx.listener(|this, _: &crate::view::menubar::CloseWindow, window, cx| {
+            .on_action(cx.listener(
+                |this, _: &crate::view::window::menubar::CloseWindow, window, cx| {
                     if let Some(id) = this.strip.active().copied() {
                         this.close(id, window, cx);
                     }
-                }),
-            )
+                },
+            ))
             .on_action(cx.listener(|this, _: &CloseTab, window, cx| {
                 if let Some(id) = this.strip.active().copied() {
                     this.close(id, window, cx);
@@ -793,7 +792,7 @@ impl Render for Panel {
             .on_action(cx.listener(|this, _: &NextTab, window, cx| this.cycle(1, window, cx)))
             .on_action(cx.listener(|this, _: &PrevTab, window, cx| this.cycle(-1, window, cx)))
             .child(
-                crate::view::root::band()
+                crate::view::window::root::band()
                     .gap(px(6.))
                     // Always at the window's top right while it is up.
                     .when(right, |band| band.pr_0())
@@ -906,19 +905,22 @@ impl Render for Panel {
                                     .id("panel-add")
                                     .flex_none()
                                     .tooltip(|window, cx| Tooltip::text("New tab", window, cx))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.menu = !this.menu;
-                                        this.cursor.clear();
-                                        cx.notify();
-                                    })),
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        ContextMenu::toggle(
+                                            this,
+                                            |this| &mut this.menu,
+                                            (),
+                                            Place::Below,
+                                            Self::launch_menu,
+                                            window,
+                                            cx,
+                                        );
+                                    }))
+                                    .map(|el| {
+                                        ContextMenu::trigger(el, |this| &mut this.menu, (), cx)
+                                    }),
                             )
-                            .children(popup.map(|popup| {
-                                popover::anchored_menu_below(
-                                    "panel-menu",
-                                    popup.into_any_element(),
-                                    None,
-                                )
-                            })),
+                            .children(popup),
                     )
                     .child(chrome::grip("panel-grip", &self.drag, window))
                     .child(changes_toggle("Hide right panel", self.toggle, &theme))
@@ -1053,7 +1055,7 @@ impl Cydonia {
             return false;
         }
         self.set_changes_open(true, cx);
-        self.sync_changes(cx);
+        self.sync_changes(window, cx);
         let Some(panel) = self.changes.clone() else {
             return false;
         };
@@ -1084,7 +1086,7 @@ impl Cydonia {
 
     pub(crate) fn show_files(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.set_changes_open(true, cx);
-        self.sync_changes(cx);
+        self.sync_changes(window, cx);
         if let Some(panel) = self.changes.clone() {
             panel.update(cx, |panel, cx| panel.files(window, cx));
         }
@@ -1093,7 +1095,7 @@ impl Cydonia {
 
     pub(crate) fn show_changes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.set_changes_open(true, cx);
-        self.sync_changes(cx);
+        self.sync_changes(window, cx);
         if let Some(panel) = self.changes.clone() {
             panel.update(cx, |panel, cx| {
                 panel.restore_tabs(window, cx);
@@ -1114,7 +1116,7 @@ impl Cydonia {
         if !self.changes_open {
             window.focus(&self.composer_focus_handle(cx), cx);
         } else {
-            self.sync_changes(cx);
+            self.sync_changes(window, cx);
             if let Some(panel) = self.changes.clone() {
                 panel.update(cx, |panel, cx| panel.focus(window, cx));
             }
@@ -1172,7 +1174,7 @@ impl Cydonia {
         self.changes_for = active;
     }
 
-    pub(crate) fn sync_changes(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn sync_changes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.follow_changes(cx);
         let here = self.shell_cwd(cx);
         // A panel outlives the directory going out of front, and is dropped
@@ -1188,8 +1190,8 @@ impl Cydonia {
         self.changes = here
             .filter(|_| self.changes_open)
             .map(|cwd| match self.library.is_some() {
-                true => self.library_panel(cwd, cx),
-                false => self.right_panel(cwd, cx),
+                true => self.library_panel(cwd, window, cx),
+                false => self.right_panel(cwd, window, cx),
             });
         let tabs = self.workspace.read(cx).settings.features.panel;
         if let Some(panel) = &self.changes {
@@ -1211,7 +1213,7 @@ impl Cydonia {
             return false;
         }
         self.set_changes_open(true, cx);
-        self.sync_changes(cx);
+        self.sync_changes(window, cx);
         let Some(panel) = self.changes.clone() else {
             return false;
         };
@@ -1224,12 +1226,17 @@ impl Cydonia {
     }
 
     /// The right panel for `cwd`, made the first time it is asked for.
-    pub(crate) fn right_panel(&mut self, cwd: PathBuf, cx: &mut Context<Self>) -> Entity<Panel> {
+    pub(crate) fn right_panel(
+        &mut self,
+        cwd: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<Panel> {
         if let Some(panel) = self.right_panels.get(&cwd) {
             return panel.clone();
         }
         let restore = persistence::saved_panel(&cwd);
-        let panel = self.new_panel(cwd.clone(), restore, PanelTabs::default(), cx);
+        let panel = self.new_panel(cwd.clone(), restore, PanelTabs::default(), window, cx);
         self.right_panels.insert(cwd, panel.clone());
         panel
     }
@@ -1239,7 +1246,12 @@ impl Cydonia {
     /// directory in front when they are opened.
     ///
     /// Not saved across launches.
-    fn library_panel(&mut self, cwd: PathBuf, cx: &mut Context<Self>) -> Entity<Panel> {
+    fn library_panel(
+        &mut self,
+        cwd: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<Panel> {
         let panel = match &self.library_panel {
             Some(panel) => panel.clone(),
             None => {
@@ -1248,7 +1260,7 @@ impl Cydonia {
                     files: false,
                     browser: true,
                 };
-                let panel = self.new_panel(cwd.clone(), None, offers, cx);
+                let panel = self.new_panel(cwd.clone(), None, offers, window, cx);
                 self.library_panel = Some(panel.clone());
                 panel
             }
@@ -1262,6 +1274,7 @@ impl Cydonia {
         cwd: PathBuf,
         restore: Option<persistence::SavedPanel>,
         offers: PanelTabs,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<Panel> {
         let toggle = Painter::of(cx);
@@ -1274,12 +1287,14 @@ impl Cydonia {
             panel.offers = offers;
             panel
         });
-        cx.subscribe(&panel, |this, _, event: &DesktopOnly, cx| {
-            this.desktop_only(event.0, cx)
-        })
+        cx.subscribe_in(
+            &panel,
+            window,
+            |this, _, event: &DesktopOnly, window, cx| this.desktop_only(event.0, window, cx),
+        )
         .detach();
-        cx.subscribe(&panel, |this, _, _: &OpenFeatures, cx| {
-            this.open_settings(crate::view::section::Section::Features, cx)
+        cx.subscribe_in(&panel, window, |this, _, _: &OpenFeatures, window, cx| {
+            this.open_settings(crate::view::window::section::Section::Features, window, cx)
         })
         .detach();
         let tabs = self.workspace.read(cx).settings.features.panel;
@@ -1300,7 +1315,7 @@ impl Cydonia {
             .iter()
             .flat_map(|project| {
                 std::iter::once(project.path.clone())
-                    .chain(project.sessions.iter().map(|chat| chat.cwd.clone()))
+                    .chain(project.chats(cx).map(|chat| chat.cwd.clone()))
             })
             .collect()
     }

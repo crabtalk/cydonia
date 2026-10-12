@@ -11,38 +11,33 @@
 //! disagreeing — and a path already handed to an agent is not one we can
 //! rewrite the way a vault rewrites its own links.
 
+use crate::model::language::Grammars as _;
 use crate::model::{
     cover, file_url, language,
     store::{self, Store},
     workspace::Workspace,
 };
-use crate::view::component::file::pictures::Pictures;
+use artifact::kind::Kind;
 use artifact::project::Project as _;
 use artifact::{
     article as layout,
-    article::properties::{self, Properties},
+    article::{
+        comments::{Comment, Comments},
+        properties::{self, Properties},
+    },
 };
 use bezel::{
-    gpui::{App, AppContext as _, Context, Entity, ScrollHandle},
+    gpui::{App, AppContext as _, Context, Entity},
     ui::input::{Shape, TextField},
 };
-use editor::{Editor, EditorEvent, Mode};
+use editor::{Anchor, AnchorId, Document, DocumentEvent, Mode};
 use markdown::AppExt as _;
 use std::{
-    cell::{OnceCell, RefCell},
+    cell::OnceCell,
     ops::Range,
     path::{Path, PathBuf},
     rc::Rc,
 };
-
-/// Which of an article's headings the pane is on, counted among the headings
-/// from 0: the one whose section holds the first block on screen, and every
-/// one whose section has a block on screen.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Reading {
-    pub at: Option<usize>,
-    pub shown: Range<usize>,
-}
 
 /// What articles were called before they were named for their age, and what an
 /// unnamed one was called among them.
@@ -82,23 +77,13 @@ pub struct Article {
     pub title: String,
     /// The title's field, once the article has been opened.
     pub field: Option<Entity<TextField>>,
-    /// The editing surface, once the article has been opened. Building one for
-    /// every article of every project at launch is the alternative.
-    pub editor: Option<Entity<Editor>>,
-    /// The `Open with` button over the editor's pictures, held for as long as
-    /// the editor is.
-    pictures: Option<Entity<Pictures>>,
-    /// The pane's scroll box, shared with the editor so typing follows the
-    /// caret down.
-    pub scroll: ScrollHandle,
-    /// Where the outline says the reader is, taken from the last frame.
-    pub reading: Rc<RefCell<Reading>>,
-    /// Which form the document is edited in — see [`Article::set_mode`]. Held
-    /// beside the editor rather than only in it, because a re-read builds a
-    /// new editor and somebody reading the markdown did not ask to leave it.
+    /// The document every pane's editor on this article shares, once it has
+    /// been opened.
+    pub document: Option<Entity<Document>>,
+    /// Which form the document opens in: the one it was last in, while no
+    /// document is held.
     mode: Mode,
-    /// What is on disk. The editor notifies on caret moves too, so without
-    /// this every arrow key would rewrite the file.
+    /// What is on disk, as this process last wrote or read it.
     saved: String,
     /// [`Disk`], filled when first asked for and emptied whenever what is on
     /// disk changes.
@@ -129,13 +114,23 @@ pub struct Article {
     /// between the buffer and the disk, and reopening the app ends it by
     /// reading the disk.
     pub stale: bool,
+    /// The notes in its margin, held against [`Article::saved`] while it is
+    /// open.
+    pub comments: Comments,
+    /// The comment whose note is open, pressed in the margin or on its text.
+    pub active_comment: Option<u64>,
+    /// The comment whose note, or whose text, the pointer is over.
+    pub hovered_comment: Option<u64>,
+    /// The newest comment id read from the file. One there above it was filed
+    /// since, and a write here keeps it.
+    known_comment: u64,
 }
 
 impl Article {
     fn new(project: &Path, store: Store, held: layout::Article) -> Self {
         let properties = store.properties(&held.id);
         Self {
-            number: store.number("article", &held.id).ok(),
+            number: store.number(Kind::Article, &held.id).ok(),
             path: layout::content(&layout::dir(project).join(&held.id)),
             cover: held.cover.as_ref().and_then(file_url::to_path),
             title: properties.title,
@@ -147,15 +142,16 @@ impl Article {
             id: held.id,
             store,
             field: None,
-            editor: None,
-            pictures: None,
-            scroll: ScrollHandle::new(),
-            reading: Rc::default(),
+            document: None,
             mode: Mode::default(),
             saved: String::new(),
             disk: OnceCell::new(),
             words: OnceCell::new(),
             stale: false,
+            comments: Comments::default(),
+            active_comment: None,
+            hovered_comment: None,
+            known_comment: 0,
         }
     }
 
@@ -173,11 +169,10 @@ impl Article {
         if !self.archived || self.edited(cx) {
             return;
         }
+        self.mode = self.mode(cx);
         self.field = None;
-        self.editor = None;
-        self.pictures = None;
+        self.document = None;
         self.saved = String::new();
-        self.scroll = ScrollHandle::new();
     }
 
     pub fn archive(&mut self, archived: bool) {
@@ -204,22 +199,11 @@ impl Article {
         self.full_width.unwrap_or(default)
     }
 
-    /// Edit the markdown itself, or the document it spells. Runtime only: the
-    /// form somebody is reading in is not a property of the file, and nothing
-    /// on disk changes either way.
-    pub fn set_mode(&mut self, mode: Mode, cx: &mut Context<Workspace>) {
-        self.mode = mode;
-        if let Some(editor) = &self.editor {
-            editor.update(cx, |editor, cx| editor.set_mode(mode, cx));
-        }
-    }
-
-    /// Which form the document is in. The editor's answer where there is one:
-    /// an undo can step back over a switch, and the field here would not hear
-    /// about it.
+    /// Which form the document is in. The document's answer where there is
+    /// one: an editor switches it, and an undo can step back over a switch.
     pub fn mode(&self, cx: &App) -> Mode {
-        match &self.editor {
-            Some(editor) => editor.read(cx).mode(),
+        match &self.document {
+            Some(document) => document.read(cx).mode(),
             None => self.mode,
         }
     }
@@ -232,10 +216,10 @@ impl Article {
         }
     }
 
-    /// Put a field over the title and an editor over the content. Idempotent —
-    /// reopening an article is what keeps its undo history and its scroll.
-    pub fn open(&mut self, text_size: f32, cx: &mut Context<Workspace>) {
-        if self.editor.is_some() {
+    /// Put a field over the title and a document under the content.
+    /// Idempotent — reopening an article is what keeps its undo history.
+    pub fn open(&mut self, cx: &mut Context<Workspace>) {
+        if self.document.is_some() {
             return;
         }
         // The document's own heading type, so the title is set the way the page
@@ -261,57 +245,210 @@ impl Article {
 
         self.saved = self.store.read_article(&self.id).unwrap_or_default();
         self.forget_disk();
-        let scroll = self.scroll.clone();
-        let dir = self
-            .path
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_default();
-        let (text_size, mode) = (text_size, self.mode);
-        let (editor, pictures) = super::document::editor(
-            &dir,
-            &self.saved,
-            cx.entity().downgrade(),
-            |editor| {
-                editor
-                    .with_text_size(text_size)
-                    .with_scroll(scroll)
-                    .with_mode(mode)
-            },
-            cx,
-        );
-        language::ensure(fences(editor.read(cx)), cx);
-        let mut source_digits = self.saved.split('\n').count().to_string().len();
-        // `Changed` rather than every notify: a selection drag and the caret
-        // blink notify too, and each write serializes the whole document.
-        cx.subscribe(&editor, move |workspace, editor, event, cx| {
-            if !matches!(event, EditorEvent::Changed) {
-                return;
-            }
-            workspace.write_article(editor.entity_id(), cx);
-            // On every change rather than on open alone: a fence is usually
-            // tagged after it is made, and the grammar is wanted the moment it
-            // is named.
-            language::ensure(fences(editor.read(cx)), cx);
-            if editor.read(cx).mode() == Mode::Source {
-                let digits = editor
-                    .read(cx)
-                    .source()
-                    .split('\n')
-                    .count()
-                    .to_string()
-                    .len();
-                if digits != source_digits {
-                    source_digits = digits;
-                    cx.notify();
+        let (saved, mode) = (self.saved.clone(), self.mode);
+        let document = cx.new(|cx| Document::new(&saved, cx).with_mode(mode));
+        language::Here::ensure(fences(document.read(cx).doc()), cx);
+        // Edits only: a selection drag and the caret blink notify too, and
+        // each write serializes the whole document.
+        cx.subscribe(
+            &document,
+            |workspace, document, event: &DocumentEvent, cx| {
+                if !event.edited() {
+                    return;
                 }
-            }
-        })
+                workspace.write_article(document.entity_id(), cx);
+                // On every change rather than on open alone: a fence is usually
+                // tagged after it is made, and the grammar is wanted the moment it
+                // is named.
+                language::Here::ensure(fences(document.read(cx).doc()), cx);
+            },
+        )
         .detach();
 
         self.field = Some(field);
-        self.editor = Some(editor);
-        self.pictures = Some(pictures);
+        self.document = Some(document);
+        self.comments = self.store.comments(&self.id);
+        self.comments.carry(None, &self.saved);
+        self.know_comments();
+        self.place_comments(cx);
+    }
+
+    fn know_comments(&mut self) {
+        let newest = self
+            .comments
+            .comments
+            .iter()
+            .map(|comment| comment.id)
+            .max();
+        self.known_comment = self.known_comment.max(newest.unwrap_or_default());
+    }
+
+    /// Write the comments beside `text`, the markdown on disk, with any filed
+    /// there since they were read. Answers whether any were.
+    fn save_comments(&mut self, text: &str) -> bool {
+        let mut file = self.store.comments(&self.id);
+        file.carry(None, text);
+        let arrived: Vec<Comment> = file
+            .comments
+            .into_iter()
+            .filter(|comment| {
+                comment.id > self.known_comment
+                    && !self
+                        .comments
+                        .comments
+                        .iter()
+                        .any(|held| held.id == comment.id)
+            })
+            .collect();
+        let any = !arrived.is_empty();
+        self.comments.comments.extend(arrived);
+        self.know_comments();
+        let _ = self.store.save_comments(&self.id, &self.comments);
+        any
+    }
+
+    /// Hand the comments' ranges to the document, which carries them through
+    /// edits from here on.
+    fn place_comments(&self, cx: &mut App) {
+        self.place_comments_over(&self.saved.clone(), cx);
+    }
+
+    /// [`Article::place_comments`] with the ranges into `text`, the markdown
+    /// the document is.
+    fn place_comments_over(&self, text: &str, cx: &mut App) {
+        let Some(document) = &self.document else {
+            return;
+        };
+        let anchors = self
+            .comments
+            .comments
+            .iter()
+            .map(|comment| (AnchorId(comment.id), comment.range(), self.wash(comment)))
+            .collect();
+        document.update(cx, |document, cx| {
+            document.set_source_anchors(text, anchors, cx)
+        });
+    }
+
+    /// Repaint the comments' washes over the ranges the document holds.
+    fn restate_comments(&self, cx: &mut App) {
+        let Some(document) = &self.document else {
+            return;
+        };
+        let anchors: Vec<Anchor> = document
+            .read(cx)
+            .anchors()
+            .iter()
+            .map(|anchor| Anchor {
+                state: self
+                    .comments
+                    .comments
+                    .iter()
+                    .find(|comment| comment.id == anchor.id.0)
+                    .map_or(anchor.state, |comment| self.wash(comment)),
+                ..anchor.clone()
+            })
+            .collect();
+        if document.read(cx).anchors() != anchors.as_slice() {
+            document.update(cx, |document, cx| document.set_anchors(anchors, cx));
+        }
+    }
+
+    fn wash(&self, comment: &Comment) -> markdown::Annotation {
+        if comment.resolved {
+            markdown::Annotation::Resolved
+        } else if [self.active_comment, self.hovered_comment].contains(&Some(comment.id)) {
+            markdown::Annotation::Active
+        } else {
+            markdown::Annotation::Open
+        }
+    }
+
+    /// Take the document's ranges into the comments, which hold them against
+    /// `source`, what was just written, and write them beside it.
+    fn write_comments(&mut self, source: &str, cx: &mut App) {
+        let Some(document) = &self.document else {
+            return;
+        };
+        // None held, none to lose: one filed meanwhile arrives through the
+        // watch.
+        if self.comments.comments.is_empty() {
+            return;
+        }
+        let (placed, ranges) = document.read(cx).source_with_anchors();
+        for comment in &mut self.comments.comments {
+            if let Some(range) = ranges
+                .iter()
+                .find(|(id, _)| id.0 == comment.id)
+                .and_then(|(_, range)| range.clone())
+            {
+                comment.start = range.start;
+                comment.end = range.end;
+            }
+        }
+        self.comments.stamp(&placed);
+        self.comments.carry(Some(&placed), source);
+        if self.save_comments(source) {
+            self.place_comments_over(source, cx);
+        }
+    }
+
+    /// Read the comments again, for a file that moved beside a document that
+    /// did not. Answers whether they changed.
+    fn reread_comments(&mut self, cx: &mut App) -> bool {
+        let mut fresh = self.store.comments(&self.id);
+        fresh.carry(None, &self.saved);
+        if fresh == self.comments {
+            return false;
+        }
+        self.comments = fresh;
+        self.know_comments();
+        self.place_comments(cx);
+        true
+    }
+
+    /// Open one comment's note, or close the one open.
+    pub fn activate_comment(&mut self, id: Option<u64>, cx: &mut App) {
+        self.active_comment = id;
+        self.restate_comments(cx);
+    }
+
+    pub fn hover_comment(&mut self, id: Option<u64>, cx: &mut App) {
+        // A resolved comment's text is washed but has no note.
+        let id = id.filter(|id| {
+            self.comments
+                .comments
+                .iter()
+                .any(|comment| comment.id == *id && !comment.resolved)
+        });
+        if self.hovered_comment != id {
+            self.hovered_comment = id;
+            self.restate_comments(cx);
+        }
+    }
+
+    /// Mark one comment resolved, or open again.
+    pub fn resolve_comment(&mut self, id: u64, resolved: bool, cx: &mut App) {
+        let Some(comment) = self.comments.comments.iter_mut().find(|c| c.id == id) else {
+            return;
+        };
+        comment.resolved = resolved;
+        if resolved && self.active_comment == Some(id) {
+            self.active_comment = None;
+        }
+        match self.save_comments(&self.saved.clone()) {
+            true => self.place_comments(cx),
+            false => self.restate_comments(cx),
+        }
+    }
+
+    pub fn delete_comment(&mut self, id: u64, cx: &mut App) {
+        self.comments.comments.retain(|comment| comment.id != id);
+        if self.active_comment == Some(id) {
+            self.active_comment = None;
+        }
+        self.save_comments(&self.saved.clone());
+        self.place_comments(cx);
     }
 
     /// Best effort, like every other write here: a document that cannot be
@@ -320,7 +457,7 @@ impl Article {
     /// Each surface writes its own file, so typing in the body never touches
     /// the properties and naming the page never touches the markdown. Answers
     /// whether the title moved, which is what the caller repaints on.
-    pub fn write(&mut self, cx: &App) -> bool {
+    pub fn write(&mut self, cx: &mut App) -> bool {
         let renamed = match &self.field {
             Some(field) => {
                 let title = field.read(cx).content().to_string();
@@ -334,9 +471,10 @@ impl Article {
             }
             None => false,
         };
-        if let Some(editor) = &self.editor {
-            let source = editor.read(cx).source();
+        if let Some(document) = &self.document {
+            let source = document.read(cx).source();
             if self.saved != source && self.store.write_article(&self.id, &source).is_ok() {
+                self.write_comments(&source, cx);
                 self.saved = source;
                 self.forget_disk();
                 self.touched = artifact::stamp::now();
@@ -351,7 +489,7 @@ impl Article {
 
     /// Keep the buffer and write it over what landed on disk — the pane's other
     /// way out of the notice. The same write a keystroke makes, said out loud.
-    pub fn keep(&mut self, cx: &App) {
+    pub fn keep(&mut self, cx: &mut App) {
         self.write(cx);
         self.stale = false;
     }
@@ -362,10 +500,7 @@ impl Article {
     /// not been written. There the buffer stands and the pane is told the file
     /// moved underneath it: an agent's write and a half-typed paragraph are
     /// both somebody's work, and this is not the layer that gets to choose.
-    ///
-    /// Answers whether the surfaces were replaced, which is what tells the pane
-    /// the editor it had the caret in is not there any more.
-    pub fn adopt(&mut self, fresh: &Self, cx: &mut Context<Workspace>) -> bool {
+    pub fn adopt(&mut self, fresh: &Self, cx: &mut Context<Workspace>) {
         self.number = fresh.number;
         self.cover = fresh.cover.clone();
         self.archived = fresh.archived;
@@ -375,36 +510,33 @@ impl Article {
         self.created = fresh.created;
         // Never opened: the label is the whole of what is held, and the file
         // is where it came from.
-        if self.editor.is_none() {
+        if self.document.is_none() {
             self.title = fresh.title.clone();
             self.forget_disk();
-            return false;
+            return;
         }
         // The echo of our own write, which every save produces. `saved` is what
         // this process last put on disk, so the two agreeing is the file saying
         // nothing new.
         let disk = self.store.read_article(&self.id).unwrap_or_default();
         if disk == self.saved && fresh.title == self.title {
-            return false;
+            self.reread_comments(cx);
+            return;
         }
         if self.edited(cx) {
             self.stale = true;
-            return false;
+            return;
         }
         self.revert(cx);
-        true
     }
 
-    /// Throw the surfaces away and build them again over what is on disk. What
-    /// the pane's Reload does, and what [`Article::adopt`] does for a document
+    /// Read the title and the document again from what is on disk. What the
+    /// pane's Reload does, and what [`Article::adopt`] does for a document
     /// with nothing of its own to lose.
     ///
-    /// The undo history goes with the old editor. There is no honest way to
-    /// keep it: it is a history of a document this one no longer is.
+    /// The undo history goes: it is a history of a document this one no
+    /// longer is.
     pub fn revert(&mut self, cx: &mut Context<Workspace>) {
-        // Carried over, since the surfaces are not: a file that moved under
-        // the document is not somebody asking to leave the markdown.
-        self.mode = self.mode(cx);
         let held = self.store.properties(&self.id);
         self.title = held.title;
         if let Some(article) = self.store.article(&self.id) {
@@ -414,15 +546,25 @@ impl Article {
         self.archived = held.archived;
         self.full_width = held.full_width;
         self.labels = held.labels;
-        let text_size = self
-            .editor
-            .as_ref()
-            .and_then(|editor| editor.read(cx).text_size())
-            .unwrap_or_else(bezel::theme::base_text_size);
-        self.field = None;
-        self.editor = None;
-        self.pictures = None;
-        self.open(text_size, cx);
+        let old = std::mem::take(&mut self.saved);
+        self.saved = self.store.read_article(&self.id).unwrap_or_default();
+        self.forget_disk();
+        if let Some(field) = &self.field {
+            let title = self.title.clone();
+            field.update(cx, |field, cx| field.set_content(title, cx));
+        }
+        if let Some(document) = &self.document {
+            let saved = self.saved.clone();
+            document.update(cx, |document, cx| document.reload(&saved, cx));
+        }
+        // Through the change from what was written here, where the file still
+        // holds the comments against it.
+        let mut held = self.store.comments(&self.id);
+        held.carry(Some(&old), &self.saved);
+        self.comments = held;
+        self.know_comments();
+        let _ = self.store.save_comments(&self.id, &self.comments);
+        self.place_comments(cx);
         self.stale = false;
     }
 
@@ -431,7 +573,7 @@ impl Article {
     /// The words in the open document as last saved: each run of letters or
     /// digits, and each CJK character on its own. `None` while it is not open.
     pub fn words(&self) -> Option<usize> {
-        self.editor.as_ref()?;
+        self.document.as_ref()?;
         Some(*self.words.get_or_init(|| {
             unicode_segmentation::UnicodeSegmentation::unicode_words(self.saved.as_str()).count()
         }))
@@ -446,7 +588,7 @@ impl Article {
     pub fn disk(&self) -> Rc<Disk> {
         self.disk
             .get_or_init(|| {
-                let text = match self.editor {
+                let text = match self.document {
                     Some(_) => self.saved.clone(),
                     None => self.store.read_article(&self.id).unwrap_or_default(),
                 };
@@ -460,9 +602,9 @@ impl Article {
     /// filed on the keystroke, so in practice this is the body — but a rename
     /// that failed to write leaves the field ahead of the file too.
     fn edited(&self, cx: &App) -> bool {
-        self.editor
+        self.document
             .as_ref()
-            .is_some_and(|editor| editor.read(cx).source() != self.saved)
+            .is_some_and(|document| document.read(cx).source() != self.saved)
             || self
                 .field
                 .as_ref()
@@ -485,13 +627,13 @@ impl Article {
             self.replace_cover(None);
             return;
         };
-        let seed = cover::seed(&self.path, self.cover.as_deref());
+        let seed = cover::Seed::next(&self.path, self.cover.as_deref());
         let to = source
             .extension()
             .and_then(|ext| ext.to_str())
             .map(str::to_ascii_lowercase)
-            .and_then(|ext| cover::path(&self.path, seed, &ext));
-        if let Some(to) = to.filter(|to| cover::import(source, to).is_ok()) {
+            .and_then(|ext| seed.path(&self.path, &ext));
+        if let Some(to) = to.filter(|to| artifact::article::cover::import(source, to).is_ok()) {
             self.replace_cover(Some(to));
         }
     }
@@ -499,11 +641,11 @@ impl Article {
     /// A fresh generated cover. Adding one and shuffling are the same act —
     /// the first cover an article is given is already a throw.
     pub fn shuffle_cover(&mut self) {
-        let seed = cover::seed(&self.path, self.cover.as_deref());
-        let Some(to) = cover::path(&self.path, seed, "svg") else {
+        let seed = cover::Seed::next(&self.path, self.cover.as_deref());
+        let Some(to) = seed.path(&self.path, "svg") else {
             return;
         };
-        if std::fs::write(&to, cover::svg(seed)).is_ok() {
+        if std::fs::write(&to, seed.svg()).is_ok() {
             self.replace_cover(Some(to));
         }
     }
@@ -600,10 +742,8 @@ fn migrate(project: &Path) {
 }
 
 /// The languages the document's fences are tagged with.
-pub(crate) fn fences(editor: &Editor) -> Vec<String> {
-    editor
-        .doc()
-        .blocks
+pub(crate) fn fences(doc: &markdown::Doc) -> Vec<String> {
+    doc.blocks
         .iter()
         .filter_map(|block| match &block.kind {
             markdown::BlockKind::Code { language, .. } => language.clone(),

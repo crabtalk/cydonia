@@ -64,6 +64,14 @@ const SERVER: &str = "cydonia";
 /// stdin outlives every handle this side can drop.
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(250);
 
+// A GPUI (or any multi-threaded) frontend holds `Session` in its UI state
+// and moves `Event` — reply included — across executor threads.
+const _: () = {
+    const fn assert_send<T: Send>() {}
+    assert_send::<Session>();
+    assert_send::<Event>();
+};
+
 /// The runtime every connection runs on, started on first use.
 pub fn runtime() -> &'static Runtime {
     static RUNTIME: OnceLock<Runtime> = OnceLock::new();
@@ -438,8 +446,9 @@ impl Session {
     /// Pictures the message points at go along as image blocks when the agent
     /// takes them, read and encoded off the UI thread. An agent that does not
     /// still has their paths in the text.
-    /// `number` is the session's entry number, named in the app's context.
-    pub fn prompt(&self, content: &str, number: Option<u64>) {
+    /// `number` is the session's entry number and `article` the id of the
+    /// article it was opened under, both named in the app's context.
+    pub fn prompt(&self, content: &str, number: Option<u64>, article: Option<&str>) {
         let capabilities = &self.init.agent_capabilities.prompt_capabilities;
         let pictures = match capabilities.image {
             true => media::attached(content),
@@ -448,6 +457,7 @@ impl Session {
         let mut blocks = super::context::prompt(
             &self.cwd,
             number,
+            article,
             self.built_in_mcp,
             capabilities.embedded_context,
             vec![content.to_owned().into()],
@@ -625,14 +635,6 @@ impl Drop for Frontend {
         let _ = self.0.send(Event::Closed);
     }
 }
-
-// A GPUI (or any multi-threaded) frontend holds `Session` in its UI state
-// and moves `Event` — reply included — across executor threads.
-const _: () = {
-    const fn assert_send<T: Send>() {}
-    assert_send::<Session>();
-    assert_send::<Event>();
-};
 
 fn loopback_bypass(existing: [Option<String>; 2]) -> String {
     let mut entries = Vec::new();

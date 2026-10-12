@@ -9,6 +9,12 @@ use bezel::{
 };
 use std::{cell::Cell, rc::Rc};
 
+const ZOOM_MIN: f32 = 1.;
+
+const ZOOM_MAX: f32 = 8.;
+
+const ZOOM_STEP: f32 = 1.25;
+
 pub(super) fn disc(
     theme: &Theme,
     id: impl Into<gpui::ElementId>,
@@ -51,10 +57,6 @@ pub(super) fn frame(
                 .on_click(on_close),
         ))
 }
-
-const ZOOM_MIN: f32 = 1.;
-const ZOOM_MAX: f32 = 8.;
-const ZOOM_STEP: f32 = 1.25;
 
 /// A modal over a run of images: arrows and dots page through them, the wheel,
 /// the buttons and `+` `-` `0` scale the one on show, and a drag pans it once

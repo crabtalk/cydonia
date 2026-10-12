@@ -25,14 +25,20 @@ fn line(y: f32) -> Bounds<Pixels> {
 }
 
 #[test]
-fn the_bar_offers_the_four_marks_markdown_spells() {
+fn the_bar_offers_its_five_marks_in_order() {
     let offered: Vec<Mark> = formats(&formatting(Vec::new()))
         .into_iter()
         .map(|format| format.mark)
         .collect();
     assert_eq!(
         offered,
-        vec![Mark::Bold, Mark::Italic, Mark::Strike, Mark::Code]
+        vec![
+            Mark::Bold,
+            Mark::Italic,
+            Mark::Strike,
+            Mark::Code,
+            Mark::Custom(editor::HIGHLIGHT_MARK.into()),
+        ]
     );
 }
 

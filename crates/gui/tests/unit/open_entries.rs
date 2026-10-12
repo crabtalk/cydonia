@@ -8,6 +8,7 @@
 
 use super::*;
 use crate::model::{settings::Settings, state};
+use artifact::kind::Kind;
 use artifact::space::Side;
 use bezel::gpui;
 
@@ -82,7 +83,7 @@ fn opening_an_entry_outside_the_space_lands_on_it(cx: &mut gpui::TestAppContext)
             // And the frame after it.
             root.sync_leaves(window, cx);
             assert_eq!(root.leaves.len(), 1, "one pane");
-            assert_eq!(root.leaf().pane, Pane::Board);
+            assert_eq!(root.leaf().read(cx).kind, Kind::Board);
             assert_eq!(
                 root.workspace
                     .read(cx)
@@ -103,8 +104,6 @@ fn making_an_entry_inside_a_space_lands_on_it(cx: &mut gpui::TestAppContext) {
     let scratch = Scratch::new("making");
     cx.update(|cx| {
         Theme::install(bezel::theme::Appearance::Light, cx);
-        // A new article is given a cover, which goes through the image cache.
-        crate::memory::init(0, cx);
     });
     let window = cx.add_window(|window, cx| {
         Cydonia::new(Settings::default(), state::State::default(), window, cx)
@@ -134,7 +133,7 @@ fn making_an_entry_inside_a_space_lands_on_it(cx: &mut gpui::TestAppContext) {
                 "the space is left"
             );
             root.sync_leaves(window, cx);
-            assert_eq!(root.leaf().pane, Pane::Article);
+            assert_eq!(root.leaf().read(cx).kind, Kind::Article);
         })
         .unwrap();
 }
@@ -183,7 +182,7 @@ fn starting_a_session_inside_a_space_lands_on_it(cx: &mut gpui::TestAppContext) 
                 "the space is left"
             );
             root.sync_leaves(window, cx);
-            assert_eq!(root.leaf().pane, Pane::Chat);
+            assert_eq!(root.leaf().read(cx).kind, Kind::Session);
             assert!(
                 root.workspace.read(cx).active_id().is_some(),
                 "on a session"
@@ -233,7 +232,7 @@ fn opening_an_entry_a_space_holds_enters_the_space(cx: &mut gpui::TestAppContext
             root.open_board(0, 1, window, cx);
             root.sync_leaves(window, cx);
             assert_eq!(
-                root.leaf().entry.as_ref(),
+                root.leaf().read(cx).entry.as_ref(),
                 Some(&b),
                 "the second pane, which is the one picked"
             );
@@ -252,7 +251,7 @@ fn opening_an_entry_a_space_holds_enters_the_space(cx: &mut gpui::TestAppContext
             root.sync_leaves(window, cx);
             assert_eq!(root.leaves.len(), 2, "arranged, not alone");
             assert_eq!(
-                root.leaf().entry.as_ref(),
+                root.leaf().read(cx).entry.as_ref(),
                 Some(&a),
                 "focused on the pane that was picked"
             );
@@ -302,8 +301,10 @@ fn syncing_the_composers_leaves_the_focus_where_it_was(cx: &mut gpui::TestAppCon
                 // A draft to write in, which is what the sync does to the
                 // field and what the field reports as a change.
                 chat.draft = "half a thought".into();
-                workspace.projects[0].sessions.push(chat);
-                let session = workspace.member_of_session(7).expect("a member");
+                workspace.projects[0]
+                    .sessions
+                    .push(crate::model::project::HeldSession::new(chat, cx));
+                let session = workspace.member_of_session(7, cx).expect("a member");
                 (board, session)
             });
 
@@ -314,7 +315,11 @@ fn syncing_the_composers_leaves_the_focus_where_it_was(cx: &mut gpui::TestAppCon
             });
             root.sync_leaves(window, cx);
             root.focus_pane(&board, window, cx);
-            assert_eq!(root.leaf().entry.as_ref(), Some(&board), "on the board");
+            assert_eq!(
+                root.leaf().read(cx).entry.as_ref(),
+                Some(&board),
+                "on the board"
+            );
 
             root.sync_composer(cx);
             board
@@ -326,9 +331,9 @@ fn syncing_the_composers_leaves_the_focus_where_it_was(cx: &mut gpui::TestAppCon
     cx.run_until_parked();
 
     window
-        .update(cx, |root, _, _| {
+        .update(cx, |root, _, cx| {
             assert_eq!(
-                root.leaf().entry.as_ref(),
+                root.leaf().read(cx).entry.as_ref(),
                 Some(&board),
                 "and still on the board after the sync"
             );

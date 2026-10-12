@@ -56,6 +56,11 @@ pub struct Record {
     pub labels: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fork: Option<ForkOrigin>,
+    /// The article this session was opened under, by id. It moves to another
+    /// project with the article and is removed with it — see
+    /// [`crate::article::move_to`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub article: Option<String>,
     /// Items before this index have not reached the agent's session yet, and
     /// go to it as history with the next prompt. Cleared by the first turn
     /// that finishes.
@@ -93,12 +98,17 @@ impl ForkOrigin {
 }
 
 impl Record {
+    /// What it is called: the name given it, else its title.
+    pub fn label(&self) -> &str {
+        self.name.as_deref().unwrap_or(&self.title)
+    }
+
     /// Copy history before a user message and leave that message as an editable draft.
     pub fn fork_at(&self, before: usize) -> Option<Self> {
         let ChatItem::User(draft) = self.items.get(before)? else {
             return None;
         };
-        let title = self.name.as_ref().unwrap_or(&self.title).clone();
+        let title = self.label().to_owned();
         Some(Self {
             id: String::new(),
             number: None,
@@ -114,13 +124,11 @@ impl Record {
                 }
             ),
             name: None,
-            updated: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
+            updated: crate::stamp::seconds(),
             closed: false,
             labels: self.labels.clone(),
             fork: Some(ForkOrigin::new(self.id.clone(), title)),
+            article: None,
             replay: Some(before),
             draft: draft.clone(),
             items: self.items[..before].to_vec(),

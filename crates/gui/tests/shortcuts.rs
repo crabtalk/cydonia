@@ -3,15 +3,16 @@
 
 use cydonia_gui::{
     model::settings::{Settings, Shortcuts},
-    view::{
-        hotkey,
-        keymap::{self, Command},
-    },
+    view::keymap::{self, Chord, Command},
 };
 
 /// A `[shortcuts]` table as the file would hold it.
 fn shortcuts(body: &str) -> Shortcuts {
     toml::from_str(body).expect("valid toml")
+}
+
+fn chord(text: &str) -> Chord {
+    Chord::parse(text).expect("a chord")
 }
 
 #[test]
@@ -71,13 +72,13 @@ fn a_chord_that_is_not_one_falls_back_rather_than_unbinding() {
 fn a_chord_already_spoken_for_names_who_has_it() {
     let held = shortcuts(r#"new_board = "secondary-b""#);
     assert_eq!(
-        keymap::claimed("secondary-b", Command::NewBoard, &held),
+        keymap::claimed(&chord("secondary-b"), Command::NewBoard, &held),
         vec![Command::ToggleSidebar]
     );
     // Symmetric, and neither of them counts itself: each is told who else is
     // on the chord, which is what a row has to say.
     assert_eq!(
-        keymap::claimed("secondary-b", Command::ToggleSidebar, &held),
+        keymap::claimed(&chord("secondary-b"), Command::ToggleSidebar, &held),
         vec![Command::NewBoard]
     );
 }
@@ -92,7 +93,7 @@ fn a_recorded_chord_meets_the_default_it_spells_differently() {
         "ctrl-b"
     };
     assert_eq!(
-        keymap::claimed(recorded, Command::NewBoard, &shortcuts("")),
+        keymap::claimed(&chord(recorded), Command::NewBoard, &shortcuts("")),
         vec![Command::ToggleSidebar]
     );
 }
@@ -115,12 +116,9 @@ fn no_two_defaults_want_the_same_chord() {
     let bare = Shortcuts::default();
     for command in Command::ALL {
         assert!(
-            keymap::claimed(
-                keymap::chord(command, &bare).unwrap_or_default(),
-                command,
-                &bare
-            )
-            .is_empty(),
+            keymap::chord(command, &bare)
+                .and_then(Chord::parse)
+                .is_none_or(|held| keymap::claimed(&held, command, &bare).is_empty()),
             "{} collides",
             command.title()
         );
@@ -129,21 +127,21 @@ fn no_two_defaults_want_the_same_chord() {
 
 #[test]
 fn chords_are_written_the_way_the_platform_writes_them() {
-    assert_eq!(keymap::glyphs("cmd-b").as_deref(), Some("⌘B"));
-    assert_eq!(keymap::glyphs("ctrl-alt-cmd-1").as_deref(), Some("⌃⌥⌘1"));
-    assert_eq!(keymap::glyphs("not-a-chord"), None);
+    assert_eq!(chord("cmd-b").glyphs(), "⌘B");
+    assert_eq!(chord("ctrl-alt-cmd-1").glyphs(), "⌃⌥⌘1");
+    assert_eq!(Chord::parse("not-a-chord"), None);
 }
 
 #[test]
 fn the_system_takes_a_modified_single_stroke_and_nothing_else() {
-    assert!(hotkey::holdable("ctrl-space"));
-    assert!(hotkey::holdable("alt-cmd-,"));
-    assert!(hotkey::holdable("shift-cmd-f7"));
+    assert!(chord("ctrl-space").holdable());
+    assert!(chord("alt-cmd-,").holdable());
+    assert!(chord("shift-cmd-f7").holdable());
     // A bare key would be that key, everywhere, for every app on the desktop.
-    assert!(!hotkey::holdable("space"));
+    assert!(!chord("space").holdable());
     // Carbon registers one combination and has nowhere to put the waiting.
-    assert!(!hotkey::holdable("cmd-k cmd-b"));
-    assert!(!hotkey::holdable(""));
+    assert!(!chord("cmd-k cmd-b").holdable());
+    assert_eq!(Chord::parse(""), None);
 }
 
 /// A fresh install claims no key across the desktop, and a table that says

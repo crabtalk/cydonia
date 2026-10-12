@@ -36,8 +36,6 @@ DMGMNT   := target/bundle/mnt
 SIZES    := 16 32 128 256 512
 LINUXAPP := target/bundle/linux/cydonia.app
 TARBALL  := target/bundle/cydonia-linux-$(ARCH).tar.xz
-# What the updater of v0.1.20 and earlier fetches.
-TARGZ    := target/bundle/cydonia-linux-$(ARCH).tar.gz
 # The hicolor sizes the Linux tarball carries.
 LINUXSIZES := 16 32 48 64 128 256 512
 # Ad-hoc, and every target but `release` leaves it that way: a local build signs
@@ -130,7 +128,7 @@ release:
 # Icons are resized with ImageMagick's `convert`.
 tarball:
 	cargo build --profile $(PROFILE) $(CARGOOPT)
-	rm -rf $(LINUXAPP) $(TARBALL) $(TARGZ)
+	rm -rf $(LINUXAPP) $(TARBALL)
 	mkdir -p $(LINUXAPP)/bin $(LINUXAPP)/share/applications
 	cp target/$(PROFILE)/cydonia $(LINUXAPP)/bin/cydonia
 	cp bundle/linux/cydonia.desktop $(LINUXAPP)/share/applications/
@@ -144,8 +142,7 @@ tarball:
 		echo "no $(ICON): packaging without an icon"; \
 	fi
 	XZ_OPT="-9e -T0" tar -cJf $(TARBALL) -C $(dir $(LINUXAPP)) cydonia.app
-	tar -czf $(TARGZ) -C $(dir $(LINUXAPP)) cydonia.app
-	@echo "built $(TARBALL) and $(TARGZ)"
+	@echo "built $(TARBALL)"
 
 # Also the way to pick up a redrawn logo: it refetches rather than skipping.
 # The partial file is named apart from the real one, so an interrupted download

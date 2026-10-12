@@ -3,7 +3,7 @@
 
 use crate::view::settings::SettingsWindow;
 use bezel::{
-    gpui::{AnyElement, Context, div, prelude::*},
+    gpui::{AnyElement, Context, Window, div, prelude::*},
     theme::{TextStyle, Theme, Typeset},
     ui::widgets::Scaffolding as _,
 };
@@ -13,8 +13,12 @@ impl SettingsWindow {
         let _ = cx;
     }
 
-    pub(super) fn trust_dialog(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let _ = cx;
+    pub(super) fn trust_dialog(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let _ = (window, cx);
         None
     }
 

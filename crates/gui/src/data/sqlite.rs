@@ -2,14 +2,11 @@
 
 use super::FILE;
 use anyhow::{Result, anyhow, bail};
+use artifact::kind::Kind;
 use artifact::project::fs;
 use rusqlite::{Connection, OpenFlags, Row as SqlRow, types::ValueRef};
 use serde_json::Value;
-use std::{
-    collections::HashSet,
-    path::Path,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::{collections::HashSet, path::Path, time::Duration};
 
 #[path = "ddl.rs"]
 mod ddl;
@@ -156,7 +153,7 @@ impl Data {
             )
         });
         Ok(Table {
-            number: artifact::entry::number(&self.project, "table", key).ok(),
+            number: artifact::entry::number(&self.project, Kind::Table, key).ok(),
             columns: columns_of(&self.reader, key)?,
             rows: self.reader.query_row(
                 &format!("SELECT count(*) FROM {}", quote(key)),
@@ -304,9 +301,17 @@ impl Data {
     fn resolve(&self, ident: &str) -> Result<String> {
         let ident = ident.trim();
         let resolved;
-        let ident = if let Some(number) = artifact::entry::reference(ident) {
+        let ident = if let Some(artifact::reference::Reference {
+            project: None,
+            target:
+                artifact::reference::Target::Entry {
+                    number,
+                    within: None,
+                },
+        }) = artifact::reference::parse(ident)
+        {
             resolved = artifact::entry::Registry::open(&self.project)?
-                .resolve("table", number)?
+                .resolve(Kind::Table, number)?
                 .ok_or_else(|| anyhow!("no table {ident}"))?;
             resolved.as_str()
         } else {
@@ -399,9 +404,7 @@ pub(crate) fn bind(v: &Value) -> rusqlite::types::Value {
 
 /// An identifier as SQL will accept it whatever it contains, which is what lets
 /// a column keep the header the person typed.
-pub(crate) fn quote(ident: &str) -> String {
-    format!("\"{}\"", ident.replace('"', "\"\""))
-}
+pub(crate) use artifact::table::quote;
 
 /// A SQL identifier from a display name. Lossy on purpose — it is a handle, not
 /// a translation, and a name that reduces to nothing (any name in a non-Latin
@@ -426,7 +429,5 @@ fn slug(name: &str) -> String {
 
 /// Seconds since the epoch, as SQLite stores an integer.
 fn now() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| since.as_secs() as i64)
+    artifact::stamp::seconds() as i64
 }

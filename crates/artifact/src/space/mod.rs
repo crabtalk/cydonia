@@ -14,7 +14,7 @@
 //! The tree nests: children are a `Vec`, so a third pane alongside two others
 //! joins their split rather than nesting inside one of them.
 
-use crate::{id, stamp};
+use crate::{id, kind::Kind, stamp};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
@@ -642,20 +642,6 @@ impl<T: Clone + PartialEq> Node<T> {
     }
 }
 
-/// Which of a project's things a pane is on.
-///
-/// Its own rather than the app's `state::Kind`: nothing in this crate knows
-/// what a window shows, and a space read by anything outside cydonia needs to
-/// know what it is naming.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Kind {
-    Session,
-    Board,
-    Article,
-    Table,
-}
-
 /// One entry a pane is on: which project it is in, and which of that project's
 /// things it is.
 ///
@@ -668,10 +654,27 @@ pub enum Kind {
 /// per project, so two projects' `#12` are different entries, and a member has
 /// to say which it means without reading either project's database.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "Written")]
 pub struct Member {
     pub project: std::path::PathBuf,
     pub kind: Kind,
     pub id: String,
+}
+
+/// A [`Member`] as a file holds it, before its id is read — see
+/// [`crate::article::stored_id`].
+#[derive(Deserialize)]
+struct Written {
+    project: std::path::PathBuf,
+    kind: Kind,
+    id: String,
+}
+
+impl From<Written> for Member {
+    fn from(written: Written) -> Self {
+        let id = crate::article::stored_id(written.kind, written.id);
+        Self::new(written.project, written.kind, id)
+    }
 }
 
 impl Member {

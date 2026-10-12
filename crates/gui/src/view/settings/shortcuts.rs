@@ -11,13 +11,14 @@
 //! the keyboard actually sends. While a row is recording the app answers to
 //! nothing at all — see [`SettingsWindow::record`].
 
-#[cfg(feature = "desktop")]
-use crate::view::hotkey;
 use crate::{
     model::{settings::Shortcuts, workspace::Workspace},
     view::{
-        keymap::{self, Command, Menu},
-        settings::{self, SettingsWindow, Switch},
+        keymap::{
+            self, Chord, Command, Menu,
+            hotkey::{self, Hotkey as _},
+        },
+        settings::{self, SettingsWindow, Switch, group, labelled},
     },
 };
 use bezel::{
@@ -28,6 +29,9 @@ use bezel::{
     theme::{TextStyle, Theme, Typeset},
     ui::widgets::{Buttons, Scaffolding},
 };
+
+/// What a row shows in place of a chord when it has none.
+const UNBOUND: &str = "None";
 
 /// Which row is taking keys.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -60,9 +64,6 @@ pub(super) struct Recording {
     _blur: Subscription,
 }
 
-/// What a row shows in place of a chord when it has none.
-const UNBOUND: &str = "None";
-
 impl SettingsWindow {
     pub(super) fn shortcuts_body(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
@@ -72,19 +73,11 @@ impl SettingsWindow {
             .flex_col()
             .gap(px(settings::GROUP_GAP))
             .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(settings::LABEL_GAP))
-                    .child(theme.field_label("System"))
+                group(&theme, "System")
                     .child(theme.group_box().child(self.activate_row(cx))),
             )
             .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(settings::LABEL_GAP))
-                    .child(theme.field_label("Text editing"))
+                group(&theme, "Text editing")
                     .child(theme.group_box().child(self.switch_row(
                         Switch::new(
                             "emacs-shortcuts",
@@ -102,11 +95,7 @@ impl SettingsWindow {
                     ))),
             )
             .children(Menu::ALL.into_iter().map(|menu| {
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(settings::LABEL_GAP))
-                    .child(theme.field_label(menu.title()))
+                group(&theme, menu.title())
                     .child(
                         theme.group_box().children(
                             Command::ALL
@@ -140,7 +129,7 @@ impl SettingsWindow {
             .shortcuts
             .activate()
             .map(str::to_owned);
-        let refused = hotkey::refused(cx);
+        let refused = hotkey::Here::refused(cx);
         let blurb = match refused.clone() {
             Some(why) => why,
             None if held.is_some() => SharedString::from("Brings cydonia forward from anywhere."),
@@ -150,25 +139,14 @@ impl SettingsWindow {
         };
         theme
             .card_row(true)
-            .child(
+            .child(labelled(
+                &theme,
+                "Activate cydonia",
                 div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(theme.row_title("Activate cydonia"))
-                    .child(
-                        div()
-                            .mt(px(4.))
-                            .text_style(TextStyle::Subheadline)
-                            .text_color(if refused.is_some() {
-                                theme.danger
-                            } else {
-                                theme.text_muted
-                            })
-                            .child(blurb),
-                    ),
-            )
+                    .when(refused.is_some(), |el| el.text_color(theme.danger))
+                    .child(blurb),
+                false,
+            ))
             .children(
                 held.is_some()
                     .then(|| self.clear_button(Target::Activate, cx)),
@@ -211,9 +189,9 @@ impl SettingsWindow {
     fn row_note(&self, command: Command, cx: &Context<Self>) -> Option<AnyElement> {
         let theme = Theme::of(cx).clone();
         let shortcuts = &self.workspace.read(cx).settings.shortcuts;
-        let held = keymap::chord(command, shortcuts);
-        let clash = held
-            .map(|chord| keymap::claimed(chord, command, shortcuts))
+        let clash = keymap::chord(command, shortcuts)
+            .and_then(Chord::parse)
+            .map(|chord| keymap::claimed(&chord, command, shortcuts))
             .unwrap_or_default();
         let (copy, colour) = match (clash.first(), shortcuts.get(command.key())) {
             (Some(other), _) => (
@@ -224,7 +202,8 @@ impl SettingsWindow {
                 match command.default() {
                     Some(default) => format!(
                         "Moved from {}.",
-                        keymap::glyphs(default).unwrap_or_else(|| default.into())
+                        Chord::parse(default)
+                            .map_or_else(|| default.into(), |chord| chord.glyphs())
                     ),
                     None => "Moved from nothing.".to_owned(),
                 },
@@ -260,7 +239,9 @@ impl SettingsWindow {
                 .refused
                 .clone()
                 .unwrap_or_else(|| "Press a key…".into()),
-            (None, Some(chord)) => keymap::glyphs(chord).unwrap_or_else(|| chord.into()),
+            (None, Some(chord)) => {
+                Chord::parse(chord).map_or_else(|| chord.into(), |parsed| parsed.glyphs())
+            }
             (None, None) => UNBOUND.into(),
         };
         let button = theme
@@ -390,7 +371,9 @@ impl SettingsWindow {
                 let chord = stroke.unparse();
                 // Only Activate has a second gate: the keymap will take any
                 // chord gpui can parse, and the system will not.
-                if target == Target::Activate && !hotkey::holdable(&chord) {
+                if target == Target::Activate
+                    && !Chord::parse(&chord).is_some_and(|chord| chord.holdable())
+                {
                     recording.refused = Some("The system cannot hold that".into());
                     cx.notify();
                     return;
@@ -434,26 +417,5 @@ impl SettingsWindow {
 pub(super) fn restore(workspace: &Entity<Workspace>, cx: &mut App) {
     let shortcuts = workspace.read(cx).settings.shortcuts.clone();
     keymap::rebind(&shortcuts, cx);
-    hotkey::apply(shortcuts.activate(), cx);
-}
-
-/// No system-wide chord without the `desktop` feature: the page cannot hear a
-/// key while it is not in front.
-#[cfg(not(feature = "desktop"))]
-mod hotkey {
-    use bezel::gpui::{App, SharedString};
-
-    pub fn refused(cx: &App) -> Option<SharedString> {
-        let _ = cx;
-        Some("A browser tab cannot answer a chord while it is in the background.".into())
-    }
-
-    pub fn holdable(chord: &str) -> bool {
-        let _ = chord;
-        true
-    }
-
-    pub fn apply(chord: Option<&str>, cx: &mut App) {
-        let _ = (chord, cx);
-    }
+    hotkey::Here::apply(shortcuts.activate(), cx);
 }

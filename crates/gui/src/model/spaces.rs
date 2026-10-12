@@ -16,149 +16,176 @@
 
 #[cfg(feature = "desktop")]
 use crate::model::settings;
-use artifact::{space::Space, stamp};
+use artifact::{
+    space::{Member, Space},
+    stamp,
+};
 use std::collections::HashSet;
 #[cfg(feature = "desktop")]
 use std::path::PathBuf;
 
-/// `~/.config/cydonia/spaces/`.
+/// Where this build keeps spaces.
 #[cfg(feature = "desktop")]
-fn dir() -> Option<PathBuf> {
-    settings::dir().ok().map(|dir| dir.join("spaces"))
-}
+pub type Shelf = Disk;
+#[cfg(not(feature = "desktop"))]
+pub type Shelf = Memory;
 
-#[cfg(feature = "desktop")]
-fn file(id: &str) -> Option<PathBuf> {
-    Some(dir()?.join(format!("{id}.toml")))
-}
+/// What keeps spaces.
+pub trait Store {
+    /// Every space held, most recently written first.
+    fn all() -> Vec<Space>;
 
-/// Every space on this machine, most recently written first.
-#[cfg(feature = "desktop")]
-pub fn all() -> Vec<Space> {
-    let Some(dir) = dir() else {
-        return Vec::new();
-    };
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    let mut spaces: Vec<Space> = entries
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().is_some_and(|ext| ext == "toml"))
-        .filter_map(|path| {
-            let body = std::fs::read_to_string(&path).ok()?;
-            let mut space: Space = toml::from_str(&body).ok()?;
-            space.touched = stamp::of(&path);
-            if space.id.is_empty() {
-                space.id = path.file_stem()?.to_str()?.to_owned();
-            }
-            Some(space)
-        })
-        .collect();
-    spaces.sort_by_key(|space| std::cmp::Reverse(space.touched));
-    spaces
-}
+    fn read(id: &str) -> Option<Space>;
 
-/// Read one back, for a test or a re-read.
-#[cfg(feature = "desktop")]
-pub fn read(id: &str) -> Option<Space> {
-    let path = file(id)?;
-    let body = std::fs::read_to_string(&path).ok()?;
-    let mut space: Space = toml::from_str(&body).ok()?;
-    space.touched = stamp::of(&path);
-    if space.id.is_empty() {
-        space.id = id.to_owned();
+    /// Write one back, and take the time it was written at — what the sidebar
+    /// orders on.
+    fn save(space: &mut Space);
+
+    fn remove(id: &str);
+
+    /// Whether a space is held under `id`.
+    fn holds(id: &str) -> bool;
+
+    /// Ready to take a new space; `false` where nothing can be written.
+    fn prepare() -> bool;
+
+    /// Mint one, named clear of those already here.
+    fn create(name: &str, over: Member) -> Option<Space> {
+        if !Self::prepare() {
+            return None;
+        }
+        let taken: HashSet<String> = Self::all().into_iter().map(|space| space.name).collect();
+        let name = match name.is_empty() {
+            false => name.to_owned(),
+            true => artifact::space::next_name(&taken),
+        };
+        // This millisecond, or the first after it that is not taken — two made
+        // inside one millisecond is the only way that happens.
+        let id = (stamp::now()..)
+            .map(|stamp| stamp.to_string())
+            .find(|id| !Self::holds(id))?;
+        let mut space = Space::new(id, &name, over);
+        Self::save(&mut space);
+        Some(space)
     }
-    Some(space)
 }
 
-/// Mint one, named clear of those already here.
+/// `~/.config/cydonia/spaces/`, one file per space.
 #[cfg(feature = "desktop")]
-pub fn create(name: &str, over: artifact::space::Member) -> Option<Space> {
-    let dir = dir()?;
-    std::fs::create_dir_all(&dir).ok()?;
-    let taken: HashSet<String> = all().into_iter().map(|space| space.name).collect();
-    let name = match name.is_empty() {
-        false => name.to_owned(),
-        true => artifact::space::next_name(&taken),
-    };
-    // This millisecond's file, or the first after it that is not taken — two
-    // made inside one millisecond is the only way that happens.
-    let id = (stamp::now()..)
-        .map(|stamp| stamp.to_string())
-        .find(|id| !dir.join(format!("{id}.toml")).exists())?;
-    let mut space = Space::new(id, &name, over);
-    save(&mut space);
-    Some(space)
-}
+pub struct Disk;
 
-/// Write one back, and take the time it was written at — what the sidebar
-/// orders on.
 #[cfg(feature = "desktop")]
-pub fn save(space: &mut Space) {
-    let (Some(path), Ok(body)) = (file(&space.id), toml::to_string_pretty(&*space)) else {
-        return;
-    };
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
+impl Disk {
+    fn dir() -> Option<PathBuf> {
+        settings::dir().ok().map(|dir| dir.join("spaces"))
     }
-    if std::fs::write(&path, body).is_ok() {
+
+    fn file(id: &str) -> Option<PathBuf> {
+        Some(Self::dir()?.join(format!("{id}.toml")))
+    }
+}
+
+#[cfg(feature = "desktop")]
+impl Store for Disk {
+    fn all() -> Vec<Space> {
+        let Some(dir) = Self::dir() else {
+            return Vec::new();
+        };
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return Vec::new();
+        };
+        let mut spaces: Vec<Space> = entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "toml"))
+            .filter_map(|path| {
+                let body = std::fs::read_to_string(&path).ok()?;
+                let mut space: Space = toml::from_str(&body).ok()?;
+                space.touched = stamp::of(&path);
+                if space.id.is_empty() {
+                    space.id = path.file_stem()?.to_str()?.to_owned();
+                }
+                Some(space)
+            })
+            .collect();
+        spaces.sort_by_key(|space| std::cmp::Reverse(space.touched));
+        spaces
+    }
+
+    fn read(id: &str) -> Option<Space> {
+        let path = Self::file(id)?;
+        let body = std::fs::read_to_string(&path).ok()?;
+        let mut space: Space = toml::from_str(&body).ok()?;
+        space.touched = stamp::of(&path);
+        if space.id.is_empty() {
+            space.id = id.to_owned();
+        }
+        Some(space)
+    }
+
+    fn save(space: &mut Space) {
+        let Some(path) = Self::file(&space.id) else {
+            return;
+        };
+        if settings::write_toml(&path, &*space).is_ok() {
+            space.touched = stamp::now();
+        }
+    }
+
+    fn remove(id: &str) {
+        if let Some(path) = Self::file(id) {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+
+    fn holds(id: &str) -> bool {
+        Self::file(id).is_some_and(|path| path.exists())
+    }
+
+    fn prepare() -> bool {
+        Self::dir().is_some_and(|dir| std::fs::create_dir_all(dir).is_ok())
+    }
+}
+
+/// Held for as long as the process runs.
+#[cfg(not(feature = "desktop"))]
+pub struct Memory;
+
+#[cfg(not(feature = "desktop"))]
+impl Memory {
+    fn held() -> std::sync::MutexGuard<'static, std::collections::BTreeMap<String, Space>> {
+        static HELD: std::sync::Mutex<std::collections::BTreeMap<String, Space>> =
+            std::sync::Mutex::new(std::collections::BTreeMap::new());
+        HELD.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+#[cfg(not(feature = "desktop"))]
+impl Store for Memory {
+    fn all() -> Vec<Space> {
+        let mut spaces: Vec<Space> = Self::held().values().cloned().collect();
+        spaces.sort_by_key(|space| std::cmp::Reverse(space.touched));
+        spaces
+    }
+
+    fn read(id: &str) -> Option<Space> {
+        Self::held().get(id).cloned()
+    }
+
+    fn save(space: &mut Space) {
         space.touched = stamp::now();
+        Self::held().insert(space.id.clone(), space.clone());
     }
-}
 
-#[cfg(feature = "desktop")]
-pub fn remove(id: &str) {
-    if let Some(path) = file(id) {
-        let _ = std::fs::remove_file(path);
+    fn remove(id: &str) {
+        Self::held().remove(id);
     }
-}
 
-// ── without the `desktop` feature ─────────────────────────────────
-//
-// No config directory: spaces are held for as long as the process runs.
+    fn holds(id: &str) -> bool {
+        Self::held().contains_key(id)
+    }
 
-#[cfg(not(feature = "desktop"))]
-fn held() -> std::sync::MutexGuard<'static, std::collections::BTreeMap<String, Space>> {
-    static HELD: std::sync::Mutex<std::collections::BTreeMap<String, Space>> =
-        std::sync::Mutex::new(std::collections::BTreeMap::new());
-    HELD.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
-#[cfg(not(feature = "desktop"))]
-pub fn all() -> Vec<Space> {
-    let mut spaces: Vec<Space> = held().values().cloned().collect();
-    spaces.sort_by_key(|space| std::cmp::Reverse(space.touched));
-    spaces
-}
-
-#[cfg(not(feature = "desktop"))]
-pub fn read(id: &str) -> Option<Space> {
-    held().get(id).cloned()
-}
-
-#[cfg(not(feature = "desktop"))]
-pub fn create(name: &str, over: artifact::space::Member) -> Option<Space> {
-    let taken: HashSet<String> = all().into_iter().map(|space| space.name).collect();
-    let name = match name.is_empty() {
-        false => name.to_owned(),
-        true => artifact::space::next_name(&taken),
-    };
-    let id = (stamp::now()..)
-        .map(|stamp| stamp.to_string())
-        .find(|id| !held().contains_key(id))?;
-    let mut space = Space::new(id, &name, over);
-    save(&mut space);
-    Some(space)
-}
-
-#[cfg(not(feature = "desktop"))]
-pub fn save(space: &mut Space) {
-    space.touched = stamp::now();
-    held().insert(space.id.clone(), space.clone());
-}
-
-#[cfg(not(feature = "desktop"))]
-pub fn remove(id: &str) {
-    held().remove(id);
+    fn prepare() -> bool {
+        true
+    }
 }

@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { generateOg } from './scripts/generate-og.mjs';
+import { generateFigures } from './scripts/generate-figures.mjs';
 
 const at = (path) => fileURLToPath(new URL(path, import.meta.url));
 
@@ -28,15 +29,16 @@ if (newest?.version !== version) {
 // evaluated. Vite watches the config file but cannot know it read these two, so
 // a dev server started before a version bump keeps serving the old one.
 let images;
+let figures;
 const release = {
 	name: 'watch-release-inputs',
 	async configResolved(config) {
 		// The manifest must exist before either SSR or client compilation.
-		if (!config.isPreview) await (images ??= generateOg());
+		if (!config.isPreview) await Promise.all([(images ??= generateOg()), (figures ??= generateFigures())]);
 	},
 	configureServer(server) {
 		const docs = resolve(at('../docs'));
-		const watched = [resolve(at('../Cargo.toml')), resolve(at('../changelog.json')), docs, resolve(at('./scripts/generate-og.mjs'))];
+		const watched = [resolve(at('../Cargo.toml')), resolve(at('../changelog.json')), docs, resolve(at('./scripts/generate-og.mjs')), resolve(at('./scripts/generate-figures.mjs'))];
 		server.watcher.add(watched);
 		server.watcher.on('all', (event, file) => {
 			if (!['add', 'change', 'unlink'].includes(event)) return;

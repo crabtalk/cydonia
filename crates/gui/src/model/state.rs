@@ -10,22 +10,9 @@
 //! the move.
 
 use crate::model::settings;
+use artifact::kind::Kind;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf};
-
-/// The four things a project holds. Which one a launch lands on is the last
-/// one that was open, so the window comes back where it was left.
-///
-/// A space is not among them: it spans projects and is kept beside this file
-/// rather than in any of them — see [`crate::model::spaces`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Kind {
-    Session,
-    Board,
-    Article,
-    Table,
-}
 
 /// What a project's list is ordered by, under the pins.
 ///
@@ -43,11 +30,30 @@ pub enum Sort {
 
 /// One remembered entry: which kind, and which of them.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(from = "Written")]
 pub struct Entry {
     pub kind: Kind,
-    /// The file the entry is, or a table's key. An index would drift as
-    /// siblings are added and removed between launches.
+    /// The entry's id — a session's record, a board's or an article's id, a
+    /// table's key. An index would drift as siblings are added and removed
+    /// between launches.
     pub id: String,
+}
+
+/// An [`Entry`] as `state.toml` holds it, before its id is read — see
+/// [`artifact::article::stored_id`].
+#[derive(Deserialize)]
+struct Written {
+    kind: Kind,
+    id: String,
+}
+
+impl From<Written> for Entry {
+    fn from(written: Written) -> Self {
+        Self {
+            kind: written.kind,
+            id: artifact::article::stored_id(written.kind, written.id),
+        }
+    }
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -112,7 +118,7 @@ pub struct State {
     #[serde(default)]
     pub window: Option<Frame>,
     /// The palette's commands last run, most recent first, each as its menu
-    /// path and name — see [`crate::view::menubar::Command::key`].
+    /// path and name — see [`crate::view::window::menubar::Command::key`].
     #[serde(default)]
     pub commands: Vec<String>,
 }
@@ -147,10 +153,7 @@ pub(crate) fn path() -> Option<PathBuf> {
 /// otherwise leave a tab no agent can spawn in. The active project is resolved
 /// by path first, so dropping an earlier one doesn't shift it.
 pub fn restore() -> State {
-    let stored: State = path()
-        .and_then(|path| std::fs::read_to_string(path).ok())
-        .and_then(|body| toml::from_str(&body).ok())
-        .unwrap_or_default();
+    let stored: State = settings::read_toml(path());
     let active = stored.projects.get(stored.active).cloned();
     let projects: Vec<PathBuf> = stored
         .projects
@@ -181,13 +184,7 @@ pub fn restore() -> State {
 /// Best effort: a state file that cannot be written is not worth failing a
 /// click over.
 pub fn save(state: &State) {
-    let Some(path) = path() else {
-        return;
-    };
-    if let Ok(body) = toml::to_string_pretty(state)
-        && let Some(dir) = path.parent()
-    {
-        let _ = std::fs::create_dir_all(dir);
-        let _ = std::fs::write(&path, body);
+    if let Some(path) = path() {
+        let _ = settings::write_toml(&path, state);
     }
 }

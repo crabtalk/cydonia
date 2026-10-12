@@ -1,8 +1,8 @@
 //! A picture's web address pasted into a document.
 
 use cydonia_gui::model::media::Pasting;
-use editor::{Editor, Mode};
-use gpui::{ClipboardItem, Focusable, TestAppContext, VisualTestContext};
+use editor::{Document, Editor, Mode};
+use gpui::{AppContext as _, ClipboardItem, Focusable, TestAppContext, VisualTestContext};
 
 #[cfg(target_os = "macos")]
 const PASTE: &str = "cmd-v";
@@ -23,7 +23,10 @@ fn pasted(mode: Mode, pasting: Pasting, cx: &mut TestAppContext) -> String {
         editor::init(cx);
         cydonia_gui::model::media::init(pasting, cx);
     });
-    let window = cx.add_window(|_, cx| Editor::new("", cx).with_mode(mode).with_base("/notes"));
+    let window = cx.add_window(|_, cx| {
+        let document = cx.new(|cx| Document::new("", cx).with_mode(mode));
+        Editor::for_document(document, cx).with_base("/notes")
+    });
     let editor = window.root(cx).unwrap();
     let mut cx = VisualTestContext::from_window(window.into(), cx);
     cx.update(|window, cx| window.focus(&editor.read(cx).focus_handle(cx), cx));

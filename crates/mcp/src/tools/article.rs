@@ -16,11 +16,13 @@ use crate::{
     tool::{Answer, Arg, Args, Outcome, Tool, Trouble},
     tools::{PROJECT, fields, many, on_the_rail, root, session},
 };
+use artifact::error::{Act, Error};
 use artifact::{
-    article::{self, anchor, properties::Properties},
+    article::{self, anchor, comments::Comment, properties::Properties},
+    kind::Kind,
     project::{Project as _, fs},
     reference::{Span, Within},
-    search::{self, Block, Kind, Query},
+    search::{self, Block, Query},
     stamp,
 };
 use serde_json::{Value, json};
@@ -100,6 +102,15 @@ const REPLACE_ALL: Arg = Arg {
     about: "Replace every non-overlapping occurrence. Defaults to false, requiring exactly one match.",
 };
 
+const QUOTE: Arg = Arg {
+    name: "quote",
+    about: "The exact text of the article's markdown the note is on, including whitespace. It must occur once; include surrounding text to tell occurrences apart. Must not be empty.",
+};
+const NOTE: Arg = Arg {
+    name: "note",
+    about: "The note, in Cydonia Markdown. Shown in the margin beside the quote, a few lines of it until it is opened.",
+};
+
 const QUERY: Arg = Arg {
     name: "query",
     about: "The text to find, matched case-insensitively.",
@@ -108,7 +119,7 @@ const QUERY: Arg = Arg {
 /// Hits a search answers with, at most.
 const HITS: usize = 20;
 
-pub static TOOLS: [Tool; 12] = [
+pub static TOOLS: [Tool; 13] = [
     Tool {
         name: "article_list",
         description: "List the project's articles, most recently written first.",
@@ -119,7 +130,7 @@ pub static TOOLS: [Tool; 12] = [
     },
     Tool {
         name: "article_read",
-        description: "Read one article's markdown, or part of it: #12:5-7 reads lines 5 to 7, and #12#setup the section under the heading whose anchor is setup (GitHub's: lowercased, punctuation dropped, spaces as -). A part answers its line numbers. The result includes two directories, relative to the project directory: assets_path, this article's own media directory, which holds its body images and its cover; and article_path, the article's folder. Filesystem access is needed to place a file in either.",
+        description: "Read one article's markdown, or part of it: #12:5-7 reads lines 5 to 7, and #12#setup the section under the heading whose anchor is setup (GitHub's: lowercased, punctuation dropped, spaces as -). A part answers its line numbers. sessions are the numbers of the sessions opened under the article, newest first; read one with session_read. The result includes two directories, relative to the project directory: assets_path, this article's own media directory, which holds its body images and its cover; and article_path, the article's folder. Filesystem access is needed to place a file in either.",
         schema: |bound| fields(bound, &[PROJECT, ARTICLE]),
         writes: false,
         deletes: false,
@@ -162,17 +173,25 @@ pub static TOOLS: [Tool; 12] = [
         description: "Edit an article's markdown by exact string replacement. Read it first. Missing or ambiguous matches leave it unchanged; include more context to target one occurrence, or set replace_all to change all. The title is left alone.",
         schema: |bound| {
             let mut schema = fields(bound, &[PROJECT, ARTICLE, OLD_STRING, NEW_STRING]);
-            schema["properties"][REPLACE_ALL.name] = json!({
-                "type": "boolean",
-                "description": REPLACE_ALL.about,
-                "default": false,
-            });
+            super::defaulted(&mut schema, REPLACE_ALL, "boolean", json!(false));
             schema["properties"][OLD_STRING.name]["minLength"] = json!(1);
             schema
         },
         writes: true,
         deletes: false,
         call: edit,
+    },
+    Tool {
+        name: "article_comment",
+        description: "File a note in an article's margin, against a passage of its markdown. The article itself is not changed. The note links back to the turn of the session that filed it.",
+        schema: |bound| {
+            let mut schema = fields(bound, &[PROJECT, ARTICLE, QUOTE, NOTE]);
+            schema["properties"][QUOTE.name]["minLength"] = json!(1);
+            schema
+        },
+        writes: true,
+        deletes: false,
+        call: comment,
     },
     Tool {
         name: "article_set_cover",
@@ -207,11 +226,7 @@ pub static TOOLS: [Tool; 12] = [
         schema: |bound| {
             let mut schema = fields(bound, &[PROJECT, ARTICLES]);
             many(&mut schema, ARTICLES);
-            schema["properties"][ARCHIVED.name] = json!({
-                "type": "boolean",
-                "description": ARCHIVED.about,
-                "default": true,
-            });
+            super::defaulted(&mut schema, ARCHIVED, "boolean", json!(true));
             schema
         },
         writes: true,
@@ -335,7 +350,7 @@ fn read(args: Args<'_>) -> Outcome {
     let (found, part) = located(project, named)?;
     let text = fs::Project::new(project)
         .read_article(&found.id)
-        .map_err(|e| Trouble::Refused(format!("{} cannot be read — {e}", found.label())))?;
+        .map_err(|e| Error::failed(found.label(), Act::Read, e))?;
     let (text, lines) = match part {
         None => (text, None),
         Some(part) => {
@@ -343,10 +358,18 @@ fn read(args: Args<'_>) -> Outcome {
             (text[range].to_owned(), Some(lines))
         }
     };
+    let mut opened: Vec<_> = fs::Project::new(project)
+        .sessions()
+        .into_iter()
+        .filter(|record| record.article.as_deref() == Some(found.id.as_str()))
+        .collect();
+    opened.sort_by_key(|record| std::cmp::Reverse(record.updated));
+    let sessions: Vec<_> = opened.iter().filter_map(|record| record.number).collect();
     Ok(Answer::said(text).with(json!({
         "id": found.id,
         "number": found.number,
         "title": found.title,
+        "sessions": sessions,
         "lines": lines.map(|lines| json!({ "from": lines.from, "to": lines.to })),
         "assets_path": within(project, &article::assets(&found.content)),
         "article_path": within(project, found.content.parent().unwrap_or(project)),
@@ -359,7 +382,7 @@ fn highlights(args: Args<'_>) -> Outcome {
     let found = locate(project, args.text(ARTICLE)?)?;
     let text = fs::Project::new(project)
         .read_article(&found.id)
-        .map_err(|e| Trouble::Refused(format!("{} cannot be read — {e}", found.label())))?;
+        .map_err(|e| Error::failed(found.label(), Act::Read, e))?;
     let found_marks = marked(&text);
     if found_marks.is_empty() {
         return Ok(Answer::said(format!("{} has no highlights", found.label())));
@@ -478,18 +501,20 @@ fn add(args: Args<'_>) -> Outcome {
     let store = fs::Project::new(project);
     let made = store
         .create_article(text)
-        .map_err(|e| Trouble::Refused(format!("the article cannot be written — {e}")))?;
+        .map_err(|e| Error::failed("the article", Act::Written, e))?;
     let titled = Properties {
         title: title.to_owned(),
         ..Properties::default()
     };
     store
         .save_properties(&made.id, &titled)
-        .map_err(|e| Trouble::Refused(format!("the article cannot be named — {e}")))?;
+        .map_err(|e| Error::failed("the article", Act::Named, e))?;
     let id = made.id;
-    let content = article::content(&article::dir(project).join(&id));
+    let content = store
+        .article_file(&id)
+        .map_err(|e| Trouble::Refused(e.to_string()))?;
     let number = store
-        .number("article", &id)
+        .number(Kind::Article, &id)
         .map_err(|e| Trouble::Refused(e.to_string()))?;
     Ok(
         Answer::said(format!("#{number} {title} written")).with(json!({
@@ -509,8 +534,9 @@ fn within(project: &Path, path: &Path) -> PathBuf {
 
 /// File a picture as the article's cover, or take the one it has off.
 ///
-/// The bytes are copied rather than moved: the source is the caller's, and a
-/// picture in the article's `assets/` is one it may well link to as well.
+/// The picture is imported rather than moved — see
+/// [`article::cover::import`]: the source is the caller's, and a picture in the
+/// article's `assets/` is one it may well link to as well.
 /// What was there before goes, which is what keeps one article to one cover —
 /// `cover::of` reads the first one it finds and a second would shadow it.
 fn set_cover(args: Args<'_>) -> Outcome {
@@ -520,7 +546,7 @@ fn set_cover(args: Args<'_>) -> Outcome {
     let Some(source) = args.maybe(COVER) else {
         if let Some(old) = previous {
             std::fs::remove_file(&old).map_err(|e| {
-                Trouble::Refused(format!("{} cannot be uncovered — {e}", found.label()))
+                Error::failed(format!("{}'s cover", found.label()), Act::Deleted, e)
             })?;
         }
         return Ok(Answer::said(format!("{} has no cover now", found.label())));
@@ -548,9 +574,8 @@ fn set_cover(args: Args<'_>) -> Outcome {
     if article::cover::is_cover(&source) && source == to {
         return Ok(Answer::said(format!("{} keeps its cover", found.label())));
     }
-    std::fs::create_dir_all(article::assets(&found.content))
-        .and_then(|()| std::fs::copy(&source, &to))
-        .map_err(|e| Trouble::Refused(format!("the cover cannot be written — {e}")))?;
+    article::cover::import(&source, &to)
+        .map_err(|e| Error::failed("the cover", Act::Written, e))?;
     if let Some(old) = previous.filter(|old| *old != to) {
         let _ = std::fs::remove_file(old);
     }
@@ -568,7 +593,7 @@ fn rewrite(args: Args<'_>) -> Outcome {
     let text = args.text(MARKDOWN_NOW)?;
     fs::Project::new(project)
         .write_article(&found.id, text)
-        .map_err(|e| Trouble::Refused(format!("{} cannot be written — {e}", found.label())))?;
+        .map_err(|e| Error::failed(found.label(), Act::Written, e))?;
     Ok(Answer::said(format!("{} rewritten", found.label())))
 }
 
@@ -583,7 +608,7 @@ fn edit(args: Args<'_>) -> Outcome {
     let found = locate(project, args.text(ARTICLE)?)?;
     let text = fs::Project::new(project)
         .read_article(&found.id)
-        .map_err(|e| Trouble::Refused(format!("{} cannot be read — {e}", found.label())))?;
+        .map_err(|e| Error::failed(found.label(), Act::Read, e))?;
     let count = text.matches(old).count();
     if count == 0 {
         return Err(Trouble::Refused(
@@ -599,11 +624,59 @@ fn edit(args: Args<'_>) -> Outcome {
     let edited = text.replacen(old, new, count);
     fs::Project::new(project)
         .write_article(&found.id, &edited)
-        .map_err(|e| Trouble::Refused(format!("{} cannot be written — {e}", found.label())))?;
+        .map_err(|e| Error::failed(found.label(), Act::Written, e))?;
     Ok(
         Answer::said(format!("{} edited: {count} replacement(s)", found.label()))
             .with(json!({ "id": found.id, "replacements": count })),
     )
+}
+
+fn comment(args: Args<'_>) -> Outcome {
+    let quote = args.text(QUOTE)?;
+    let note = args.text(NOTE)?;
+    if quote.is_empty() {
+        return Err(Trouble::Invalid("quote must not be empty".to_owned()));
+    }
+    let project = root(&args)?;
+    let found = locate(project, args.text(ARTICLE)?)?;
+    let store = fs::Project::new(project);
+    let text = store
+        .read_article(&found.id)
+        .map_err(|e| Error::failed(found.label(), Act::Read, e))?;
+    let start = match text
+        .match_indices(quote)
+        .map(|(at, _)| at)
+        .collect::<Vec<_>>()[..]
+    {
+        [at] => at,
+        [] => {
+            return Err(Trouble::Refused(
+                "quote was not found; read the article and provide exact text, including whitespace"
+                    .to_owned(),
+            ));
+        }
+        ref many => {
+            return Err(Trouble::Refused(format!(
+                "quote matches {} occurrences; include more surrounding text for a unique match",
+                many.len()
+            )));
+        }
+    };
+    let mut held = store.comments(&found.id);
+    held.carry(None, &text);
+    let id = held.fresh_id(stamp::now() as u64);
+    held.comments.push(Comment::new(
+        id,
+        &text,
+        start..start + quote.len(),
+        note.to_owned(),
+        session::turn_link(&args),
+    ));
+    store
+        .save_comments(&found.id, &held)
+        .map_err(|e| Error::failed(found.label(), Act::Written, e))?;
+    Ok(Answer::said(format!("{} has a new comment", found.label()))
+        .with(json!({ "id": found.id, "comment": id })))
 }
 
 fn rename(args: Args<'_>) -> Outcome {
@@ -615,7 +688,7 @@ fn rename(args: Args<'_>) -> Outcome {
     held.title = title.to_owned();
     store
         .save_properties(&found.id, &held)
-        .map_err(|e| Trouble::Refused(format!("{} cannot be renamed — {e}", found.label())))?;
+        .map_err(|e| Error::failed(found.label(), Act::Renamed, e))?;
     Ok(Answer::said(format!("{} is now {title}", found.label())))
 }
 
@@ -631,7 +704,7 @@ fn archive(args: Args<'_>) -> Outcome {
         held.archived = archived;
         store
             .save_properties(&found.id, &held)
-            .map_err(|e| Trouble::Refused(format!("{} cannot be written — {e}", found.label())))?;
+            .map_err(|e| Error::failed(found.label(), Act::Written, e))?;
         said.push(found.label().to_owned());
     }
     let what = match archived {
@@ -656,9 +729,7 @@ fn remove(args: Args<'_>) -> Outcome {
     for article in &found {
         fs::Project::new(root)
             .remove_article(&article.id)
-            .map_err(|e| {
-                Trouble::Refused(format!("{} cannot be deleted — {e}", article.label()))
-            })?;
+            .map_err(|e| Error::failed(article.label(), Act::Deleted, e))?;
         gone.push(article.label().to_owned());
     }
     Ok(Answer::said(format!("{} deleted", gone.join(", "))))
@@ -721,16 +792,14 @@ fn move_article(args: Args<'_>) -> Outcome {
     for held in &found {
         let label = held.label().to_owned();
         let arrived = article::move_to(&held.content, to).map_err(|e| {
+            let error = Error::failed(label.clone(), Act::Moved, e);
             Trouble::Refused(match spoken.is_empty() {
-                true => format!("{label} cannot be moved — {e}"),
-                false => format!(
-                    "{label} cannot be moved — {e}. {} had already landed",
-                    spoken.join(", ")
-                ),
+                true => error.to_string(),
+                false => format!("{error}\n{} had already landed", spoken.join(", ")),
             })
         })?;
         let id = article::id_of(&arrived);
-        let number = artifact::entry::number(to, "article", &id)
+        let number = artifact::entry::number(to, Kind::Article, &id)
             .map_err(|e| Trouble::Refused(e.to_string()))?;
         spoken.push(format!("{label} as #{number}"));
         landed.push(json!({
@@ -754,13 +823,15 @@ fn articles(project: &Path) -> Vec<Held> {
     store
         .articles()
         .into_iter()
-        .map(|found| Held {
-            number: store.number("article", &found.id).ok(),
-            content: article::content(&article::dir(project).join(&found.id)),
-            id: found.id,
-            title: found.title,
-            archived: found.archived,
-            touched: found.touched,
+        .filter_map(|found| {
+            Some(Held {
+                number: store.number(Kind::Article, &found.id).ok(),
+                content: store.article_file(&found.id).ok()?,
+                id: found.id,
+                title: found.title,
+                archived: found.archived,
+                touched: found.touched,
+            })
         })
         .collect()
 }
@@ -784,7 +855,13 @@ fn located<'a>(project: &Path, needle: &'a str) -> Result<(Held, Option<Within<'
             .iter()
             .position(|article| article.number == Some(number))
             .map(|at| (held.swap_remove(at), within))
-            .ok_or_else(|| Trouble::Refused(format!("no article {needle} in this project")));
+            .ok_or_else(|| {
+                Error::NotFound {
+                    what: "article",
+                    named: needle.to_owned(),
+                }
+                .into()
+            });
     }
     if let Some(at) = held.iter().position(|article| article.id == needle) {
         return Ok((held.swap_remove(at), None));
@@ -814,30 +891,7 @@ pub(crate) fn excerpt(
     within: Within<'_>,
     named: &str,
 ) -> Result<(std::ops::Range<usize>, Span), Trouble> {
-    let range = match within {
-        Within::Span(span) => anchor::lines(markdown, span).ok_or_else(|| {
-            Trouble::Refused(format!(
-                "{named} starts past the article's last line, {}",
-                markdown.lines().count()
-            ))
-        })?,
-        Within::Heading(name) => match anchor::section(markdown, name) {
-            Some((_, range)) => range,
-            None => {
-                let anchors = anchor::headings(markdown)
-                    .into_iter()
-                    .map(|heading| heading.anchor)
-                    .collect::<Vec<_>>();
-                return Err(Trouble::Refused(match anchors.is_empty() {
-                    true => format!("{named} names a heading, and the article has none"),
-                    false => format!(
-                        "{named} names no heading — the article's are {}",
-                        anchors.join(", ")
-                    ),
-                }));
-            }
-        },
-    };
+    let (range, _) = anchor::excerpt(markdown, within, named)?;
     Ok((range.clone(), anchor::span_of(markdown, range)))
 }
 
@@ -863,12 +917,5 @@ fn listing(held: &[Held]) -> String {
 }
 
 fn titles(held: &[Held]) -> String {
-    match held.is_empty() {
-        true => "none at all".to_owned(),
-        false => held
-            .iter()
-            .map(|article| article.label().to_owned())
-            .collect::<Vec<_>>()
-            .join(", "),
-    }
+    super::listing(held.iter().map(|article| article.label().to_owned()))
 }

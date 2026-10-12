@@ -3,7 +3,7 @@
 
 use crate::{
     model::{fonts, settings as config},
-    view::settings::{self, SettingsWindow},
+    view::settings::{SettingsWindow, group, labelled},
 };
 use bezel::{
     gpui::{AnyElement, Context, Entity, SharedString, div, prelude::*, px},
@@ -14,7 +14,7 @@ use bezel::{
     },
 };
 
-/// What a family picker is set against — the two faces a palette carries.
+/// The three faces text is set in: each has a family picker and a size.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Face {
     Interface,
@@ -120,32 +120,26 @@ impl FamilyPicker {
     }
 }
 
-/// The three sizes, against the three faces they are set in — see [`Face`].
-#[derive(Clone, Copy)]
-enum Font {
-    Ui,
-    Article,
-    Mono,
-}
+impl Face {
+    // ── the size each face is set at ─────────────────────────────
 
-impl Font {
-    fn key(self) -> &'static str {
+    fn size_key(self) -> &'static str {
         match self {
-            Self::Ui => "ui-font",
+            Self::Interface => "ui-font",
             Self::Article => "article-font",
             Self::Mono => "mono-font",
         }
     }
 
-    fn title(self) -> &'static str {
+    fn size_title(self) -> &'static str {
         match self {
-            Self::Ui => "Interface font size",
+            Self::Interface => "Interface font size",
             Self::Article => "Article font size",
             Self::Mono => "Monospace font size",
         }
     }
 
-    fn description(self) -> String {
+    fn size_description(self) -> String {
         let zoom = || {
             format!(
                 "{} / {} zooms; {} resets.",
@@ -155,7 +149,7 @@ impl Font {
             )
         };
         match self {
-            Self::Ui => "Sizes for menus, controls, and the rest of the interface.".into(),
+            Self::Interface => "Sizes for menus, controls, and the rest of the interface.".into(),
             Self::Article => format!("Default for articles. {}", zoom()),
             Self::Mono => format!(
                 "Default for terminals, file source and previews. {}",
@@ -164,9 +158,9 @@ impl Font {
         }
     }
 
-    fn range(self) -> (f32, f32) {
+    fn size_range(self) -> (f32, f32) {
         match self {
-            Self::Ui => config::TEXT_SIZE,
+            Self::Interface => config::TEXT_SIZE,
             _ => config::CONTENT_TEXT_SIZE,
         }
     }
@@ -181,35 +175,22 @@ impl SettingsWindow {
             workspace.article_font_size(),
             workspace.mono_font_size,
         ];
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(settings::LABEL_GAP))
-            .child(theme.field_label("Typography"))
+        group(&theme, "Typography")
             .child(
                 theme.group_box().children(
-                    [Font::Ui, Font::Article, Font::Mono]
+                    [Face::Interface, Face::Article, Face::Mono]
                         .into_iter()
                         .zip(sizes)
                         .enumerate()
                         .map(|(ix, (font, size))| {
                             theme
                                 .card_row(ix == 0)
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .flex()
-                                        .flex_col()
-                                        .child(theme.row_title(font.title()))
-                                        .child(
-                                            div()
-                                                .mt(px(4.))
-                                                .text_style(TextStyle::Subheadline)
-                                                .text_color(theme.text_muted)
-                                                .child(font.description()),
-                                        ),
-                                )
+                                .child(labelled(
+                                    &theme,
+                                    font.size_title(),
+                                    font.size_description(),
+                                    false,
+                                ))
                                 .child(
                                     div()
                                         .flex_none()
@@ -243,11 +224,7 @@ impl SettingsWindow {
     /// a family silently falling back to the one it replaced.
     pub(super) fn families_group(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(settings::LABEL_GAP))
-            .child(theme.field_label("Font families"))
+        group(&theme, "Font families")
             .child(
                 theme.group_box().children(
                     [&self.interface_font, &self.article_font, &self.mono_font]
@@ -256,21 +233,12 @@ impl SettingsWindow {
                         .map(|(ix, picker)| {
                             theme
                                 .card_row(ix == 0)
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .flex()
-                                        .flex_col()
-                                        .child(theme.row_title(picker.face.title()))
-                                        .child(
-                                            div()
-                                                .mt(px(4.))
-                                                .text_style(TextStyle::Subheadline)
-                                                .text_color(theme.text_muted)
-                                                .child(picker.face.description()),
-                                        ),
-                                )
+                                .child(labelled(
+                                    &theme,
+                                    picker.face.title(),
+                                    picker.face.description(),
+                                    false,
+                                ))
                                 .child(div().flex_none().w(px(220.)).child(picker.combobox.clone()))
                         }),
                 ),
@@ -278,12 +246,12 @@ impl SettingsWindow {
             .into_any_element()
     }
 
-    fn font_step(&self, font: Font, size: f32, by: f32, cx: &mut Context<Self>) -> AnyElement {
+    fn font_step(&self, font: Face, size: f32, by: f32, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        let (min, max) = font.range();
+        let (min, max) = font.size_range();
         let next = (size + by).clamp(min, max);
         theme
-            .ghost((font.key(), usize::from(by > 0.)))
+            .ghost((font.size_key(), usize::from(by > 0.)))
             .px(px(8.))
             .py(px(3.))
             .text_style(TextStyle::Callout)
@@ -298,9 +266,9 @@ impl SettingsWindow {
                     return;
                 }
                 this.workspace.update(cx, |workspace, cx| match font {
-                    Font::Ui => workspace.set_text_size(next, cx),
-                    Font::Article => workspace.set_article_font_size(next, cx),
-                    Font::Mono => workspace.set_mono_font_size(next, cx),
+                    Face::Interface => workspace.set_text_size(next, cx),
+                    Face::Article => workspace.set_article_font_size(next, cx),
+                    Face::Mono => workspace.set_mono_font_size(next, cx),
                 });
                 cx.notify();
             }))

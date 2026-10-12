@@ -12,8 +12,11 @@
 //! There is no `new_space` a menu calls: a space is made by dragging a
 //! second entry onto the one already open — see [`Workspace::arrange`].
 use super::*;
-use crate::model::spaces as store;
-use artifact::space::{Kind as MemberKind, Member, Side, Space};
+use crate::model::spaces::{Shelf, Store as _};
+use artifact::{
+    kind::Kind,
+    space::{Member, Side, Space},
+};
 
 /// What a pane shows, resolved from the member a space names: an entry of
 /// one project, by the id it has there.
@@ -26,6 +29,17 @@ pub enum Showing {
     Article(String),
     /// A table's key.
     Table(String),
+}
+
+impl Showing {
+    pub fn kind(&self) -> Kind {
+        match self {
+            Self::Session(_) => Kind::Session,
+            Self::Board(_) => Kind::Board,
+            Self::Article(_) => Kind::Article,
+            Self::Table(_) => Kind::Table,
+        }
+    }
 }
 
 impl Workspace {
@@ -41,7 +55,7 @@ impl Workspace {
     /// Put `spaces` in the order `ids` names them, with anything that list
     /// does not name in front, newest first.
     ///
-    /// A space's file carries no place in the list: [`store::all`] reads them
+    /// A space's file carries no place in the list: [`Shelf::all`] reads them
     /// back by the time they were written, and the hand order is kept beside
     /// the rest of the window's bookkeeping — see
     /// [`crate::model::state::State::spaces`].
@@ -131,7 +145,7 @@ impl Workspace {
     pub fn reload_spaces(&mut self, cx: &mut Context<Self>) {
         let open = self.active_space().map(|space| space.id.clone());
         let order: Vec<String> = self.spaces.iter().map(|at| at.id.clone()).collect();
-        self.spaces = Self::in_order(store::all(), &order);
+        self.spaces = Self::in_order(Shelf::all(), &order);
         self.space = open.and_then(|id| self.spaces.iter().position(|at| at.id == id));
         cx.notify();
     }
@@ -182,7 +196,7 @@ impl Workspace {
             // The first drag. The space starts as the pane that was there,
             // which is what the arrival is being put beside.
             _ => {
-                let space = store::create("", target.clone())?;
+                let space = Shelf::create("", target.clone())?;
                 self.spaces.insert(0, space);
                 0
             }
@@ -198,7 +212,7 @@ impl Workspace {
         if !space.insert(target, arriving, side) {
             return None;
         }
-        store::save(space);
+        Shelf::save(space);
         self.space = Some(at);
         self.save();
         cx.notify();
@@ -218,7 +232,7 @@ impl Workspace {
         let keep = match space {
             Some(id) => id.to_owned(),
             None => {
-                let made = store::create("", members.first()?.clone())?;
+                let made = Shelf::create("", members.first()?.clone())?;
                 let id = made.id.clone();
                 self.spaces.insert(0, made);
                 self.space = self.space.map(|open| open + 1);
@@ -232,7 +246,7 @@ impl Workspace {
             let space = &mut self.spaces[at];
             let target = space.entries().into_iter().next()?;
             if target != *member && space.stack(&target, member) {
-                store::save(space);
+                Shelf::save(space);
             }
         }
         self.save();
@@ -255,7 +269,7 @@ impl Workspace {
         let at = match self.space {
             Some(at) if at < self.spaces.len() => at,
             _ => {
-                let Some(space) = store::create("", target.clone()) else {
+                let Some(space) = Shelf::create("", target.clone()) else {
                     return;
                 };
                 self.spaces.insert(0, space);
@@ -298,7 +312,7 @@ impl Workspace {
             if !self.spaces[ix].remove(member) {
                 return;
             }
-            store::save(&mut self.spaces[ix]);
+            Shelf::save(&mut self.spaces[ix]);
             cx.notify();
         }
     }
@@ -370,7 +384,7 @@ impl Workspace {
             .entries()
             .into_iter()
             .find(|member| member != entry)
-            .and_then(|member| Some((member.clone(), self.showing_of(&member)?)));
+            .and_then(|member| Some((member.clone(), self.showing_of(&member, cx)?)));
 
         if let Some(at) = self.space {
             self.delete_space(at, cx);
@@ -401,7 +415,7 @@ impl Workspace {
             return;
         }
         if space.remove(member) {
-            store::save(space);
+            Shelf::save(space);
             cx.notify();
         }
     }
@@ -413,7 +427,7 @@ impl Workspace {
             .spaces
             .iter()
             .flat_map(Space::entries)
-            .filter(|member| self.archived(member))
+            .filter(|member| self.archived(member, cx))
             .collect();
         for member in archived {
             self.drop_from_spaces(&member, cx);
@@ -422,7 +436,7 @@ impl Workspace {
 
     /// Whether the entry a member names is archived. One no open project lists
     /// is not.
-    fn archived(&self, member: &Member) -> bool {
+    fn archived(&self, member: &Member, cx: &App) -> bool {
         let Some(open) = self
             .projects
             .iter()
@@ -431,19 +445,20 @@ impl Workspace {
             return false;
         };
         match member.kind {
-            MemberKind::Session => open
+            Kind::Session => open
                 .sessions
                 .iter()
+                .map(|held| held.chat.read(cx))
                 .any(|chat| chat.closed && chat.record.as_deref() == Some(member.id.as_str())),
-            MemberKind::Board => open
+            Kind::Board => open
                 .boards
                 .iter()
-                .any(|board| board.archived && board.id == member.id),
-            MemberKind::Article => open
+                .any(|held| held.id == member.id && held.board.read(cx).archived),
+            Kind::Article => open
                 .articles
                 .iter()
-                .any(|article| article.archived && article.path.to_string_lossy() == member.id),
-            MemberKind::Table => open
+                .any(|article| article.archived && article.id == member.id),
+            Kind::Table => open
                 .tables
                 .iter()
                 .any(|table| table.archived && table.key == member.id),
@@ -464,7 +479,7 @@ impl Workspace {
         if ix >= self.spaces.len() {
             return;
         }
-        store::remove(&self.spaces.remove(ix).id);
+        Shelf::remove(&self.spaces.remove(ix).id);
         self.space = self
             .space
             .filter(|open| *open != ix)
@@ -488,7 +503,7 @@ impl Workspace {
     pub fn rename_space(&mut self, id: &str, name: String, cx: &mut Context<Self>) {
         if let Some(space) = self.spaces.iter_mut().find(|space| space.id == id) {
             space.name = name.trim().to_owned();
-            store::save(space);
+            Shelf::save(space);
             cx.notify();
         }
     }
@@ -510,31 +525,19 @@ impl Workspace {
         let mut live: Vec<Member> = Vec::new();
         for open in &self.projects {
             let path = open.path.clone();
-            for chat in &open.sessions {
+            for chat in open.chats(cx) {
                 if let Some(record) = chat.record.clone() {
-                    live.push(Member::new(path.clone(), MemberKind::Session, record));
+                    live.push(Member::new(path.clone(), Kind::Session, record));
                 }
             }
             for board in &open.boards {
-                live.push(Member::new(
-                    path.clone(),
-                    MemberKind::Board,
-                    board.id.clone(),
-                ));
+                live.push(Member::new(path.clone(), Kind::Board, board.id.clone()));
             }
             for article in &open.articles {
-                live.push(Member::new(
-                    path.clone(),
-                    MemberKind::Article,
-                    article.path.to_string_lossy().into_owned(),
-                ));
+                live.push(Member::new(path.clone(), Kind::Article, article.id.clone()));
             }
             for table in &open.tables {
-                live.push(Member::new(
-                    path.clone(),
-                    MemberKind::Table,
-                    table.key.clone(),
-                ));
+                live.push(Member::new(path.clone(), Kind::Table, table.key.clone()));
             }
         }
         let open: Vec<PathBuf> = self.projects.iter().map(|open| open.path.clone()).collect();
@@ -545,7 +548,7 @@ impl Workspace {
                 .filter(|member| open.contains(&member.project) && !live.contains(member))
                 .collect();
             if !gone.is_empty() && space.prune(&gone) {
-                store::save(space);
+                Shelf::save(space);
             }
         }
         cx.notify();
@@ -554,34 +557,13 @@ impl Workspace {
     /// What the member names, and which open project it is in. Nothing for one
     /// whose project is shut, or which has gone since the space named it —
     /// that draws as an empty pane rather than a panic.
-    pub fn showing_of(&self, member: &Member) -> Option<(usize, Showing)> {
+    pub fn showing_of(&self, member: &Member, cx: &App) -> Option<(usize, Showing)> {
         let at = self
             .projects
             .iter()
             .position(|open| open.path == member.project)?;
         let open = self.projects.get(at)?;
-        let showing = match member.kind {
-            MemberKind::Session => open
-                .sessions
-                .iter()
-                .find(|chat| chat.record.as_deref() == Some(member.id.as_str()))
-                .map(|chat| Showing::Session(chat.id))?,
-            MemberKind::Board => open
-                .boards
-                .iter()
-                .find(|board| board.id == member.id)
-                .map(|board| Showing::Board(board.id.clone()))?,
-            MemberKind::Article => open
-                .articles
-                .iter()
-                .find(|article| article.path.to_string_lossy() == member.id)
-                .map(|article| Showing::Article(article.id.clone()))?,
-            MemberKind::Table => open
-                .tables
-                .iter()
-                .find(|table| table.key == member.id)
-                .map(|table| Showing::Table(table.key.clone()))?,
-        };
+        let showing = open.stored(member.kind, &member.id, cx)?;
         Some((at, showing))
     }
 
@@ -590,30 +572,34 @@ impl Workspace {
     ///
     /// Nothing for a session with no file yet: a space names entries on disk,
     /// and one that has had no turn is not there to be named.
-    pub fn member_of(&self, project: usize, showing: Showing) -> Option<Member> {
+    pub fn member_of(&self, project: usize, showing: Showing, cx: &App) -> Option<Member> {
+        let Showing::Session(id) = showing else {
+            return self.filed_member(project, showing);
+        };
+        let open = self.projects.get(project)?;
+        let record = open.session(id, cx)?.filed()?.to_owned();
+        Some(Member::new(open.path.clone(), Kind::Session, record))
+    }
+
+    /// [`Self::member_of`] for a board, an article or a table, whose id is
+    /// its file. Nothing for a session.
+    fn filed_member(&self, project: usize, showing: Showing) -> Option<Member> {
         let open = self.projects.get(project)?;
         let path = open.path.clone();
         Some(match showing {
-            Showing::Session(id) => Member::new(
-                path,
-                MemberKind::Session,
-                open.session(id)?.filed()?.to_owned(),
-            ),
+            Showing::Session(_) => return None,
             Showing::Board(id) => {
                 open.board_ix(&id)?;
-                Member::new(path, MemberKind::Board, id)
+                Member::new(path, Kind::Board, id)
             }
             Showing::Article(id) => Member::new(
                 path,
-                MemberKind::Article,
-                open.articles[open.article_ix(&id)?]
-                    .path
-                    .to_string_lossy()
-                    .into_owned(),
+                Kind::Article,
+                open.articles[open.article_ix(&id)?].id.clone(),
             ),
             Showing::Table(key) => {
                 open.table_ix(&key)?;
-                Member::new(path, MemberKind::Table, key)
+                Member::new(path, Kind::Table, key)
             }
         })
     }
@@ -621,28 +607,28 @@ impl Workspace {
     /// The member naming the board listed at `ix` in `project`.
     pub fn board_member(&self, project: usize, ix: usize) -> Option<Member> {
         let id = self.projects.get(project)?.boards.get(ix)?.id.clone();
-        self.member_of(project, Showing::Board(id))
+        self.filed_member(project, Showing::Board(id))
     }
 
     /// The member naming the article listed at `ix` in `project`.
     pub fn article_member(&self, project: usize, ix: usize) -> Option<Member> {
         let id = self.projects.get(project)?.articles.get(ix)?.id.clone();
-        self.member_of(project, Showing::Article(id))
+        self.filed_member(project, Showing::Article(id))
     }
 
     /// The member naming the table listed at `ix` in `project`.
     pub fn table_member(&self, project: usize, ix: usize) -> Option<Member> {
         let key = self.projects.get(project)?.tables.get(ix)?.key.clone();
-        self.member_of(project, Showing::Table(key))
+        self.filed_member(project, Showing::Table(key))
     }
 
     /// The board a pane is on, by its place in its project. Named apart from
     /// [`Self::board_at`], which finds one by file wherever it is open.
-    pub fn board_in(&self, project: usize, ix: usize) -> Option<&Board> {
+    pub fn board_in<'a>(&self, project: usize, ix: usize, cx: &'a App) -> Option<&'a Board> {
         if !self.settings.features.boards {
             return None;
         }
-        self.projects.get(project)?.boards.get(ix)
+        self.projects.get(project)?.board(ix, cx)
     }
 
     /// The board one pane is showing.
@@ -651,13 +637,13 @@ impl Workspace {
     /// answers for at most one of the boards a space can have on screen. No
     /// member is a window showing one entry, where the selection is the whole
     /// truth.
-    pub fn board_of(&self, member: Option<&Member>) -> Option<&Board> {
+    pub fn board_of<'a>(&self, member: Option<&Member>, cx: &'a App) -> Option<&'a Board> {
         let Some(member) = member else {
-            return self.active_board();
+            return self.active_board(cx);
         };
-        match self.showing_of(member)? {
+        match self.showing_of(member, cx)? {
             (project, Showing::Board(id)) => {
-                self.board_in(project, self.projects.get(project)?.board_ix(&id)?)
+                self.board_in(project, self.projects.get(project)?.board_ix(&id)?, cx)
             }
             _ => None,
         }
@@ -665,11 +651,11 @@ impl Workspace {
 
     /// The session one pane is showing, the way [`Self::board_of`] answers
     /// for a board.
-    pub fn session_id_of(&self, member: Option<&Member>) -> Option<u64> {
+    pub fn session_id_of(&self, member: Option<&Member>, cx: &App) -> Option<u64> {
         let Some(member) = member else {
             return self.active_id();
         };
-        match self.showing_of(member)? {
+        match self.showing_of(member, cx)? {
             (_, Showing::Session(id)) => Some(id),
             _ => None,
         }
@@ -677,11 +663,11 @@ impl Workspace {
 
     /// The article one pane is showing, the way [`Self::board_of`] answers for
     /// a board.
-    pub fn article_of(&self, member: Option<&Member>) -> Option<&Article> {
+    pub fn article_of(&self, member: Option<&Member>, cx: &App) -> Option<&Article> {
         let Some(member) = member else {
             return self.active_article();
         };
-        match self.showing_of(member)? {
+        match self.showing_of(member, cx)? {
             (project, Showing::Article(id)) => {
                 self.article_in(project, self.projects.get(project)?.article_ix(&id)?)
             }
@@ -691,11 +677,11 @@ impl Workspace {
 
     /// The table one pane is showing, the way [`Self::board_of`] answers for a
     /// board.
-    pub fn table_of(&self, member: Option<&Member>) -> Option<&Table> {
+    pub fn table_of(&self, member: Option<&Member>, cx: &App) -> Option<&Table> {
         let Some(member) = member else {
             return self.active_table();
         };
-        match self.showing_of(member)? {
+        match self.showing_of(member, cx)? {
             (project, Showing::Table(key)) => {
                 self.table_in(project, self.projects.get(project)?.table_ix(&key)?)
             }
@@ -723,8 +709,8 @@ impl Workspace {
         open.pages.get(&open.tables.get(ix)?.key)
     }
 
-    pub fn session_in(&self, project: usize, id: u64) -> Option<&ChatSession> {
-        self.projects.get(project)?.session(id)
+    pub fn session_in<'a>(&self, project: usize, id: u64, cx: &'a App) -> Option<&'a ChatSession> {
+        self.projects.get(project)?.session(id, cx)
     }
 
     /// Put the project's selection on what a pane is showing.
@@ -766,16 +752,14 @@ impl Workspace {
     /// board draws as an empty one. `false` where the entry is not there to
     /// draw: no such project, or a board that would not load.
     fn bring_up(&mut self, project: usize, showing: &Showing, cx: &mut Context<Self>) -> bool {
-        // Read before the project is borrowed for the rest of this.
-        let text_size = self.article_font_size();
         let Some(open) = self.projects.get_mut(project) else {
             return false;
         };
         match showing {
-            Showing::Board(id) => open.board_ix(id).is_some() && open.load_board(id),
+            Showing::Board(id) => open.board_ix(id).is_some() && open.load_board(id, cx),
             Showing::Article(id) => {
                 if let Some(ix) = open.article_ix(id) {
-                    open.articles[ix].open(text_size, cx);
+                    open.articles[ix].open(cx);
                 }
                 true
             }
@@ -794,7 +778,7 @@ impl Workspace {
             .tree
             .panes()
             .iter()
-            .filter_map(|member| self.showing_of(member))
+            .filter_map(|member| self.showing_of(member, cx))
             .collect();
         for (project, showing) in showing {
             self.bring_up(project, &showing, cx);
@@ -807,7 +791,7 @@ impl Workspace {
             return;
         };
         if edit(space) {
-            store::save(space);
+            Shelf::save(space);
             cx.notify();
         }
     }

@@ -7,7 +7,7 @@ impl Render for CopyRoot {
         div()
             .key_context("Cydonia")
             .size_full()
-            .on_action(|_: &super::root::CopySelection, _, cx| {
+            .on_action(|_: &super::window::root::CopySelection, _, cx| {
                 cx.write_to_clipboard(ClipboardItem::new_string("transcript fallback".into()));
             })
             .child(self.0.clone())
