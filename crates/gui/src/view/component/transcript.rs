@@ -243,13 +243,17 @@ impl State {
         &self,
         images: Vec<bezel::gpui::ImageSource>,
         selected: usize,
+        cwd: &std::path::Path,
+        workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut bezel::gpui::App,
     ) {
         let preview = self
             .preview
             .borrow_mut()
-            .get_or_insert_with(|| cx.new(|cx| super::image_preview::Preview::new(Vec::new(), cx)))
+            .get_or_insert_with(|| {
+                cx.new(|cx| super::image_preview::Preview::new(Vec::new(), cwd, workspace, cx))
+            })
             .clone();
         preview.update(cx, |preview, cx| {
             preview.images = images;
@@ -557,7 +561,9 @@ fn prose(
                         .collect();
                     view.update(cx, |view, cx| {
                         view.state.release();
-                        view.state.open_preview(images, at, window, cx);
+                        let workspace = view.workspace.downgrade();
+                        view.state
+                            .open_preview(images, at, &cwd, workspace, window, cx);
                         cx.notify();
                     })
                     .ok();
@@ -1444,7 +1450,10 @@ fn zone(
                 .galleries
                 .borrow_mut()
                 .entry(first)
-                .or_insert_with(|| cx.new(|cx| gallery::Gallery::new(images, &chat.cwd, cx)))
+                .or_insert_with(|| {
+                    let workspace = hold.workspace.clone();
+                    cx.new(|cx| gallery::Gallery::new(images, &chat.cwd, workspace, cx))
+                })
                 .clone()
         });
         let group = SharedString::from(format!("user-message-{}-{first}", chat.id));

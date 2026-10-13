@@ -545,7 +545,8 @@ impl Tab {
                 self.queued_galleries
                     .entry((id, ix, text.clone()))
                     .or_insert_with(|| {
-                        cx.new(|cx| transcript::gallery::Gallery::new(images, &cwd, cx))
+                        let workspace = self.workspace.downgrade();
+                        cx.new(|cx| transcript::gallery::Gallery::new(images, &cwd, workspace, cx))
                     })
                     .clone()
             });

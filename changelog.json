@@ -9,7 +9,8 @@
       "Agents file notes in an article's margin with article_comment, each against a passage of its markdown and linked back to the turn that filed it",
       "Show margin notes beside their lines, or as a mark with a count that opens the note, from Comments in Settings › Appearance. A narrow pane shows marks",
       "Link a board card with @ and its handle, as in @DEV-12, shown as a chip carrying the handle",
-      "Find a card by its handle in the palette"
+      "Find a card by its handle in the palette",
+      "Right-click a picture opened full size from a session to open it, reveal it, copy it or copy its address, and open it in another app from the button beside the zoom"
     ],
     "changed": [
       "Redraw only the pane, sidebar row or embed whose entry changed, so typing in an article or a session streaming no longer redraws the whole window",
