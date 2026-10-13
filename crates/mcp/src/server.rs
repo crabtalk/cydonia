@@ -267,19 +267,20 @@ impl Server {
             .cloned()
             .unwrap_or_else(|| json!({}));
         match self.call_from(name, arguments, at, session) {
-            Ok(answer) => Ok(result(&answer.text, answer.data, false)),
-            Err(Trouble::Refused(why)) => Ok(result(&why, None, true)),
+            Ok(answer) => Ok(result(&answer.text, false)),
+            Err(Trouble::Refused(why)) => Ok(result(&why, true)),
             Err(Trouble::Invalid(why)) => Err(Error::invalid_params(why)),
         }
     }
 }
 
-/// A `tools/call` result: the text a model reads, and the shape beside it.
-fn result(text: &str, data: Option<Value>, failed: bool) -> Value {
+/// A `tools/call` result: the text a model reads.
+///
+/// No `structuredContent`: no tool declares an `outputSchema`, and Claude Code
+/// hands the model `structuredContent` in place of `content` when both are
+/// there.
+fn result(text: &str, failed: bool) -> Value {
     let mut result = json!({ "content": [{ "type": "text", "text": text }] });
-    if let Some(data) = data {
-        result["structuredContent"] = data;
-    }
     // Left out when it is false, which is what it defaults to.
     if failed {
         result["isError"] = Value::Bool(true);

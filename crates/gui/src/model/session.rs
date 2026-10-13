@@ -749,7 +749,11 @@ impl ChatSession {
                 self.queue.push_front(content);
                 return;
             };
-            session.prompt(&content, self.number, self.article.as_deref());
+            let article = self
+                .article
+                .as_deref()
+                .and_then(|id| self.store().number(Kind::Article, id).ok());
+            session.prompt(&content, self.number, article);
             self.last_activity = Instant::now();
             self.turn_started = Some(self.last_activity);
             self.tool_started.clear();

@@ -8,7 +8,7 @@ use std::path::Path;
 pub fn prompt(
     cwd: &Path,
     session: Option<u64>,
-    article: Option<&str>,
+    article: Option<u64>,
     mcp_available: bool,
     embedded_context: bool,
     mut blocks: Vec<ContentBlock>,

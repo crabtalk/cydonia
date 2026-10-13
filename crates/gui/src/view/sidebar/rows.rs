@@ -34,7 +34,7 @@ use bezel::{
         context_menu::Place as MenuPlace,
         icons::{self, Icon},
         menu::Item,
-        popover,
+        multi_select, popover,
         surface::Surfaced as _,
         tooltip::Tooltip,
         widgets::{ButtonStyle, Buttons, Content, Layout},
@@ -530,7 +530,22 @@ impl Sidebar {
                         }),
                 )
                 .when(!facts.labels.is_empty(), |el| {
-                    el.child(detail(facts.labels.join(" · "), &theme).w_full())
+                    el.child(
+                        div()
+                            .w_full()
+                            .h(px(DETAIL_LINE))
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(4.))
+                            .overflow_hidden()
+                            .children(facts.labels.iter().map(|label| {
+                                theme
+                                    .chip(label.clone(), multi_select::tint(&theme, label))
+                                    .text_style(TextStyle::Caption)
+                                    .line_height(px(DETAIL_LINE))
+                            })),
+                    )
                 }),
         };
         frame

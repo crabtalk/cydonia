@@ -91,8 +91,8 @@ fn a_numbered_session_is_named_in_its_context() {
 
 #[test]
 fn an_article_session_names_its_article() {
-    let under = prompts::session_context(Path::new("/project"), Some(43), Some("1791"), true, &[]);
-    assert!(under.contains("Current article: 1791"));
+    let under = prompts::session_context(Path::new("/project"), Some(43), Some(279), true, &[]);
+    assert!(under.contains("Current article: #279"));
     assert!(under.contains("article_comment"));
     assert!(under.contains("article_comment_reply"));
     let loose = prompts::session_context(Path::new("/project"), Some(43), None, true, &[]);

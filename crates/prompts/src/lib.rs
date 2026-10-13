@@ -40,11 +40,12 @@ directory path."
 /// Current session state alongside static instructions, refreshed each turn.
 ///
 /// `session` is the session's entry number; without one the context names no
-/// session. `article` is the id of the article the session was opened under.
+/// session. `article` is the entry number of the article the session was opened
+/// under.
 pub fn session_context(
     cwd: &Path,
     session: Option<u64>,
-    article: Option<&str>,
+    article: Option<u64>,
     mcp_available: bool,
     hidden: &[&str],
 ) -> String {
@@ -58,7 +59,7 @@ pub fn session_context(
     }
     if let Some(article) = article {
         context.push_str(&format!(
-            "Current article: {article}. This session was opened under it. Answer a question about one of its passages here, and file the answer as a note on that passage with article_comment, its first line the question. A follow-up on a note names the note's id: answer it here, and add the answer to that note with article_comment_reply.\n"
+            "Current article: #{article}. This session was opened under it. Answer a question about one of its passages here, and file the answer as a note on that passage with article_comment, its first line the question. A follow-up on a note names the note's id: answer it here, and add the answer to that note with article_comment_reply.\n"
         ));
     }
     context.push('\n');

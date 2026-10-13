@@ -1482,6 +1482,7 @@ fn zone(
                 .gap(px(4.))
                 .child(
                     bubble::bubble(&theme)
+                        .when(gallery.is_some(), |bubble| bubble.w_full())
                         .flex()
                         .flex_col()
                         .gap(px(8.))
