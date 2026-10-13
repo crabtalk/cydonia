@@ -3,14 +3,20 @@
     "version": "0.2.0",
     "date": "2026-10-12",
     "nightly": true,
-    "summary": "Article threads: ask about a passage and the answer stays with the article. Agents' notes in an article's margin, @ links to board cards, and a window that redraws only what changed.",
+    "summary": "Article threads: ask about a passage and the answer stays with the article. Cards sent to a session you pick, cards that wait on other cards, and a description on each board for the agents working it. Agents' notes in an article's margin, @ links to board cards, an extended sidebar, and a window that redraws only what changed.",
     "new": [
       "Ask about a passage of an article: select it and press Ask or Explain on the formatting bar, and the answer comes in the article's own session under the page. Article threads can be switched off in Settings › Features",
       "Agents file notes in an article's margin with article_comment, each against a passage of its markdown and linked back to the turn that filed it",
       "Show margin notes beside their lines, or as a mark with a count that opens the note, from Comments in Settings › Appearance. A narrow pane shows marks",
       "Link a board card with @ and its handle, as in @DEV-12, shown as a chip carrying the handle",
       "Find a card by its handle in the palette",
-      "Right-click a picture opened full size from a session to open it, reveal it, copy it or copy its address, and open it in another app from the button beside the zoom"
+      "Right-click a picture opened full size from a session to open it, reveal it, copy it or copy its address, and open it in another app from the button beside the zoom",
+      "Send a card, or a column's open cards, to a session from ▶: the session that last held the card, the project's recent sessions, or a new one",
+      "Make a card wait on other cards, on any board of any open project, from under its head. It shows blocked until they are gone",
+      "Give a card one label from beside its handle",
+      "Describe a board from Add description in its menu, opened in the pane's drawer. Agents read it with the board and its cards, and set it with board_describe",
+      "Show each sidebar entry's preview, labels and when it last changed with Extended sidebar in Settings › Appearance",
+      "Agents find text in the cards of a project's boards with board_search_cards"
     ],
     "changed": [
       "Redraw only the pane, sidebar row or embed whose entry changed, so typing in an article or a session streaming no longer redraws the whole window",
@@ -20,7 +26,10 @@
       "Hold an article's cover only while the article shows it, in place of the Cover memory setting",
       "Write entries to a temporary file and rename it into place, so a save cut short leaves the last one whole",
       "Ship Linux releases as .tar.xz alone: the .tar.gz kept for the updater of v0.1.20 and earlier is gone",
-      "Build on Bezel 0.2.13 from crates.io"
+      "Tag a card busy as its only status, in place of busy, blocked and done: a finished card is moved to the column that says so",
+      "Remember on a card the session that last held it: the one that made it, last sent it or last tagged it busy",
+      "Leave archived boards out of board_list, board_search and board_search_cards unless asked for",
+      "Build on Bezel 0.2.14 from crates.io"
     ],
     "fixed": [
       "Draw hover cards on an opaque background",
