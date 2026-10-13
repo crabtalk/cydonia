@@ -23,12 +23,15 @@ use crate::{
 };
 use artifact::error::{Act, Error};
 use artifact::{
-    board::Board,
+    board::{Board, Card, Column},
     project::{Project, fs},
     reference::{self, Reference, Target},
 };
 use serde_json::{Value, json};
 use std::path::Path;
+
+/// How many cards `board_read` answers per column.
+const PAGE: usize = 50;
 
 const BOARD: Arg = Arg {
     name: "board",
@@ -65,6 +68,14 @@ const CARDS: Arg = Arg {
 const COLUMN: Arg = Arg {
     name: "column",
     about: "The column: its name, or its id.",
+};
+const ONE_COLUMN: Arg = Arg {
+    name: "column",
+    about: "Read only this column, by name or id. Left out, every column is read.",
+};
+const AFTER: Arg = Arg {
+    name: "after",
+    about: "Read the cards after this one in its column, by handle (ROAD-12) or id: the next page of a column that answered more.",
 };
 /// The same argument where several are taken at once. A second const rather
 /// than a flag on [`COLUMN`], the way [`CARDS`] stands beside [`CARD`].
@@ -136,7 +147,7 @@ const KEY_NOW: Arg = Arg {
     about: "A new key for card handles, such as ROAD. Every handle on the board is read off it, so ROAD-12 becomes BACK-12. Left out, the key does not change.",
 };
 
-pub static TOOLS: [Tool; 16] = [
+pub static TOOLS: [Tool; 17] = [
     Tool {
         name: "board_add",
         description: "Create a board with a name and unique key. Returns its id, project number, key, and columns. Use board_add_column to add columns.",
@@ -182,11 +193,28 @@ pub static TOOLS: [Tool; 16] = [
     },
     Tool {
         name: "board_read",
-        description: "Read one board: its columns, and the cards under them by handle.",
-        schema: |bound| fields(bound, &[PROJECT, BOARD]),
+        description: "Read one board: its columns, and the cards under them by handle and first line, 50 to a column. A column holding more says so; read the rest with column and after. Read a card's whole text with board_read_card.",
+        schema: |bound| {
+            let mut schema = fields(bound, &[PROJECT, BOARD]);
+            super::optional(&mut schema, ONE_COLUMN, "string");
+            super::optional(&mut schema, AFTER, "string");
+            schema
+        },
         writes: false,
         deletes: false,
         call: read,
+    },
+    Tool {
+        name: "board_read_card",
+        description: "Read one card or several by handle: each one's whole text, its column, its status and the session it was dispatched to.",
+        schema: |bound| {
+            let mut schema = fields(bound, &[PROJECT, CARDS]);
+            many(&mut schema, CARDS);
+            schema
+        },
+        writes: false,
+        deletes: false,
+        call: read_card,
     },
     Tool {
         name: "board_archive",
@@ -336,7 +364,8 @@ fn add(args: Args<'_>) -> Outcome {
     }
     let key = artifact::board::key::claim(args.text(KEY)?, &project.boards(), None)?;
     let board = project.create_board(name, &key).map_err(unwritten)?;
-    Ok(Answer::said(outline(&board)).with(shape(&board)))
+    let lanes = Lane::first(&board);
+    Ok(Answer::said(outline(&board, &lanes)).with(shape(&board, &lanes)))
 }
 
 /// The name, and the key with it where one was given.
@@ -375,7 +404,8 @@ fn rename(args: Args<'_>) -> Outcome {
         Some((from, to)) => format!("{was} is now {name}, and {from}-1 is now {to}-1"),
         None => format!("{was} is now {name}"),
     };
-    Ok(Answer::said(said).with(shape(&board)))
+    let lanes = Lane::first(&board);
+    Ok(Answer::said(said).with(shape(&board, &lanes)))
 }
 
 /// One board or a run of them, put away or brought back in one write.
@@ -501,7 +531,62 @@ fn search(args: Args<'_>) -> Outcome {
 fn read(args: Args<'_>) -> Outcome {
     let project = &store(&args)?;
     let board = board(project, args.text(BOARD)?)?;
-    Ok(Answer::said(outline(&board)).with(shape(&board)))
+    let after = match args.maybe(AFTER) {
+        Some(needle) => Some(card_on(&board, needle)?),
+        None => None,
+    };
+    let column = match (args.maybe(ONE_COLUMN), &after) {
+        (Some(needle), _) => Some(column(&board, needle)?),
+        (None, Some(card)) => board.column_of(card).map(|column| column.id.clone()),
+        (None, None) => None,
+    };
+    let lanes = match &column {
+        Some(id) => vec![Lane::of(&board, id, after.as_deref())?],
+        None => Lane::first(&board),
+    };
+    Ok(Answer::said(outline(&board, &lanes)).with(shape(&board, &lanes)))
+}
+
+/// Board `id` of `project` as `board_read` answers it with no column named.
+pub(crate) fn listed(project: &fs::Project, id: &str) -> Outcome {
+    let board = board(project, id)?;
+    let lanes = Lane::first(&board);
+    Ok(Answer::said(outline(&board, &lanes)).with(shape(&board, &lanes)))
+}
+
+fn read_card(args: Args<'_>) -> Outcome {
+    let project = &store(&args)?;
+    cards(project, &args.list(CARDS)?)
+}
+
+/// The cards `needles` name in `project`, whole.
+pub(crate) fn cards(project: &fs::Project, needles: &[&str]) -> Outcome {
+    let mut said: Vec<String> = Vec::new();
+    let mut data: Vec<Value> = Vec::new();
+    for needle in needles {
+        let (board, id) = locate(project, needle)?;
+        let card = board.card(&id).expect("located on this board");
+        let column = board.column_of(&id).expect("located in a column");
+        let handle = named(&board, &id);
+        let mut head = format!("{handle} · {}", column.name);
+        if let Some(status) = card.status {
+            head.push_str(&format!(" · {}", status.key()));
+        }
+        if card.session.is_some() {
+            head.push_str(" · dispatched");
+        }
+        said.push(format!("{head}\n\n{}", card.text));
+        data.push(json!({
+            "id": card.id,
+            "handle": board.handle_of(card),
+            "board": { "id": board.id, "key": board.key, "name": board.name },
+            "column": { "id": column.id, "name": column.name },
+            "text": card.text,
+            "status": card.status,
+            "session": card.session,
+        }));
+    }
+    Ok(Answer::said(said.join("\n\n")).with(json!({ "cards": data })))
 }
 
 /// One card or a run of them, into one lane, in the order they were given.
@@ -951,6 +1036,20 @@ fn locate(project: &fs::Project, needle: &str) -> Result<(Board, String), Troubl
     )))
 }
 
+/// The id of the card on `board` a needle names, by handle or id.
+fn card_on(board: &Board, needle: &str) -> Result<String, Trouble> {
+    let found = match reference::parse(needle) {
+        Some(Reference {
+            target: Target::Card { key, handle },
+            ..
+        }) if board.keyed(key) => board.card_at(handle),
+        _ => board.card(needle),
+    };
+    found
+        .map(|card| card.id.clone())
+        .ok_or_else(|| Trouble::Refused(format!("no {needle} on {}", board.label())))
+}
+
 /// Located cards, one entry a board. Two cards on one board arrive as two
 /// reads of it, and saving each read in turn writes back one that predates the
 /// other's edit.
@@ -1009,8 +1108,55 @@ fn same(held: &str, needle: &str) -> bool {
 
 // ── rendering ────────────────────────────────────────────────────
 
+/// One page of a column's cards: at most [`PAGE`] of them, from the start or
+/// after one card.
+struct Lane<'a> {
+    column: &'a Column,
+    after: Option<&'a Card>,
+    cards: &'a [Card],
+    /// How many of the column's cards come after this page.
+    more: usize,
+}
+
+impl<'a> Lane<'a> {
+    /// The first page of every column.
+    fn first(board: &'a Board) -> Vec<Self> {
+        board
+            .columns
+            .iter()
+            .map(|column| Self::page(column, 0))
+            .collect()
+    }
+
+    /// The page of `column` after the card `after`, or its first.
+    fn of(board: &'a Board, column: &str, after: Option<&str>) -> Result<Self, Trouble> {
+        let column = board.column(column).expect("resolved on this board");
+        let Some(id) = after else {
+            return Ok(Self::page(column, 0));
+        };
+        let at = column
+            .cards
+            .iter()
+            .position(|card| card.id == id)
+            .ok_or_else(|| {
+                Trouble::Refused(format!("{} is not in {}", named(board, id), column.name))
+            })?;
+        Ok(Self::page(column, at + 1))
+    }
+
+    fn page(column: &'a Column, start: usize) -> Self {
+        let end = (start + PAGE).min(column.cards.len());
+        Self {
+            column,
+            after: start.checked_sub(1).map(|at| &column.cards[at]),
+            cards: &column.cards[start..end],
+            more: column.cards.len() - end,
+        }
+    }
+}
+
 /// One board, as a person would have written it down.
-fn outline(board: &Board) -> String {
+fn outline(board: &Board, lanes: &[Lane<'_>]) -> String {
     let mut out = match board.key.is_empty() {
         true => board.label().to_owned(),
         false => format!("{} ({})", board.label(), board.key),
@@ -1023,20 +1169,22 @@ fn outline(board: &Board) -> String {
         out.push_str("\n\nno columns yet");
         return out;
     }
-    let width = board
-        .columns
+    let width = lanes
         .iter()
-        .flat_map(|column| &column.cards)
+        .flat_map(|lane| lane.cards)
         .filter_map(|card| board.handle_of(card))
         .map(|handle| handle.chars().count())
         .max()
         .unwrap_or(0);
-    for column in &board.columns {
-        out.push_str(&format!("\n\n{}", column.name));
-        if column.cards.is_empty() {
+    for lane in lanes {
+        out.push_str(&format!("\n\n{}", lane.column.name));
+        if let Some(card) = lane.after {
+            out.push_str(&format!(", after {}", named(board, &card.id)));
+        }
+        if lane.column.cards.is_empty() {
             out.push_str("\n  (empty)");
         }
-        for card in &column.cards {
+        for card in lane.cards {
             let handle = board.handle_of(card).unwrap_or_else(|| card.id.clone());
             out.push_str(&format!("\n  {handle:<width$}  {}", line(&card.text)));
             if let Some(status) = card.status {
@@ -1047,6 +1195,14 @@ fn outline(board: &Board) -> String {
             if card.session.is_some() {
                 out.push_str("  (dispatched)");
             }
+        }
+        if let Some(last) = lane.cards.last().filter(|_| lane.more > 0) {
+            out.push_str(&format!(
+                "\n  … {} more — read them with column {} and after {}",
+                lane.more,
+                lane.column.name,
+                named(board, &last.id)
+            ));
         }
     }
     out
@@ -1076,37 +1232,38 @@ fn listing(boards: &[Board]) -> String {
 }
 
 /// The same board as fields, for a client that renders rather than reads.
-fn shape(board: &Board) -> Value {
+fn shape(board: &Board, lanes: &[Lane<'_>]) -> Value {
     json!({
         "id": board.id,
         "number": board.number,
         "key": board.key,
         "name": board.name,
         "archived": board.archived,
-        "columns": board
-            .columns
+        "columns": lanes
             .iter()
-            .map(|column| json!({
-                "id": column.id,
-                "name": column.name,
-                "cards": column
+            .map(|lane| json!({
+                "id": lane.column.id,
+                "name": lane.column.name,
+                "count": lane.column.cards.len(),
+                "after": lane.after.map(|card| named(board, &card.id)),
+                "cards": lane
                     .cards
                     .iter()
                     .map(|card| json!({
                         "id": card.id,
                         "handle": board.handle_of(card),
-                        "text": card.text,
+                        "title": line(&card.text),
                         "session": card.session,
                         "status": card.status,
                     }))
                     .collect::<Vec<_>>(),
+                "more": lane.more,
             }))
             .collect::<Vec<_>>(),
     })
 }
 
-/// A card is one line in an outline however many it has. The whole of it is in
-/// `structuredContent`, for the caller that wants the rest.
+/// A card's first line.
 fn line(text: &str) -> &str {
     text.lines().next().unwrap_or("")
 }

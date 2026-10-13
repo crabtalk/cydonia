@@ -48,7 +48,7 @@ pub static TOOLS: [Tool; 5] = [
     },
     Tool {
         name: "project_read_entry",
-        description: "Read a project entry by its numeric reference (#12). An article's part reads that part alone: #12:5-7 its lines, #12#setup the section under a heading. Tables return up to 200 rows with the total count.",
+        description: "Read a project entry by its numeric reference (#12). An article's part reads that part alone: #12:5-7 its lines, #12#setup the section under a heading. Tables return up to 200 rows with the total count. A card's link (ROAD-12, cydonia://foo#ROAD-12) reads the card, as board_read_card does.",
         schema: |bound| fields(bound, &[PROJECT, ENTRY]),
         writes: false,
         deletes: false,
@@ -273,10 +273,19 @@ fn label_entry(args: Args<'_>) -> Outcome {
 
 fn read_entry(args: Args<'_>) -> Outcome {
     let named = args.text(ENTRY)?;
+    if let Some(reference) = artifact::reference::parse(named)
+        && let artifact::reference::Target::Card { .. } = reference.target
+    {
+        let project = super::project_of(&args, &reference)?;
+        return super::board::cards(&artifact::project::fs::Project::new(project), &[named]);
+    }
     let (project, number, within) = entry_of(&args, named)?;
     let project = project.as_path();
     let entry = super::entry_numbered(project, number, named)?;
     artifact::reference::fits(named, entry.kind, within)?;
+    if entry.kind == Kind::Board {
+        return super::board::listed(&artifact::project::fs::Project::new(project), &entry.id);
+    }
     if let (Kind::Session, Some(Within::Span(_))) = (entry.kind, within) {
         return Err(Trouble::Invalid(format!(
             "{named} names turns — read them with session_read"

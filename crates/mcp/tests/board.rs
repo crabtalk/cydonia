@@ -4,7 +4,7 @@
 mod common;
 
 use artifact::project::Project as _;
-use common::{Rail, Scratch, invalid, refused, said};
+use common::{Rail, Scratch, invalid, refused, said, structured};
 use cydonia_mcp::proto::Request;
 use serde_json::json;
 
@@ -316,7 +316,12 @@ fn a_read_only_server_offers_no_way_to_write() {
         .collect();
     assert_eq!(
         names,
-        ["board_list", "board_search", "board_read"],
+        [
+            "board_list",
+            "board_search",
+            "board_read",
+            "board_read_card"
+        ],
         "{names:?}"
     );
 
@@ -897,4 +902,107 @@ fn a_board_is_found_across_open_projects() {
         "{text}"
     );
     assert!(lines[2].starts_with("no board ZQC"), "{text}");
+}
+
+/// A board read answers each card's first line, 50 to a column, and says how
+/// to page through the rest.
+#[test]
+fn a_board_read_pages_a_long_column() {
+    let scratch = Scratch::new("paged");
+    scratch
+        .store()
+        .create_board("Roadmap", "ROAD")
+        .expect("a board");
+    let server = scratch.server();
+    let at = json!({ "project": scratch.path(), "board": "ROAD" });
+    said(server.call(
+        "board_add_column",
+        json!({ "project": scratch.path(), "board": "ROAD", "name": "Done" }),
+        None,
+    ));
+    let texts: Vec<String> = (1..=60).map(|n| format!("card {n}\nits body")).collect();
+    said(server.call(
+        "board_add_card",
+        json!({ "project": scratch.path(), "board": "ROAD", "column": "Done", "text": texts }),
+        None,
+    ));
+
+    let text = said(server.call("board_read", at.clone(), None));
+    assert!(text.contains("ROAD-50  card 50"), "{text}");
+    assert!(!text.contains("ROAD-51"), "{text}");
+    assert!(!text.contains("its body"), "{text}");
+    assert!(
+        text.contains("… 10 more — read them with column DONE and after ROAD-50"),
+        "{text}"
+    );
+    let data = structured(server.call("board_read", at, None));
+    let done = &data["columns"][0];
+    assert_eq!(done["count"], json!(60));
+    assert_eq!(done["more"], json!(10));
+    assert_eq!(done["cards"].as_array().expect("cards").len(), 50);
+    assert_eq!(done["cards"][0]["title"], json!("card 1"));
+    assert!(done["cards"][0].get("text").is_none(), "{done}");
+
+    let entry = said(server.call(
+        "project_read_entry",
+        json!({ "project": scratch.path(), "entry": "#1" }),
+        None,
+    ));
+    assert_eq!(entry, text);
+
+    let rest = said(server.call(
+        "board_read",
+        json!({ "project": scratch.path(), "board": "ROAD", "after": "ROAD-50" }),
+        None,
+    ));
+    assert!(rest.contains("DONE, after ROAD-50"), "{rest}");
+    assert!(rest.contains("ROAD-60  card 60"), "{rest}");
+    assert!(!rest.contains("ROAD-50  "), "{rest}");
+    assert!(!rest.contains("more"), "{rest}");
+}
+
+/// A card's whole text is read by its handle, from board_read_card or from
+/// its link.
+#[test]
+fn a_card_is_read_whole_by_its_handle() {
+    let scratch = Scratch::new("read-card");
+    Rail::also(scratch.path());
+    scratch
+        .store()
+        .create_board("Roadmap", "ROAD")
+        .expect("a board");
+    let server = scratch.server();
+    said(server.call(
+        "board_add_column",
+        json!({ "project": scratch.path(), "board": "ROAD", "name": "Todo" }),
+        None,
+    ));
+    said(server.call(
+        "board_add_card",
+        json!({ "project": scratch.path(), "board": "ROAD", "column": "Todo", "text": ["Wire it\n\nthe whole body", "Ship it"] }),
+        None,
+    ));
+
+    let both = json!({ "project": scratch.path(), "card": ["ROAD-1", "ROAD-2"] });
+    let text = said(server.call("board_read_card", both.clone(), None));
+    assert!(
+        text.starts_with("ROAD-1 · TODO\n\nWire it\n\nthe whole body"),
+        "{text}"
+    );
+    assert!(text.contains("ROAD-2 · TODO\n\nShip it"), "{text}");
+    let data = structured(server.call("board_read_card", both, None));
+    assert_eq!(data["cards"][0]["column"]["name"], json!("TODO"));
+    assert_eq!(data["cards"][0]["text"], json!("Wire it\n\nthe whole body"));
+
+    let name = scratch
+        .path()
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("a name");
+    let linked = said(server.call(
+        "project_read_entry",
+        json!({ "project": scratch.path(), "entry": format!("cydonia://{name}#ROAD-1") }),
+        None,
+    ));
+    assert!(linked.contains("the whole body"), "{linked}");
 }
