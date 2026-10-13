@@ -99,7 +99,7 @@ impl Section {
         Self::Shortcuts,
         Self::Statistics,
         Self::Features,
-        Self::Editor,
+        Self::Documents,
         Self::Browser,
         Self::Agents,
         Self::Mcp,
@@ -140,7 +140,7 @@ impl Section {
     fn group(self) -> Option<&'static str> {
         match self {
             Self::General | Self::Appearance | Self::Shortcuts | Self::Statistics => None,
-            Self::Editor | Self::Features | Self::Browser => Some("Workspace"),
+            Self::Documents | Self::Features | Self::Browser => Some("Workspace"),
             Self::Agents | Self::Mcp => Some("Agents"),
             Self::Performance | Self::Backups | Self::Developer => Some("Advanced"),
         }
@@ -150,7 +150,7 @@ impl Section {
         match self {
             Self::General => "General",
             Self::Appearance => "Appearance",
-            Self::Editor => "Editor",
+            Self::Documents => "Documents",
             Self::Shortcuts => "Shortcuts",
             Self::Statistics => "Statistics",
             Self::Features => "Features",
@@ -183,7 +183,7 @@ impl Section {
             Self::General
             | Self::Appearance
             | Self::Statistics
-            | Self::Editor
+            | Self::Documents
             | Self::Agents
             | Self::Performance => None,
         }
@@ -194,7 +194,7 @@ impl Section {
             // The gear macOS itself puts on General.
             Self::General => icons::account::Settings,
             Self::Appearance => icons::weather::Sun,
-            Self::Editor => icons::text::SquarePen,
+            Self::Documents => icons::files::FileText,
             Self::Shortcuts => icons::development::Command,
             Self::Statistics => icons::charts::ChartColumn,
             Self::Features => icons::account::SlidersHorizontal,
@@ -707,7 +707,7 @@ impl SettingsWindow {
             Section::Statistics => {}
             Section::General
             | Section::Appearance
-            | Section::Editor
+            | Section::Documents
             | Section::Shortcuts
             | Section::Features
             | Section::Mcp
@@ -868,7 +868,7 @@ impl Render for SettingsWindow {
                             .child(match self.section {
                                 Section::General => self.general_body(cx),
                                 Section::Appearance => self.appearance_body(cx),
-                                Section::Editor => self.editor_body(cx),
+                                Section::Documents => self.documents_body(cx),
                                 Section::Shortcuts => self.shortcuts_body(cx),
                                 #[cfg(feature = "desktop")]
                                 Section::Statistics => self.statistics_body(cx),

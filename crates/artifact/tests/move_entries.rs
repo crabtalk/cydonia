@@ -154,19 +154,18 @@ fn a_card_takes_the_handle_of_the_board_it_lands_on() {
     assert_eq!(to.columns[0].cards[0].text, "ship it");
 }
 
-/// The session stays behind: it runs where its board was, and a card that has
-/// moved is one to run again.
+/// The session that held it still holds it on the other board.
 #[test]
-fn a_card_leaves_its_session_behind() {
+fn a_card_keeps_its_session_on_another_board() {
     let mut from = board("Roadmap", "ROAD", &["TODO"]);
     let mut to = board("Plans", "PLAN", &["TODO"]);
     let todo = from.columns[0].id.clone();
     let card = from.add_card(&todo, "ship it".into()).unwrap().id.clone();
-    assert!(from.dispatch_card(&card, "session-1".into()));
+    assert!(from.hold_card(&card, "session-1".into()));
 
     board::carry_card(&mut from, &mut to, &card, None).unwrap();
 
-    assert_eq!(to.columns[0].cards[0].session, None);
+    assert_eq!(to.columns[0].cards[0].session.as_deref(), Some("session-1"));
 }
 
 /// A named lane wins over the one the card came out of.

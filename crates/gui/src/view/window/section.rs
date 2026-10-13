@@ -11,7 +11,7 @@ pub enum Section {
     // Before Agents, because it is what decides whether agents matter: with
     // sessions off, nothing installed under Agents can be launched.
     Features,
-    Editor,
+    Documents,
     // With Features, which switches it on.
     Browser,
     Agents,

@@ -3,7 +3,11 @@
 mod common;
 
 use common::Scratch;
-use cydonia_artifact::{article::properties::Properties, kind::Kind, project::Project as _};
+use cydonia_artifact::{
+    article::properties::{CommentDisplay, Properties},
+    kind::Kind,
+    project::Project as _,
+};
 use std::fs;
 
 #[test]
@@ -34,6 +38,7 @@ fn properties_save_keeps_unknown_keys() {
         title: "Rate limiting plan".into(),
         archived: true,
         full_width: Some(false),
+        comments: Some(CommentDisplay::Minimal),
         labels: vec!["q3".into(), "research".into()],
     };
     store.save_properties(&made.id, &wanted).unwrap();
@@ -120,14 +125,15 @@ fn place_is_an_articles_directory_and_a_boards_directory() {
 }
 
 #[test]
-fn files_is_an_articles_folder_and_a_cards_folder() {
+fn files_is_an_articles_a_boards_and_a_cards_folder() {
     let scratch = Scratch::new("project-files");
     let store = scratch.store();
     let cydonia = scratch.path().join(".cydonia");
     assert!(store.files(&cydonia.join("articles/1790089015001")));
     assert!(store.files(&cydonia.join("boards/1790266971001/cards/1790252301417")));
+    assert!(store.files(&cydonia.join("boards/1790266971001")));
     assert!(!store.files(&cydonia.join("articles")));
-    assert!(!store.files(&cydonia.join("boards/1790266971001")));
+    assert!(!store.files(&cydonia.join("boards/1790266971001/cards")));
     assert!(!store.files(&cydonia.join("worktrees/fix")));
     assert!(!store.files(scratch.path()));
 }

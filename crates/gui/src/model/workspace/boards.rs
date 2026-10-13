@@ -12,11 +12,12 @@ use bezel::gpui::Entity;
 use std::collections::HashSet;
 
 impl Workspace {
-    /// Save a draft against the latest disk contents, preserving other card fields.
-    pub fn save_card_draft(
+    /// Save a draft of `page` against the latest disk contents, preserving
+    /// the rest of the board.
+    pub fn save_page_draft(
         &mut self,
         member: &artifact::space::Member,
-        card: &str,
+        page: &board::Page,
         base: &str,
         text: &str,
         cx: &mut Context<Self>,
@@ -33,7 +34,7 @@ impl Workspace {
             let mut board = store
                 .board(&member.id)
                 .ok_or("The board could not be read.")?;
-            if let Err(error) = apply_card_draft(&mut board, card, base, text) {
+            if let Err(error) = apply_page_draft(&mut board, page, base, text) {
                 if let Some(held) = open.boards.iter().find(|held| held.id == member.id) {
                     held.board.update(cx, |held, cx| {
                         *held = board;
@@ -50,8 +51,14 @@ impl Workspace {
         let saved = store
             .board(&member.id)
             .ok_or("The saved board could not be read.")?;
-        if saved.card(card).is_none_or(|card| card.text != text) {
-            return Err("The card could not be saved. Your draft is retained.".into());
+        if saved.page_text(page) != Some(text) {
+            return Err(match page {
+                board::Page::Card(_) => "The card could not be saved. Your draft is retained.",
+                board::Page::Description => {
+                    "The description could not be saved. Your draft is retained."
+                }
+            }
+            .into());
         }
         if let Some(held) = open.boards.iter().find(|held| held.id == member.id) {
             held.board.update(cx, |held, cx| {
@@ -136,10 +143,6 @@ impl Workspace {
             return;
         };
         if ix >= open.boards.len() {
-            return;
-        }
-        let id = open.boards[ix].id.clone();
-        if !open.load_board(&id, cx) {
             return;
         }
         open.board = Some(ix);
@@ -370,9 +373,6 @@ impl Workspace {
         mut edit: impl FnMut(&mut Board) -> T,
     ) -> Option<T> {
         for open in &mut self.projects {
-            if !open.load_board(id, cx) {
-                return None;
-            }
             let store = open.store();
             let Some(held) = open.boards.iter().find(|held| held.id == id) else {
                 continue;
@@ -424,10 +424,8 @@ impl Workspace {
     /// Carry a card to another board, which may be in another project.
     ///
     /// Answers what it is called where it landed — `PLAN-3` — and nothing where
-    /// it did not move. It arrives under a new handle with no session on it;
-    /// see [`artifact::board::carry_card`].
-    ///
-    /// A card whose session is still open does not move.
+    /// it did not move. It arrives under a new handle; see
+    /// [`artifact::board::carry_card`].
     pub fn carry_card(
         &mut self,
         from: (usize, usize),
@@ -439,20 +437,8 @@ impl Workspace {
         if from == to {
             return None;
         }
-        let live = self
-            .board_in(from.0, from.1, cx)
-            .and_then(|board| board.card(card))
-            .and_then(|card| card.session.clone())
-            .is_some_and(|record| self.session_by_record(&record, cx).is_some());
-        if live {
-            return None;
-        }
-        // Both boards in hand before either is touched: a board listed in the
-        // sidebar may not have been read off the disk yet, and moving a card
-        // onto the half of one that is in memory would write the other half
-        // away.
-        let mut source = self.loaded_board(from, cx)?;
-        let mut landing = self.loaded_board(to, cx)?;
+        let mut source = self.board_copy(from, cx)?;
+        let mut landing = self.board_copy(to, cx)?;
         let mut landed = artifact::board::carry_card(&mut source, &mut landing, card, column)?;
         // The landing is written first: refused there, nothing has moved, and
         // the carry is made again over both boards as their backends hold
@@ -491,12 +477,9 @@ impl Workspace {
         Some(landed.said)
     }
 
-    /// A board by where it sits, read off the disk if it has not been yet.
-    fn loaded_board(&mut self, (project, ix): (usize, usize), cx: &mut App) -> Option<Board> {
-        let open = self.projects.get_mut(project)?;
-        let id = open.boards.get(ix)?.id.clone();
-        open.load_board(&id, cx).then_some(())?;
-        open.board(ix, cx).cloned()
+    /// A copy of the board at `(project, ix)`.
+    fn board_copy(&self, (project, ix): (usize, usize), cx: &App) -> Option<Board> {
+        self.projects.get(project)?.board(ix, cx).cloned()
     }
 
     /// Change one board, named by the board, and write it back.
@@ -517,16 +500,25 @@ impl Workspace {
     }
 }
 
-fn apply_card_draft(board: &mut Board, id: &str, base: &str, text: &str) -> Result<(), String> {
-    let card = board
-        .card(id)
+fn apply_page_draft(
+    board: &mut Board,
+    page: &board::Page,
+    base: &str,
+    text: &str,
+) -> Result<(), String> {
+    let held = board
+        .page_text(page)
         .ok_or("The card was removed or moved. Your draft is retained.")?;
-    if text.trim().is_empty() {
+    if matches!(page, board::Page::Card(_)) && text.trim().is_empty() {
         return Err("A card needs some text. Use the card menu to delete it.".into());
     }
-    if card.text != base && card.text != text {
-        return Err("The card changed while you were editing. Copy your draft before cancelling to reload it.".into());
+    if held != base && held != text {
+        return Err(match page {
+            board::Page::Card(_) => "The card changed while you were editing. Copy your draft before cancelling to reload it.",
+            board::Page::Description => "The description changed while you were editing. Copy your draft before cancelling to reload it.",
+        }
+        .into());
     }
-    board.rewrite_card(id, text);
+    board.rewrite_page(page, text);
     Ok(())
 }

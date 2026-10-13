@@ -103,3 +103,44 @@ fn a_file_edited_elsewhere_is_refound_on_read() {
     assert_eq!(quoted(new, &read), "beta");
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn a_comment_keeps_its_thread_through_the_file() {
+    use cydonia_artifact::article::comments::{Author, Reply, parse, serialize};
+    let mut held = held("one two three", "two");
+    let id = held.comments[0].id;
+    held.get_mut(id).unwrap().replies.push(Reply {
+        from: Author::Reader,
+        text: "And three?".into(),
+        turn: None,
+    });
+    held.get_mut(id).unwrap().replies.push(Reply {
+        from: Author::Agent,
+        text: "Three follows two.".into(),
+        turn: Some("cydonia://p#4:2".into()),
+    });
+    let text = serialize(&held);
+    assert!(text.contains("[[comment.reply]]"), "{text}");
+    assert_eq!(parse(&text), held);
+}
+
+#[test]
+fn replies_filed_since_are_taken_and_none_are_lost() {
+    use cydonia_artifact::article::comments::{Author, Reply};
+    let reply = |text: &str| Reply {
+        from: Author::Agent,
+        text: text.into(),
+        turn: None,
+    };
+    let mut mine = held("one two three", "two");
+    let mut file = mine.clone();
+    file.comments[0].replies.push(reply("filed since"));
+    mine.take_replies(&file);
+    assert_eq!(mine.comments[0].replies, vec![reply("filed since")]);
+
+    // A thread that went its own way here is not overwritten.
+    let mut diverged = held("one two three", "two");
+    diverged.comments[0].replies.push(reply("mine"));
+    diverged.take_replies(&file);
+    assert_eq!(diverged.comments[0].replies, vec![reply("mine")]);
+}

@@ -1,7 +1,7 @@
 use super::*;
 use artifact::project::fs;
 #[gpui::test]
-fn archived_boards_keep_metadata_and_load_cards_only_on_demand(cx: &mut gpui::TestAppContext) {
+fn archived_boards_keep_their_cards(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         let path =
             std::env::temp_dir().join(format!("cydonia-archive-board-{}", std::process::id()));
@@ -12,14 +12,8 @@ fn archived_boards_keep_metadata_and_load_cards_only_on_demand(cx: &mut gpui::Te
         board.add_card(&column, "Preserve this card".into());
         board.archived = true;
         store.save_board(&mut board).unwrap();
-        let mut project = Project::new(path.clone(), cx);
-        assert!(project.boards[0].board.read(cx).columns.is_empty());
-        assert_eq!(project.boards[0].board.read(cx).name, "Archive");
-        assert!(project.load_board(&board.id, cx));
+        let project = Project::new(path.clone(), cx);
         assert_eq!(project.boards[0].board.read(cx).columns[0].cards.len(), 1);
-        project.unload_boards(None, cx);
-        assert!(project.boards[0].board.read(cx).columns.is_empty());
-        assert_eq!(store.board(&board.id).unwrap().columns[0].cards.len(), 1);
         std::fs::remove_dir_all(path).unwrap();
     });
 }

@@ -1,8 +1,10 @@
 //! The board pane: lanes of cards or a list of them, and the one field that
 //! writes them.
 
+mod blockers;
 pub mod embed;
 pub mod info;
+mod send;
 
 use crate::model::language::Grammars as _;
 use crate::view::kit::menu;
@@ -11,6 +13,7 @@ use crate::{
     view::{
         component::transcript,
         kit::{
+            labels::{LabelHost, Labels, Target as LabelTarget},
             rename::{NameEvent, NameField},
             text::CardTitle,
             watch::Watch,
@@ -24,7 +27,7 @@ use crate::{
 };
 use artifact::kind::Kind;
 use artifact::{
-    board::{Card, Status, View},
+    board::{Card, Page, View},
     space::Member,
 };
 use bezel::agent::orbs::engine::Frame;
@@ -42,9 +45,10 @@ use bezel::{
         icons,
         input::{self, Shape, TextField},
         menu::Item,
+        multi_select,
         scroll::{self, Axes, FollowState, Scroller},
         tooltip::Tooltip,
-        widgets::Buttons,
+        widgets::{Buttons, Content as _},
     },
 };
 use editor::{Editor, EditorEvent};
@@ -52,7 +56,7 @@ use markdown::AppExt as _;
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
-    path::PathBuf,
+    path::{Path, PathBuf},
     rc::Rc,
 };
 
@@ -105,7 +109,7 @@ const CARD_EDITOR_MAX_ROWS: usize = 512;
 /// as a heading, in a lane 272 wide rather than on a page.
 const CARD_TEXT_SCALE: f32 = TextStyle::Callout.size() / TextStyle::Body.size();
 
-const STATUS_CHIP_HEIGHT: f32 = 16.;
+const BLOCKED_CHIP_HEIGHT: f32 = 16.;
 
 /// When this window opened, for the one orb with nothing better to count from
 /// — see [`Cydonia::card_working`].
@@ -184,38 +188,52 @@ pub fn field(cx: &mut App) -> Entity<TextField> {
     })
 }
 
-/// The statuses a chip is drawn for, which is the ones with no motion of their
-/// own. `busy` is the orb instead — see the `running` a card is built with.
-fn resting(status: Option<Status>) -> Option<Status> {
-    status.filter(|status| *status != Status::Busy)
+/// What a card says about itself beside its handle: its label, and that it
+/// waits on other cards.
+#[derive(Clone, Default)]
+struct Tags {
+    label: Option<String>,
+    blocked: bool,
 }
 
-/// How the work on a card is going, said in a word — see
-/// [`artifact::board::Status`]. Written by whoever is doing the work, which is
-/// usually an agent through `board_set_card_status`.
-fn status_chip(status: Status, theme: &Theme) -> AnyElement {
-    let tint = match status {
-        // Never drawn — see [`resting`]. Named so the match stays total if the
-        // set grows.
-        Status::Busy => theme.accent,
-        Status::Blocked => theme.danger,
-        Status::Done => theme.text_faint,
-    };
+impl Tags {
+    /// `card`'s, on a board of the project at `home`. Blocked while any card
+    /// it waits on is still there.
+    fn of(card: &Card, home: &Path, workspace: &Workspace, cx: &App) -> Self {
+        Self {
+            label: card.label.clone(),
+            blocked: workspace.blocking_boards(home, card, cx).next().is_some(),
+        }
+    }
+
+    fn chips(&self, theme: &Theme) -> Vec<AnyElement> {
+        let label = self.label.as_ref().map(|label| {
+            theme
+                .chip(label.clone(), multi_select::tint(theme, label))
+                .into_any_element()
+        });
+        let blocked = self.blocked.then(|| blocked_chip(theme));
+        label.into_iter().chain(blocked).collect()
+    }
+}
+
+/// A card waiting on others, said in a word.
+fn blocked_chip(theme: &Theme) -> AnyElement {
     // A fixed height with the text box held to the glyphs, so the word sits in
     // the middle of the border and the chip on the row's centre line.
     div()
         .flex_none()
-        .h(px(STATUS_CHIP_HEIGHT))
+        .h(px(BLOCKED_CHIP_HEIGHT))
         .flex()
         .items_center()
         .px(px(6.))
         .rounded_full()
         .border_1()
-        .border_color(tint)
+        .border_color(theme.danger)
         .text_style(TextStyle::Caption)
         .line_height(gpui::relative(1.))
-        .text_color(tint)
-        .child(status.key())
+        .text_color(theme.danger)
+        .child("blocked")
         .into_any_element()
 }
 
@@ -317,21 +335,21 @@ pub enum Editing {
     Card(String),
 }
 
-/// The card of a board view open in its pane's drawer. Set exactly while the
-/// pane's drawer peeks the view — see [`Peek::Card`].
-struct OpenCard {
-    card: String,
-    /// The drawer's scroll, which the card's editor scrolls by.
+/// The card or the description of a board view open in its pane's drawer.
+/// Set exactly while the pane's drawer peeks the view — see [`Peek::Page`].
+struct OpenPage {
+    page: Page,
+    /// The drawer's scroll, which the page's editor scrolls by.
     scroll: ScrollHandle,
     adjustments: Rc<RefCell<HashMap<String, LaneAdjustment>>>,
 }
 
-/// The editor over the card open in a pane's drawer, saved as it is typed in.
+/// The editor over the page open in a pane's drawer, saved as it is typed in.
 /// Kept past the drawer only while its last save failed, so closing and
-/// switching cards never discard text.
-pub struct CardDraft {
-    card: String,
-    /// The card's text as last read from the board or written to it — what a
+/// switching pages never discard text.
+pub struct PageDraft {
+    page: Page,
+    /// The page's text as last read from the board or written to it — what a
     /// save checks the board against.
     base: String,
     /// The editor's source when `base` was taken. Differs from `base` where
@@ -357,7 +375,7 @@ impl LaneAdjustment {
     }
 }
 
-impl Drop for OpenCard {
+impl Drop for OpenPage {
     fn drop(&mut self) {
         for adjustment in self.adjustments.borrow().values() {
             adjustment.restore();
@@ -768,6 +786,8 @@ enum BoardMenu {
     Lane(String),
     /// A card's `···`, by card id.
     Card(String),
+    /// A card's or a lane's ▶.
+    Send(send::Sent),
 }
 
 /// Where the pane's drawer stands around a board view, read from the window
@@ -836,18 +856,21 @@ pub(crate) struct BoardView {
     renaming: Option<String>,
     name_field: Entity<NameField>,
     menu: ContextMenu<Self, BoardMenu>,
-    opened: Option<OpenCard>,
-    drafts: Vec<CardDraft>,
+    opened: Option<OpenPage>,
+    drafts: Vec<PageDraft>,
     /// What the pane's find narrows the board by.
     find: Find,
     /// The pane's drawer as of the last render.
     shown: PaneState,
     watch: Watch,
+    /// The open card's label picker.
+    labels: Labels,
+    /// The open card's blocker picker.
+    blockers: blockers::Blockers,
     _name: gpui::Subscription,
 }
 
-/// The session a card was dispatched to, while it is still open — a card
-/// whose session has been closed is a card you can run again.
+/// The session that last held a card, while it is still open.
 fn card_session<'a>(card: &Card, workspace: &'a Workspace, cx: &'a App) -> Option<&'a ChatSession> {
     let record = card.session.as_deref()?;
     workspace.session_by_record(record, cx)
@@ -862,7 +885,7 @@ fn card_session<'a>(card: &Card, workspace: &'a Workspace, cx: &'a App) -> Optio
 fn card_working(card: &Card, chat: Option<&ChatSession>, marks: &Marks) -> Option<Working> {
     let session = chat.map(|chat| (chat.id, chat.label()));
     let number = chat.and_then(|chat| chat.number);
-    if card.status != Some(Status::Busy) {
+    if !card.busy {
         return chat.map(|chat| Working {
             busy: false,
             number,
@@ -952,13 +975,13 @@ fn lane_cards(
         .collect();
     Some((column.name.clone(), column.cards.len(), cards))
 }
-/// What a list row says about its card: its handle, its title, its status
-/// and its run.
+/// What a list row says about its card: its handle, its title, its tags and
+/// its run.
 #[allow(clippy::too_many_arguments)]
 fn list_row_cells<V: 'static>(
     handle: Option<String>,
     text: &str,
-    status: Option<Status>,
+    tags: &Tags,
     working: Option<Working>,
     docs: &Docs,
     root: &WeakEntity<Cydonia>,
@@ -987,7 +1010,7 @@ fn list_row_cells<V: 'static>(
             .child(docs.title(text))
             .into_any_element(),
     ];
-    cells.extend(resting(status).map(|status| status_chip(status, &theme)));
+    cells.extend(tags.chips(&theme));
     // On show, not behind a hover — a card's run is what you look at the
     // board to see, and hiding it would mean hunting for the one that is
     // working.
@@ -1193,14 +1216,14 @@ impl Cydonia {
         cx.notify();
     }
 
-    /// Open `card` of `board` in `on`'s drawer, or put the drawer away where
+    /// Open `page` of `board` in `on`'s drawer, or put the drawer away where
     /// it already shows it: every pane's open field filed and `on`'s pane
     /// entered first.
-    pub(crate) fn open_card(
+    pub(crate) fn open_page(
         &mut self,
         on: Option<&Member>,
         board: Member,
-        card: String,
+        page: Page,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1210,12 +1233,12 @@ impl Cydonia {
         }
         self.leaf_of(on, cx)
             .clone()
-            .update(cx, |pane, cx| pane.open_card(board, card, window, cx));
+            .update(cx, |pane, cx| pane.open_page(board, page, window, cx));
         cx.notify();
     }
 
     /// Card `id` of the board at `board_at`, as a link embeds it: its handle,
-    /// its board and its status over the lane's preview of its text. Pressing
+    /// its board, label and blocked mark over the lane's preview of its text. Pressing
     /// it opens `reference`.
     pub(crate) fn card_embed(
         &self,
@@ -1231,13 +1254,14 @@ impl Cydonia {
         board.board.read(cx).card(id)?;
         let board = board.board.clone();
         let base = card_base(workspace, project, &board.read(cx).id, id);
+        let home = workspace.projects.get(project)?.path.clone();
         let (card, reference) = (id.to_owned(), reference.to_owned());
         let (docs, root) = (self.card_docs.clone(), cx.entity().downgrade());
         let key = format!("card-embed-{reference}-{}", board.entity_id());
         Some(
             window
                 .use_keyed_state(SharedString::from(key), cx, move |_, cx| {
-                    embed::CardEmbed::new(board, card, reference, base, docs, root, cx)
+                    embed::CardEmbed::new(board, home, card, reference, base, docs, root, cx)
                 })
                 .into_any_element(),
         )
@@ -1288,7 +1312,7 @@ impl Cydonia {
                 continue;
             }
             for id in cards {
-                let Some((handle, text, status, working)) = self
+                let Some((handle, text, tags, working)) = self
                     .workspace
                     .read(cx)
                     .board_in(project, board_at, cx)
@@ -1298,7 +1322,7 @@ impl Cydonia {
                         Some((
                             board.handle_of(card),
                             card.text.clone(),
-                            card.status,
+                            Tags::of(card, &member.project, self.workspace.read(cx), cx),
                             card_working(card, chat, &self.card_marks),
                         ))
                     })
@@ -1321,7 +1345,7 @@ impl Cydonia {
                         .children(list_row_cells(
                             handle,
                             &text,
-                            status,
+                            &tags,
                             working,
                             &self.card_docs,
                             &root,
@@ -1330,7 +1354,13 @@ impl Cydonia {
                         ))
                         .on_click(cx.listener(move |this, _, window, cx| {
                             cx.stop_propagation();
-                            this.open_card(pane.as_ref(), board.clone(), id.clone(), window, cx);
+                            this.open_page(
+                                pane.as_ref(),
+                                board.clone(),
+                                Page::Card(id.clone()),
+                                window,
+                                cx,
+                            );
                         }))
                         .into_any_element(),
                 );
@@ -1400,6 +1430,8 @@ impl BoardView {
             find: Find::default(),
             shown: PaneState::default(),
             watch: Watch::default(),
+            labels: Labels::default(),
+            blockers: blockers::Blockers::default(),
             _name: name,
         }
     }
@@ -1412,35 +1444,66 @@ impl BoardView {
         Some((project, at))
     }
 
-    /// The card open in the pane's drawer, by id.
-    pub(crate) fn opened_card(&self) -> Option<&str> {
-        self.opened.as_ref().map(|opened| opened.card.as_str())
+    /// The page open in the pane's drawer.
+    pub(crate) fn opened(&self) -> Option<&Page> {
+        self.opened.as_ref().map(|opened| &opened.page)
     }
 
-    /// Whether the open card shows: it is still on the board, or still being
+    /// What the pane draws from: its board, and the boards holding the cards
+    /// its cards wait on.
+    fn watched(&self, cx: &App) -> Vec<Entity<artifact::board::Board>> {
+        let workspace = self.workspace.read(cx);
+        let Some(board) = workspace.board_entity(&self.board.id) else {
+            return Vec::new();
+        };
+        let mut watched = vec![board.clone()];
+        for card in board
+            .read(cx)
+            .columns
+            .iter()
+            .flat_map(|column| &column.cards)
+        {
+            for other in workspace.blocking_boards(&self.board.project, card, cx) {
+                if !watched.contains(other) {
+                    watched.push(other.clone());
+                }
+            }
+        }
+        watched
+    }
+
+    /// The card open in the pane's drawer, by id.
+    pub(crate) fn opened_card(&self) -> Option<&str> {
+        match self.opened()? {
+            Page::Card(id) => Some(id),
+            Page::Description => None,
+        }
+    }
+
+    /// Whether the open page shows: it is still on the board, or still being
     /// written.
-    pub(crate) fn card_live(&self, cx: &App) -> bool {
+    pub(crate) fn page_live(&self, cx: &App) -> bool {
         let Some(opened) = &self.opened else {
             return false;
         };
         let held = self
             .located(cx)
             .and_then(|(project, at)| self.workspace.read(cx).board_in(project, at, cx))
-            .is_some_and(|board| board.card(&opened.card).is_some());
+            .is_some_and(|board| board.page_text(&opened.page).is_some());
         held || self.draft().is_some()
     }
 
-    /// Open `card` in the pane's drawer, its editor scrolled by `scroll`.
-    pub(crate) fn open(&mut self, card: String, scroll: ScrollHandle, cx: &mut Context<Self>) {
+    /// Open `page` in the pane's drawer, its editor scrolled by `scroll`.
+    pub(crate) fn open(&mut self, page: Page, scroll: ScrollHandle, cx: &mut Context<Self>) {
         match &mut self.opened {
             Some(opened) => {
-                let was = std::mem::replace(&mut opened.card, card);
+                let was = std::mem::replace(&mut opened.page, page);
                 opened.scroll = scroll;
                 self.settle_draft(&was);
             }
             None => {
-                self.opened = Some(OpenCard {
-                    card,
+                self.opened = Some(OpenPage {
+                    page,
                     scroll,
                     adjustments: Default::default(),
                 })
@@ -1450,10 +1513,10 @@ impl BoardView {
         cx.notify();
     }
 
-    /// The pane's drawer let the card go.
+    /// The pane's drawer let the page go.
     pub(crate) fn close(&mut self, cx: &mut Context<Self>) {
         if let Some(opened) = self.opened.take() {
-            self.settle_draft(&opened.card);
+            self.settle_draft(&opened.page);
         }
         cx.notify();
     }
@@ -1464,16 +1527,16 @@ impl BoardView {
             .is_some_and(|draft| draft.editor.focus_handle(cx).is_focused(window))
     }
 
-    pub(crate) fn draft(&self) -> Option<&CardDraft> {
+    pub(crate) fn draft(&self) -> Option<&PageDraft> {
         let opened = self.opened.as_ref()?;
-        self.drafts.iter().find(|draft| draft.card == opened.card)
+        self.drafts.iter().find(|draft| draft.page == opened.page)
     }
 
-    fn draft_mut(&mut self, card: &str) -> Option<&mut CardDraft> {
-        self.drafts.iter_mut().find(|draft| draft.card == card)
+    fn draft_mut(&mut self, page: &Page) -> Option<&mut PageDraft> {
+        self.drafts.iter_mut().find(|draft| draft.page == *page)
     }
 
-    /// Put an editor over the open card, unless one is there.
+    /// Put an editor over the open page, unless one is there.
     fn ensure_draft(&mut self, cx: &mut Context<Self>) {
         let Some(opened) = &self.opened else {
             return;
@@ -1481,19 +1544,19 @@ impl BoardView {
         if self.draft().is_some() {
             return;
         }
-        let (card, scroll) = (opened.card.clone(), opened.scroll.clone());
+        let (page, scroll) = (opened.page.clone(), opened.scroll.clone());
         let workspace = self.workspace.read(cx);
         let Some(text) = self
             .located(cx)
             .and_then(|(project, at)| workspace.board_in(project, at, cx))
-            .and_then(|board| board.card(&card))
-            .map(|held| held.text.clone())
+            .and_then(|board| board.page_text(&page))
+            .map(str::to_owned)
         else {
             return;
         };
         let text_size = workspace.text_size;
         let dir = artifact::project::fs::Project::new(&self.board.project)
-            .card_dir(&self.board.id, &card);
+            .page_dir(&self.board.id, &page);
         let document = cx.new(|cx| editor::Document::new(&text, cx));
         let (editor, pictures) = crate::view::kit::document::editor(
             &dir,
@@ -1507,18 +1570,18 @@ impl BoardView {
             cx,
         );
         let shown = editor.read(cx).source();
-        let held = card.clone();
+        let held = page.clone();
         let subscription = cx.subscribe(&editor, move |this, editor, event: &EditorEvent, cx| {
             if let EditorEvent::Changed = event {
                 crate::model::language::Here::ensure(
                     crate::model::article::fences(editor.read(cx).doc()),
                     cx,
                 );
-                this.save_card(&held, cx);
+                this.save_page(&held, cx);
             }
         });
-        self.drafts.push(CardDraft {
-            card,
+        self.drafts.push(PageDraft {
+            page,
             base: text,
             shown,
             editor,
@@ -1528,10 +1591,10 @@ impl BoardView {
         });
     }
 
-    /// Write the card's editor to the board, keeping on the draft why the
+    /// Write the page's editor to the board, keeping on the draft why the
     /// board refused it.
-    fn save_card(&mut self, card: &str, cx: &mut Context<Self>) {
-        let Some(draft) = self.draft_mut(card) else {
+    fn save_page(&mut self, page: &Page, cx: &mut Context<Self>) {
+        let Some(draft) = self.draft_mut(page) else {
             return;
         };
         let (base, shown, editor) = (
@@ -1544,10 +1607,10 @@ impl BoardView {
         let result = match text == shown {
             true => Ok(()),
             false => self.workspace.update(cx, |workspace, cx| {
-                workspace.save_card_draft(&board, card, &base, &text, cx)
+                workspace.save_page_draft(&board, page, &base, &text, cx)
             }),
         };
-        if let Some(draft) = self.draft_mut(card) {
+        if let Some(draft) = self.draft_mut(page) {
             match result {
                 Ok(()) => {
                     if text != draft.shown {
@@ -1562,51 +1625,61 @@ impl BoardView {
         cx.notify();
     }
 
-    /// Let a card's editor go with its drawer, unless its last save failed.
-    fn settle_draft(&mut self, card: &str) {
+    /// Let a page's editor go with its drawer, unless its last save failed.
+    fn settle_draft(&mut self, page: &Page) {
         self.drafts
-            .retain(|draft| draft.card != card || draft.error.is_some());
+            .retain(|draft| draft.page != *page || draft.error.is_some());
     }
 
-    /// Drop the editor's text and read the open card back off the board.
+    /// Drop the editor's text and read the open page back off the board.
     fn reload_draft(&mut self, cx: &mut Context<Self>) {
         let Some(opened) = &self.opened else {
             return;
         };
-        let card = opened.card.clone();
-        self.drafts.retain(|draft| draft.card != card);
+        let page = opened.page.clone();
+        self.drafts.retain(|draft| draft.page != page);
         self.ensure_draft(cx);
         cx.notify();
     }
 
-    /// What the pane's drawer draws for the open card, while it shows.
-    pub(crate) fn card_face(
+    /// What the pane's drawer draws for the open page, while it shows.
+    pub(crate) fn page_face(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Face> {
-        if !self.card_live(cx) {
+        if !self.page_live(cx) {
             return None;
         }
         let opened = self.opened.as_ref()?;
         let (project, board_at) = self.located(cx)?;
         let board = self.workspace.read(cx).board_in(project, board_at, cx)?;
-        let card = board.card(&opened.card).cloned();
+        let page = opened.page.clone();
+        let card = match &page {
+            Page::Card(id) => board.card(id).cloned(),
+            Page::Description => None,
+        };
         let card = card.as_ref();
-        let handle = card
-            .and_then(|card| board.handle_of(card))
-            .unwrap_or_else(|| "Missing card".into());
-        let status = card.and_then(|card| card.status);
+        let text = board.page_text(&page).map(str::to_owned);
+        let handle = match &page {
+            Page::Card(_) => card
+                .and_then(|card| board.handle_of(card))
+                .unwrap_or_else(|| "Missing card".into()),
+            Page::Description => "Description".into(),
+        };
+        let tags = card
+            .map(|card| Tags::of(card, &self.board.project, self.workspace.read(cx), cx))
+            .unwrap_or_default();
         let draft = self.draft();
         let error = draft.and_then(|draft| draft.error.clone()).or_else(|| {
-            card.is_none().then(|| {
+            text.is_none().then(|| {
                 "This card was removed or moved. Copy your text before discarding it.".into()
             })
         });
         // The board moved under an editor with nothing of its own to keep —
         // an agent's rewrite, most often — so the editor takes the board's.
-        if let (Some(card), Some(draft)) = (card, draft)
-            && card.text != draft.base
+        if let (Some(text), Some(draft)) = (&text, draft)
+            && *text != draft.base
             && draft.editor.read(cx).source() == draft.shown
         {
             let this = cx.entity();
@@ -1645,23 +1718,36 @@ impl BoardView {
                 .child(editor.clone())
                 .into_any_element(),
             None => markdown::render_with(
-                &self
-                    .docs
-                    .of(&card.map(|card| card.text.clone()).unwrap_or_default()),
+                &self.docs.of(&text.unwrap_or_default()),
                 markdown::Editing::default(),
                 window,
                 cx,
             )
             .into_any_element(),
         };
+        let mono = matches!(page, Page::Card(_));
         Some(Face {
             lead: std::iter::once(
                 div()
-                    .font_family(theme.font_mono.clone())
+                    .when(mono, |lead| lead.font_family(theme.font_mono.clone()))
                     .child(handle)
                     .into_any_element(),
             )
-            .chain(resting(status).map(|status| status_chip(status, &theme).into_any_element()))
+            .chain(card.map(|card| {
+                let target = LabelTarget::Card {
+                    board: self.board.id.clone(),
+                    card: card.id.clone(),
+                };
+                let trigger = div()
+                    .id("card-label")
+                    .group("card-label")
+                    .flex()
+                    .flex_row()
+                    .items_center();
+                let labels: Vec<String> = tags.label.iter().cloned().collect();
+                self.label_chips(trigger, target, &labels, "card-label", cx)
+                    .into_any_element()
+            }))
             .chain(working.map(|at| card_orb(at, self.root.clone(), sessions, cx)))
             .collect(),
             actions: (error.is_some() && editor.is_some())
@@ -1669,7 +1755,10 @@ impl BoardView {
                     Drawer::action(
                         "card-draft-discard",
                         icons::glyph::Undo2,
-                        "Discard your text and reload the card",
+                        match page {
+                            Page::Card(_) => "Discard your text and reload the card",
+                            Page::Description => "Discard your text and reload the description",
+                        },
                         cx,
                     )
                     .on_click(cx.listener(|this, _, _, cx| {
@@ -1680,16 +1769,27 @@ impl BoardView {
                 })
                 .into_iter()
                 .collect(),
-            notice: error.map(|error| {
-                div()
-                    .flex_none()
-                    .px(px(16.))
-                    .pb(px(8.))
-                    .text_style(TextStyle::Caption)
-                    .text_color(theme.danger)
-                    .child(error)
-                    .into_any_element()
-            }),
+            notice: {
+                let blocked_by = card.map(|card| self.blocked_by_line(&card.id, cx));
+                let error = error.map(|error| {
+                    div()
+                        .flex_none()
+                        .px(px(16.))
+                        .pb(px(8.))
+                        .text_style(TextStyle::Caption)
+                        .text_color(theme.danger)
+                        .child(error)
+                        .into_any_element()
+                });
+                (blocked_by.is_some() || error.is_some()).then(|| {
+                    div()
+                        .flex()
+                        .flex_col()
+                        .children(blocked_by)
+                        .children(error)
+                        .into_any_element()
+                })
+            },
             body,
             scrolls: true,
             open: None,
@@ -1700,7 +1800,10 @@ impl BoardView {
     /// and not expanded.
     fn reveal(&self) -> Option<Reveal> {
         let drawer = self.shown.drawer.as_ref()?;
-        let opened = self.opened.as_ref()?;
+        let opened = self
+            .opened
+            .as_ref()
+            .filter(|opened| matches!(opened.page, Page::Card(_)))?;
         (drawer.own && !drawer.expanded && drawer.reveal.get() && drawer.height > px(0.)).then(
             || Reveal {
                 pending: drawer.reveal.clone(),
@@ -1844,7 +1947,7 @@ impl BoardView {
         let (root, pane, board) = (self.root.clone(), self.pane.clone(), self.board.clone());
         window.defer(cx, move |window, cx| {
             let _ = root.update(cx, |root, cx| {
-                root.open_card(pane.as_ref(), board, card, window, cx)
+                root.open_page(pane.as_ref(), board, Page::Card(card), window, cx)
             });
         });
     }
@@ -1886,8 +1989,21 @@ impl BoardView {
         cx: &Context<Self>,
     ) -> Stateful<Div> {
         let open = self.menu.key() == Some(&menu);
+        let button = menu::button(id, icons::layout::Ellipsis, reveal, open, cx);
+        self.opens(button, menu, rows, cx)
+    }
+
+    /// `el`, opening `menu` below itself on a press, or shutting it when it
+    /// is the one up.
+    fn opens(
+        &self,
+        el: Stateful<Div>,
+        menu: BoardMenu,
+        rows: menu::Rows<Self>,
+        cx: &Context<Self>,
+    ) -> Stateful<Div> {
         let rows = Rc::new(rows);
-        let button = menu::button(id, icons::layout::Ellipsis, reveal, open, cx).on_click({
+        let el = el.on_click({
             let menu = menu.clone();
             cx.listener(move |this, _, window, cx| {
                 cx.stop_propagation();
@@ -1903,7 +2019,7 @@ impl BoardView {
                 );
             })
         });
-        ContextMenu::trigger(button, |this: &mut Self| &mut this.menu, menu, cx)
+        ContextMenu::trigger(el, |this: &mut Self| &mut this.menu, menu, cx)
     }
 
     /// `menu`, placed, while it is on screen.
@@ -2082,39 +2198,6 @@ impl BoardView {
             return;
         };
         cx.write_to_clipboard(ClipboardItem::new_string(text));
-    }
-
-    /// Hand the card to an agent: a session of its own, opened in the project
-    /// with the card's text as its first prompt.
-    ///
-    /// A session of its own rather than the one in front, so the card's dot
-    /// reports its own run — and so dispatching a second card doesn't queue
-    /// behind the first. The board stays up: the card goes live where you are
-    /// looking, and clicking it is what follows the work into the transcript.
-    fn dispatch_card(&mut self, board: &str, card: &str, cx: &mut Context<Self>) {
-        self.commit_edit(cx);
-        let (board, card) = (board.to_owned(), card.to_owned());
-        self.workspace.update(cx, |workspace, cx| {
-            let text = workspace
-                .board_at(&board, cx)
-                .and_then(|board| board.card(&card))
-                .map(|card| card.text.clone());
-            let (Some(text), Some(entry)) = (text, workspace.preferred_agent(cx)) else {
-                return;
-            };
-            // Nothing to link to is nothing to write: clearing the field on a
-            // refused dispatch would take the card's last session off it.
-            let Some(record) = workspace
-                .new_session(entry, Some(text), cx)
-                .and_then(|id| workspace.mint_record(id, cx))
-            else {
-                return;
-            };
-            // The link lands on the board, so the board is written — it is what
-            // the ▶ reads after a quit.
-            workspace.write_board(&board, cx, |held| held.dispatch_card(&card, record.clone()));
-        });
-        cx.notify();
     }
 
     /// The `···` on a card: what the row of glyphs underneath should not carry,
@@ -2876,6 +2959,7 @@ impl BoardView {
                         this.edit(Editing::New(Place::Top, add_column.clone()), window, cx);
                     }))
             }))
+            .children(self.send_lane_button(board, id, "list-group", window, cx))
             .child(
                 self.menu_button(
                     SharedString::from(format!("list-group-menu-{id}")),
@@ -2927,7 +3011,8 @@ impl BoardView {
             .as_ref()
             .is_some_and(|query| card_matches(card, handle.as_deref(), query.text()));
         let text = card.text.clone();
-        let status = card.status;
+        let tags = Tags::of(card, &self.board.project, self.workspace.read(cx), cx);
+        let busy = card.busy;
         let on_board = self
             .workspace
             .read(cx)
@@ -2935,11 +3020,10 @@ impl BoardView {
             .map(|board| board.id.clone())
             .unwrap_or_default();
         let chat = card_session(card, self.workspace.read(cx), cx);
-        let live = chat.map(|chat| chat.id);
         let sessions = self.workspace.read(cx).settings.features.sessions;
         let working = card_working(card, chat, &self.marks);
-        let (opened, run) = (id.to_owned(), id.to_owned());
-        let sent = on_board.clone();
+        let opened = id.to_owned();
+        let sending = self.menu.key() == Some(&BoardMenu::Send(send::Sent::Card(id.to_owned())));
         let selected = self.opened_card() == Some(id);
 
         let viewport = self.scroll.down.clone();
@@ -2990,8 +3074,12 @@ impl BoardView {
         // and decided here rather than in a hover style: gpui can resolve hover
         // differently in prepaint and paint.
         let actions = selected
+            || sending
             || self.list_hovered.as_deref() == Some(id)
             || self.menu.key() == Some(&BoardMenu::Card(id.to_owned()));
+        // Refused while the card is busy or waits on other cards.
+        let send = (sessions && !busy && !tags.blocked)
+            .then(|| self.send_card_button("list-run", &on_board, id, window, cx));
         let hovered_id = id.to_owned();
         let row = div()
             .id(SharedString::from(format!("list-row-{id}")))
@@ -3028,7 +3116,7 @@ impl BoardView {
             })
             .children(reveal)
             .children(list_row_cells(
-                handle, &text, status, working, &self.docs, &self.root, sessions, cx,
+                handle, &text, &tags, working, &self.docs, &self.root, sessions, cx,
             ))
             .when(actions, |row| {
                 row.child(
@@ -3037,18 +3125,7 @@ impl BoardView {
                         .flex_row()
                         .items_center()
                         .gap(px(2.))
-                        // Handing a card to an agent is refused once the card says
-                        // something about itself: a tag is somebody already holding
-                        // it, and a second agent at one task is work done twice.
-                        // Opening the session it has stays — reading is not doing.
-                        .children((sessions && live.is_none() && status.is_none()).then(|| {
-                            card_action("list-run", id, icons::multimedia::Play, cx).on_click(
-                                cx.listener(move |this, _, _, cx| {
-                                    cx.stop_propagation();
-                                    this.dispatch_card(&sent, &run, cx);
-                                }),
-                            )
-                        })),
+                        .children(send),
                 )
                 .child(
                     self.card_menu_button(
@@ -3440,6 +3517,7 @@ impl BoardView {
                     }),
             )
             .child(div().flex_1())
+            .children(self.send_lane_button(board, id, "column", window, cx))
             .child(
                 self.menu_button(
                     SharedString::from(format!("column-menu-{id}")),
@@ -3520,7 +3598,8 @@ impl BoardView {
             .as_ref()
             .is_some_and(|query| card_matches(card, handle.as_deref(), query.text()));
         let text = card.text.clone();
-        let status = card.status;
+        let tags = Tags::of(card, &self.board.project, self.workspace.read(cx), cx);
+        let busy = card.busy;
         let on_board = self
             .workspace
             .read(cx)
@@ -3528,11 +3607,10 @@ impl BoardView {
             .map(|board| board.id.clone())
             .unwrap_or_default();
         let chat = card_session(card, self.workspace.read(cx), cx);
-        let live = chat.map(|chat| chat.id);
         let sessions = self.workspace.read(cx).settings.features.sessions;
         let working = card_working(card, chat, &self.marks);
-        let (opened, run) = (id.to_owned(), id.to_owned());
-        let sent = on_board.clone();
+        let opened = id.to_owned();
+        let sending = self.menu.key() == Some(&BoardMenu::Send(send::Sent::Card(id.to_owned())));
         let selected = self.opened_card() == Some(id);
         let overflow = window.use_keyed_state(
             SharedString::from(format!("card-overflow-{}-{id}", cx.entity_id())),
@@ -3551,6 +3629,9 @@ impl BoardView {
             .absolute()
             .size_full()
         });
+        // Refused while the card is busy or waits on other cards.
+        let send = (sessions && !busy && !tags.blocked)
+            .then(|| self.send_card_button("run", &on_board, id, window, cx));
         let card = div()
             .id(SharedString::from(format!("card-{id}")))
             .group("card")
@@ -3633,11 +3714,15 @@ impl BoardView {
                             .child(handle)
                     }))
                     .child(div().flex_1())
-                    .children(resting(status).map(|status| {
+                    .children((tags.label.is_some() || tags.blocked).then(|| {
                         div()
                             .flex_none()
-                            .when(working.is_some(), |chip| chip.mr(px(6.)))
-                            .child(status_chip(status, &theme))
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(4.))
+                            .when(working.is_some(), |chips| chips.mr(px(6.)))
+                            .children(tags.chips(&theme))
                     }))
                     // Where ▶ stands, because it is what ▶ becomes: a card is
                     // either one you can start or one that is running, and the
@@ -3647,31 +3732,14 @@ impl BoardView {
                     .children(working.map(|at| card_orb(at, self.root.clone(), sessions, cx)))
                     .child(
                         div()
-                            .invisible()
-                            .group_hover("card", |el| el.visible())
+                            .when(!sending, |el| {
+                                el.invisible().group_hover("card", |el| el.visible())
+                            })
                             .flex()
                             .flex_row()
                             .items_center()
                             .gap(px(2.))
-                            // Handing a card to an agent is opening a session,
-                            // so the control goes with them: with sessions off
-                            // the play would start nothing, and the card is
-                            // still a card without it.
-                            // Handing a card to an agent is refused once the card
-                            // says something about itself: a tag is somebody
-                            // already holding it, and a second agent at one task is
-                            // the work done twice. Opening the session it has
-                            // stays — reading is not doing.
-                            .children((sessions && live.is_none() && status.is_none()).then(
-                                || {
-                                    card_action("run", id, icons::multimedia::Play, cx).on_click(
-                                        cx.listener(move |this, _, _, cx| {
-                                            cx.stop_propagation();
-                                            this.dispatch_card(&sent, &run, cx);
-                                        }),
-                                    )
-                                },
-                            )),
+                            .children(send),
                     ),
             )
             .on_click(cx.listener(move |this, _, window, cx| {
@@ -3713,6 +3781,24 @@ impl BoardView {
     }
 }
 
+impl LabelHost for BoardView {
+    fn labels(&self) -> &Labels {
+        &self.labels
+    }
+
+    fn labels_mut(&mut self) -> &mut Labels {
+        &mut self.labels
+    }
+
+    fn label_workspace(&self) -> &Entity<Workspace> {
+        &self.workspace
+    }
+
+    fn label_root(&self) -> &WeakEntity<Cydonia> {
+        &self.root
+    }
+}
+
 impl Searchable for BoardView {
     fn set_find(&mut self, find: Find, cx: &mut Context<Self>) {
         self.find = find;
@@ -3751,19 +3837,15 @@ impl Searchable for BoardView {
 
 impl Render for BoardView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let board = self
-            .workspace
-            .read(cx)
-            .board_entity(&self.board.id)
-            .cloned();
-        self.watch.set(board.as_ref(), cx);
+        let watched = self.watched(cx);
+        self.watch.set(&watched, cx);
         let me = cx.entity_id();
         self.shown = self
             .root
             .upgrade()
             .map(|root| root.read(cx).pane_state(self.pane.as_ref(), me, cx))
             .unwrap_or_default();
-        if self.shown.drawer.as_ref().is_some_and(|drawer| drawer.own) && !self.card_live(cx) {
+        if self.shown.drawer.as_ref().is_some_and(|drawer| drawer.own) && !self.page_live(cx) {
             self.shown.drawer = None;
         }
         let Some((project, board_at)) = self.located(cx) else {

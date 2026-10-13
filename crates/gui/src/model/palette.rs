@@ -18,11 +18,15 @@ pub struct Washes {
     pub highlight: Paint,
     /// The find wash; `None` keeps [`markdown::default_find`].
     pub find: Option<Paint>,
+    /// What comment washes are cut from; `None` keeps
+    /// [`markdown::default_comment`].
+    pub comment: Option<Paint>,
 }
 
 static WASHES: RwLock<Washes> = RwLock::new(Washes {
     highlight: Paint::Named(settings::Highlight::Yellow),
     find: None,
+    comment: None,
 });
 
 impl Washes {
@@ -30,6 +34,7 @@ impl Washes {
         Self {
             highlight: look.highlight,
             find: look.search,
+            comment: look.comment_color,
         }
     }
 

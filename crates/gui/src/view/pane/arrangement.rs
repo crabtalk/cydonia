@@ -743,7 +743,9 @@ impl Cydonia {
     ) -> Vec<(Item, menu::Act)> {
         new::rows(new::offered(self.workspace.read(cx)), |kind| {
             let pane = pane.clone();
-            Box::new(move |this, window, cx| this.new_in_pane(&pane, project, kind, window, cx))
+            Box::new(move |this: &mut Cydonia, window, cx| {
+                this.new_in_pane(&pane, project, kind, window, cx)
+            })
         })
     }
 
@@ -771,10 +773,7 @@ impl Cydonia {
             workspace.select_project(project, cx);
             let showing = match kind {
                 New::Session(at) => {
-                    let agent = match at {
-                        Some(at) => workspace.settings.agents.get(at).cloned()?,
-                        None => workspace.preferred_agent(cx)?,
-                    };
+                    let agent = workspace.agent_at(at, cx)?;
                     let id = workspace.new_session(agent, None, cx)?;
                     // A space names its members by file, and a new session
                     // has none until its first turn.

@@ -13,13 +13,14 @@ fn board(key: &str, texts: &[&str]) -> Board {
     board
 }
 
-fn carded<'a>(project: &str, active: bool, board: &'a Board) -> Vec<Carded<'a>> {
+fn carded<'a>(project: &'a str, active: bool, board: &'a Board) -> Vec<Carded<'a>> {
     board
         .columns
         .iter()
         .flat_map(|column| &column.cards)
         .map(|card| Carded {
             project: project.to_owned(),
+            path: std::path::Path::new(project),
             active,
             board,
             card,

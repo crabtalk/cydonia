@@ -15,11 +15,15 @@ use std::{
 
 static OPENED: Mutex<Vec<(String, Option<PathBuf>)>> = Mutex::new(Vec::new());
 
-fn record(url: &str, base: Option<&Path>, _: &mut gpui::Window, _: &mut gpui::App) {
-    OPENED
-        .lock()
-        .unwrap()
-        .push((url.to_owned(), base.map(Path::to_path_buf)));
+struct Record;
+
+impl markdown::Links for Record {
+    fn open(link: markdown::Link<'_>, _: &mut gpui::Window, _: &mut gpui::App) {
+        OPENED
+            .lock()
+            .unwrap()
+            .push((link.url.to_owned(), link.base.map(Path::to_path_buf)));
+    }
 }
 
 struct LinkedTranscript {
@@ -61,7 +65,7 @@ fn a_clicked_session_link_reaches_the_handler_with_the_session_folder(
 ) {
     cx.update(|cx| {
         Theme::install(bezel::theme::Appearance::Light, cx);
-        cx.set_link_handler(record);
+        cx.set_links::<Record>();
     });
     let window = cx.add_window(|window, cx| {
         let workspace = cx.new(|cx| Workspace::new(Settings::default(), State::default(), cx));
@@ -107,7 +111,7 @@ fn a_clicked_session_link_reaches_the_handler_with_the_session_folder(
     let point = window
         .update(&mut visual, |view, _, cx| {
             let _ = cx;
-            let layouts = view.held.layouts(0);
+            let layouts = view.held.selection.layouts(0);
             let from = markdown::Cursor::new(0, markdown::Part::default(), 5);
             let to = markdown::Cursor { offset: 6, ..from };
             layouts.rects(markdown::Selection::new(from, to))[0].center()

@@ -29,7 +29,7 @@ use std::{
 
 /// A seeded board directory: its `board.toml`, and each card's `content.md`
 /// and `properties.toml` by the card's id.
-type Seeded = (String, BTreeMap<String, (String, String)>);
+type Seeded = (String, BTreeMap<String, (String, String)>, String);
 
 #[derive(Default)]
 pub struct Project(Mutex<State>);
@@ -94,6 +94,9 @@ impl Project {
                     ["boards", id, "board.toml"] => {
                         dirs.entry((*id).to_owned()).or_default().0 = text();
                     }
+                    ["boards", id, "content.md"] => {
+                        dirs.entry((*id).to_owned()).or_default().2 = text();
+                    }
                     [
                         "boards",
                         id,
@@ -149,7 +152,7 @@ impl Project {
                     _ => {}
                 }
             }
-            for (id, (body, cards)) in dirs {
+            for (id, (body, cards, description)) in dirs {
                 let cards = cards
                     .iter()
                     .map(|(card, (content, properties))| {
@@ -163,6 +166,7 @@ impl Project {
                     board.id = id.clone();
                 }
                 board.created = stamp::named(&id);
+                board.description = description;
                 state.boards.insert(board.id.clone(), board);
             }
             let now = stamp::now();

@@ -76,6 +76,15 @@ impl<'a> Reference<'a> {
         }
     }
 
+    /// This reference as written in a project: without the project's name
+    /// when `home`, the project it names being the one it is written in.
+    pub fn relative(mut self, home: bool) -> Self {
+        if home {
+            self.project = None;
+        }
+        self
+    }
+
     /// The reference behind [`SCHEME`]: `cydonia://foo#43`.
     pub fn link(&self) -> String {
         format!("{SCHEME}{self}")

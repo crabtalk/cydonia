@@ -89,6 +89,11 @@ pub struct Settings {
     /// see [`Shortcuts`].
     #[serde(default)]
     pub shortcuts: Shortcuts,
+    /// `[article_session]`: the agent an article's session opens on, and the
+    /// choices it opens with. Set by picking on an article's composer before
+    /// its first send.
+    #[serde(default)]
+    pub article_session: ArticleSession,
     /// What the app will show. Every bare key has to go above it, and every
     /// table below — `[[agents]]` is the one that follows.
     #[serde(default)]
@@ -191,15 +196,19 @@ pub struct Appearance {
     pub wide_pages: bool,
     /// Whether an article offers its floating outline button.
     pub outline: bool,
-    /// How an article's margin shows its comments. A pane too narrow for the
-    /// notes beside the column shows [`Comments::Minimal`] whatever this says.
-    pub comments: Comments,
+    /// How an article's margin shows its comments, for a page with nothing of
+    /// its own to say — see [`artifact::article::properties::comments`]. A pane
+    /// too narrow for notes beside the column shows marks whatever this says.
+    pub comments: CommentDisplay,
     /// How a new board is laid out. Every board carries its own answer from the
     /// moment it is made — see [`artifact::board::Board::view`] — so this seeds
     /// one and never steers it afterwards.
     pub board_view: artifact::board::View,
     /// Indent sidebar items beneath project and space headings by one icon width.
     pub indent_project_rows: bool,
+    /// Sidebar entries are three lines: the name, a preview, and the labels
+    /// with how long ago the entry was touched.
+    pub extended_sidebar: bool,
     /// The settings window's section sidebar is as wide as its widest row
     /// rather than a fixed width.
     pub settings_sidebar_fits: bool,
@@ -222,6 +231,10 @@ pub struct Appearance {
     /// accent.
     #[serde(deserialize_with = "paint_or_unset")]
     pub search: Option<Paint>,
+    /// The colour behind commented words, and the margin's marks for them.
+    /// Unset, or not a colour, keeps [`markdown::default_comment`].
+    #[serde(deserialize_with = "paint_or_unset")]
+    pub comment_color: Option<Paint>,
     /// The caret's colour. Unset, or not a colour, keeps the palette's.
     #[serde(deserialize_with = "paint_or_unset")]
     pub caret: Option<Paint>,
@@ -454,35 +467,7 @@ impl CaretShape {
     }
 }
 
-/// How an article's margin shows its comments.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Comments {
-    /// Each note beside its line, a few lines of it.
-    #[default]
-    Full,
-    /// A mark with a count beside each commented line; pressing it opens the
-    /// note.
-    Minimal,
-}
-
-impl Comments {
-    pub const ALL: [Self; 2] = [Self::Full, Self::Minimal];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Full => "Full",
-            Self::Minimal => "Minimal",
-        }
-    }
-
-    pub fn key(self) -> &'static str {
-        match self {
-            Self::Full => "full",
-            Self::Minimal => "minimal",
-        }
-    }
-}
+pub use artifact::article::properties::CommentDisplay;
 
 /// When overflowing panes show their scrollbars.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -542,9 +527,10 @@ impl Default for Appearance {
             chroma: 0.,
             wide_pages: false,
             outline: true,
-            comments: Comments::default(),
+            comments: CommentDisplay::default(),
             board_view: artifact::board::View::List,
             indent_project_rows: true,
+            extended_sidebar: false,
             settings_sidebar_fits: false,
             traffic_lights: false,
             scrollbars: Scrollbars::default(),
@@ -558,6 +544,7 @@ impl Default for Appearance {
             highlight: Paint::Named(Highlight::default()),
             selection: None,
             search: None,
+            comment_color: None,
             caret: None,
             caret_shape: CaretShape::default(),
             caret_height: CaretHeight::default(),
@@ -1081,6 +1068,7 @@ impl Default for Settings {
             drawer_composer: drawer_composer(),
             appearance: Appearance::default(),
             shortcuts: Shortcuts::default(),
+            article_session: ArticleSession::default(),
             features: Features::default(),
             mcp: Mcp::default(),
             browser: Browsing::default(),
@@ -1310,6 +1298,66 @@ pub fn set_opener(opens: Opens, opener: &Opener) -> Result<()> {
     })
 }
 
+/// `[article_session]`: the agent and choices an article's session opens with.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ArticleSession {
+    /// The agent's key, as `session_preferences` files its choices under —
+    /// `id:<registry id>` or `name:<name>`. None until one is picked.
+    pub agent: Option<String>,
+    pub mode: Option<String>,
+    /// Select values by config option id. Booleans are not offered as
+    /// article defaults.
+    pub config: BTreeMap<String, String>,
+}
+
+impl ArticleSession {
+    /// The choices a session opened on this default starts with.
+    pub fn choices(&self) -> crate::model::session_preferences::Choices {
+        use cacp::schema::SessionConfigOptionValue;
+        crate::model::session_preferences::Choices {
+            mode: self.mode.clone(),
+            config: self
+                .config
+                .iter()
+                .map(|(id, value)| {
+                    (
+                        id.clone(),
+                        SessionConfigOptionValue::ValueId {
+                            value: value.as_str().into(),
+                        },
+                    )
+                })
+                .collect(),
+        }
+    }
+}
+
+/// Write the whole of `[article_session]`.
+pub fn set_article_session(article: &ArticleSession) -> Result<()> {
+    Here::edit(|doc| {
+        let held = table(doc, "article_session")?;
+        match &article.agent {
+            Some(agent) => held["agent"] = toml_edit::value(agent.as_str()),
+            None => {
+                held.remove("agent");
+            }
+        }
+        match &article.mode {
+            Some(mode) => held["mode"] = toml_edit::value(mode.as_str()),
+            None => {
+                held.remove("mode");
+            }
+        }
+        let mut config = toml_edit::Table::new();
+        for (id, value) in &article.config {
+            config[id.as_str()] = toml_edit::value(value.as_str());
+        }
+        held["config"] = toml_edit::Item::Table(config);
+        Ok(true)
+    })
+}
+
 /// Write the whole of `[appearance]`.
 ///
 /// One call rather than a setter per key: the window holds these live and
@@ -1377,6 +1425,7 @@ fn write_appearance(doc: &mut toml_edit::DocumentMut, appearance: &Appearance) -
     held["comments"] = toml_edit::value(appearance.comments.key());
     held["board_view"] = toml_edit::value(appearance.board_view.key());
     held["indent_project_rows"] = toml_edit::value(appearance.indent_project_rows);
+    held["extended_sidebar"] = toml_edit::value(appearance.extended_sidebar);
     held["traffic_lights"] = toml_edit::value(appearance.traffic_lights);
     held["settings_sidebar_fits"] = toml_edit::value(appearance.settings_sidebar_fits);
     held["scrollbars"] = toml_edit::value(appearance.scrollbars.key());
@@ -1390,6 +1439,7 @@ fn write_appearance(doc: &mut toml_edit::DocumentMut, appearance: &Appearance) -
     for (key, color) in [
         ("selection", appearance.selection),
         ("search", appearance.search),
+        ("comment_color", appearance.comment_color),
         ("caret", appearance.caret),
     ] {
         match color {

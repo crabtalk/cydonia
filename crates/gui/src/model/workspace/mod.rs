@@ -55,6 +55,7 @@ mod articles;
 mod boards;
 mod labels;
 mod spaces;
+pub use sessions::ArticleChange;
 pub use spaces::Showing;
 mod order;
 mod projects;
@@ -187,6 +188,7 @@ impl Workspace {
         });
         crate::model::typography::set_terminal_size(look.mono_font_size, cx);
         crate::model::typography::set_file_size(look.mono_font_size, cx);
+        crate::model::session_preferences::OfferCache::load(cx);
         let mut this = Self {
             settings,
             projects,
@@ -340,6 +342,7 @@ impl Workspace {
             comments: self.settings.appearance.comments,
             board_view: self.board_view,
             indent_project_rows: self.indent_project_rows,
+            extended_sidebar: self.settings.appearance.extended_sidebar,
             settings_sidebar_fits: self.settings.appearance.settings_sidebar_fits,
             traffic_lights: self.settings.appearance.traffic_lights,
             scrollbars: self.settings.appearance.scrollbars,
@@ -348,6 +351,7 @@ impl Workspace {
             highlight: self.settings.appearance.highlight,
             selection: self.settings.appearance.selection,
             search: self.settings.appearance.search,
+            comment_color: self.settings.appearance.comment_color,
             caret: self.settings.appearance.caret,
             caret_shape: self.settings.appearance.caret_shape,
             caret_height: self.settings.appearance.caret_height,
@@ -441,6 +445,15 @@ impl Workspace {
             .and_then(|chat| self.agent_for(&chat.entry))
             .or_else(|| self.settings.agents.first())
             .cloned()
+    }
+
+    /// The agent at `at` in the settings, or the preferred one where `at` is
+    /// `None` — what a "New session" choice names.
+    pub fn agent_at(&self, at: Option<usize>, cx: &App) -> Option<settings::Agent> {
+        match at {
+            Some(at) => self.settings.agents.get(at).cloned(),
+            None => self.preferred_agent(cx),
+        }
     }
 
     /// The configured agents as the tools offer them.
@@ -790,6 +803,12 @@ impl Workspace {
         cx.notify();
     }
 
+    pub fn set_extended_sidebar(&mut self, extended: bool, cx: &mut Context<Self>) {
+        self.settings.appearance.extended_sidebar = extended;
+        self.save_appearance();
+        cx.notify();
+    }
+
     pub fn set_settings_sidebar_fits(&mut self, fits: bool, cx: &mut Context<Self>) {
         self.settings.appearance.settings_sidebar_fits = fits;
         self.save_appearance();
@@ -870,7 +889,7 @@ impl Workspace {
         cx.notify();
     }
 
-    pub fn set_comments(&mut self, comments: settings::Comments, cx: &mut Context<Self>) {
+    pub fn set_comments(&mut self, comments: settings::CommentDisplay, cx: &mut Context<Self>) {
         self.settings.appearance.comments = comments;
         self.save_appearance();
         cx.notify();
@@ -938,6 +957,14 @@ impl Workspace {
 
     pub fn set_search(&mut self, value: Option<settings::Paint>, cx: &mut Context<Self>) {
         self.settings.appearance.search = value;
+        crate::model::palette::Washes::of(&self.settings.appearance).install();
+        self.save_appearance();
+        cx.refresh_windows();
+        cx.notify();
+    }
+
+    pub fn set_comment_color(&mut self, value: Option<settings::Paint>, cx: &mut Context<Self>) {
+        self.settings.appearance.comment_color = value;
         crate::model::palette::Washes::of(&self.settings.appearance).install();
         self.save_appearance();
         cx.refresh_windows();

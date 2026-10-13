@@ -51,12 +51,8 @@ pub struct Arg {
 
 pub type Outcome = Result<Answer, Trouble>;
 
-/// What a tool answers with: the lines a model reads, and the shape a client
-/// renders.
-///
-/// The text is not the JSON. A rendering a model can read beats a
-/// serialisation it has to parse, and anything that wants fields has `data` —
-/// which is the opposite way round from a server that puts its JSON in both.
+/// What a tool answers with: the lines a model reads, and `data`, the fields
+/// for a caller in the same process. Only the text goes on the wire.
 pub struct Answer {
     pub text: String,
     pub data: Option<Value>,

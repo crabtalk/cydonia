@@ -20,7 +20,7 @@ use bezel::{
     gpui::{AnyElement, App, Context, FontWeight, SharedString, Window, div, prelude::*, px},
     motion::Painter,
     theme::{TextStyle, Theme, Typeset},
-    ui::{context_menu::Place, icons, titlebar::CaptionSide},
+    ui::{context_menu::Place, icons, titlebar::CaptionSide, tooltip::Tooltip},
 };
 /// What a pane puts in the band.
 pub(crate) struct Toolbar {
@@ -131,6 +131,15 @@ impl Cydonia {
         let left = !self.sidebar_open && chrome::has(CaptionSide::Left, window, cx);
         let right = self.changes.is_none() && chrome::has(CaptionSide::Right, window, cx);
         let bare = toolbar.is_none();
+        // The open article's comments, beside its `···`.
+        let comments = match self.library.is_some() {
+            true => None,
+            false => self
+                .leaf()
+                .read(cx)
+                .article_shown(cx)
+                .map(|view| view.read(cx).comments.clone()),
+        };
         let renaming = self.header_renaming(cx).is_some();
         // Which board the band is showing, if any — the only entry with a
         // panel.
@@ -140,6 +149,16 @@ impl Cydonia {
                 ..
             }) => Some(id.clone()),
             _ => None,
+        });
+        // The first line of that board's description, which its name shows
+        // on hover.
+        let described: Option<SharedString> = board.as_deref().and_then(|id| {
+            let board = self.workspace.read(cx).board_at(id, cx)?;
+            let line = board
+                .description
+                .lines()
+                .find(|line| !line.trim().is_empty())?;
+            Some(line.trim().to_owned().into())
         });
         root::band()
             .absolute()
@@ -192,6 +211,11 @@ impl Cydonia {
                                         .font_weight(FontWeight::MEDIUM)
                                         .text_color(theme.text)
                                         .when_some(board.clone(), |title, _| title.cursor_pointer())
+                                        .when_some(described, |title, line| {
+                                            title.tooltip(move |window, cx| {
+                                                Tooltip::text(line.clone(), window, cx)
+                                            })
+                                        })
                                         .child(toolbar.title)
                                         .when_some(board.clone(), |title, id| {
                                             // Noted on the way down, ahead of
@@ -227,6 +251,7 @@ impl Cydonia {
                                 .children(board.as_deref().and_then(|id| self.info_panel(id, cx)))
                                 .child(chrome::grip("header-grip", &self.drag, window)),
                         )
+                        .children(comments)
                         .children(toolbar.entry.map(|entry| {
                             self.menu_button(
                                 SharedString::from("header-menu"),

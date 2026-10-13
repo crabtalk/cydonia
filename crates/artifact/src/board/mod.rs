@@ -17,12 +17,12 @@ pub mod card;
 pub mod column;
 pub mod key;
 
-pub use card::{Card, Status};
+pub use card::Card;
 pub use column::Column;
 
 use crate::{id, stamp};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 /// What a board is called before it is named, and what one whose name has been
 /// taken off is shown as.
@@ -59,6 +59,13 @@ impl View {
     }
 }
 
+/// A document a board holds: one of its cards, by id, or its description.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Page {
+    Card(String),
+    Description,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Board {
     /// What names this board, for as long as it exists. Written into the file
@@ -87,6 +94,14 @@ pub struct Board {
     /// backend, whose save is not checked.
     #[serde(skip)]
     pub version: Option<String>,
+    /// The guide for working this board's cards, markdown. Empty for none. In
+    /// the board directory's `content.md`, not in `board.toml`.
+    #[serde(skip)]
+    pub description: String,
+    /// What the backend held for [`Board::description`] when it was read, as
+    /// [`Board::version`] is for the board.
+    #[serde(skip)]
+    pub description_version: Option<String>,
     /// Put away: listed under the divider rather than gone.
     #[serde(default)]
     pub archived: bool,
@@ -123,6 +138,8 @@ impl Board {
             id,
             number: None,
             version: None,
+            description: String::new(),
+            description_version: None,
             touched: stamp::now(),
             created: None,
             archived: false,
@@ -291,6 +308,14 @@ impl Board {
             .find(|card| card.handle == Some(handle))
     }
 
+    /// The card added last: the one with the highest handle.
+    pub fn newest_card(&self) -> Option<&Card> {
+        self.columns
+            .iter()
+            .flat_map(|column| column.cards.iter())
+            .max_by_key(|card| card.handle)
+    }
+
     pub fn card(&self, id: &str) -> Option<&Card> {
         self.columns
             .iter()
@@ -351,15 +376,74 @@ impl Board {
         (!self.key.is_empty()).then(|| format!("{}-{handle}", self.key))
     }
 
-    /// Say how the work on a card is going, or take the answer off. Says
-    /// whether there was a card to say it about.
-    pub fn set_card_status(&mut self, id: &str, status: Option<Status>) -> bool {
+    /// Say someone is working on a card now, or take that off. Says whether
+    /// there was a card to say it about.
+    pub fn set_card_busy(&mut self, id: &str, busy: bool) -> bool {
         match self.card_mut(id) {
             Some(card) => {
-                card.status = status;
+                card.busy = busy;
                 true
             }
             None => false,
+        }
+    }
+
+    /// Give a card `label`, normalised, or take its label off. Says whether
+    /// there was a card.
+    pub fn set_card_label(&mut self, id: &str, label: Option<&str>) -> bool {
+        match self.card_mut(id) {
+            Some(card) => {
+                card.label = label.and_then(crate::label::normalize);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Give a card exactly `blockers`, references to the cards it waits on
+    /// as written in its project (see [`crate::reference`]), each once and
+    /// never its own handle. Says whether there was a card.
+    pub fn set_card_blockers(&mut self, id: &str, blockers: Vec<String>) -> bool {
+        let Some(own) = self.card(id).map(|card| self.handle_of(card)) else {
+            return false;
+        };
+        let mut kept: Vec<String> = Vec::new();
+        for blocker in blockers {
+            if Some(&blocker) != own.as_ref() && !kept.contains(&blocker) {
+                kept.push(blocker);
+            }
+        }
+        if let Some(card) = self.card_mut(id) {
+            card.blocked_by = kept;
+        }
+        true
+    }
+
+    /// The labels this board's cards carry, in name order.
+    pub fn card_labels(&self) -> BTreeSet<&str> {
+        self.columns
+            .iter()
+            .flat_map(|column| &column.cards)
+            .filter_map(|card| card.label.as_deref())
+            .collect()
+    }
+
+    /// What `page` says. `None` for a card the board does not hold.
+    pub fn page_text(&self, page: &Page) -> Option<&str> {
+        match page {
+            Page::Card(id) => self.card(id).map(|card| card.text.as_str()),
+            Page::Description => Some(&self.description),
+        }
+    }
+
+    /// Give `page` exactly `text`. Says whether the board holds it.
+    pub fn rewrite_page(&mut self, page: &Page, text: &str) -> bool {
+        match page {
+            Page::Card(id) => self.rewrite_card(id, text),
+            Page::Description => {
+                self.description = text.to_owned();
+                true
+            }
         }
     }
 
@@ -427,12 +511,11 @@ impl Board {
         None
     }
 
-    /// Write down the session a card was handed to.
-    pub fn dispatch_card(&mut self, id: &str, session: String) -> bool {
+    /// Write down the session that last held a card — see [`Card::session`].
+    pub fn hold_card(&mut self, id: &str, session: String) -> bool {
         match self.card_mut(id) {
             Some(card) => {
                 card.session = Some(session);
-                card.status = Some(Status::Busy);
                 true
             }
             None => false,
@@ -451,7 +534,9 @@ impl Board {
     /// Answers whether the board was actually replaced, which is what tells
     /// that pane.
     pub fn adopt(&mut self, fresh: Self) -> bool {
-        if toml::to_string_pretty(self).ok() == toml::to_string_pretty(&fresh).ok() {
+        if self.description == fresh.description
+            && toml::to_string_pretty(self).ok() == toml::to_string_pretty(&fresh).ok()
+        {
             self.touched = fresh.touched;
             self.created = fresh.created;
             self.number = fresh.number;
@@ -480,8 +565,6 @@ fn mint(taken: &mut HashSet<String>) -> String {
 /// is `PLAN-3` from here on. Anything that already said `ROAD-12` still says
 /// it.
 ///
-/// Its session is left behind — see [`Card::session`].
-///
 /// Lands in `column` where one is named, otherwise in the lane of the same name
 /// as the one it came out of, otherwise in the first lane. A board with no lanes
 /// answers `None`, with the card where it was.
@@ -508,7 +591,6 @@ pub fn carry_card(
     }
     card.version = None;
     card.handle = Some(to.take_handle());
-    card.session = None;
     let said = to.handle_of(&card).unwrap_or_else(|| card.id.clone());
     let id = card.id.clone();
     match to.column_mut(&landing) {

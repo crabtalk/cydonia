@@ -3,7 +3,7 @@
 use crate::{
     rail::{self, Change},
     tool::{Answer, Arg, Args, Outcome, Tool, Trouble},
-    tools::{PROJECT, fields, project_of, root},
+    tools::{HITS, PROJECT, QUERY, fields, project_of, root},
 };
 use artifact::error::{Act, Error};
 use artifact::{
@@ -56,11 +56,6 @@ const TURNS: Arg = Arg {
 turns written on the session reference. Without either, the last 3 turns.",
 };
 
-const QUERY: Arg = Arg {
-    name: "query",
-    about: "The text to find, matched case-insensitively.",
-};
-
 const FULL: Arg = Arg {
     name: "full",
     about: "Include thinking, tool output and agent process output. Off by \
@@ -80,9 +75,6 @@ asked for the rename.",
 
 /// Turns read when none are asked for.
 const LATEST: u64 = 3;
-
-/// Hits a search answers with, at most.
-const HITS: usize = 20;
 
 /// Characters of a hit's line shown, at most.
 const SNIPPET: usize = 160;

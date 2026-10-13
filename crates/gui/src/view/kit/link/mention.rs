@@ -25,6 +25,7 @@ use bezel::gpui::{App, Global, SharedString};
 use bezel::ui::icons::Icon;
 use editor::Mention;
 use markdown::Preview;
+use std::path::Path;
 
 /// Rows the menu lists at most.
 const SHOWN: usize = 20;
@@ -75,10 +76,10 @@ pub(crate) fn read(workspace: &Workspace, cx: &App) -> Linkables {
             continue;
         };
         let active = active == Some(&project.path);
-        let reference = |number: u64| Reference::entry(Some(&name), number, None).to_string();
-        let shown = |number: u64| match active {
-            true => format!("#{number}"),
-            false => reference(number),
+        let shown = |number: u64| {
+            Reference::entry(Some(&name), number, None)
+                .relative(active)
+                .to_string()
         };
         let row = |showing: Showing| Row::Entry {
             project: project.path.clone(),
@@ -201,6 +202,8 @@ pub(crate) fn source(query: &str, cx: &App) -> Vec<Mention> {
 pub(crate) struct Carded<'a> {
     /// The directory name of the project it is in.
     pub(crate) project: String,
+    /// The project's directory.
+    pub(crate) path: &'a Path,
     /// In the active project, the one a bare `DEV-12` means.
     pub(crate) active: bool,
     pub(crate) board: &'a Board,
@@ -241,6 +244,7 @@ pub(crate) fn carded<'a>(workspace: &'a Workspace, cx: &'a App) -> Vec<Carded<'a
                 };
                 cards.push(Carded {
                     project: name.to_string(),
+                    path: &project.path,
                     active: active == Some(&project.path),
                     board,
                     card,
@@ -494,10 +498,7 @@ impl Linkable {
 }
 
 fn card_mention(carded: &Carded) -> Mention {
-    let shown = match carded.active {
-        true => carded.handle.clone(),
-        false => format!("{}#{}", carded.project, carded.handle),
-    };
+    let shown = carded.reference().relative(carded.active).to_string();
     Mention {
         icon: Some(kind_icon(Kind::Board)),
         label: SharedString::from(shown),

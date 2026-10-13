@@ -21,7 +21,7 @@ fn notes_with_room_sit_at_their_lines() {
 fn a_note_that_would_overlap_goes_under_the_one_above() {
     assert_eq!(
         tops(&[0., 10., 20.], &[40., 40., 40.], None),
-        vec![0., 48., 96.]
+        vec![0., 44., 88.]
     );
 }
 
@@ -29,6 +29,12 @@ fn a_note_that_would_overlap_goes_under_the_one_above() {
 fn the_pinned_note_sits_at_its_line_and_the_others_make_room() {
     assert_eq!(
         tops(&[0., 10., 20.], &[40., 40., 40.], Some(1)),
-        vec![-38., 10., 58.]
+        vec![-34., 10., 54.]
     );
+}
+
+#[test]
+fn the_room_kept_for_notes_holds_notes() {
+    assert!(Margin::fits_notes(px(Margin::room(true))));
+    assert!(!Margin::fits_notes(px(Margin::room(false))));
 }

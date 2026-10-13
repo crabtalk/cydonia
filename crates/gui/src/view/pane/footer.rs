@@ -4,12 +4,13 @@
 //! over a run picked out of the transcript.
 
 use super::Tab;
+use crate::view::kit::text::ShownPath as _;
 use crate::view::window::reach::InWindow as _;
 use crate::{
     model::workspace::Workspace,
     view::{
         component::{composer, ribbon, transcript},
-        detail::{adrift, adrift_line, agent_missing, footer, shown_path},
+        detail::{adrift, adrift_line, agent_missing, footer},
         window::section::Section,
     },
 };
@@ -342,7 +343,7 @@ impl Tab {
             let agent = chat.entry.name.clone();
             let cwd = workspace
                 .active_project()
-                .map(|project| shown_path(&project.path))
+                .map(|project| project.path.shown())
                 .unwrap_or_default();
             // Except where the agent is not here to be started in it. A
             // transcript that has nothing to show *and* nowhere to send is the
@@ -544,7 +545,8 @@ impl Tab {
                 self.queued_galleries
                     .entry((id, ix, text.clone()))
                     .or_insert_with(|| {
-                        cx.new(|cx| transcript::gallery::Gallery::new(images, &cwd, cx))
+                        let workspace = self.workspace.downgrade();
+                        cx.new(|cx| transcript::gallery::Gallery::new(images, &cwd, workspace, cx))
                     })
                     .clone()
             });

@@ -22,15 +22,15 @@ use artifact::project::Project as _;
 use artifact::{
     article as layout,
     article::{
-        comments::{Comment, Comments},
-        properties::{self, Properties},
+        comments::{Author, Comment, Comments, Reply},
+        properties::{self, CommentDisplay, Properties},
     },
 };
 use bezel::{
     gpui::{App, AppContext as _, Context, Entity},
     ui::input::{Shape, TextField},
 };
-use editor::{Anchor, AnchorId, Document, DocumentEvent, Mode};
+use editor::{Anchor, AnchorId, Document, DocumentEvent, Mode, SourceAnchor};
 use markdown::AppExt as _;
 use std::{
     cell::OnceCell,
@@ -106,9 +106,15 @@ pub struct Article {
     /// see [`Article::wide`]. Cached like [`Article::archived`]: the frame
     /// reads it, and a frame is not somewhere to open a file.
     pub full_width: Option<bool>,
+    /// How its margin shows its comments, and `None` for a page nobody has
+    /// decided about — see [`Article::comments_shown`]. Cached like
+    /// [`Article::full_width`].
+    pub comment_display: Option<CommentDisplay>,
     /// Its labels, normalised — see [`artifact::label`]. Cached like
     /// [`Article::archived`].
     pub labels: Vec<String>,
+    /// The start of its body as plain text — see [`Article::preview`].
+    preview: OnceCell<String>,
     /// The file moved under an open document that has edits of its own — see
     /// [`Article::adopt`]. Runtime only: what it marks is a disagreement
     /// between the buffer and the disk, and reopening the app ends it by
@@ -138,7 +144,9 @@ impl Article {
             created: held.created,
             archived: properties.archived,
             full_width: properties.full_width,
+            comment_display: properties.comments,
             labels: properties.labels,
+            preview: OnceCell::new(),
             id: held.id,
             store,
             field: None,
@@ -161,6 +169,7 @@ impl Article {
             title: self.title.clone(),
             archived: self.archived,
             full_width: self.full_width,
+            comments: self.comment_display,
             labels: self.labels.clone(),
         }
     }
@@ -197,6 +206,19 @@ impl Article {
     /// One answer, so the pane and the menu that toggles it cannot disagree.
     pub fn wide(&self, default: bool) -> bool {
         self.full_width.unwrap_or(default)
+    }
+
+    /// Set how the margin shows its comments. `None` hands it back to the
+    /// reader's default and takes the key out of the file.
+    pub fn set_comment_display(&mut self, display: Option<CommentDisplay>) {
+        self.comment_display = display;
+        let _ = self.store.save_properties(&self.id, &self.properties());
+    }
+
+    /// How this page's margin shows its comments, against the app's own
+    /// default.
+    pub fn comments_shown(&self, default: CommentDisplay) -> CommentDisplay {
+        self.comment_display.unwrap_or(default)
     }
 
     /// Which form the document is in. The document's answer where there is
@@ -288,6 +310,8 @@ impl Article {
     fn save_comments(&mut self, text: &str) -> bool {
         let mut file = self.store.comments(&self.id);
         file.carry(None, text);
+        let answered = self.filed_by_agent(&file);
+        self.comments.take_replies(&file);
         let arrived: Vec<Comment> = file
             .comments
             .into_iter()
@@ -303,8 +327,33 @@ impl Article {
         let any = !arrived.is_empty();
         self.comments.comments.extend(arrived);
         self.know_comments();
+        if let Some(id) = answered {
+            self.active_comment = Some(id);
+        }
         let _ = self.store.save_comments(&self.id, &self.comments);
-        any
+        any || answered.is_some()
+    }
+
+    /// The newest open comment an agent has just filed in `fresh`: a note it
+    /// added, or an answer on one. What the margin opens on when it lands.
+    fn filed_by_agent(&self, fresh: &Comments) -> Option<u64> {
+        fresh
+            .comments
+            .iter()
+            .filter(|comment| !comment.resolved)
+            .filter(|comment| {
+                match self
+                    .comments
+                    .comments
+                    .iter()
+                    .find(|held| held.id == comment.id)
+                {
+                    None => comment.id > self.known_comment,
+                    Some(held) => comment.agent_replies() > held.agent_replies(),
+                }
+            })
+            .map(|comment| comment.id)
+            .max()
     }
 
     /// Hand the comments' ranges to the document, which carries them through
@@ -323,14 +372,20 @@ impl Article {
             .comments
             .comments
             .iter()
-            .map(|comment| (AnchorId(comment.id), comment.range(), self.wash(comment)))
+            .map(|comment| SourceAnchor {
+                id: AnchorId(comment.id),
+                range: comment.range(),
+                state: self.wash(comment),
+                actionable: comment.opens(),
+            })
             .collect();
         document.update(cx, |document, cx| {
             document.set_source_anchors(text, anchors, cx)
         });
     }
 
-    /// Repaint the comments' washes over the ranges the document holds.
+    /// Repaint the comments' washes over the ranges the document holds, and
+    /// say again which of them a press opens.
     fn restate_comments(&self, cx: &mut App) {
         let Some(document) = &self.document else {
             return;
@@ -339,14 +394,17 @@ impl Article {
             .read(cx)
             .anchors()
             .iter()
-            .map(|anchor| Anchor {
-                state: self
+            .map(|anchor| {
+                let held = self
                     .comments
                     .comments
                     .iter()
-                    .find(|comment| comment.id == anchor.id.0)
-                    .map_or(anchor.state, |comment| self.wash(comment)),
-                ..anchor.clone()
+                    .find(|comment| comment.id == anchor.id.0);
+                Anchor {
+                    state: held.map_or(anchor.state, |comment| self.wash(comment)),
+                    actionable: held.map_or(anchor.actionable, Comment::opens),
+                    ..anchor.clone()
+                }
             })
             .collect();
         if document.read(cx).anchors() != anchors.as_slice() {
@@ -401,8 +459,12 @@ impl Article {
         if fresh == self.comments {
             return false;
         }
+        let answered = self.filed_by_agent(&fresh);
         self.comments = fresh;
         self.know_comments();
+        if let Some(id) = answered {
+            self.active_comment = Some(id);
+        }
         self.place_comments(cx);
         true
     }
@@ -419,7 +481,7 @@ impl Article {
             self.comments
                 .comments
                 .iter()
-                .any(|comment| comment.id == *id && !comment.resolved)
+                .any(|comment| comment.id == *id && comment.opens())
         });
         if self.hovered_comment != id {
             self.hovered_comment = id;
@@ -440,6 +502,20 @@ impl Article {
             true => self.place_comments(cx),
             false => self.restate_comments(cx),
         }
+    }
+
+    /// Add the reader's follow-up `question` to comment `id`'s thread.
+    pub fn ask_on_comment(&mut self, id: u64, question: String, cx: &mut App) {
+        let Some(comment) = self.comments.get_mut(id) else {
+            return;
+        };
+        comment.replies.push(Reply {
+            from: Author::Reader,
+            text: question,
+            turn: None,
+        });
+        self.save_comments(&self.saved.clone());
+        self.restate_comments(cx);
     }
 
     pub fn delete_comment(&mut self, id: u64, cx: &mut App) {
@@ -505,6 +581,7 @@ impl Article {
         self.cover = fresh.cover.clone();
         self.archived = fresh.archived;
         self.full_width = fresh.full_width;
+        self.comment_display = fresh.comment_display;
         self.labels = fresh.labels.clone();
         self.touched = fresh.touched;
         self.created = fresh.created;
@@ -545,6 +622,7 @@ impl Article {
         }
         self.archived = held.archived;
         self.full_width = held.full_width;
+        self.comment_display = held.comments;
         self.labels = held.labels;
         let old = std::mem::take(&mut self.saved);
         self.saved = self.store.read_article(&self.id).unwrap_or_default();
@@ -583,6 +661,17 @@ impl Article {
     fn forget_disk(&mut self) {
         self.disk = OnceCell::new();
         self.words = OnceCell::new();
+        self.preview = OnceCell::new();
+    }
+
+    /// The start of its body as plain text — see [`artifact::text::preview`]:
+    /// of what this process last wrote for an open article, and of the file,
+    /// read once, for one never opened.
+    pub fn preview(&self) -> &str {
+        self.preview.get_or_init(|| match self.document {
+            Some(_) => artifact::text::preview(&self.saved),
+            None => artifact::text::preview(&self.store.read_article(&self.id).unwrap_or_default()),
+        })
     }
 
     pub fn disk(&self) -> Rc<Disk> {

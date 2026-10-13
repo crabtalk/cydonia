@@ -29,7 +29,7 @@ use bezel::{
         popover,
         surface::{self, Surfaced as _},
         tooltip::Tooltip,
-        widgets::{Controls as _, Layout as _},
+        widgets::Controls as _,
     },
 };
 use editor::Mention;
@@ -132,6 +132,9 @@ pub enum SwitchId {
     /// `session/set_config_option`, by the option's own id — which is where
     /// the model lives.
     Config(SharedString),
+    /// The agent an article's session opens on, offered before there is a
+    /// session to switch. Its options are the configured agents by index.
+    Agent,
 }
 
 /// One value a switch can be set to.
@@ -168,16 +171,6 @@ pub enum ComposerEvent {
     Files,
     /// Set a switch to one of its values, by id.
     Switch(SwitchId, SharedString),
-}
-
-/// A switchable row's name with the value it is on. A submenu row is one line
-/// and has no column for a value the way the old flyout did, so what a thing
-/// is set to is written into what it is called.
-fn set_to(name: &str, value: Option<SharedString>) -> SharedString {
-    match value {
-        Some(value) => format!("{name}: {value}").into(),
-        None => name.into(),
-    }
 }
 
 /// The text as a markdown blockquote.
@@ -332,7 +325,7 @@ pub struct Composer {
     /// The configured agents, and which one the session runs on.
     agents: Vec<Agent>,
     agent: Option<usize>,
-    /// What the live session can be switched between — its mode, its model.
+    /// What the session can be switched between — its mode, its model.
     /// Empty for a session with no agent behind it.
     switches: Vec<Switch>,
     /// Context spent, when the agent counts it.
@@ -541,8 +534,8 @@ impl Composer {
         cx.notify();
     }
 
-    /// What the session can be switched between, and how much context it has
-    /// spent. Both belong to a live connection, so both go empty with one.
+    /// What the session can be switched between: the agent's offers, live or
+    /// cached.
     pub fn set_switches(&mut self, switches: &[Switch], cx: &mut Context<Self>) {
         if self.switches == switches {
             return;
@@ -958,6 +951,7 @@ impl Composer {
                         "composer-commands",
                         &items,
                         &cursor,
+                        None,
                         window,
                         cx,
                         move |composer, hit, _, cx| match hit {
@@ -1045,7 +1039,7 @@ impl Composer {
                     |this| &mut this.menu,
                     ComposerMenu::Agent,
                     Place::Above,
-                    |composer, _, _| (composer.menu_items(), Self::switch),
+                    |composer, _, _| (composer.menu_rows(), Self::switch),
                     window,
                     cx,
                 );
@@ -1084,7 +1078,7 @@ impl Composer {
         Some(self.menu.place("composer-menu", card))
     }
 
-    /// The menu's rows: whatever the live session offers, one submenu each.
+    /// The menu's rows: whatever the session offers, one submenu each.
     /// Each switch carries the value it is on in its own name — the reason to
     /// open one of these is as often to read what it is set to as to change it,
     /// and a submenu row has one line to say both on.
@@ -1095,12 +1089,12 @@ impl Composer {
     ///
     /// No leading glyphs either: these rows are words, and one icon among them
     /// would open an empty gutter down the menu's left.
-    fn menu_items(&self) -> Vec<Item> {
+    fn menu_rows(&self) -> Vec<Item> {
         self.switches
             .iter()
             .map(|switch| {
                 Item::submenu(
-                    set_to(&switch.name, self.value_of(switch)),
+                    crate::view::kit::menu::set_to(&switch.name, self.value_of(switch)),
                     switch
                         .options
                         .iter()
@@ -1115,11 +1109,11 @@ impl Composer {
     }
 
     /// Pick the option at `path` in the agent menu: one row per level, the
-    /// switch and then which of its options — [`Self::menu_items`] taken
+    /// switch and then which of its options — [`Self::menu_rows`] taken
     /// backwards.
     fn switch(&mut self, path: &[usize], _: &mut Window, cx: &mut Context<Self>) {
-        let [row, at] = path[..] else { return };
-        if let Some(switch) = self.switches.get(row)
+        if let [row, at] = path[..]
+            && let Some(switch) = self.switches.get(row)
             && let Some(option) = switch.options.get(at)
         {
             cx.emit(ComposerEvent::Switch(switch.id.clone(), option.id.clone()));
@@ -1352,7 +1346,15 @@ impl Composer {
                 this.thread_open = !this.thread_open;
                 cx.notify();
             }))
-            .child(theme.disclosure(open))
+            // Up while it is shut, where the panel opens; down to close it.
+            .child(
+                icons::icon(match open {
+                    true => icons::arrows::ChevronDown,
+                    false => icons::arrows::ChevronUp,
+                })
+                .size(px(14.))
+                .text_color(theme.text_muted),
+            )
             .surface(theme, SURFACE)
             .into_any_element()
     }

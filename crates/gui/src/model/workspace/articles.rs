@@ -4,6 +4,7 @@
 //! `use super::*`: these methods work on the same struct and reach the same
 //! names as the rest of it.
 use super::*;
+use artifact::article::properties::CommentDisplay;
 use artifact::kind::Kind;
 
 impl Workspace {
@@ -192,6 +193,20 @@ impl Workspace {
         }
     }
 
+    /// Set how one page's margin shows its comments — see
+    /// [`Article::set_comment_display`].
+    pub fn set_comment_display(
+        &mut self,
+        on: &Path,
+        display: Option<CommentDisplay>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(article) = self.article_at_mut(on) {
+            article.set_comment_display(display);
+            cx.notify();
+        }
+    }
+
     /// Open one comment's note in an article's margin, or close the one open.
     pub fn activate_comment(&mut self, on: &Path, id: Option<u64>, cx: &mut Context<Self>) {
         if let Some(article) = self.article_at_mut(on) {
@@ -212,6 +227,14 @@ impl Workspace {
     pub fn resolve_comment(&mut self, on: &Path, id: u64, resolved: bool, cx: &mut Context<Self>) {
         if let Some(article) = self.article_at_mut(on) {
             article.resolve_comment(id, resolved, cx);
+            cx.notify();
+        }
+    }
+
+    /// Ask a follow-up on one comment — see [`Article::ask_on_comment`].
+    pub fn ask_on_comment(&mut self, on: &Path, id: u64, question: String, cx: &mut Context<Self>) {
+        if let Some(article) = self.article_at_mut(on) {
+            article.ask_on_comment(id, question, cx);
             cx.notify();
         }
     }

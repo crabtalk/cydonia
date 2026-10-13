@@ -1,44 +1,10 @@
-//! A card: what needs doing, the session it was handed to, and how that work
-//! is going.
+//! A card: what needs doing, the session that last held it, whether someone is
+//! on it, its label and the cards it waits on.
 
 use serde::{Deserialize, Serialize};
 
-/// How the work on a card is going, as whoever is doing it says.
-///
-/// Not where the card sits: that is the column, which the reader names and
-/// rearranges, and a card in `Doing` that an agent has not picked up yet is a
-/// real state the two together can say and neither can alone.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Status {
-    /// Being worked on now.
-    Busy,
-    /// Cannot go on.
-    Blocked,
-    /// The work is finished.
-    Done,
-}
-
-impl Status {
-    pub const ALL: [Self; 3] = [Self::Busy, Self::Blocked, Self::Done];
-
-    /// The word it is written under, in a file and in a tool call.
-    pub fn key(self) -> &'static str {
-        match self {
-            Self::Busy => "busy",
-            Self::Blocked => "blocked",
-            Self::Done => "done",
-        }
-    }
-
-    /// The status that word names, and nothing for one nobody uses. `none`
-    /// is not handled here: taking a status off is the absence of one, and a
-    /// caller saying so is saying `None`.
-    pub fn parse(word: &str) -> Option<Self> {
-        let word = word.trim().to_lowercase();
-        Self::ALL.into_iter().find(|status| status.key() == word)
-    }
-}
+/// The one word a card's status is written with — see [`Card::busy`].
+pub const BUSY: &str = "busy";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Card {
@@ -52,14 +18,28 @@ pub struct Card {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub handle: Option<u64>,
     pub text: String,
-    /// The session this card was dispatched to, by the id it is filed under.
-    /// Persisted, so ▶/💬 still tells the truth after a quit.
+    /// The session that last held this card, by the id it is filed under: the
+    /// one that made it, was last sent it, or last tagged it busy.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session: Option<String>,
-    /// How the work is going — see [`Status`]. Nothing for a card nobody has
-    /// said anything about, which is most of them.
+    /// Someone is working on it now, as whoever is doing the work says.
+    /// Written as `status = "busy"`; any other word there reads as not busy.
+    #[serde(
+        default,
+        rename = "status",
+        skip_serializing_if = "std::ops::Not::not",
+        with = "busy"
+    )]
+    pub busy: bool,
+    /// Its one label, normalised — see [`crate::label::normalize`]. Drawn from
+    /// the labels on its board's cards, not the entries'.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub status: Option<Status>,
+    pub label: Option<String>,
+    /// The cards it waits on, each a reference as written in its project —
+    /// `DEV-12`, or `foo#DEV-12` for a card in project `foo`; see
+    /// [`crate::reference`]. One that no longer resolves names nothing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blocked_by: Vec<String>,
     /// What the backend held for this card when it was read — see
     /// [`super::Board::version`]. `None` for a card not read from a backend.
     #[serde(skip)]
@@ -75,8 +55,23 @@ impl Card {
             handle: Some(handle),
             text,
             session: None,
-            status: None,
+            busy: false,
+            label: None,
+            blocked_by: Vec::new(),
             version: None,
         }
+    }
+}
+
+/// [`Card::busy`] as the word it is written under.
+mod busy {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(_: &bool, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(super::BUSY)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<bool, D::Error> {
+        Ok(Option::<String>::deserialize(deserializer)?.as_deref() == Some(super::BUSY))
     }
 }

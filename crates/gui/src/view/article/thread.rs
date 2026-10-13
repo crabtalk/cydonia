@@ -105,7 +105,11 @@ impl Render for ThreadView {
                 })
             });
         }
-        let body = match &self.transcript {
+        let asked = chat.as_ref().is_some_and(|chat| {
+            let chat = chat.read(cx);
+            !chat.unsaid() || !chat.queue.is_empty()
+        });
+        let body = match self.transcript.as_ref().filter(|_| asked) {
             Some(view) => view.clone().into_any_element(),
             None => div()
                 .text_style(TextStyle::Callout)

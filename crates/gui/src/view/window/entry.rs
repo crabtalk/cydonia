@@ -5,19 +5,15 @@ use crate::model::workspace::Showing;
 use crate::view::{
     article::TogglePlainText,
     keymap::{self, Command},
-    kit::menu,
+    kit::{menu, stamp, text},
     sidebar::{Group, Lit, Renaming, Row, on_disk},
     window::root::Cydonia,
 };
-use artifact::board::View;
+use artifact::board::{Page, View};
 use artifact::space::Member;
 use bezel::{
     gpui::{AnyElement, App, Context, Window, prelude::*},
-    ui::{
-        icons,
-        input::Case,
-        menu::{Item, Segment},
-    },
+    ui::{icons, input::Case, menu::Item},
 };
 use std::path::PathBuf;
 
@@ -204,26 +200,42 @@ impl Cydonia {
         if let Some(Showing::Board(_)) = entry.showing()
             && !matches!(host, Host::Sidebar | Host::Library)
             && let Some((project, ix)) = entry.located(self.workspace.read(cx))
-            && let Some((id, view)) = self
+            && let Some((id, view, described)) = self
                 .workspace
                 .read(cx)
                 .board_in(project, ix, cx)
-                .map(|board| (board.id.clone(), board.view))
+                .map(|board| (board.id.clone(), board.view, !board.description.is_empty()))
         {
-            let views = [View::Lanes, View::List];
-            let item = Item::segmented(
-                [
-                    Segment::new(icons::development::SquareKanban, "Lanes"),
-                    Segment::new(icons::layout::LayoutList, "List"),
+            if let Some(board) = self.workspace.read(cx).board_member(project, ix) {
+                let on = match &host {
+                    Host::Tab(tab) => Some(tab.clone()),
+                    Host::Sidebar | Host::Library | Host::Header => None,
+                };
+                let label = match described {
+                    true => "Description",
+                    false => "Add description",
+                };
+                shown.push(menu::row::<Cydonia>(
+                    Item::action(label).with_icon(icons::text::Book),
+                    move |this, window, cx| {
+                        this.open_page(on.as_ref(), board.clone(), Page::Description, window, cx)
+                    },
+                ));
+            }
+            shown.push(menu::switch::<Cydonia, _>(
+                "View",
+                icons::layout::LayoutList,
+                vec![
+                    (
+                        View::Lanes,
+                        icons::development::SquareKanban.into(),
+                        "Lanes",
+                    ),
+                    (View::List, icons::layout::LayoutList.into(), "List"),
                 ],
-                views.iter().position(|at| *at == view).unwrap_or_default(),
-            );
-            let act: menu::Act = Box::new(move |this, path, _, cx| {
-                if let Some(view) = path.first().and_then(|at| views.get(*at)) {
-                    this.set_board_view(&id, *view, cx);
-                }
-            });
-            shown.push((item, act));
+                view,
+                move |this, view, _, cx| this.set_board_view(&id, view, cx),
+            ));
         }
 
         // ── the entry itself ──
@@ -314,7 +326,25 @@ impl Cydonia {
                 move |this, window, cx| this.ask_delete(&entry, window, cx)
             },
         )];
-        menu::sections([shown, held, disk, tab_rows, delete])
+        // ── what the open page is, at the foot: read, never chosen ──
+        let mut about: Vec<(Item, menu::Act)> = Vec::new();
+        if matches!(entry.showing(), Some(Showing::Article(_)))
+            && page
+            && let Some(article) = self.pane_doc(cx)
+        {
+            if let Some(words) = article.words() {
+                about.push(menu::note(text::word_count(words)));
+            }
+            about.push(menu::note(format!(
+                "Edited {}",
+                stamp::full(article.touched)
+            )));
+            if let Some(created) = article.created {
+                about.push(menu::note(format!("Created {}", stamp::full(created))));
+            }
+        }
+
+        menu::sections([shown, held, disk, tab_rows, delete, about])
     }
 
     /// Drop an entry, file and all. Deleting the session on screen lands on

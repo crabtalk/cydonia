@@ -18,7 +18,7 @@ use crate::model::notify;
 #[cfg(feature = "desktop")]
 use crate::model::workspace::references;
 use crate::model::{
-    session_preferences::{self, Choices},
+    session_preferences::{self, Choices, OfferCache, Offers},
     settings,
     store::{self, Store},
 };
@@ -33,12 +33,11 @@ use artifact::session::{
     record::{ForkOrigin, Record},
 };
 use bezel::agent::orbs::engine::Frame;
-use bezel::gpui::{Context, Task};
+use bezel::gpui::{App, Context, Task};
 #[cfg(feature = "desktop")]
 use cacp::schema::{
     ContentBlock, MaybeUndefined, PlanEntryStatus, RequestPermissionRequest,
-    RequestPermissionResponse, SessionConfigKind, SessionUpdate, StopReason, ToolCallContent,
-    ToolCallStatus,
+    RequestPermissionResponse, SessionUpdate, StopReason, ToolCallContent, ToolCallStatus,
 };
 use cacp::schema::{
     PermissionOptionKind, SessionConfigOption, SessionConfigOptionValue, SessionModeState,
@@ -160,6 +159,8 @@ pub struct ChatSession {
     pub connection: Connection,
     pub items: Vec<ChatItem>,
     history_unloaded: bool,
+    /// [`ChatSession::preview`] as it stood when the history was unloaded.
+    unloaded_preview: String,
     pub fork: Option<ForkOrigin>,
     /// See [`Record::replay`].
     pub replay: Option<usize>,
@@ -211,7 +212,7 @@ pub struct ChatSession {
     pub(crate) turn_started: Option<Instant>,
     pub(crate) tool_started: BTreeMap<String, Instant>,
     /// Prompts waiting for an agent to send them to: what was typed while a
-    /// turn was in flight, and what a dispatched card opened the session with.
+    /// turn was in flight, and what a card sent to a new session opened it with.
     pub queue: VecDeque<String>,
     /// The geometry of the sidebar's orb for this session, reused tick to
     /// tick. Its own buffer: each orb on screen is filled where it is built
@@ -244,7 +245,7 @@ impl ChatSession {
     }
 
     /// Open a session on `entry`. `seed` is its first prompt, sent as soon as
-    /// the agent is up — what a dispatched card rides in on.
+    /// the agent is up — what a card sent to a new session rides in on.
     pub fn connect(
         id: u64,
         entry: settings::Agent,
@@ -253,6 +254,18 @@ impl ChatSession {
         cx: &mut Context<Self>,
     ) -> Self {
         let preferences = session_preferences::load(&cwd, &entry, None);
+        Self::open(id, entry, cwd, seed, preferences, cx)
+    }
+
+    /// [`Self::connect`] with the choices the launch starts from given.
+    fn open(
+        id: u64,
+        entry: settings::Agent,
+        cwd: PathBuf,
+        seed: Option<String>,
+        preferences: Choices,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let record = store::open(&cwd).create_session().ok();
         #[cfg(feature = "desktop")]
         let (pump, connection) = (
@@ -279,6 +292,7 @@ impl ChatSession {
             connection,
             items: Vec::new(),
             history_unloaded: false,
+            unloaded_preview: String::new(),
             fork: None,
             replay: None,
             draft: String::new(),
@@ -320,9 +334,10 @@ impl ChatSession {
         entry: settings::Agent,
         cwd: PathBuf,
         article: String,
+        choices: Choices,
         cx: &mut Context<Self>,
     ) -> Self {
-        let mut chat = Self::connect(id, entry, cwd, None, cx);
+        let mut chat = Self::open(id, entry, cwd, None, choices, cx);
         chat.article = Some(article);
         chat
     }
@@ -341,6 +356,7 @@ impl ChatSession {
             replay: record.replay,
             items: record.items,
             history_unloaded: false,
+            unloaded_preview: String::new(),
             fork: record.fork,
             draft: record.draft,
             draft_save: None,
@@ -414,6 +430,7 @@ impl ChatSession {
         if serde_json::to_value(&record).ok() != serde_json::to_value(self.to_record()).ok() {
             return;
         }
+        self.unloaded_preview = self.preview();
         self.items = Vec::new();
         self.sent_at = BTreeMap::new();
         self.fork = None;
@@ -428,6 +445,23 @@ impl ChatSession {
         self.usage = None;
         self.tool_started = BTreeMap::new();
         self.history_unloaded = true;
+    }
+
+    /// The start of the agent's last response as plain text — see
+    /// [`artifact::text::preview`]. Empty before the agent has said anything.
+    pub fn preview(&self) -> String {
+        if self.history_unloaded {
+            return self.unloaded_preview.clone();
+        }
+        self.items
+            .iter()
+            .rev()
+            .find_map(|item| match item {
+                ChatItem::Agent(text) if !text.trim().is_empty() => Some(text.as_str()),
+                _ => None,
+            })
+            .map(artifact::text::preview)
+            .unwrap_or_default()
     }
 
     /// Last user submission in milliseconds, used for sidebar ordering.
@@ -481,10 +515,9 @@ impl ChatSession {
 
     /// The id this session is filed under, minted now if it has none.
     ///
-    /// A dispatched card writes the link on the click that made it, and until
-    /// then a session that has said nothing has no id to be written down.
-    /// Bringing the mint forward costs nothing: a dispatched session carries a
-    /// first prompt, so it is about to have something to file anyway.
+    /// A card sent to a session writes the session down on the click that sent
+    /// it, and until then a session that has said nothing has no id to be
+    /// written down.
     pub fn mint_record(&mut self) -> Option<&str> {
         if self.record.is_none() {
             self.record = self.store().create_session().ok();
@@ -716,7 +749,11 @@ impl ChatSession {
                 self.queue.push_front(content);
                 return;
             };
-            session.prompt(&content, self.number, self.article.as_deref());
+            let article = self
+                .article
+                .as_deref()
+                .and_then(|id| self.store().number(Kind::Article, id).ok());
+            session.prompt(&content, self.number, article);
             self.last_activity = Instant::now();
             self.turn_started = Some(self.last_activity);
             self.tool_started.clear();
@@ -755,89 +792,80 @@ impl ChatSession {
     /// agent's `CurrentModeUpdate` is the confirmation, so a picker that waited
     /// for it would read as a press that did nothing — and the update, when it
     /// lands, is what settles any disagreement.
-    pub fn set_mode(&mut self, mode_id: &str) {
-        #[cfg(not(feature = "desktop"))]
-        {
-            let _ = mode_id;
+    ///
+    /// Answers whether the agent offers `mode_id`. The pick is kept as this
+    /// session's choice only; which default it also becomes is the caller's.
+    pub fn set_mode(&mut self, mode_id: &str, cx: &App) -> bool {
+        let offered = self.offered(cx).modes.is_some_and(|modes| {
+            modes
+                .available_modes
+                .iter()
+                .any(|mode| &*mode.id == mode_id)
+        });
+        if !offered {
+            return false;
         }
         #[cfg(feature = "desktop")]
-        {
-            let Connection::Live(session) = &self.connection else {
-                return;
-            };
-            if !self.modes.as_ref().is_some_and(|modes| {
-                modes
-                    .available_modes
-                    .iter()
-                    .any(|mode| &*mode.id == mode_id)
-            }) {
-                return;
-            }
+        if let Connection::Live(session) = &self.connection {
             session.set_mode(mode_id);
-            if let Some(modes) = &mut self.modes {
-                modes.current_mode_id = mode_id.into();
-            }
-            self.preferences.mode = Some(mode_id.into());
-            if let Err(error) = session_preferences::remember_mode(&self.cwd, &self.entry, mode_id)
-            {
-                self.notice(true, &format!("Could not save session default: {error}"));
-            }
-            self.save_preferences();
         }
+        if self.live()
+            && let Some(modes) = self.modes.as_mut()
+        {
+            modes.current_mode_id = mode_id.into();
+        }
+        self.preferences.mode = Some(mode_id.into());
+        self.save_preferences();
+        true
+    }
+
+    /// Say that a pick taken here could not be kept as a default.
+    pub fn default_unsaved(&mut self, error: impl std::fmt::Display) {
+        self.notice(true, &format!("Could not save session default: {error}"));
     }
 
     /// The same for a config option, which is where the model lives
     /// (`session/set_config_option`).
-    pub fn set_config(&mut self, config_id: &str, value: SessionConfigOptionValue) {
-        #[cfg(not(feature = "desktop"))]
-        {
-            let _ = (config_id, value);
+    pub fn set_config(
+        &mut self,
+        config_id: &str,
+        value: SessionConfigOptionValue,
+        cx: &App,
+    ) -> bool {
+        let offered = self.offered(cx).config.iter().any(|option| {
+            &*option.id == config_id && session_preferences::supports(option, &value)
+        });
+        if !offered {
+            return false;
         }
         #[cfg(feature = "desktop")]
-        {
-            let Connection::Live(session) = &self.connection else {
-                return;
-            };
-            if !self.config.iter().any(|option| {
-                &*option.id == config_id && session_preferences::supports(option, &value)
-            }) {
-                return;
-            }
+        if let Connection::Live(session) = &self.connection {
             session.set_config_option(config_id, value.clone());
-            self.preferences
-                .config
-                .insert(config_id.into(), value.clone());
-            let saved = session_preferences::remember_config(
-                &self.cwd,
-                &self.entry,
-                config_id,
-                value.clone(),
-            );
-            let found = self
+        }
+        if self.live()
+            && let Some(option) = self
                 .config
                 .iter_mut()
-                .find(|option| &*option.id == config_id);
-            let Some(option) = found else {
-                return;
-            };
-            match (&mut option.kind, value) {
-                (
-                    SessionConfigKind::Select(select),
-                    SessionConfigOptionValue::ValueId { value },
-                ) => {
-                    select.current_value = value;
-                }
-                (SessionConfigKind::Boolean(flag), SessionConfigOptionValue::Boolean { value }) => {
-                    flag.current_value = value;
-                }
-                // The agent offers one shape and was asked for the other. Its own
-                // update is the answer; nothing is guessed at here.
-                _ => {}
+                .find(|option| &*option.id == config_id)
+        {
+            session_preferences::adopt(option, value.clone());
+        }
+        self.preferences.config.insert(config_id.into(), value);
+        self.save_preferences();
+        true
+    }
+
+    /// What the agent offers this session, and what it is on: the live
+    /// connection's while there is one, otherwise the [`OfferCache`] with this
+    /// session's choices on.
+    pub fn offered(&self, cx: &App) -> Offers {
+        if self.live() {
+            Offers {
+                modes: self.modes.clone(),
+                config: self.config.clone(),
             }
-            if let Err(error) = saved {
-                self.notice(true, &format!("Could not save session default: {error}"));
-            }
-            self.save_preferences();
+        } else {
+            OfferCache::get(cx, &self.cwd, &self.entry).with(&self.preferences)
         }
     }
 
@@ -1272,7 +1300,36 @@ fn pump(entry: &settings::Agent, launch: Launch, cx: &mut Context<ChatSession>) 
                     // this arrives as an update.
                     chat.modes = session.response.modes.clone();
                     chat.config = session.response.config_options.clone().unwrap_or_default();
+                    // Picks made while it was starting were not in its launch.
+                    // Put them on now, where the agent offers them.
+                    let pending = chat.preferences.clone();
+                    if let Some(mode) = pending.mode.as_deref()
+                        && let Some(modes) = chat.modes.as_mut()
+                        && modes.available_modes.iter().any(|m| &*m.id == mode)
+                        && &*modes.current_mode_id != mode
+                    {
+                        session.set_mode(mode);
+                        modes.current_mode_id = mode.into();
+                    }
+                    for option in &mut chat.config {
+                        let Some(value) = pending.config.get(&*option.id) else {
+                            continue;
+                        };
+                        if session_preferences::supports(option, value)
+                            && session_preferences::current(option) != *value
+                        {
+                            session.set_config_option(&option.id, value.clone());
+                            session_preferences::adopt(option, value.clone());
+                        }
+                    }
                     chat.preferences = Choices::capture(chat.modes.as_ref(), &chat.config);
+                    let offers = Offers {
+                        modes: chat.modes.clone(),
+                        config: chat.config.clone(),
+                    };
+                    if let Err(error) = OfferCache::remember(cx, &chat.cwd, &chat.entry, offers) {
+                        chat.notice(true, &format!("Could not save agent options: {error}"));
+                    }
                     chat.connection = Connection::Live(Box::new(session));
                 }
                 // Whatever was typed while it had no agent goes now, and the

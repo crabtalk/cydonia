@@ -7,7 +7,7 @@
 - `#12:5-7` names lines 5 to 7 of article #12, and `#12#setup` the section under its heading whose anchor is `setup` (GitHub's anchor: lowercased, punctuation dropped, spaces as `-`). Read either with article_read.
 - An entry's link is `cydonia://<project>#<number>`, with `:<turns>` after a session's number for a run of its turns, and `:<lines>` or `#<anchor>` after an article's number for part of it. A board's card is `cydonia://<project>#<handle>`, `cydonia://foo#ROAD-12`, never its board's number. `<project>` is the directory name of the entry's project.
 - Replies are Cydonia Markdown. Write an entry named in one as a chip of its link, as the markdown resource's "Links to entries" spells it.
-- Name a board by its key (ROAD), its name or its id; a card by its handle (ROAD-12) or its id; a column by its name or its id; an article by its title or its id.
+- Name a board by its key (ROAD), its name or its id; a card by its handle (ROAD-12) or its id, and read its whole text with board_read_card; a column by its name or its id; an article by its title or its id.
 - A board key or handle not in this project: board_search finds the open project it is in.
 
 ## Files under .cydonia/
@@ -27,7 +27,7 @@
 
 A request that names a card is a card you are working.
 
-- Call board_set_card_status with busy before the first thing you do about it, and clear it with none when you answer.
+- Call board_set_card_busy with true before the first thing you do about it, and with false when you answer.
 - This holds however small the request and however often one card comes back: a correction to work already done is that card again, and so is a question about it.
-- Use blocked or done where one of those is the lasting answer. A tag left behind says an agent is on a card that nobody is.
+- A finished card is moved to the column that says so, with board_move_card. A card that cannot go on until other cards are finished names them with board_set_card_blockers. A tag left behind says an agent is on a card that nobody is.
 - A request naming several cards names them in one call: the card argument takes a list.

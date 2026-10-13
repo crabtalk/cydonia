@@ -18,6 +18,7 @@ fn clicking_opens_preview_and_horizontal_drag_switches_images(cx: &mut gpui::Tes
         Gallery::new(
             vec!["one.png".into(), "two.png".into(), "three.png".into()],
             Path::new("/tmp"),
+            WeakEntity::new_invalid(),
             cx,
         )
     });
@@ -88,6 +89,7 @@ fn dots_select_images_and_single_images_have_no_dots(cx: &mut gpui::TestAppConte
         Gallery::new(
             vec!["one.png".into(), "two.png".into()],
             Path::new("/tmp"),
+            WeakEntity::new_invalid(),
             cx,
         )
     });
@@ -121,7 +123,7 @@ fn preview_close_button_is_above_the_image_and_closes_the_dialog(cx: &mut gpui::
         png.into_inner(),
     ));
     let window = cx.add_window(|_, cx| {
-        let gallery = Gallery::new(vec![], Path::new("/tmp"), cx);
+        let gallery = Gallery::new(vec![], Path::new("/tmp"), WeakEntity::new_invalid(), cx);
         gallery.preview.update(cx, |preview, _| {
             preview.images.push(picture.into());
             preview.open = true;
@@ -153,6 +155,7 @@ fn preview_zooms_by_button_and_key_and_resets_on_paging(cx: &mut gpui::TestAppCo
         Gallery::new(
             vec!["one.png".into(), "two.png".into()],
             Path::new("/tmp"),
+            WeakEntity::new_invalid(),
             cx,
         )
     });

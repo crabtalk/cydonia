@@ -515,6 +515,51 @@ fn a_comment_is_filed_beside_the_article_and_follows_an_edit() {
     assert_eq!(comment.note, "Why two?");
 }
 
+/// An answer to a follow-up joins the note's thread; a note that is not there
+/// is refused.
+#[test]
+fn a_follow_up_answer_joins_the_notes_thread() {
+    let scratch = Scratch::new("article-comment-reply");
+    let server = scratch.server();
+    let made = server
+        .call(
+            "article_add",
+            json!({ "project": scratch.path(), "title": "Notes", "text": "One line." }),
+            None,
+        )
+        .unwrap_or_else(|_| panic!("article creation failed"));
+    let id = made.data.unwrap()["id"].as_str().unwrap().to_owned();
+    let filed = structured(server.call(
+        "article_comment",
+        json!({ "project": scratch.path(), "article": "Notes", "quote": "One line", "note": "Why one?" }),
+        None,
+    ));
+    let comment = filed["comment"].as_u64().unwrap();
+
+    let missing = refused(server.call(
+        "article_comment_reply",
+        json!({ "project": scratch.path(), "article": "Notes", "comment": comment + 1, "answer": "?" }),
+        None,
+    ));
+    assert!(missing.contains("no note"), "{missing}");
+
+    said(server.call(
+        "article_comment_reply",
+        json!({ "project": scratch.path(), "article": "Notes", "comment": comment, "answer": "Because." }),
+        None,
+    ));
+    let content = scratch
+        .path()
+        .join(".cydonia/articles")
+        .join(&id)
+        .join("content.md");
+    let held = artifact::article::comments::read(&content);
+    let replies = &held.comments[0].replies;
+    assert_eq!(replies.len(), 1);
+    assert_eq!(replies[0].from, artifact::article::comments::Author::Agent);
+    assert_eq!(replies[0].text, "Because.");
+}
+
 /// An article answers the sessions opened under it, and the entry list
 /// names the article each is under.
 #[test]

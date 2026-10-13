@@ -15,7 +15,7 @@ use crate::{
         window::root::Cydonia,
     },
 };
-use artifact::space::Member;
+use artifact::{board::Page, space::Member};
 use bezel::{
     gpui::{
         self, AnyElement, App, Context, Div, Entity, EntityId, FocusHandle, KeyBinding, Pixels,
@@ -44,9 +44,9 @@ pub fn bindings() -> Vec<KeyBinding> {
 
 /// What a pane's drawer holds.
 pub(crate) enum Peek {
-    /// The card open in one of the pane's board views — see
-    /// [`BoardView::open`].
-    Card(Entity<BoardView>),
+    /// The card or the description open in one of the pane's board views —
+    /// see [`BoardView::open`].
+    Page(Entity<BoardView>),
     Entry(Entry),
 }
 
@@ -123,10 +123,10 @@ impl Drawer {
             })
     }
 
-    /// The board view whose open card the drawer holds.
-    pub(crate) fn card(&self) -> Option<&Entity<BoardView>> {
+    /// The board view whose open page the drawer holds.
+    pub(crate) fn page(&self) -> Option<&Entity<BoardView>> {
         match &self.peek {
-            Peek::Card(view) => Some(view),
+            Peek::Page(view) => Some(view),
             Peek::Entry(_) => None,
         }
     }
@@ -134,7 +134,7 @@ impl Drawer {
     fn entry(&self) -> Option<&Entry> {
         match &self.peek {
             Peek::Entry(entry) => Some(entry),
-            Peek::Card(_) => None,
+            Peek::Page(_) => None,
         }
     }
 }
@@ -204,7 +204,7 @@ impl Tab {
         let drawer = self.drawer.as_ref()?;
         match &drawer.peek {
             Peek::Entry(_) => Some(drawer),
-            Peek::Card(view) => view.read(cx).card_live(cx).then_some(drawer),
+            Peek::Page(view) => view.read(cx).page_live(cx).then_some(drawer),
         }
     }
 
@@ -218,25 +218,25 @@ impl Tab {
     /// Put the drawer away, saving the card it had open.
     pub(crate) fn drop_drawer(&mut self, cx: &mut Context<Self>) {
         if let Some(drawer) = self.drawer.take()
-            && let Peek::Card(view) = &drawer.peek
+            && let Peek::Page(view) = &drawer.peek
         {
             view.update(cx, |view, cx| view.close(cx));
         }
         cx.notify();
     }
 
-    /// Open `card` of `board` in the drawer, or put the drawer away where it
+    /// Open `page` of `board` in the drawer, or put the drawer away where it
     /// already shows it.
-    pub(crate) fn open_card(
+    pub(crate) fn open_page(
         &mut self,
         board: Member,
-        card: String,
+        page: Page,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let view = self.board_view(board, cx);
-        let peeked = self.drawer.as_ref().and_then(Drawer::card) == Some(&view);
-        if peeked && view.read(cx).opened_card() == Some(card.as_str()) {
+        let peeked = self.drawer.as_ref().and_then(Drawer::page) == Some(&view);
+        if peeked && view.read(cx).opened() == Some(&page) {
             return self.close_drawer(window, cx);
         }
         match self.drawer.as_mut().filter(|_| peeked) {
@@ -246,12 +246,12 @@ impl Tab {
             }
             None => {
                 self.drop_drawer(cx);
-                self.drawer = Some(Drawer::new(Peek::Card(view.clone()), cx.focus_handle()));
+                self.drawer = Some(Drawer::new(Peek::Page(view.clone()), cx.focus_handle()));
             }
         }
         let drawer = self.drawer.as_ref().unwrap();
         let (focus, scroll) = (drawer.focus.clone(), drawer.scroll.clone());
-        view.update(cx, |view, cx| view.open(card, scroll, cx));
+        view.update(cx, |view, cx| view.open(page, scroll, cx));
         window.focus(&focus, cx);
         cx.notify();
     }
@@ -296,7 +296,7 @@ impl Tab {
         // have put it in a field of its own.
         let inside = opened.focus.contains_focused(window, cx)
             || opened
-                .card()
+                .page()
                 .is_some_and(|view| view.read(cx).draft_focused(window, cx));
         self.drop_drawer(cx);
         if inside {
@@ -309,7 +309,7 @@ impl Tab {
     /// card shows or not: `view` is drawing, and only it can tell.
     pub(crate) fn pane_state(&self, view: EntityId, cx: &App) -> PaneState {
         let drawer = self.drawer.as_ref().and_then(|drawer| {
-            let own = drawer.card().is_some_and(|card| card.entity_id() == view);
+            let own = drawer.page().is_some_and(|card| card.entity_id() == view);
             let shown = own || self.drawer_shown(cx).is_some();
             shown.then(|| DrawerAt {
                 own,
@@ -388,7 +388,7 @@ impl Tab {
         let scroll = drawer.scroll.clone();
         let focus = drawer.focus.clone();
         let bounds = drawer.bounds.clone();
-        let reveal = drawer.card().map(|_| drawer.reveal.clone());
+        let reveal = drawer.page().map(|_| drawer.reveal.clone());
         let focus_on = self.entry.clone();
         let body = match face.scrolls {
             true => div()
@@ -537,7 +537,7 @@ impl Tab {
                                     if let Some(drawer) = &mut this.drawer {
                                         drawer.size.expanded = !drawer.size.expanded;
                                         let expanded = drawer.size.expanded;
-                                        if drawer.card().is_some() {
+                                        if drawer.page().is_some() {
                                             drawer.reveal.set(!expanded);
                                         }
                                     }
@@ -646,7 +646,7 @@ impl Cydonia {
                 .located(self.workspace.read(cx))
                 .and_then(|(project, at)| self.workspace.read(cx).board_member(project, at));
             if let Some(board) = board {
-                self.open_card(on, board, card.id.clone(), window, cx);
+                self.open_page(on, board, Page::Card(card.id.clone()), window, cx);
             }
             return;
         }
@@ -727,12 +727,12 @@ impl Cydonia {
             .read(cx)
             .drawer_shown(cx)
             .map(|drawer| match &drawer.peek {
-                Peek::Card(view) => Err(view.clone()),
+                Peek::Page(view) => Err(view.clone()),
                 Peek::Entry(entry) => Ok((entry.clone(), drawer.scroll.clone())),
             });
         let face = match peek {
             None => None,
-            Some(Err(view)) => view.update(cx, |view, cx| view.card_face(window, cx)),
+            Some(Err(view)) => view.update(cx, |view, cx| view.page_face(window, cx)),
             Some(Ok((entry, scroll))) => Some(self.entry_face(&entry, on, &scroll, window, cx)),
         };
         let Some(face) = face else {

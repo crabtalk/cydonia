@@ -446,9 +446,9 @@ impl Session {
     /// Pictures the message points at go along as image blocks when the agent
     /// takes them, read and encoded off the UI thread. An agent that does not
     /// still has their paths in the text.
-    /// `number` is the session's entry number and `article` the id of the
-    /// article it was opened under, both named in the app's context.
-    pub fn prompt(&self, content: &str, number: Option<u64>, article: Option<&str>) {
+    /// `number` is the session's entry number and `article` the entry number
+    /// of the article it was opened under, both named in the app's context.
+    pub fn prompt(&self, content: &str, number: Option<u64>, article: Option<u64>) {
         let capabilities = &self.init.agent_capabilities.prompt_capabilities;
         let pictures = match capabilities.image {
             true => media::attached(content),

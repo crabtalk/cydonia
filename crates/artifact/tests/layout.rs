@@ -1,11 +1,7 @@
 mod common;
 
 use common::Scratch;
-use cydonia_artifact::{
-    board::{self, Status},
-    error::Error,
-    project::Project as _,
-};
+use cydonia_artifact::{board, error::Error, project::Project as _};
 use std::fs;
 
 /// A board and its column, with two cards on it.
@@ -56,14 +52,14 @@ fn edits_to_different_cards_do_not_clash() {
     let store = scratch.store();
     let mut first = store.board(&id).unwrap();
     let mut second = store.board(&id).unwrap();
-    first.set_card_status(&one, Some(Status::Done));
+    first.set_card_label(&one, Some("bug"));
     store.save_board(&mut first).unwrap();
-    second.set_card_status(&two, Some(Status::Busy));
+    second.set_card_busy(&two, true);
     store.save_board(&mut second).unwrap();
 
     let now = store.board(&id).unwrap();
-    assert_eq!(now.card(&one).unwrap().status, Some(Status::Done));
-    assert_eq!(now.card(&two).unwrap().status, Some(Status::Busy));
+    assert_eq!(now.card(&one).unwrap().label.as_deref(), Some("bug"));
+    assert!(now.card(&two).unwrap().busy);
 }
 
 #[test]
@@ -73,9 +69,9 @@ fn edits_to_the_same_card_are_stale() {
     let store = scratch.store();
     let mut first = store.board(&id).unwrap();
     let mut second = store.board(&id).unwrap();
-    first.set_card_status(&one, Some(Status::Done));
+    first.set_card_label(&one, Some("bug"));
     store.save_board(&mut first).unwrap();
-    second.set_card_status(&one, Some(Status::Blocked));
+    second.set_card_busy(&one, true);
     assert!(matches!(
         store.save_board(&mut second).unwrap_err(),
         Error::Stale
@@ -92,11 +88,11 @@ fn a_card_edit_survives_a_reorder_elsewhere_but_not_its_removal() {
     let column = mover.columns[0].id.clone();
     mover.move_card_before(&two, &column, Some(&one));
     store.save_board(&mut mover).unwrap();
-    editor.set_card_status(&one, Some(Status::Done));
+    editor.set_card_label(&one, Some("bug"));
     store.save_board(&mut editor).unwrap();
     let now = store.board(&id).unwrap();
     assert_eq!(now.columns[0].cards[0].id, two);
-    assert_eq!(now.card(&one).unwrap().status, Some(Status::Done));
+    assert_eq!(now.card(&one).unwrap().label.as_deref(), Some("bug"));
 
     let mut remover = store.board(&id).unwrap();
     let mut late = store.board(&id).unwrap();
@@ -109,7 +105,7 @@ fn a_card_edit_survives_a_reorder_elsewhere_but_not_its_removal() {
         .join("cards")
         .join(&one);
     assert!(!file.exists());
-    late.set_card_status(&one, Some(Status::Busy));
+    late.set_card_busy(&one, true);
     assert!(matches!(
         store.save_board(&mut late).unwrap_err(),
         Error::Stale
@@ -195,13 +191,47 @@ fn a_card_keeps_properties_cydonia_does_not_know() {
     let store = scratch.store();
     let properties = store.card_dir(&id, &one).join("properties.toml");
     let held = fs::read_to_string(&properties).unwrap();
-    fs::write(&properties, format!("{held}label = \"bug\"\n")).unwrap();
+    fs::write(&properties, format!("{held}owner = \"ana\"\n")).unwrap();
     let mut board = store.board(&id).unwrap();
-    board.set_card_status(&one, Some(Status::Done));
+    board.set_card_busy(&one, true);
     store.save_board(&mut board).unwrap();
     let now = fs::read_to_string(&properties).unwrap();
-    assert!(now.contains("label = \"bug\""));
-    assert!(now.contains("status = \"done\""));
+    assert!(now.contains("owner = \"ana\""));
+    assert!(now.contains("status = \"busy\""));
+}
+
+#[test]
+fn a_card_keeps_its_label_and_blockers_on_disk() {
+    let scratch = Scratch::new("layout-tags");
+    let (id, one, _) = board_with_two(&scratch);
+    let store = scratch.store();
+    let mut board = store.board(&id).unwrap();
+    board.set_card_label(&one, Some("bug"));
+    board.set_card_blockers(&one, vec!["WORK-2".into(), "foo#DEV-3".into()]);
+    store.save_board(&mut board).unwrap();
+
+    let now = store.board(&id).unwrap();
+    let card = now.card(&one).unwrap();
+    assert_eq!(card.label.as_deref(), Some("bug"));
+    assert_eq!(card.blocked_by, ["WORK-2", "foo#DEV-3"]);
+}
+
+/// `blocked` and `done` were statuses once. A card written with one reads as
+/// not busy, and its next write drops the word.
+#[test]
+fn a_status_other_than_busy_reads_as_none_and_is_dropped() {
+    let scratch = Scratch::new("layout-old-status");
+    let (id, one, _) = board_with_two(&scratch);
+    let store = scratch.store();
+    let properties = store.card_dir(&id, &one).join("properties.toml");
+    let held = fs::read_to_string(&properties).unwrap();
+    fs::write(&properties, format!("{held}status = \"done\"\n")).unwrap();
+
+    let mut board = store.board(&id).unwrap();
+    assert!(!board.card(&one).unwrap().busy);
+    board.set_card_label(&one, Some("bug"));
+    store.save_board(&mut board).unwrap();
+    assert!(!fs::read_to_string(&properties).unwrap().contains("status"));
 }
 
 #[test]

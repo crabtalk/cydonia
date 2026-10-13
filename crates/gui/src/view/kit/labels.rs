@@ -1,6 +1,7 @@
-//! The label picker: one entry's labels, the library's filter, or its
-//! selection's, opened from whichever trigger names it. Each view that hangs
-//! one holds its own [`Labels`] and implements [`LabelHost`].
+//! The label picker: one entry's labels, the library's filter, its
+//! selection's, or one board card's label, opened from whichever trigger names
+//! it. Each view that hangs one holds its own [`Labels`] and implements
+//! [`LabelHost`].
 
 use crate::model::workspace::Workspace;
 use crate::view::{sidebar::Row, window::root::Cydonia};
@@ -28,6 +29,9 @@ pub(crate) enum Target {
     Heading,
     /// Every entry in the selection, from the selection bar.
     Selection,
+    /// One card's label, from the cards on its board — see
+    /// [`artifact::board::Card::label`].
+    Card { board: String, card: String },
 }
 
 /// The open label picker.
@@ -68,10 +72,13 @@ pub(crate) trait LabelHost: Sized + 'static {
         }
         let choices = self.label_choices(&target, cx);
         let creates = target != Target::Heading;
+        let manages = !matches!(target, Target::Card { .. });
         let select = cx.new(|cx| {
-            let select = MultiSelect::new(choices, cx)
-                .with_manage()
-                .with_width(px(200.), px(280.));
+            let select = MultiSelect::new(choices, cx).with_width(px(200.), px(280.));
+            let select = match manages {
+                true => select.with_manage(),
+                false => select,
+            };
             match creates {
                 true => select.with_create(|text| artifact::label::normalize(text).map(Into::into)),
                 false => select,
@@ -221,6 +228,13 @@ pub(crate) trait LabelHost: Sized + 'static {
         let rows = match target {
             Target::Cell(row) | Target::Page(row) => vec![row.clone()],
             Target::Selection => self.selected_rows(),
+            Target::Card { board, card } => {
+                let label = on.then_some(name);
+                self.label_workspace().update(cx, |workspace, cx| {
+                    workspace.write_board(board, cx, |board| board.set_card_label(card, label));
+                });
+                return;
+            }
             Target::Heading => {
                 if let Some(filter) = self.label_filter() {
                     filter.retain(|label| label != name);
@@ -251,6 +265,24 @@ pub(crate) trait LabelHost: Sized + 'static {
             Target::Cell(row) | Target::Page(row) => vec![row.clone()],
             Target::Selection => self.selected_rows(),
             Target::Heading => Vec::new(),
+            Target::Card { board, card } => {
+                let Some(board) = self.label_workspace().read(cx).board_at(board, cx) else {
+                    return Vec::new();
+                };
+                let held = board.card(card).and_then(|card| card.label.as_deref());
+                return board
+                    .card_labels()
+                    .into_iter()
+                    .map(|name| Choice {
+                        check: match held == Some(name) {
+                            true => Check::On,
+                            false => Check::Off,
+                        },
+                        name: name.to_owned().into(),
+                        count: None,
+                    })
+                    .collect();
+            }
         };
         let filter = self.label_filter().cloned().unwrap_or_default();
         let workspace = self.label_workspace().read(cx);

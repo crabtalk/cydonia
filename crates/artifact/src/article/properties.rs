@@ -7,6 +7,7 @@
 //! comment cydonia does not itself know about.
 
 use crate::document;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 const TITLE: &str = "title";
@@ -18,8 +19,46 @@ const ARCHIVED: &str = "archived";
 /// Absent for a page that has never been told either way.
 const FULL_WIDTH: &str = "full_width";
 
+/// How the page's margin shows its comments. Absent for a page that has never
+/// been told either way.
+const COMMENTS: &str = "comments";
+
 /// The article's labels — see [`crate::label`].
 const LABELS: &str = "labels";
+
+/// How an article's margin shows its comments.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommentDisplay {
+    /// Each comment beside its line.
+    #[default]
+    Full,
+    /// A mark with a count beside each commented line; pressing it opens the
+    /// comment.
+    Minimal,
+}
+
+impl CommentDisplay {
+    pub const ALL: [Self; 2] = [Self::Full, Self::Minimal];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Full => "Full",
+            Self::Minimal => "Minimal",
+        }
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::Minimal => "minimal",
+        }
+    }
+
+    pub fn parse(key: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|display| display.key() == key)
+    }
+}
 
 /// Where this article's properties live — beside its content, in the directory
 /// that is the article.
@@ -38,6 +77,7 @@ pub struct Properties {
     pub title: String,
     pub archived: bool,
     pub full_width: Option<bool>,
+    pub comments: Option<CommentDisplay>,
     pub labels: Vec<String>,
 }
 
@@ -87,6 +127,21 @@ pub fn set_full_width(content: &Path, wide: Option<bool>) {
     set(content, FULL_WIDTH, wide.map(toml_edit::value));
 }
 
+/// How the page's margin shows its comments, and `None` for a page nobody has
+/// decided about — the same split as [`full_width`].
+pub fn comments(content: &Path) -> Option<CommentDisplay> {
+    all(content).comments
+}
+
+/// `None` takes the key out, handing the page back to the reader's default.
+pub fn set_comments(content: &Path, display: Option<CommentDisplay>) {
+    set(
+        content,
+        COMMENTS,
+        display.map(|display| toml_edit::value(display.key())),
+    );
+}
+
 /// Write every field at once, in one pass over the file. Keys this module does
 /// not know about are kept.
 pub fn save(content: &Path, properties: &Properties) -> std::io::Result<()> {
@@ -107,6 +162,10 @@ pub fn parse(text: &str) -> Properties {
             .and_then(|archived| archived.as_bool())
             .unwrap_or_default(),
         full_width: doc.get(FULL_WIDTH).and_then(|wide| wide.as_bool()),
+        comments: doc
+            .get(COMMENTS)
+            .and_then(|display| display.as_str())
+            .and_then(CommentDisplay::parse),
         labels: doc
             .get(LABELS)
             .and_then(|labels| labels.as_array())
@@ -127,7 +186,7 @@ pub fn apply(text: &str, properties: &Properties) -> Option<String> {
     document::apply(text, &fields(properties))
 }
 
-fn fields(properties: &Properties) -> [(&'static str, Option<toml_edit::Item>); 4] {
+fn fields(properties: &Properties) -> [(&'static str, Option<toml_edit::Item>); 5] {
     [
         (
             TITLE,
@@ -138,6 +197,12 @@ fn fields(properties: &Properties) -> [(&'static str, Option<toml_edit::Item>); 
             properties.archived.then(|| toml_edit::value(true)),
         ),
         (FULL_WIDTH, properties.full_width.map(toml_edit::value)),
+        (
+            COMMENTS,
+            properties
+                .comments
+                .map(|display| toml_edit::value(display.key())),
+        ),
         (
             LABELS,
             (!properties.labels.is_empty()).then(|| {

@@ -2,9 +2,10 @@
 
 use super::settings::{self, Agent};
 use anyhow::Result;
+use bezel::gpui::{App, Global};
 use cacp::schema::{
-    SessionConfigKind, SessionConfigOption, SessionConfigOptionValue, SessionConfigSelectOptions,
-    SessionModeState,
+    SessionConfigKind, SessionConfigOption, SessionConfigOptionValue, SessionConfigSelectOption,
+    SessionConfigSelectOptions, SessionModeState,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -42,20 +43,130 @@ pub fn current(option: &SessionConfigOption) -> SessionConfigOptionValue {
     }
 }
 
+/// Put `value` on `option` as its current value. Callers check
+/// [`supports`] first; a value of the other shape is left out.
+pub fn adopt(option: &mut SessionConfigOption, value: SessionConfigOptionValue) {
+    match (&mut option.kind, value) {
+        (SessionConfigKind::Select(select), SessionConfigOptionValue::ValueId { value }) => {
+            select.current_value = value;
+        }
+        (SessionConfigKind::Boolean(flag), SessionConfigOptionValue::Boolean { value }) => {
+            flag.current_value = value;
+        }
+        _ => {}
+    }
+}
+
+/// A select's values, with a group's rows folded in beside the ungrouped ones.
+pub fn select_values(options: &SessionConfigSelectOptions) -> Vec<&SessionConfigSelectOption> {
+    match options {
+        SessionConfigSelectOptions::Ungrouped(options) => options.iter().collect(),
+        SessionConfigSelectOptions::Grouped(groups) => groups
+            .iter()
+            .flat_map(|group| group.options.iter())
+            .collect(),
+    }
+}
+
 pub fn supports(option: &SessionConfigOption, value: &SessionConfigOptionValue) -> bool {
     match (&option.kind, value) {
         (SessionConfigKind::Boolean(_), SessionConfigOptionValue::Boolean { .. }) => true,
         (SessionConfigKind::Select(select), SessionConfigOptionValue::ValueId { value }) => {
-            match &select.options {
-                SessionConfigSelectOptions::Ungrouped(options) => {
-                    options.iter().any(|option| &option.value == value)
-                }
-                SessionConfigSelectOptions::Grouped(groups) => groups
-                    .iter()
-                    .any(|group| group.options.iter().any(|option| &option.value == value)),
-            }
+            select_values(&select.options)
+                .iter()
+                .any(|option| &option.value == value)
         }
         _ => false,
+    }
+}
+
+/// What an agent offered in a project the last time it connected: its modes
+/// and config options, as `session/new` reported them, and the values they
+/// were on. Read while no connection is live, so the menu can list them.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Offers {
+    pub modes: Option<SessionModeState>,
+    pub config: Vec<SessionConfigOption>,
+}
+
+impl Offers {
+    /// These offers with `choices` on them, where the agent still offers them.
+    pub fn with(&self, choices: &Choices) -> Self {
+        let mut offers = self.clone();
+        if let Some(mode) = choices.mode.as_deref()
+            && let Some(modes) = offers.modes.as_mut()
+            && modes.available_modes.iter().any(|m| &*m.id == mode)
+        {
+            modes.current_mode_id = mode.into();
+        }
+        for option in &mut offers.config {
+            if let Some(value) = choices.config.get(&*option.id)
+                && supports(option, value)
+            {
+                adopt(option, value.clone());
+            }
+        }
+        offers
+    }
+}
+
+impl Offers {
+    fn is_empty(&self) -> bool {
+        self.modes.is_none() && self.config.is_empty()
+    }
+}
+
+/// Every agent's [`Offers`] per project, read from `session-preferences.json`
+/// once and written through. Every composer and default reads offers here.
+#[derive(Default)]
+pub struct OfferCache(BTreeMap<String, BTreeMap<PathBuf, Offers>>);
+
+impl Global for OfferCache {}
+
+impl OfferCache {
+    /// Read the cache in, once, at launch.
+    pub fn load(cx: &mut App) {
+        let mut cache = Self::default();
+        for (cwd, agents) in path().and_then(|path| read(&path)).unwrap_or_default() {
+            for (key, agent) in agents {
+                if !agent.offers.is_empty() {
+                    cache
+                        .0
+                        .entry(key)
+                        .or_default()
+                        .insert(cwd.clone(), agent.offers);
+                }
+            }
+        }
+        cx.set_global(cache);
+    }
+
+    /// What `agent` offers in the project at `cwd`: its offers there, else
+    /// its offers in another project, else nothing.
+    pub fn get(cx: &App, cwd: &Path, agent: &Agent) -> Offers {
+        let Some(projects) = cx
+            .try_global::<Self>()
+            .and_then(|cache| cache.0.get(&agent_key(agent)))
+        else {
+            return Offers::default();
+        };
+        projects
+            .get(cwd)
+            .or_else(|| projects.values().next())
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Keep what `agent` offered on connecting in the project at `cwd`.
+    pub fn remember(cx: &mut App, cwd: &Path, agent: &Agent, offers: Offers) -> Result<()> {
+        edit(cwd, agent, |agent| agent.offers = offers.clone())?;
+        cx.default_global::<Self>()
+            .0
+            .entry(agent_key(agent))
+            .or_default()
+            .insert(cwd.to_path_buf(), offers);
+        Ok(())
     }
 }
 
@@ -64,6 +175,7 @@ pub fn supports(option: &SessionConfigOption, value: &SessionConfigOptionValue) 
 struct AgentChoices {
     defaults: Choices,
     sessions: BTreeMap<String, Choices>,
+    offers: Offers,
 }
 
 type Stored = BTreeMap<PathBuf, BTreeMap<String, AgentChoices>>;
@@ -72,7 +184,7 @@ fn path() -> Result<PathBuf> {
     Ok(settings::dir()?.join("session-preferences.json"))
 }
 
-fn agent_key(agent: &Agent) -> String {
+pub fn agent_key(agent: &Agent) -> String {
     agent
         .id
         .as_ref()
@@ -168,3 +280,7 @@ pub fn remember_session(cwd: &Path, agent: &Agent, id: &str, choices: &Choices) 
         agent.sessions.insert(id.into(), choices.clone());
     })
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/session_offers.rs"]
+mod offers_tests;

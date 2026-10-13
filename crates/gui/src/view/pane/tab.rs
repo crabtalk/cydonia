@@ -262,9 +262,9 @@ impl Tab {
     ) -> Option<super::drawer::Face> {
         let drawer = self.drawer_shown(cx)?;
         match &drawer.peek {
-            super::drawer::Peek::Card(view) => view
+            super::drawer::Peek::Page(view) => view
                 .clone()
-                .update(cx, |view, cx| view.card_face(window, cx)),
+                .update(cx, |view, cx| view.page_face(window, cx)),
             super::drawer::Peek::Entry(entry) => {
                 let (entry, scroll, on) =
                     (entry.clone(), drawer.scroll.clone(), self.entry.clone());

@@ -23,7 +23,7 @@ use crate::{
         window::{entry::Host, reach::InWindow, root::Cydonia},
     },
 };
-use artifact::kind::Kind;
+use artifact::{archive::Archived, kind::Kind};
 use bezel::{
     gpui::{
         self, AnyElement, App, AppContext as _, Context, Div, Entity, Pixels, SharedString,
@@ -36,9 +36,7 @@ use bezel::{
         icons::{self, Icon},
         input::{FieldEvent, TextField},
         menu::Item as MenuItem,
-        popover,
-        scroll::{self as scrollbars, Axes},
-        table, tabs,
+        popover, table, tabs,
         widgets::{ButtonStyle, Buttons, Controls},
     },
 };
@@ -152,8 +150,7 @@ pub(crate) enum Field {
 }
 
 impl Field {
-    /// Its heading and width. A flexible column's weight is the least width
-    /// it reads at, so at the table's least width each is exactly that.
+    /// Its heading and width.
     fn column(self) -> table::Column {
         let (title, width) = match self {
             Self::Check => ("", table::Width::Fixed(px(40.))),
@@ -178,30 +175,17 @@ impl Field {
     }
 }
 
-/// Which of a tab's entries are listed, by whether they are put away.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Status {
-    Active,
-    Archived,
-    All,
+/// What the library's status menu calls each filter.
+trait StatusLabel {
+    fn label(self) -> &'static str;
 }
 
-impl Status {
-    const ALL: [Self; 3] = [Self::Active, Self::Archived, Self::All];
-
+impl StatusLabel for Archived {
     fn label(self) -> &'static str {
         match self {
-            Self::Active => "Active",
-            Self::Archived => "Archived",
-            Self::All => "All",
-        }
-    }
-
-    fn keeps(self, archived: bool) -> bool {
-        match self {
-            Self::Active => !archived,
-            Self::Archived => archived,
-            Self::All => true,
+            Self::Exclude => "Active",
+            Self::Only => "Archived",
+            Self::Include => "All",
         }
     }
 }
@@ -225,7 +209,7 @@ impl Order {
 #[derive(Clone, PartialEq)]
 pub(crate) struct Shelf {
     tab: Tab,
-    status: Status,
+    status: Archived,
     project: Option<PathBuf>,
     agent: Option<String>,
     labels: Vec<String>,
@@ -259,7 +243,7 @@ pub(crate) struct Library {
     menu: ContextMenu<Self, LibraryMenu>,
     labels_picker: Labels,
     tab: Tab,
-    status: Status,
+    status: Archived,
     /// The one project listed, by its path, or every open one.
     project: Option<PathBuf>,
     /// The one agent whose sessions are listed, by name, or every one.
@@ -345,7 +329,7 @@ impl Library {
             menu: ContextMenu::default(),
             labels_picker: Labels::default(),
             tab: Tab::Articles,
-            status: Status::Active,
+            status: Archived::Exclude,
             project: None,
             agent: None,
             labels: Vec::new(),
@@ -575,7 +559,7 @@ impl Library {
         cx.notify();
     }
 
-    fn library_status(&mut self, status: Status, cx: &mut Context<Self>) {
+    fn library_status(&mut self, status: Archived, cx: &mut Context<Self>) {
         let library = &mut *self;
         library.status = status;
         library.selected.clear();
@@ -711,7 +695,7 @@ impl Library {
         let library = &*self;
         let selected = !library.selected.is_empty();
         let (listings, total) = self.library_listings(cx);
-        let archived = library.status == Status::Archived;
+        let archived = library.status == Archived::Only;
         let count = match listings.len() == total {
             true => library.tab.count(total, archived),
             false => format!(
@@ -745,8 +729,7 @@ impl Library {
             false => self.library_list(listings, window, cx),
         };
         div()
-            .flex_1()
-            .min_h_0()
+            .size_full()
             .flex()
             .flex_col()
             .px(px(24.))
@@ -1123,7 +1106,7 @@ impl Library {
     fn status_rows(&self) -> Vec<(MenuItem, Act<Self>)> {
         let library = self;
         let picked = library.status;
-        Status::ALL
+        Archived::ALL
             .into_iter()
             .map(|status| {
                 menu::row::<Self>(
@@ -1147,7 +1130,6 @@ impl Library {
         let fields = tab.fields();
         let columns: Rc<Vec<table::Column>> =
             Rc::new(fields.iter().map(|field| field.column()).collect());
-        let width = least(&columns);
         let headings: Vec<AnyElement> = fields
             .iter()
             .zip(columns.iter())
@@ -1212,18 +1194,11 @@ impl Library {
         .track_scroll(&scroll)
         .flex_1()
         .min_h_0();
-        div()
-            .id("library-table")
+        table::table(&theme)
             .flex_1()
             .min_h_0()
-            .map(|el| scrollbars::scrolls(el, Axes::Horizontal))
-            .child(
-                table::table(&theme)
-                    .h_full()
-                    .min_w(px(width))
-                    .child(table::header(&theme).flex_none().children(headings))
-                    .child(rows),
-            )
+            .child(table::header(&theme).flex_none().children(headings))
+            .child(rows)
             .into_any_element()
     }
 
@@ -1314,8 +1289,6 @@ impl Library {
         let checked = self.is_selected(&listing.row);
         let muted = |text: Option<SharedString>| {
             div()
-                .min_w_0()
-                .truncate()
                 .text_color(theme.text_muted)
                 .child(text.unwrap_or_default())
                 .into_any_element()
@@ -1336,7 +1309,6 @@ impl Library {
                 .child(
                     div()
                         .min_w_0()
-                        .truncate()
                         .text_color(match listing.archived {
                             true => theme.text_faint,
                             false => theme.text,
@@ -1363,8 +1335,8 @@ impl Library {
                 Field::Agent => muted(listing.agent.clone()),
                 Field::Status => muted(Some(
                     match listing.archived {
-                        true => Status::Archived,
-                        false => Status::Active,
+                        true => Archived::Only,
+                        false => Archived::Exclude,
                     }
                     .label()
                     .into(),
@@ -1481,16 +1453,4 @@ fn measure(into: Rc<Cell<Pixels>>) -> impl IntoElement {
     )
     .absolute()
     .size_full()
-}
-
-/// The narrowest `columns` are laid out at; a pane narrower scrolls the table
-/// sideways.
-fn least(columns: &[table::Column]) -> f32 {
-    columns
-        .iter()
-        .map(|column| match column.width {
-            table::Width::Fixed(width) => f32::from(width),
-            table::Width::Flex(least) => least,
-        })
-        .sum()
 }

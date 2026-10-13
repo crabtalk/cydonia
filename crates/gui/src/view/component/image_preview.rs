@@ -1,13 +1,29 @@
 //! Shared image-preview frame and controls.
+use crate::{
+    model::workspace::Workspace,
+    view::component::file::pictures::{Assets, Pictures},
+};
 use bezel::{
     gpui::{
-        self, AnyElement, Context, CursorStyle, Empty, MouseButton, ObjectFit, Pixels, Render,
-        Window, div, img, prelude::*, px, relative,
+        self, AnyElement, Context, CursorStyle, Empty, Entity, MouseButton, ObjectFit, Pixels,
+        Render, WeakEntity, Window, div, img, prelude::*, px, relative,
     },
     theme::Theme,
-    ui::{icons, popover, surface, tooltip::Tooltip},
+    ui::{
+        context_menu::{ContextMenu, Place},
+        icons, popover, surface,
+        tooltip::Tooltip,
+    },
 };
-use std::{cell::Cell, rc::Rc};
+use markdown::PictureMenu;
+use std::{cell::Cell, path::Path, rc::Rc};
+
+/// Between the card's edge and the picture and toolbar inside it.
+const INSET: f32 = 12.;
+
+/// The picture's rounding: the card's, less [`INSET`], so the two corners
+/// share a centre.
+const STAGE_RADIUS: f32 = 4.;
 
 const ZOOM_MIN: f32 = 1.;
 
@@ -73,11 +89,37 @@ pub(crate) struct Preview {
     previous_focus: Option<gpui::FocusHandle>,
     /// The frame's size as last painted, window pixels.
     frame: Rc<Cell<gpui::Size<Pixels>>>,
+    /// The `Open with` button for the picture on show. It holds the
+    /// pictures weakly.
+    open_with: markdown::ImageOverlay,
+    _pictures: Entity<Pictures>,
+    /// The right-click menu over the picture on show.
+    menu: ContextMenu<Self>,
 }
 
 impl Preview {
-    pub(crate) fn new(images: Vec<gpui::ImageSource>, cx: &mut Context<Self>) -> Self {
+    /// `cwd` is where a picture fetched off the web to open elsewhere is
+    /// kept, under its `.cydonia/assets/`.
+    pub(crate) fn new(
+        images: Vec<gpui::ImageSource>,
+        cwd: &Path,
+        workspace: WeakEntity<Workspace>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let pictures = cx.new(|cx| {
+            Pictures::new(
+                cwd.to_path_buf(),
+                Assets::Project(cwd.to_path_buf()),
+                workspace,
+                cx,
+            )
+        });
+        // Its list of apps arriving, or the picture saved in another app.
+        cx.observe(&pictures, |_, _, cx| cx.notify()).detach();
         Self {
+            open_with: Pictures::overlay(&pictures),
+            _pictures: pictures,
+            menu: ContextMenu::default(),
             images,
             selected: 0,
             open: false,
@@ -139,6 +181,39 @@ impl Preview {
         gpui::point(pan.x.clamp(-x, x), pan.y.clamp(-y, y))
     }
 
+    /// The picture on show, as a path or a URL. `None` for one held as
+    /// decoded pixels.
+    fn address(&self) -> Option<String> {
+        match self.images.get(self.selected)? {
+            gpui::ImageSource::Resource(gpui::Resource::Path(path)) => {
+                Some(path.to_string_lossy().into_owned())
+            }
+            gpui::ImageSource::Resource(gpui::Resource::Uri(uri)) => Some(uri.to_string()),
+            _ => None,
+        }
+    }
+
+    /// Open the right-click menu over the picture on show, at `at`.
+    fn open_menu(&mut self, at: gpui::Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(address) = self.address() else {
+            return;
+        };
+        let picture = PictureMenu::new(&address, None);
+        let items = picture.items();
+        self.menu.open(
+            (),
+            Place::At(at),
+            items,
+            move |_, path, _, cx| {
+                if let Some(&row) = path.first() {
+                    picture.run(row, cx);
+                }
+            },
+            window,
+            cx,
+        );
+    }
+
     fn release(&mut self, cx: &mut Context<Self>) {
         if self.press.take().is_none() {
             return;
@@ -165,7 +240,7 @@ impl Preview {
             .h(height)
             .relative()
             .overflow_hidden()
-            .rounded(px(8.))
+            .rounded(px(STAGE_RADIUS))
             .when(zoomed, |stage| {
                 stage.cursor(if self.press.is_some() {
                     CursorStyle::ClosedHand
@@ -205,6 +280,13 @@ impl Preview {
             .on_mouse_up_out(
                 MouseButton::Left,
                 cx.listener(|this, _, _, cx| this.release(cx)),
+            )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    this.open_menu(event.position, window, cx);
+                }),
             )
             .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| {
                 let delta = f32::from(event.delta.pixel_delta(px(16.)).y);
@@ -249,8 +331,11 @@ impl Preview {
             .into_any_element()
     }
 
-    fn controls(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn controls(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
+        let open_with = self
+            .address()
+            .and_then(|address| (self.open_with)(self.selected, &address, window, cx));
         let button = |id: &'static str, icon: &'static [u8], tip: &'static str| {
             div()
                 .id(id)
@@ -291,14 +376,15 @@ impl Preview {
                     .on_click(cx.listener(move |this, _, _, cx| this.select(index, cx)))
             }))
         });
+        // The two ends share the room left over, so the dots stay centred.
         div()
             .w_full()
             .flex()
             .items_center()
-            .justify_between()
-            .child(div().flex_1().children(dots))
+            .gap(px(INSET))
             .child(
                 div()
+                    .flex_1()
                     .flex()
                     .items_center()
                     .gap(px(4.))
@@ -327,6 +413,8 @@ impl Preview {
                         ),
                     ),
             )
+            .children(dots)
+            .child(div().flex_1().flex().justify_end().children(open_with))
             .into_any_element()
     }
 }
@@ -341,11 +429,16 @@ impl Render for Preview {
         let this = cx.entity().downgrade();
         let content = div()
             .w_full()
+            .p(px(INSET))
             .flex()
             .flex_col()
-            .gap(px(6.))
+            .gap(px(INSET))
             .child(self.stage(viewport.height * 0.75, cx))
-            .child(self.controls(cx));
+            .child(self.controls(window, cx))
+            .children(
+                self.menu
+                    .render("image-preview-menu", |this| &mut this.menu, window, cx),
+            );
         let card = frame(
             &theme,
             "image-preview-close",

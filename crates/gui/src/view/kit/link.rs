@@ -8,10 +8,13 @@
 //! row.
 //!
 //! The link names the entry; deleting the block leaves the entry where it was.
+//!
+//! [`Links`] is what cydonia does with every link a document paints: these,
+//! files and web pages.
 
 pub mod mention;
 
-use std::{path::Path, rc::Rc};
+use std::{path::PathBuf, rc::Rc};
 
 use crate::{
     model::workspace::{
@@ -24,7 +27,10 @@ use crate::{
             transcript,
         },
         detail::{Pointing, composer_agents},
-        kit::{icon::kind_icon, text::untitled},
+        kit::{
+            icon::kind_icon,
+            text::{ShownPath as _, untitled},
+        },
         modals::palette::Linked,
         sidebar::Row,
         window::root::Cydonia,
@@ -38,12 +44,13 @@ use bezel::{
     theme::{TextStyle, Theme, Typeset},
     ui::{
         icons, popover, scroll, surface,
+        tooltip::Tooltip,
         widgets::{ButtonStyle, Buttons},
     },
 };
 use editor::{SlashAction, SlashAt, SlashItem, SlashRow};
 use markdown::{
-    AppExt as _, BlockKind, Form,
+    AppExt as _, BlockKind, Form, Link,
     render::{Editing, fence_band, fence_panel},
 };
 
@@ -59,6 +66,8 @@ pub(crate) const PREVIEW_TURNS: usize = 3;
 const HOVER_BLOCKS: usize = 6;
 /// The tallest a hover card's content stands; past it the content is cut.
 const HOVER_HEIGHT: f32 = 240.;
+/// How wide a hover card stands.
+const HOVER_WIDTH: f32 = 320.;
 
 /// The card a link is written into.
 fn embed(url: &str) -> BlockKind {
@@ -68,37 +77,149 @@ fn embed(url: &str) -> BlockKind {
     }
 }
 
-/// The card renderer cydonia installs at boot: its own links, and nothing
-/// else.
-///
-/// Inside a session drawn nested — see [`nested`] — every one of them is a
-/// row, drawn without the root.
-pub(crate) fn card(url: &str, form: Form, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
-    let reference = url.strip_prefix(SCHEME)?.to_owned();
-    if cx.try_global::<Nested>().is_some_and(|nested| nested.0 > 0) {
-        return Some(nested_row(url, cx));
+/// What cydonia does with the links a document paints. Installed at boot.
+pub(crate) struct Links;
+
+impl markdown::Links for Links {
+    /// A web link in the system browser, a file in the file manager, and a
+    /// missing file nowhere. With shift held, a web link opens in a panel
+    /// browser tab and a file in a panel file tab, where the window can take
+    /// one.
+    fn open(link: Link<'_>, window: &mut Window, cx: &mut App) {
+        let Some(Some(root)) = window.root::<Cydonia>() else {
+            cx.open_url(link.url);
+            return;
+        };
+        if let Some(reference) = link.url.strip_prefix(SCHEME) {
+            root.update(cx, |root, cx| root.open_reference(reference, window, cx));
+            return;
+        }
+        let shift = window.modifiers().shift;
+        if let Some((path, line)) = file_of(link, &root, cx) {
+            // A missing file is neither revealed nor opened; its hover says so.
+            if !path.exists() {
+                return;
+            }
+            let opened = shift
+                && root.update(cx, |root, cx| {
+                    root.open_file_in_panel(path.clone(), line, window, cx)
+                });
+            if !opened {
+                root.update(cx, |root, cx| root.reveal_path(path, window, cx));
+            }
+            return;
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let web = link.url.starts_with("https://") || link.url.starts_with("http://");
+            if web
+                && shift
+                && root.update(cx, |root, cx| {
+                    root.open_in_panel(link.url.to_owned(), window, cx)
+                })
+            {
+                return;
+            }
+        }
+        cx.open_url(link.url);
     }
-    let root = window.root::<Cydonia>().flatten()?;
-    Some(root.update(cx, |root, cx| root.entry_card(&reference, form, window, cx)))
+
+    /// Its own links, then web pages. Without the `desktop` feature web
+    /// pages are not fetched.
+    fn preview(link: Link<'_>, cx: &App) -> Option<markdown::Preview> {
+        if link.url.starts_with(SCHEME) {
+            return mention::preview(link.url, cx);
+        }
+        #[cfg(feature = "desktop")]
+        return crate::model::link::preview(link.url);
+        #[cfg(not(feature = "desktop"))]
+        None
+    }
+
+    /// Its own links, and nothing else. Inside a session drawn nested — see
+    /// [`nested`] — every one of them is a row, drawn without the root.
+    fn card(link: Link<'_>, form: Form, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+        let reference = link.url.strip_prefix(SCHEME)?.to_owned();
+        if cx.try_global::<Nested>().is_some_and(|nested| nested.0 > 0) {
+            return Some(nested_row(link.url, cx));
+        }
+        let root = window.root::<Cydonia>().flatten()?;
+        Some(root.update(cx, |root, cx| root.entry_card(&reference, form, window, cx)))
+    }
+
+    /// Its own links as their entries, a web page as its bookmark, a
+    /// picture as itself, any other file or folder as its path, and a missing
+    /// one as not found.
+    fn hover(link: Link<'_>, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+        if link.is_web() {
+            return Some(markdown::render::hover_bookmark(link, cx));
+        }
+        let root = window.root::<Cydonia>().flatten()?;
+        if let Some(reference) = link.url.strip_prefix(SCHEME) {
+            let reference = reference.to_owned();
+            let card = root.update(cx, |root, cx| root.entry_hover(&reference, window, cx));
+            return Some(div().w(px(HOVER_WIDTH)).child(card).into_any_element());
+        }
+        let (path, line) = file_of(link, &root, cx)?;
+        let shown = match line {
+            Some(line) => format!("{}:{line}", path.shown()),
+            None => path.shown(),
+        };
+        if !path.exists() {
+            return Some(Tooltip::card(format!("Not found · {shown}"), None, cx));
+        }
+        match path.is_file() && markdown::is_image(&path.to_string_lossy()) {
+            true => Some(picture_hover(path, shown, cx)),
+            false => Some(Tooltip::card(shown, None, cx)),
+        }
+    }
 }
 
-/// The link preview cydonia installs at boot: its own links, then web pages.
-/// Without the `desktop` feature web pages are not fetched.
-pub(crate) fn preview(url: &str, cx: &App) -> Option<markdown::Preview> {
-    if url.starts_with(SCHEME) {
-        return mention::preview(url, cx);
-    }
-    #[cfg(feature = "desktop")]
-    return crate::model::link::preview(url);
-    #[cfg(not(feature = "desktop"))]
-    None
+/// The file a link names, as a click resolves it: a relative path in an
+/// article or a card is under its project's directory, and elsewhere under
+/// the link's base.
+fn file_of(
+    link: Link<'_>,
+    root: &gpui::Entity<Cydonia>,
+    cx: &App,
+) -> Option<(PathBuf, Option<usize>)> {
+    let project = link.base.and_then(|base| {
+        root.read(cx)
+            .workspace
+            .read(cx)
+            .projects
+            .iter()
+            .find(|project| project.store().files(base))
+            .map(|project| project.path.clone())
+    });
+    crate::model::file_url::target(project.as_deref().or(link.base), link.url)
 }
 
-/// The hover card cydonia installs at boot: its own links, and nothing else.
-pub(crate) fn hover(url: &str, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
-    let reference = url.strip_prefix(SCHEME)?.to_owned();
-    let root = window.root::<Cydonia>().flatten()?;
-    Some(root.update(cx, |root, cx| root.entry_hover(&reference, window, cx)))
+/// A picture link's hover card: the picture, and its path under it.
+fn picture_hover(path: PathBuf, shown: String, cx: &App) -> AnyElement {
+    let theme = Theme::of(cx).clone();
+    surface::popover(
+        Theme::surface_radius(),
+        popover::popover_card_flush(&theme)
+            .w(px(HOVER_WIDTH))
+            .flex()
+            .flex_col()
+            .child(
+                gpui::img(path)
+                    .w_full()
+                    .max_h(px(HOVER_HEIGHT))
+                    .object_fit(gpui::ObjectFit::Contain),
+            )
+            .child(
+                div()
+                    .px(px(12.))
+                    .py(px(8.))
+                    .text_style(TextStyle::Callout)
+                    .text_color(theme.text_muted)
+                    .child(shown),
+            ),
+    )
+    .into_any_element()
 }
 
 /// How deep the drawing is inside sessions drawn in another entry or a
@@ -108,7 +229,8 @@ struct Nested(usize);
 
 impl gpui::Global for Nested {}
 
-/// Draw with [`card`] answering rows, as inside a session drawn nested.
+/// Draw with [`Links::card`] answering rows, as inside a session drawn
+/// nested.
 pub(crate) fn nested<R>(cx: &mut App, draw: impl FnOnce(&mut App) -> R) -> R {
     enter_nested(cx);
     let drawn = draw(cx);
@@ -166,59 +288,10 @@ fn nested_row(url: &str, cx: &App) -> AnyElement {
                 .text_color(theme.text)
                 .child(title),
         )
-        .on_click(move |_, window, cx| open_link(&url, None, window, cx))
+        .on_click(move |_, window, cx| {
+            <Links as markdown::Links>::open(Link::new(&url, None), window, cx)
+        })
         .into_any_element()
-}
-
-/// Opens a link clicked in an article or a transcript: a web link in the
-/// system browser, a file in the file manager. With shift held, a web link
-/// opens in a panel browser tab and a file in a panel file tab, where the
-/// window can take one. A relative path in an article or a card is a file
-/// under its project's directory, and elsewhere under `base`. Installed as
-/// markdown's link handler.
-pub fn open_link(url: &str, base: Option<&Path>, window: &mut Window, cx: &mut App) {
-    let Some(Some(root)) = window.root::<Cydonia>() else {
-        cx.open_url(url);
-        return;
-    };
-    if let Some(reference) = url.strip_prefix(SCHEME) {
-        root.update(cx, |root, cx| root.open_reference(reference, window, cx));
-        return;
-    }
-    let shift = window.modifiers().shift;
-    let project = base.and_then(|base| {
-        root.read(cx)
-            .workspace
-            .read(cx)
-            .projects
-            .iter()
-            .find(|project| project.store().files(base))
-            .map(|project| project.path.clone())
-    });
-    let base = project.as_deref().or(base);
-    if let Some((path, line)) = crate::model::file_url::target(base, url) {
-        let opened = shift
-            && root.update(cx, |root, cx| {
-                root.open_file_in_panel(path.clone(), line, window, cx)
-            });
-        if !opened {
-            root.update(cx, |root, cx| root.reveal_path(path, window, cx));
-        }
-        return;
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let web = url.starts_with("https://") || url.starts_with("http://");
-        if web
-            && shift
-            && root.update(cx, |root, cx| {
-                root.open_in_panel(url.to_owned(), window, cx)
-            })
-        {
-            return;
-        }
-    }
-    cx.open_url(url);
 }
 
 /// The slash menu: the editor's blocks, then a session already running.
@@ -939,7 +1012,7 @@ impl Cydonia {
         let composer = cx.new(Composer::new);
         let point = {
             let workspace = self.workspace.read(cx);
-            Pointing::of(workspace.session(id, cx), &composer_agents(workspace))
+            Pointing::of(workspace.session(id, cx), &composer_agents(workspace), cx)
         };
         composer.update(cx, |composer, cx| {
             composer.set_tools(false, cx);
@@ -971,7 +1044,7 @@ impl Cydonia {
             .map(|(id, composer)| {
                 (
                     composer.clone(),
-                    Pointing::of(workspace.session(*id, cx), &agents),
+                    Pointing::of(workspace.session(*id, cx), &agents, cx),
                 )
             })
             .collect();

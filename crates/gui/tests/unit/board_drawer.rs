@@ -84,7 +84,6 @@ fn open(
         root.update(cx, |root, cx| {
             root.workspace.update(cx, |workspace, cx| {
                 let mut project = Project::new(scratch.0.clone(), cx);
-                project.load_board(&board.id, cx);
                 project.board = Some(0);
                 workspace.projects.push(project);
                 workspace.active = Some(0);
@@ -92,7 +91,13 @@ fn open(
             root.leaf()
                 .clone()
                 .update(cx, |pane, _| pane.kind = Kind::Board);
-            root.open_card(None, member.clone(), cards[0].clone(), window, cx);
+            root.open_page(
+                None,
+                member.clone(),
+                Page::Card(cards[0].clone()),
+                window,
+                cx,
+            );
         });
         cx.observe(&root, |_, _, cx| cx.notify()).detach();
         Host(root)
@@ -238,7 +243,13 @@ fn opening_a_card_writes_nothing(cx: &mut TestAppContext) {
     let (scratch, root, member, cards, mut cx) = open("untouched", cx);
     cx.update(|window, cx| {
         root.update(cx, |root, cx| {
-            root.open_card(None, member.clone(), cards[1].clone(), window, cx);
+            root.open_page(
+                None,
+                member.clone(),
+                Page::Card(cards[1].clone()),
+                window,
+                cx,
+            );
             root.close_drawer(None, window, cx);
         })
     });
@@ -258,7 +269,13 @@ fn switching_and_closing_save_at_once(cx: &mut TestAppContext) {
     type_card(&root, "Switched away", &mut cx);
     cx.update(|window, cx| {
         root.update(cx, |root, cx| {
-            root.open_card(None, member.clone(), cards[1].clone(), window, cx)
+            root.open_page(
+                None,
+                member.clone(),
+                Page::Card(cards[1].clone()),
+                window,
+                cx,
+            )
         })
     });
     assert_eq!(
@@ -278,13 +295,13 @@ fn save_preserves_agent_metadata_and_rejects_conflicting_text(cx: &mut TestAppCo
     type_card(&root, "My draft", &mut cx);
     let store = fs::Project::new(&scratch.0);
     let mut board = store.board(&member.id).unwrap();
-    board.set_card_status(&cards[0], Some(Status::Busy));
+    board.set_card_busy(&cards[0], true);
     board.card_mut(&cards[0]).unwrap().session = Some("agent-session".into());
     store.save_board(&mut board).unwrap();
     type_card(&root, "Mine", &mut cx);
     let saved = store.board(&member.id).unwrap();
     assert_eq!(saved.card(&cards[0]).unwrap().text.trim_end(), "Mine");
-    assert_eq!(saved.card(&cards[0]).unwrap().status, Some(Status::Busy));
+    assert!(saved.card(&cards[0]).unwrap().busy);
     assert_eq!(
         saved.card(&cards[0]).unwrap().session.as_deref(),
         Some("agent-session")
@@ -337,7 +354,13 @@ fn emptied_cards_are_kept_and_never_saved(cx: &mut TestAppContext) {
     cx.update(|window, cx| {
         root.update(cx, |root, cx| {
             assert!(root.leaf().read(cx).drawer.is_none());
-            root.open_card(None, member.clone(), cards[0].clone(), window, cx);
+            root.open_page(
+                None,
+                member.clone(),
+                Page::Card(cards[0].clone()),
+                window,
+                cx,
+            );
         })
     });
     assert_eq!(draft_text(&root, &mut cx), "");
@@ -430,7 +453,13 @@ fn horizontal_scroll_keeps_offsets_and_lane_geometry_stable(cx: &mut TestAppCont
     assert_eq!(lane.offset().y, px(-30.));
     cx.update(|window, cx| {
         root.update(cx, |root, cx| {
-            root.open_card(None, member.clone(), cards[0].clone(), window, cx)
+            root.open_page(
+                None,
+                member.clone(),
+                Page::Card(cards[0].clone()),
+                window,
+                cx,
+            )
         });
         cx.set_scrollbar_visibility(scrollbars::Visibility::Always);
     });
@@ -866,8 +895,7 @@ fn busy_orb_opens_its_session_without_opening_the_card(cx: &mut TestAppContext) 
                 .clone()
                 .update(cx, |board, cx| {
                     board.view = View::List;
-                    board.dispatch_card(&cards[0], "orb-session".into());
-                    board.set_card_status(&cards[0], None);
+                    board.hold_card(&cards[0], "orb-session".into());
                     cx.notify();
                 });
             // Linked and not busy: the session's number, not the orb.
@@ -888,7 +916,7 @@ fn busy_orb_opens_its_session_without_opening_the_card(cx: &mut TestAppContext) 
                 .board
                 .clone()
                 .update(cx, |board, cx| {
-                    board.set_card_status(&cards[0], Some(Status::Busy));
+                    board.set_card_busy(&cards[0], true);
                     cx.notify();
                 });
             let card = &root.workspace.read(cx).projects[0].boards[0]

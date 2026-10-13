@@ -57,15 +57,12 @@ fn callers_with_tools_are_told_to_tag_and_untag_cards() {
         prompts::tool_context(true, &[]),
         prompts::tool_context(false, &[]),
     ] {
-        assert!(context.contains("board_set_card_status"), "{context}");
+        assert!(context.contains("board_set_card_busy"), "{context}");
         assert!(
             context.contains("A request that names a card is a card you are working"),
             "{context}",
         );
-        assert!(
-            context.contains("clear it with none when you answer"),
-            "{context}"
-        );
+        assert!(context.contains("with false when you answer"), "{context}");
         assert!(
             context.contains("however often one card comes back"),
             "{context}"
@@ -73,7 +70,7 @@ fn callers_with_tools_are_told_to_tag_and_untag_cards() {
     }
     // Nothing is said to a caller with no tools to say it about.
     let unavailable = prompts::session_context(Path::new("/project"), None, None, false, &[]);
-    assert!(!unavailable.contains("board_set_card_status"));
+    assert!(!unavailable.contains("board_set_card_busy"));
 }
 
 #[test]
@@ -94,9 +91,10 @@ fn a_numbered_session_is_named_in_its_context() {
 
 #[test]
 fn an_article_session_names_its_article() {
-    let under = prompts::session_context(Path::new("/project"), Some(43), Some("1791"), true, &[]);
-    assert!(under.contains("Current article: 1791"));
+    let under = prompts::session_context(Path::new("/project"), Some(43), Some(279), true, &[]);
+    assert!(under.contains("Current article: #279"));
     assert!(under.contains("article_comment"));
+    assert!(under.contains("article_comment_reply"));
     let loose = prompts::session_context(Path::new("/project"), Some(43), None, true, &[]);
     assert!(!loose.contains("Current article"));
 }

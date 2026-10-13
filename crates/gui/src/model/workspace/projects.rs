@@ -305,14 +305,6 @@ impl Workspace {
                     article.unload(cx);
                 }
             }
-            project.unload_boards(
-                if active && kind == Some(Kind::Board) {
-                    project.board
-                } else {
-                    None
-                },
-                cx,
-            );
             if !(active && kind == Some(Kind::Table))
                 && project
                     .table

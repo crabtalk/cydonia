@@ -32,6 +32,25 @@ pub(crate) fn full(ms: u128) -> String {
     }
 }
 
+/// How long ago a millisecond stamp was, as short as a row's corner holds:
+/// `now`, `15m`, `3h`, `2d` within the week, then the day this year and the
+/// date before that. Empty for none.
+pub(crate) fn ago(ms: u128) -> String {
+    let Some(at) = local(ms) else {
+        return String::new();
+    };
+    let now = chrono::Local::now();
+    let since = now.signed_duration_since(at);
+    match () {
+        _ if since.num_minutes() < 1 => "now".to_owned(),
+        _ if since.num_hours() < 1 => format!("{}m", since.num_minutes()),
+        _ if since.num_days() < 1 => format!("{}h", since.num_hours()),
+        _ if since.num_days() < 7 => format!("{}d", since.num_days()),
+        _ if at.year() == now.year() => at.format("%b %-d").to_string(),
+        _ => at.format("%b %-d, %Y").to_string(),
+    }
+}
+
 /// A millisecond stamp in local time; none for zero or out of range.
 fn local(ms: u128) -> Option<chrono::DateTime<chrono::Local>> {
     i64::try_from(ms)

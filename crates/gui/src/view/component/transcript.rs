@@ -10,6 +10,8 @@ use crate::{
     model::{session::ChatSession, workspace::Workspace},
     view::{
         kit::{
+            bubble,
+            selection::Selections,
             text::{elapsed, tokens},
             watch::Watch,
         },
@@ -34,16 +36,14 @@ use bezel::{
     motion::Painter,
     theme::{TextStyle, Theme, Typeset, ink},
     ui::{
-        icons,
-        input::{Granularity, drag_selection},
-        scroll,
+        icons, scroll,
         tooltip::Tooltip,
         widgets::{Icons, Layout, Status, Takeover},
     },
 };
 use cacp::schema::ToolKind;
 use markdown::{
-    BlockLayouts, Cursor, Doc, Selection,
+    Doc, Selection,
     selectable::{self, Pointer},
 };
 mod follow;
@@ -163,7 +163,6 @@ const WORKING: [&str; 40] = [
 /// what is selected in it.
 #[derive(Default)]
 pub struct State {
-    focus: RefCell<HashMap<usize, bezel::gpui::FocusHandle>>,
     galleries: RefCell<HashMap<usize, bezel::gpui::Entity<gallery::Gallery>>>,
     /// The preview agent messages open their images in, made on first use.
     preview: RefCell<Option<bezel::gpui::Entity<super::image_preview::Preview>>>,
@@ -190,26 +189,12 @@ pub struct State {
     output: HashSet<usize>,
     /// Pending copy feedback resets, one per message.
     copy_feedback: HashMap<usize, Task<()>>,
-    /// Which item's text is selected and what of it. One at a time — a press
-    /// in another item is what clears the last, the same way a page of prose
-    /// has one selection however many paragraphs it holds.
-    selection: Option<(usize, Selection)>,
-    /// The unit the press selected by and the span it took, while the button
-    /// is down. A move only extends a selection a press started.
-    pressed: Option<(Granularity, Range<Cursor>)>,
-    /// The text the press came down in, for extending it without a move.
-    pressed_doc: Option<Rc<Doc>>,
+    /// Which item's text is selected, by item index.
+    selection: Selections<usize>,
     /// Where the pointer is while the button is down, in window coordinates.
     drag: Option<bezel::gpui::Point<Pixels>>,
     /// Scrolls the stream while the drag is held past its top or bottom edge.
     edge_scroll: Option<Task<()>>,
-    /// What each item painted, so a press can be resolved against what is on
-    /// screen rather than against the source.
-    ///
-    /// Behind a cell because the transcript is drawn from `&ChatSession`: the
-    /// layouts are refilled by the renderer every frame, and an item drawn for
-    /// the first time has to be able to put its own in.
-    layouts: RefCell<HashMap<usize, BlockLayouts>>,
     /// The working orb's geometry, reused tick to tick. The engine overwrites
     /// it every frame, so one buffer per session is what keeps a turn in
     /// flight from growing a fresh pair of vectors thirty times a second.
@@ -221,11 +206,6 @@ pub struct State {
 }
 
 impl State {
-    /// The layout store for item `ix`, made on the first frame it is drawn.
-    fn layouts(&self, ix: usize) -> BlockLayouts {
-        self.layouts.borrow_mut().entry(ix).or_default().clone()
-    }
-
     /// Put the stream back on its newest line, and keep it there as the answer
     /// arrives.
     ///
@@ -253,20 +233,9 @@ impl State {
         }
     }
 
-    /// What `ix` has selected, if it is the item holding the selection.
-    fn selection(&self, ix: usize) -> Option<Selection> {
-        self.selection
-            .filter(|(item, _)| *item == ix)
-            .map(|(_, selection)| selection)
-    }
-
     /// Whether the pointer is dragging the head of item `ix`'s selection.
-    ///
-    /// Narrower than [`Self::pressed`], which says only that the button is
-    /// down: the selection names the item the press came down in, and
-    /// [`Self::point`] discards a move reported by any other.
     fn dragging_in(&self, ix: usize) -> bool {
-        self.pressed.is_some() && self.selection(ix).is_some()
+        self.selection.dragging_in(ix)
     }
 
     /// Show `images` in the session's preview, opened on the one at `selected`.
@@ -274,13 +243,17 @@ impl State {
         &self,
         images: Vec<bezel::gpui::ImageSource>,
         selected: usize,
+        cwd: &std::path::Path,
+        workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut bezel::gpui::App,
     ) {
         let preview = self
             .preview
             .borrow_mut()
-            .get_or_insert_with(|| cx.new(|cx| super::image_preview::Preview::new(Vec::new(), cx)))
+            .get_or_insert_with(|| {
+                cx.new(|cx| super::image_preview::Preview::new(Vec::new(), cwd, workspace, cx))
+            })
             .clone();
         preview.update(cx, |preview, cx| {
             preview.images = images;
@@ -293,27 +266,14 @@ impl State {
     /// extends by that unit.
     pub fn point(&mut self, ix: usize, pointer: Pointer, doc: &Rc<Doc>) {
         match pointer {
-            Pointer::Down(cursor, unit) => {
-                let span = cursor.span(unit, doc);
-                self.selection = Some((ix, Selection::new(span.start, span.end)));
-                self.pressed = Some((unit, span));
-                self.pressed_doc = Some(doc.clone());
-            }
-            Pointer::Move(cursor) => {
-                let held = self.selection.is_some_and(|(item, _)| item == ix);
-                if let Some((unit, pressed)) = self.pressed.clone().filter(|_| held) {
-                    let (anchor, head) = drag_selection(pressed, cursor.span(unit, doc));
-                    self.selection = Some((ix, Selection::new(anchor, head)));
-                }
-            }
             Pointer::Up => self.release(),
+            pointer => self.selection.point(ix, pointer, doc),
         }
     }
 
     /// The button came up: whatever the selection had become is what it is.
     pub fn release(&mut self) {
-        self.pressed = None;
-        self.pressed_doc = None;
+        self.selection.release();
         self.drag = None;
         self.edge_scroll = None;
     }
@@ -321,7 +281,7 @@ impl State {
     /// How far one edge-scroll tick moves the stream: negative up, positive
     /// down, zero while the drag is over it or no press is held.
     fn edge_step(&self) -> f32 {
-        let Some(drag) = self.drag.filter(|_| self.pressed.is_some()) else {
+        let Some(drag) = self.drag.filter(|_| self.selection.pressing()) else {
             return 0.;
         };
         let viewport = self.list.state.viewport_bounds();
@@ -351,9 +311,11 @@ impl State {
                 .set_follow_mode(bezel::gpui::FollowMode::Normal);
         }
         self.list.state.scroll_by(px(step));
-        if let (Some((ix, _)), Some(doc), Some(drag)) =
-            (self.selection, self.pressed_doc.clone(), self.drag)
-            && let Some((cursor, _)) = self.layouts(ix).hit(drag)
+        if let (Some((ix, _)), Some(doc), Some(drag)) = (
+            self.selection.held(),
+            self.selection.pressed_doc(),
+            self.drag,
+        ) && let Some((cursor, _)) = self.selection.layouts(ix).hit(drag)
         {
             self.point(ix, Pointer::Move(cursor), &doc);
         }
@@ -367,27 +329,27 @@ impl State {
     /// collapsed without a drag — a caret in read-only prose is not a selection
     /// and has nothing for a bar to be about.
     pub fn selection_perch(&self) -> Option<(Bounds<Pixels>, Bounds<Pixels>)> {
-        if self.pressed.is_some() {
+        if self.selection.pressing() {
             return None;
         }
-        let (ix, selection) = self.selection?;
+        let (ix, selection) = self.selection.held()?;
         if selection.is_collapsed() {
             return None;
         }
-        let head = *self.layouts(ix).rects(selection).last()?;
+        let head = *self.selection.layouts(ix).rects(selection).last()?;
         Some((self.list.state.viewport_bounds(), head))
     }
 
     /// Drop the run, and the bar over it with it.
     pub fn clear_selection(&mut self) {
-        self.selection = None;
+        self.selection.clear();
         self.release();
     }
 
     /// What is selected, as it would be pasted, or nothing when a press
     /// collapsed without a drag behind it.
     pub fn copied(&self, chat: &ChatSession) -> Option<String> {
-        let (ix, selection) = self.selection?;
+        let (ix, selection) = self.selection.held()?;
         let item = chat.items.get(ix)?;
         let doc = if matches!(item, ChatItem::User(_)) {
             gallery::document(item_text(item)?).0
@@ -402,7 +364,7 @@ impl State {
 impl State {
     /// The turn the selection is in, from 0.
     pub(crate) fn selected_turn(&self, chat: &ChatSession) -> Option<usize> {
-        let (item, _) = self.selection?;
+        let (item, _) = self.selection.held()?;
         turns(&chat.items)
             .iter()
             .position(|turn| turn.range.contains(&item))
@@ -504,7 +466,7 @@ fn prose(
         markdown::parse(text)
     };
     let doc = Rc::new(doc);
-    let layouts = hold.state.layouts(ix);
+    let layouts = hold.state.selection.layouts(ix);
     let washes = match hold.state.find.borrow().as_ref() {
         Some(query) => {
             let current = hold
@@ -520,7 +482,7 @@ fn prose(
         ("transcript-prose", ix),
         &doc,
         &layouts,
-        hold.state.selection(ix),
+        hold.state.selection.of(ix),
         hold.state.dragging_in(ix),
         markdown::Editing {
             annotations: &washes,
@@ -576,15 +538,9 @@ fn prose(
         .absolute()
         .size_0()
     });
-    let focus = hold
-        .state
-        .focus
-        .borrow_mut()
-        .entry(ix)
-        .or_insert_with(|| cx.focus_handle())
-        .clone();
+    let focus = hold.state.selection.focus(ix, cx);
     let view = hold.view.clone();
-    selectable::surface(&focus, &doc, hold.state.selection(ix), cx)
+    selectable::surface(&focus, &doc, hold.state.selection.of(ix), cx)
         .capture_any_mouse_up(move |event: &bezel::gpui::MouseUpEvent, window, cx| {
             if event.button != bezel::gpui::MouseButton::Left {
                 return;
@@ -596,7 +552,7 @@ fn prose(
             }) {
                 let clicked = view
                     .upgrade()
-                    .and_then(|view| view.read(cx).state.selection(ix))
+                    .and_then(|view| view.read(cx).state.selection.of(ix))
                     .is_none_or(|selection| selection.is_collapsed());
                 if clicked {
                     let images = pictures
@@ -605,7 +561,9 @@ fn prose(
                         .collect();
                     view.update(cx, |view, cx| {
                         view.state.release();
-                        view.state.open_preview(images, at, window, cx);
+                        let workspace = view.workspace.downgrade();
+                        view.state
+                            .open_preview(images, at, &cwd, workspace, window, cx);
                         cx.notify();
                     })
                     .ok();
@@ -922,7 +880,7 @@ fn render(
             list.invalidate(key);
         }
     }
-    let selected_turn = state.selection.and_then(|(item, _)| {
+    let selected_turn = state.selection.held().and_then(|(item, _)| {
         turns
             .iter()
             .position(|turn| turn.range.contains(&item))
@@ -933,10 +891,10 @@ fn render(
         if let Some((index, _)) = previous_focus.filter(|(ix, _)| *ix < keys.len()) {
             list.focus_item(index, None);
         }
-        if let Some((item, _)) = state.selection
+        if let Some((item, _)) = state.selection.held()
             && let Some((index, _)) = selected_turn
         {
-            list.focus_item(index, state.focus.borrow().get(&item).cloned());
+            list.focus_item(index, state.selection.focus_of(item));
         }
     }
     let footer_height = match attached {
@@ -1018,15 +976,7 @@ fn render(
                     return;
                 };
                 let turns = items;
-                let selected = view.state.selection.map(|(ix, _)| ix);
-                view.state
-                    .focus
-                    .borrow_mut()
-                    .retain(|ix, _| turns.contains(ix) || selected == Some(*ix));
-                view.state
-                    .layouts
-                    .borrow_mut()
-                    .retain(|ix, _| turns.contains(ix) || selected == Some(*ix));
+                view.state.selection.retain(|ix| turns.contains(ix));
                 view.state.galleries.borrow_mut().retain(|ix, gallery| {
                     turns.contains(ix) || gallery.read(cx).is_preview_open(cx)
                 });
@@ -1043,7 +993,7 @@ fn render(
         .child(follow::viewport(&list.state, virtual_content))
         // Registered in the paint phase: a drag past the stream is off every
         // hitbox in it.
-        .children(state.pressed.is_some().then(|| {
+        .children(state.selection.pressing().then(|| {
             canvas(
                 |_, _, _| (),
                 move |_, _, window, _| {
@@ -1295,6 +1245,7 @@ fn range_menu<V: 'static>(
         "rail-range",
         &items,
         &hold.state.range_cursor.borrow(),
+        None,
         window,
         cx,
         move |_: &mut V, hit, window, cx| {
@@ -1499,7 +1450,10 @@ fn zone(
                 .galleries
                 .borrow_mut()
                 .entry(first)
-                .or_insert_with(|| cx.new(|cx| gallery::Gallery::new(images, &chat.cwd, cx)))
+                .or_insert_with(|| {
+                    let workspace = hold.workspace.clone();
+                    cx.new(|cx| gallery::Gallery::new(images, &chat.cwd, workspace, cx))
+                })
                 .clone()
         });
         let group = SharedString::from(format!("user-message-{}-{first}", chat.id));
@@ -1527,13 +1481,8 @@ fn zone(
                 .flex_col()
                 .gap(px(4.))
                 .child(
-                    div()
-                        .px(px(14.))
-                        .py(px(9.))
-                        .rounded(px(Theme::surface_radius()))
-                        .bg(theme.surface_raised)
-                        .text_style(TextStyle::Body)
-                        .text_color(theme.text)
+                    bubble::bubble(&theme)
+                        .when(gallery.is_some(), |bubble| bubble.w_full())
                         .flex()
                         .flex_col()
                         .gap(px(8.))

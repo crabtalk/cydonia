@@ -186,8 +186,6 @@ impl Cydonia {
             let cells = (0..declared.len())
                 .map(|ix| {
                     div()
-                        .w_full()
-                        .truncate()
                         .line_height(px(LINE))
                         .child(record.cells.get(ix).map(text).unwrap_or_default())
                         .into_any_element()
