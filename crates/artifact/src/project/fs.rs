@@ -125,7 +125,7 @@ impl Project {
 
     /// The directory a board of this id is in. Derived rather than stored:
     /// the id is the name, so there is no second copy of it to disagree.
-    fn board_dir(&self, id: &str) -> PathBuf {
+    pub fn board_dir(&self, id: &str) -> PathBuf {
         self.boards_dir().join(id)
     }
 
@@ -159,10 +159,17 @@ impl Project {
                 cards.push(card);
             }
         }
+        let described = document::content(dir);
+        let description = std::fs::read_to_string(&described).unwrap_or_default();
+        if described.is_file() {
+            touched = touched.max(stamp::of(&described));
+        }
         let mut board = layout::assemble(&body, cards)?;
         if board.id.is_empty() {
             board.id = stem(dir);
         }
+        board.description_version = Some(version(description.as_bytes()));
+        board.description = description;
         board.touched = touched;
         board.created = stamp::named(&stem(dir));
         board.version = Some(version(body.as_bytes()));
@@ -230,6 +237,14 @@ impl Project {
             };
             let own = document::assets(&document::content(&dir.join(layout::CARDS).join(id)));
             card.text = document::adopt_assets(&card.text, &shared, &own);
+        }
+    }
+
+    /// The document directory `page` of `board` is — see [`layout`].
+    pub fn page_dir(&self, board: &str, page: &board::Page) -> PathBuf {
+        match page {
+            board::Page::Card(card) => self.card_dir(board, card),
+            board::Page::Description => self.board_dir(board),
         }
     }
 
@@ -336,6 +351,20 @@ impl Project {
                 written,
             ));
         }
+        let described = document::content(&dir);
+        let description_version = version(board.description.as_bytes());
+        let describes = board.description_version.as_deref() != Some(description_version.as_str());
+        if describes
+            && let Some(seen) = &board.description_version
+            && *seen
+                != version(
+                    std::fs::read_to_string(&described)
+                        .unwrap_or_default()
+                        .as_bytes(),
+                )
+        {
+            return Err(crate::error::Error::Stale.into());
+        }
         for (_, path, text, properties, _) in &writes {
             crate::fs::save(path, text)?;
             let beside = document::properties(path);
@@ -345,6 +374,15 @@ impl Project {
                     let _ = std::fs::remove_file(&beside);
                 }
             }
+        }
+        if describes {
+            match board.description.is_empty() {
+                true => {
+                    let _ = std::fs::remove_file(&described);
+                }
+                false => document::write(&described, &board.description)?,
+            }
+            board.description_version = Some(description_version);
         }
         if ours {
             lock.set_len(0)?;
@@ -428,13 +466,14 @@ impl Project {
         content.is_file().then(|| self.describe(content))
     }
 
-    /// Whether `dir` is the folder of a document filed here: an article's, or
-    /// a card's on one of its boards.
+    /// Whether `dir` is the folder of a document filed here: an article's, a
+    /// board's description, or a card's on one of its boards.
     pub fn files(&self, dir: &Path) -> bool {
         let Some(parent) = dir.parent() else {
             return false;
         };
         parent == article::dir(&self.root)
+            || parent == self.boards_dir()
             || (parent.file_name().is_some_and(|name| name == layout::CARDS)
                 && parent.parent().and_then(Path::parent) == Some(self.boards_dir().as_path()))
     }

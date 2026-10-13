@@ -1006,3 +1006,52 @@ fn a_card_is_read_whole_by_its_handle() {
     ));
     assert!(linked.contains("the whole body"), "{linked}");
 }
+
+/// A board's description is read ahead of its columns, and once ahead of the
+/// cards read off it.
+#[test]
+fn a_description_is_read_with_the_board_and_its_cards() {
+    let scratch = Scratch::new("described");
+    scratch
+        .store()
+        .create_board("Roadmap", "ROAD")
+        .expect("a board");
+    let server = scratch.server();
+    said(server.call(
+        "board_add_column",
+        json!({ "project": scratch.path(), "board": "ROAD", "name": "Todo" }),
+        None,
+    ));
+    said(server.call(
+        "board_add_card",
+        json!({ "project": scratch.path(), "board": "ROAD", "column": "Todo", "text": ["Wire it", "Ship it"] }),
+        None,
+    ));
+    let described = said(server.call(
+        "board_describe",
+        json!({ "project": scratch.path(), "board": "ROAD", "description": "Tag cards busy first." }),
+        None,
+    ));
+    assert_eq!(described, "ROAD (Roadmap) is described");
+
+    let read = said(server.call(
+        "board_read",
+        json!({ "project": scratch.path(), "board": "ROAD" }),
+        None,
+    ));
+    assert!(
+        read.starts_with("#1 Roadmap (ROAD)\n\nTag cards busy first.\n\nTODO"),
+        "{read}"
+    );
+
+    let cards = said(server.call(
+        "board_read_card",
+        json!({ "project": scratch.path(), "card": ["ROAD-1", "ROAD-2"] }),
+        None,
+    ));
+    assert!(
+        cards.starts_with("ROAD (Roadmap) — description\n\nTag cards busy first.\n\nROAD-1 · TODO"),
+        "{cards}"
+    );
+    assert_eq!(cards.matches("Tag cards busy first.").count(), 1, "{cards}");
+}

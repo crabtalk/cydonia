@@ -92,7 +92,13 @@ fn open(
             root.leaf()
                 .clone()
                 .update(cx, |pane, _| pane.kind = Kind::Board);
-            root.open_card(None, member.clone(), cards[0].clone(), window, cx);
+            root.open_page(
+                None,
+                member.clone(),
+                Page::Card(cards[0].clone()),
+                window,
+                cx,
+            );
         });
         cx.observe(&root, |_, _, cx| cx.notify()).detach();
         Host(root)
@@ -238,7 +244,13 @@ fn opening_a_card_writes_nothing(cx: &mut TestAppContext) {
     let (scratch, root, member, cards, mut cx) = open("untouched", cx);
     cx.update(|window, cx| {
         root.update(cx, |root, cx| {
-            root.open_card(None, member.clone(), cards[1].clone(), window, cx);
+            root.open_page(
+                None,
+                member.clone(),
+                Page::Card(cards[1].clone()),
+                window,
+                cx,
+            );
             root.close_drawer(None, window, cx);
         })
     });
@@ -258,7 +270,13 @@ fn switching_and_closing_save_at_once(cx: &mut TestAppContext) {
     type_card(&root, "Switched away", &mut cx);
     cx.update(|window, cx| {
         root.update(cx, |root, cx| {
-            root.open_card(None, member.clone(), cards[1].clone(), window, cx)
+            root.open_page(
+                None,
+                member.clone(),
+                Page::Card(cards[1].clone()),
+                window,
+                cx,
+            )
         })
     });
     assert_eq!(
@@ -337,7 +355,13 @@ fn emptied_cards_are_kept_and_never_saved(cx: &mut TestAppContext) {
     cx.update(|window, cx| {
         root.update(cx, |root, cx| {
             assert!(root.leaf().read(cx).drawer.is_none());
-            root.open_card(None, member.clone(), cards[0].clone(), window, cx);
+            root.open_page(
+                None,
+                member.clone(),
+                Page::Card(cards[0].clone()),
+                window,
+                cx,
+            );
         })
     });
     assert_eq!(draft_text(&root, &mut cx), "");
@@ -430,7 +454,13 @@ fn horizontal_scroll_keeps_offsets_and_lane_geometry_stable(cx: &mut TestAppCont
     assert_eq!(lane.offset().y, px(-30.));
     cx.update(|window, cx| {
         root.update(cx, |root, cx| {
-            root.open_card(None, member.clone(), cards[0].clone(), window, cx)
+            root.open_page(
+                None,
+                member.clone(),
+                Page::Card(cards[0].clone()),
+                window,
+                cx,
+            )
         });
         cx.set_scrollbar_visibility(scrollbars::Visibility::Always);
     });

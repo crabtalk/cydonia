@@ -24,7 +24,7 @@ use crate::{
 };
 use artifact::kind::Kind;
 use artifact::{
-    board::{Card, Status, View},
+    board::{Card, Page, Status, View},
     space::Member,
 };
 use bezel::agent::orbs::engine::Frame;
@@ -317,21 +317,21 @@ pub enum Editing {
     Card(String),
 }
 
-/// The card of a board view open in its pane's drawer. Set exactly while the
-/// pane's drawer peeks the view — see [`Peek::Card`].
-struct OpenCard {
-    card: String,
-    /// The drawer's scroll, which the card's editor scrolls by.
+/// The card or the description of a board view open in its pane's drawer.
+/// Set exactly while the pane's drawer peeks the view — see [`Peek::Page`].
+struct OpenPage {
+    page: Page,
+    /// The drawer's scroll, which the page's editor scrolls by.
     scroll: ScrollHandle,
     adjustments: Rc<RefCell<HashMap<String, LaneAdjustment>>>,
 }
 
-/// The editor over the card open in a pane's drawer, saved as it is typed in.
+/// The editor over the page open in a pane's drawer, saved as it is typed in.
 /// Kept past the drawer only while its last save failed, so closing and
-/// switching cards never discard text.
-pub struct CardDraft {
-    card: String,
-    /// The card's text as last read from the board or written to it — what a
+/// switching pages never discard text.
+pub struct PageDraft {
+    page: Page,
+    /// The page's text as last read from the board or written to it — what a
     /// save checks the board against.
     base: String,
     /// The editor's source when `base` was taken. Differs from `base` where
@@ -357,7 +357,7 @@ impl LaneAdjustment {
     }
 }
 
-impl Drop for OpenCard {
+impl Drop for OpenPage {
     fn drop(&mut self) {
         for adjustment in self.adjustments.borrow().values() {
             adjustment.restore();
@@ -836,8 +836,8 @@ pub(crate) struct BoardView {
     renaming: Option<String>,
     name_field: Entity<NameField>,
     menu: ContextMenu<Self, BoardMenu>,
-    opened: Option<OpenCard>,
-    drafts: Vec<CardDraft>,
+    opened: Option<OpenPage>,
+    drafts: Vec<PageDraft>,
     /// What the pane's find narrows the board by.
     find: Find,
     /// The pane's drawer as of the last render.
@@ -1193,14 +1193,14 @@ impl Cydonia {
         cx.notify();
     }
 
-    /// Open `card` of `board` in `on`'s drawer, or put the drawer away where
+    /// Open `page` of `board` in `on`'s drawer, or put the drawer away where
     /// it already shows it: every pane's open field filed and `on`'s pane
     /// entered first.
-    pub(crate) fn open_card(
+    pub(crate) fn open_page(
         &mut self,
         on: Option<&Member>,
         board: Member,
-        card: String,
+        page: Page,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1210,7 +1210,7 @@ impl Cydonia {
         }
         self.leaf_of(on, cx)
             .clone()
-            .update(cx, |pane, cx| pane.open_card(board, card, window, cx));
+            .update(cx, |pane, cx| pane.open_page(board, page, window, cx));
         cx.notify();
     }
 
@@ -1330,7 +1330,13 @@ impl Cydonia {
                         ))
                         .on_click(cx.listener(move |this, _, window, cx| {
                             cx.stop_propagation();
-                            this.open_card(pane.as_ref(), board.clone(), id.clone(), window, cx);
+                            this.open_page(
+                                pane.as_ref(),
+                                board.clone(),
+                                Page::Card(id.clone()),
+                                window,
+                                cx,
+                            );
                         }))
                         .into_any_element(),
                 );
@@ -1412,35 +1418,43 @@ impl BoardView {
         Some((project, at))
     }
 
-    /// The card open in the pane's drawer, by id.
-    pub(crate) fn opened_card(&self) -> Option<&str> {
-        self.opened.as_ref().map(|opened| opened.card.as_str())
+    /// The page open in the pane's drawer.
+    pub(crate) fn opened(&self) -> Option<&Page> {
+        self.opened.as_ref().map(|opened| &opened.page)
     }
 
-    /// Whether the open card shows: it is still on the board, or still being
+    /// The card open in the pane's drawer, by id.
+    pub(crate) fn opened_card(&self) -> Option<&str> {
+        match self.opened()? {
+            Page::Card(id) => Some(id),
+            Page::Description => None,
+        }
+    }
+
+    /// Whether the open page shows: it is still on the board, or still being
     /// written.
-    pub(crate) fn card_live(&self, cx: &App) -> bool {
+    pub(crate) fn page_live(&self, cx: &App) -> bool {
         let Some(opened) = &self.opened else {
             return false;
         };
         let held = self
             .located(cx)
             .and_then(|(project, at)| self.workspace.read(cx).board_in(project, at, cx))
-            .is_some_and(|board| board.card(&opened.card).is_some());
+            .is_some_and(|board| board.page_text(&opened.page).is_some());
         held || self.draft().is_some()
     }
 
-    /// Open `card` in the pane's drawer, its editor scrolled by `scroll`.
-    pub(crate) fn open(&mut self, card: String, scroll: ScrollHandle, cx: &mut Context<Self>) {
+    /// Open `page` in the pane's drawer, its editor scrolled by `scroll`.
+    pub(crate) fn open(&mut self, page: Page, scroll: ScrollHandle, cx: &mut Context<Self>) {
         match &mut self.opened {
             Some(opened) => {
-                let was = std::mem::replace(&mut opened.card, card);
+                let was = std::mem::replace(&mut opened.page, page);
                 opened.scroll = scroll;
                 self.settle_draft(&was);
             }
             None => {
-                self.opened = Some(OpenCard {
-                    card,
+                self.opened = Some(OpenPage {
+                    page,
                     scroll,
                     adjustments: Default::default(),
                 })
@@ -1450,10 +1464,10 @@ impl BoardView {
         cx.notify();
     }
 
-    /// The pane's drawer let the card go.
+    /// The pane's drawer let the page go.
     pub(crate) fn close(&mut self, cx: &mut Context<Self>) {
         if let Some(opened) = self.opened.take() {
-            self.settle_draft(&opened.card);
+            self.settle_draft(&opened.page);
         }
         cx.notify();
     }
@@ -1464,16 +1478,16 @@ impl BoardView {
             .is_some_and(|draft| draft.editor.focus_handle(cx).is_focused(window))
     }
 
-    pub(crate) fn draft(&self) -> Option<&CardDraft> {
+    pub(crate) fn draft(&self) -> Option<&PageDraft> {
         let opened = self.opened.as_ref()?;
-        self.drafts.iter().find(|draft| draft.card == opened.card)
+        self.drafts.iter().find(|draft| draft.page == opened.page)
     }
 
-    fn draft_mut(&mut self, card: &str) -> Option<&mut CardDraft> {
-        self.drafts.iter_mut().find(|draft| draft.card == card)
+    fn draft_mut(&mut self, page: &Page) -> Option<&mut PageDraft> {
+        self.drafts.iter_mut().find(|draft| draft.page == *page)
     }
 
-    /// Put an editor over the open card, unless one is there.
+    /// Put an editor over the open page, unless one is there.
     fn ensure_draft(&mut self, cx: &mut Context<Self>) {
         let Some(opened) = &self.opened else {
             return;
@@ -1481,19 +1495,19 @@ impl BoardView {
         if self.draft().is_some() {
             return;
         }
-        let (card, scroll) = (opened.card.clone(), opened.scroll.clone());
+        let (page, scroll) = (opened.page.clone(), opened.scroll.clone());
         let workspace = self.workspace.read(cx);
         let Some(text) = self
             .located(cx)
             .and_then(|(project, at)| workspace.board_in(project, at, cx))
-            .and_then(|board| board.card(&card))
-            .map(|held| held.text.clone())
+            .and_then(|board| board.page_text(&page))
+            .map(str::to_owned)
         else {
             return;
         };
         let text_size = workspace.text_size;
         let dir = artifact::project::fs::Project::new(&self.board.project)
-            .card_dir(&self.board.id, &card);
+            .page_dir(&self.board.id, &page);
         let document = cx.new(|cx| editor::Document::new(&text, cx));
         let (editor, pictures) = crate::view::kit::document::editor(
             &dir,
@@ -1507,18 +1521,18 @@ impl BoardView {
             cx,
         );
         let shown = editor.read(cx).source();
-        let held = card.clone();
+        let held = page.clone();
         let subscription = cx.subscribe(&editor, move |this, editor, event: &EditorEvent, cx| {
             if let EditorEvent::Changed = event {
                 crate::model::language::Here::ensure(
                     crate::model::article::fences(editor.read(cx).doc()),
                     cx,
                 );
-                this.save_card(&held, cx);
+                this.save_page(&held, cx);
             }
         });
-        self.drafts.push(CardDraft {
-            card,
+        self.drafts.push(PageDraft {
+            page,
             base: text,
             shown,
             editor,
@@ -1528,10 +1542,10 @@ impl BoardView {
         });
     }
 
-    /// Write the card's editor to the board, keeping on the draft why the
+    /// Write the page's editor to the board, keeping on the draft why the
     /// board refused it.
-    fn save_card(&mut self, card: &str, cx: &mut Context<Self>) {
-        let Some(draft) = self.draft_mut(card) else {
+    fn save_page(&mut self, page: &Page, cx: &mut Context<Self>) {
+        let Some(draft) = self.draft_mut(page) else {
             return;
         };
         let (base, shown, editor) = (
@@ -1544,10 +1558,10 @@ impl BoardView {
         let result = match text == shown {
             true => Ok(()),
             false => self.workspace.update(cx, |workspace, cx| {
-                workspace.save_card_draft(&board, card, &base, &text, cx)
+                workspace.save_page_draft(&board, page, &base, &text, cx)
             }),
         };
-        if let Some(draft) = self.draft_mut(card) {
+        if let Some(draft) = self.draft_mut(page) {
             match result {
                 Ok(()) => {
                     if text != draft.shown {
@@ -1562,51 +1576,59 @@ impl BoardView {
         cx.notify();
     }
 
-    /// Let a card's editor go with its drawer, unless its last save failed.
-    fn settle_draft(&mut self, card: &str) {
+    /// Let a page's editor go with its drawer, unless its last save failed.
+    fn settle_draft(&mut self, page: &Page) {
         self.drafts
-            .retain(|draft| draft.card != card || draft.error.is_some());
+            .retain(|draft| draft.page != *page || draft.error.is_some());
     }
 
-    /// Drop the editor's text and read the open card back off the board.
+    /// Drop the editor's text and read the open page back off the board.
     fn reload_draft(&mut self, cx: &mut Context<Self>) {
         let Some(opened) = &self.opened else {
             return;
         };
-        let card = opened.card.clone();
-        self.drafts.retain(|draft| draft.card != card);
+        let page = opened.page.clone();
+        self.drafts.retain(|draft| draft.page != page);
         self.ensure_draft(cx);
         cx.notify();
     }
 
-    /// What the pane's drawer draws for the open card, while it shows.
-    pub(crate) fn card_face(
+    /// What the pane's drawer draws for the open page, while it shows.
+    pub(crate) fn page_face(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Face> {
-        if !self.card_live(cx) {
+        if !self.page_live(cx) {
             return None;
         }
         let opened = self.opened.as_ref()?;
         let (project, board_at) = self.located(cx)?;
         let board = self.workspace.read(cx).board_in(project, board_at, cx)?;
-        let card = board.card(&opened.card).cloned();
+        let page = opened.page.clone();
+        let card = match &page {
+            Page::Card(id) => board.card(id).cloned(),
+            Page::Description => None,
+        };
         let card = card.as_ref();
-        let handle = card
-            .and_then(|card| board.handle_of(card))
-            .unwrap_or_else(|| "Missing card".into());
+        let text = board.page_text(&page).map(str::to_owned);
+        let handle = match &page {
+            Page::Card(_) => card
+                .and_then(|card| board.handle_of(card))
+                .unwrap_or_else(|| "Missing card".into()),
+            Page::Description => "Description".into(),
+        };
         let status = card.and_then(|card| card.status);
         let draft = self.draft();
         let error = draft.and_then(|draft| draft.error.clone()).or_else(|| {
-            card.is_none().then(|| {
+            text.is_none().then(|| {
                 "This card was removed or moved. Copy your text before discarding it.".into()
             })
         });
         // The board moved under an editor with nothing of its own to keep —
         // an agent's rewrite, most often — so the editor takes the board's.
-        if let (Some(card), Some(draft)) = (card, draft)
-            && card.text != draft.base
+        if let (Some(text), Some(draft)) = (&text, draft)
+            && *text != draft.base
             && draft.editor.read(cx).source() == draft.shown
         {
             let this = cx.entity();
@@ -1645,19 +1667,18 @@ impl BoardView {
                 .child(editor.clone())
                 .into_any_element(),
             None => markdown::render_with(
-                &self
-                    .docs
-                    .of(&card.map(|card| card.text.clone()).unwrap_or_default()),
+                &self.docs.of(&text.unwrap_or_default()),
                 markdown::Editing::default(),
                 window,
                 cx,
             )
             .into_any_element(),
         };
+        let mono = matches!(page, Page::Card(_));
         Some(Face {
             lead: std::iter::once(
                 div()
-                    .font_family(theme.font_mono.clone())
+                    .when(mono, |lead| lead.font_family(theme.font_mono.clone()))
                     .child(handle)
                     .into_any_element(),
             )
@@ -1669,7 +1690,10 @@ impl BoardView {
                     Drawer::action(
                         "card-draft-discard",
                         icons::glyph::Undo2,
-                        "Discard your text and reload the card",
+                        match page {
+                            Page::Card(_) => "Discard your text and reload the card",
+                            Page::Description => "Discard your text and reload the description",
+                        },
                         cx,
                     )
                     .on_click(cx.listener(|this, _, _, cx| {
@@ -1700,7 +1724,10 @@ impl BoardView {
     /// and not expanded.
     fn reveal(&self) -> Option<Reveal> {
         let drawer = self.shown.drawer.as_ref()?;
-        let opened = self.opened.as_ref()?;
+        let opened = self
+            .opened
+            .as_ref()
+            .filter(|opened| matches!(opened.page, Page::Card(_)))?;
         (drawer.own && !drawer.expanded && drawer.reveal.get() && drawer.height > px(0.)).then(
             || Reveal {
                 pending: drawer.reveal.clone(),
@@ -1844,7 +1871,7 @@ impl BoardView {
         let (root, pane, board) = (self.root.clone(), self.pane.clone(), self.board.clone());
         window.defer(cx, move |window, cx| {
             let _ = root.update(cx, |root, cx| {
-                root.open_card(pane.as_ref(), board, card, window, cx)
+                root.open_page(pane.as_ref(), board, Page::Card(card), window, cx)
             });
         });
     }
@@ -3763,7 +3790,7 @@ impl Render for BoardView {
             .upgrade()
             .map(|root| root.read(cx).pane_state(self.pane.as_ref(), me, cx))
             .unwrap_or_default();
-        if self.shown.drawer.as_ref().is_some_and(|drawer| drawer.own) && !self.card_live(cx) {
+        if self.shown.drawer.as_ref().is_some_and(|drawer| drawer.own) && !self.page_live(cx) {
             self.shown.drawer = None;
         }
         let Some((project, board_at)) = self.located(cx) else {

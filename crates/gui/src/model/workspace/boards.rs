@@ -12,11 +12,12 @@ use bezel::gpui::Entity;
 use std::collections::HashSet;
 
 impl Workspace {
-    /// Save a draft against the latest disk contents, preserving other card fields.
-    pub fn save_card_draft(
+    /// Save a draft of `page` against the latest disk contents, preserving
+    /// the rest of the board.
+    pub fn save_page_draft(
         &mut self,
         member: &artifact::space::Member,
-        card: &str,
+        page: &board::Page,
         base: &str,
         text: &str,
         cx: &mut Context<Self>,
@@ -33,7 +34,7 @@ impl Workspace {
             let mut board = store
                 .board(&member.id)
                 .ok_or("The board could not be read.")?;
-            if let Err(error) = apply_card_draft(&mut board, card, base, text) {
+            if let Err(error) = apply_page_draft(&mut board, page, base, text) {
                 if let Some(held) = open.boards.iter().find(|held| held.id == member.id) {
                     held.board.update(cx, |held, cx| {
                         *held = board;
@@ -50,8 +51,14 @@ impl Workspace {
         let saved = store
             .board(&member.id)
             .ok_or("The saved board could not be read.")?;
-        if saved.card(card).is_none_or(|card| card.text != text) {
-            return Err("The card could not be saved. Your draft is retained.".into());
+        if saved.page_text(page) != Some(text) {
+            return Err(match page {
+                board::Page::Card(_) => "The card could not be saved. Your draft is retained.",
+                board::Page::Description => {
+                    "The description could not be saved. Your draft is retained."
+                }
+            }
+            .into());
         }
         if let Some(held) = open.boards.iter().find(|held| held.id == member.id) {
             held.board.update(cx, |held, cx| {
@@ -517,16 +524,25 @@ impl Workspace {
     }
 }
 
-fn apply_card_draft(board: &mut Board, id: &str, base: &str, text: &str) -> Result<(), String> {
-    let card = board
-        .card(id)
+fn apply_page_draft(
+    board: &mut Board,
+    page: &board::Page,
+    base: &str,
+    text: &str,
+) -> Result<(), String> {
+    let held = board
+        .page_text(page)
         .ok_or("The card was removed or moved. Your draft is retained.")?;
-    if text.trim().is_empty() {
+    if matches!(page, board::Page::Card(_)) && text.trim().is_empty() {
         return Err("A card needs some text. Use the card menu to delete it.".into());
     }
-    if card.text != base && card.text != text {
-        return Err("The card changed while you were editing. Copy your draft before cancelling to reload it.".into());
+    if held != base && held != text {
+        return Err(match page {
+            board::Page::Card(_) => "The card changed while you were editing. Copy your draft before cancelling to reload it.",
+            board::Page::Description => "The description changed while you were editing. Copy your draft before cancelling to reload it.",
+        }
+        .into());
     }
-    board.rewrite_card(id, text);
+    board.rewrite_page(page, text);
     Ok(())
 }

@@ -5,7 +5,8 @@
 //! card's directory is a [`crate::document`]: `content.md` is its text,
 //! `properties.toml` its handle, status and session, and `assets/` its
 //! pictures, referenced as `assets/<name>`. The card's id is its directory's
-//! name.
+//! name. The board directory is a document too: its `content.md` is the
+//! board's description, absent for none.
 
 use crate::{
     board::{Board, Card, Column, Status, View},

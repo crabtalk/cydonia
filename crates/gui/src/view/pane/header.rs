@@ -20,7 +20,7 @@ use bezel::{
     gpui::{AnyElement, App, Context, FontWeight, SharedString, Window, div, prelude::*, px},
     motion::Painter,
     theme::{TextStyle, Theme, Typeset},
-    ui::{context_menu::Place, icons, titlebar::CaptionSide},
+    ui::{context_menu::Place, icons, titlebar::CaptionSide, tooltip::Tooltip},
 };
 /// What a pane puts in the band.
 pub(crate) struct Toolbar {
@@ -150,6 +150,16 @@ impl Cydonia {
             }) => Some(id.clone()),
             _ => None,
         });
+        // The first line of that board's description, which its name shows
+        // on hover.
+        let described: Option<SharedString> = board.as_deref().and_then(|id| {
+            let board = self.workspace.read(cx).board_at(id, cx)?;
+            let line = board
+                .description
+                .lines()
+                .find(|line| !line.trim().is_empty())?;
+            Some(line.trim().to_owned().into())
+        });
         root::band()
             .absolute()
             .top_0()
@@ -201,6 +211,11 @@ impl Cydonia {
                                         .font_weight(FontWeight::MEDIUM)
                                         .text_color(theme.text)
                                         .when_some(board.clone(), |title, _| title.cursor_pointer())
+                                        .when_some(described, |title, line| {
+                                            title.tooltip(move |window, cx| {
+                                                Tooltip::text(line.clone(), window, cx)
+                                            })
+                                        })
                                         .child(toolbar.title)
                                         .when_some(board.clone(), |title, id| {
                                             // Noted on the way down, ahead of

@@ -87,3 +87,32 @@ fn a_hand_edit_makes_a_held_copy_stale() {
     ));
     assert_eq!(store.board(&made.id).unwrap().name, "Edited");
 }
+
+/// A description written by another hand since this copy was read is not
+/// overwritten, and the board directory's `content.md` holds it.
+#[test]
+fn files_refuse_a_stale_description() {
+    let scratch = Scratch::new("stale-fs-description");
+    let store = scratch.store();
+    let made = store.create_board("Plans", "PLAN").unwrap();
+    let mut first = store.board(&made.id).unwrap();
+    let mut second = store.board(&made.id).unwrap();
+
+    first.description = "Tag cards busy.".into();
+    store.save_board(&mut first).unwrap();
+    let file = store.board_dir(&made.id).join("content.md");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "Tag cards busy.");
+    assert_eq!(
+        store.board(&made.id).unwrap().description,
+        "Tag cards busy."
+    );
+
+    second.description = "Something else.".into();
+    let refused = store.save_board(&mut second).unwrap_err();
+    assert!(matches!(refused, Error::Stale), "{refused}");
+
+    first.description = String::new();
+    store.save_board(&mut first).unwrap();
+    assert!(!file.exists());
+    assert_eq!(store.board(&made.id).unwrap().description, "");
+}

@@ -9,7 +9,7 @@ use crate::view::{
     sidebar::{Group, Lit, Renaming, Row, on_disk},
     window::root::Cydonia,
 };
-use artifact::board::View;
+use artifact::board::{Page, View};
 use artifact::space::Member;
 use bezel::{
     gpui::{AnyElement, App, Context, Window, prelude::*},
@@ -200,12 +200,28 @@ impl Cydonia {
         if let Some(Showing::Board(_)) = entry.showing()
             && !matches!(host, Host::Sidebar | Host::Library)
             && let Some((project, ix)) = entry.located(self.workspace.read(cx))
-            && let Some((id, view)) = self
+            && let Some((id, view, described)) = self
                 .workspace
                 .read(cx)
                 .board_in(project, ix, cx)
-                .map(|board| (board.id.clone(), board.view))
+                .map(|board| (board.id.clone(), board.view, !board.description.is_empty()))
         {
+            if let Some(board) = self.workspace.read(cx).board_member(project, ix) {
+                let on = match &host {
+                    Host::Tab(tab) => Some(tab.clone()),
+                    Host::Sidebar | Host::Library | Host::Header => None,
+                };
+                let label = match described {
+                    true => "Description",
+                    false => "Add description",
+                };
+                shown.push(menu::row::<Cydonia>(
+                    Item::action(label).with_icon(icons::text::Book),
+                    move |this, window, cx| {
+                        this.open_page(on.as_ref(), board.clone(), Page::Description, window, cx)
+                    },
+                ));
+            }
             shown.push(menu::switch::<Cydonia, _>(
                 "View",
                 icons::layout::LayoutList,

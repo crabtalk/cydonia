@@ -127,6 +127,11 @@ const NAME_NOW: Arg = Arg {
     about: "What the column should be called now.",
 };
 
+const DESCRIPTION: Arg = Arg {
+    name: "description",
+    about: "What the board's description should say now, markdown: the guide for working its cards. Empty to take it off.",
+};
+
 const BOARD_NAME: Arg = Arg {
     name: "name",
     about: "What the new board is called.",
@@ -147,7 +152,7 @@ const KEY_NOW: Arg = Arg {
     about: "A new key for card handles, such as ROAD. Every handle on the board is read off it, so ROAD-12 becomes BACK-12. Left out, the key does not change.",
 };
 
-pub static TOOLS: [Tool; 17] = [
+pub static TOOLS: [Tool; 18] = [
     Tool {
         name: "board_add",
         description: "Create a board with a name and unique key. Returns its id, project number, key, and columns. Use board_add_column to add columns.",
@@ -193,7 +198,7 @@ pub static TOOLS: [Tool; 17] = [
     },
     Tool {
         name: "board_read",
-        description: "Read one board: its columns, and the cards under them by handle and first line, 50 to a column. A column holding more says so; read the rest with column and after. Read a card's whole text with board_read_card.",
+        description: "Read one board: its description, which is the guide for working its cards, then its columns and the cards under them by handle and first line, 50 to a column. A column holding more says so; read the rest with column and after. Read a card's whole text with board_read_card.",
         schema: |bound| {
             let mut schema = fields(bound, &[PROJECT, BOARD]);
             super::optional(&mut schema, ONE_COLUMN, "string");
@@ -206,7 +211,7 @@ pub static TOOLS: [Tool; 17] = [
     },
     Tool {
         name: "board_read_card",
-        description: "Read one card or several by handle: each one's whole text, its column, its status and the session it was dispatched to.",
+        description: "Read one card or several by handle: each one's whole text, its column, its status and the session it was dispatched to, after the description of the board it is on.",
         schema: |bound| {
             let mut schema = fields(bound, &[PROJECT, CARDS]);
             many(&mut schema, CARDS);
@@ -215,6 +220,14 @@ pub static TOOLS: [Tool; 17] = [
         writes: false,
         deletes: false,
         call: read_card,
+    },
+    Tool {
+        name: "board_describe",
+        description: "Replace a board's description: the guide every agent working its cards reads, answered by board_read and board_read_card.",
+        schema: |bound| fields(bound, &[PROJECT, BOARD, DESCRIPTION]),
+        writes: true,
+        deletes: false,
+        call: describe,
     },
     Tool {
         name: "board_archive",
@@ -408,6 +421,17 @@ fn rename(args: Args<'_>) -> Outcome {
     Ok(Answer::said(said).with(shape(&board, &lanes)))
 }
 
+fn describe(args: Args<'_>) -> Outcome {
+    let project = &store(&args)?;
+    let mut board = board(project, args.text(BOARD)?)?;
+    board.description = args.text(DESCRIPTION)?.trim().to_owned();
+    project.save_board(&mut board).map_err(unwritten)?;
+    Ok(Answer::said(match board.description.is_empty() {
+        true => format!("{} has no description", spoken(&board)),
+        false => format!("{} is described", spoken(&board)),
+    }))
+}
+
 /// One board or a run of them, put away or brought back in one write.
 fn archive(args: Args<'_>) -> Outcome {
     let project = &store(&args)?;
@@ -563,8 +587,17 @@ fn read_card(args: Args<'_>) -> Outcome {
 pub(crate) fn cards(project: &fs::Project, needles: &[&str]) -> Outcome {
     let mut said: Vec<String> = Vec::new();
     let mut data: Vec<Value> = Vec::new();
+    let mut described: Vec<String> = Vec::new();
     for needle in needles {
         let (board, id) = locate(project, needle)?;
+        if !board.description.is_empty() && !described.contains(&board.id) {
+            said.push(format!(
+                "{} — description\n\n{}",
+                spoken(&board),
+                board.description
+            ));
+            described.push(board.id.clone());
+        }
         let card = board.card(&id).expect("located on this board");
         let column = board.column_of(&id).expect("located in a column");
         let handle = named(&board, &id);
@@ -579,7 +612,12 @@ pub(crate) fn cards(project: &fs::Project, needles: &[&str]) -> Outcome {
         data.push(json!({
             "id": card.id,
             "handle": board.handle_of(card),
-            "board": { "id": board.id, "key": board.key, "name": board.name },
+            "board": {
+                "id": board.id,
+                "key": board.key,
+                "name": board.name,
+                "description": board.description,
+            },
             "column": { "id": column.id, "name": column.name },
             "text": card.text,
             "status": card.status,
@@ -1165,6 +1203,9 @@ fn outline(board: &Board, lanes: &[Lane<'_>]) -> String {
     if board.archived {
         out.push_str(" — archived");
     }
+    if !board.description.is_empty() {
+        out.push_str(&format!("\n\n{}", board.description));
+    }
     if board.columns.is_empty() {
         out.push_str("\n\nno columns yet");
         return out;
@@ -1239,6 +1280,7 @@ fn shape(board: &Board, lanes: &[Lane<'_>]) -> Value {
         "key": board.key,
         "name": board.name,
         "archived": board.archived,
+        "description": board.description,
         "columns": lanes
             .iter()
             .map(|lane| json!({

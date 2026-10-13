@@ -59,6 +59,13 @@ impl View {
     }
 }
 
+/// A document a board holds: one of its cards, by id, or its description.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Page {
+    Card(String),
+    Description,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Board {
     /// What names this board, for as long as it exists. Written into the file
@@ -87,6 +94,14 @@ pub struct Board {
     /// backend, whose save is not checked.
     #[serde(skip)]
     pub version: Option<String>,
+    /// The guide for working this board's cards, markdown. Empty for none. In
+    /// the board directory's `content.md`, not in `board.toml`.
+    #[serde(skip)]
+    pub description: String,
+    /// What the backend held for [`Board::description`] when it was read, as
+    /// [`Board::version`] is for the board.
+    #[serde(skip)]
+    pub description_version: Option<String>,
     /// Put away: listed under the divider rather than gone.
     #[serde(default)]
     pub archived: bool,
@@ -123,6 +138,8 @@ impl Board {
             id,
             number: None,
             version: None,
+            description: String::new(),
+            description_version: None,
             touched: stamp::now(),
             created: None,
             archived: false,
@@ -363,6 +380,25 @@ impl Board {
         }
     }
 
+    /// What `page` says. `None` for a card the board does not hold.
+    pub fn page_text(&self, page: &Page) -> Option<&str> {
+        match page {
+            Page::Card(id) => self.card(id).map(|card| card.text.as_str()),
+            Page::Description => Some(&self.description),
+        }
+    }
+
+    /// Give `page` exactly `text`. Says whether the board holds it.
+    pub fn rewrite_page(&mut self, page: &Page, text: &str) -> bool {
+        match page {
+            Page::Card(id) => self.rewrite_card(id, text),
+            Page::Description => {
+                self.description = text.to_owned();
+                true
+            }
+        }
+    }
+
     pub fn rewrite_card(&mut self, id: &str, text: &str) -> bool {
         match self.card_mut(id) {
             Some(card) => {
@@ -451,7 +487,9 @@ impl Board {
     /// Answers whether the board was actually replaced, which is what tells
     /// that pane.
     pub fn adopt(&mut self, fresh: Self) -> bool {
-        if toml::to_string_pretty(self).ok() == toml::to_string_pretty(&fresh).ok() {
+        if self.description == fresh.description
+            && toml::to_string_pretty(self).ok() == toml::to_string_pretty(&fresh).ok()
+        {
             self.touched = fresh.touched;
             self.created = fresh.created;
             self.number = fresh.number;
