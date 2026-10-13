@@ -2,9 +2,9 @@
 //! an entry, the archive's divider, and the rows above and below the list.
 
 use super::{
-    BUTTON_SIZE, Group, Heading, MenuRows, PINNED_BLEED, ROW_GAP, ROW_HEIGHT, ROW_PILL, Renaming,
-    Row, SessionRow, Sidebar, SidebarMenu, Working, key_of, on_disk, row, row_frame, row_label,
-    tint,
+    BUTTON_SIZE, DETAIL_LINE, EXTENDED_PAD, Group, Heading, MenuRows, PINNED_BLEED, ROW_GAP,
+    ROW_HEIGHT, ROW_PILL, Renaming, Row, SessionRow, Sidebar, SidebarMenu, TITLE_LINE, Working,
+    key_of, on_disk, row, row_frame, row_label, tint,
 };
 use crate::model::{state, workspace::Showing};
 use crate::view::{
@@ -13,6 +13,7 @@ use crate::view::{
     kit::{
         menu::{self, Act},
         new::{self, New},
+        stamp,
     },
     modals::palette::{Filter, ToggleSearch},
     search::Search,
@@ -42,6 +43,18 @@ use bezel::{
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+/// A line of an extended row under its name: small, muted, cut to one line.
+fn detail(text: String, theme: &Theme) -> Div {
+    detail_style(div(), theme).min_w_0().truncate().child(text)
+}
+
+/// The type of the text under an extended row's name.
+fn detail_style(el: Div, theme: &Theme) -> Div {
+    el.text_style(TextStyle::Caption)
+        .line_height(px(DETAIL_LINE))
+        .text_color(theme.text_muted)
+}
+
 impl Sidebar {
     /// One line, built when the list scrolls it into view. The box around it is
     /// what holds the pitch: the row inside paints the wash, and the pixel
@@ -67,6 +80,7 @@ impl Sidebar {
             Row::Group(Group::Project(_)) | Row::Archive(_) | Row::Heading(_)
         );
         let pinned = row.pinned(self.workspace.read(cx), cx);
+        let pitch = self.shape(row, cx).pitch();
         div()
             .id(SharedString::from(format!("sidebar-hover-{}", key_of(row))))
             .when(entry, |el| {
@@ -103,7 +117,7 @@ impl Sidebar {
                         .flatten(),
                 )
             })
-            .h(px(ROW_HEIGHT))
+            .h(px(pitch))
             .py(px(1.))
             .child(inner)
     }
@@ -385,6 +399,9 @@ impl Sidebar {
         let light = self.lit.light(entry, workspace, cx);
         let selected = light.selected();
         let facts = workspace.projects[project].facts_at(showing.kind(), ix, cx);
+        let preview = self
+            .extended(cx)
+            .then(|| workspace.projects[project].preview_at(showing.kind(), ix, cx));
         let archived = facts.archived;
         let tint = light.tint(archived, &theme);
         let glyph = |icon: Icon| {
@@ -455,31 +472,75 @@ impl Sidebar {
             false => row_label(facts.label, tint),
         };
         let open = entry.clone();
-        row(
-            id,
-            group,
-            selected,
-            lifted,
-            self.list(cx).indent_of(entry),
-            &theme,
-        )
-        .child(mark)
-        .child(label)
-        .child(self.archive_button(
+        let button = self.archive_button(
             format!("archive-{}", key_of(entry)),
             group,
             entry,
             archived,
             window,
             cx,
-        ))
-        .on_click(cx.listener(move |this, _, window, cx| {
-            let open = open.clone();
-            this.defer_window(window, cx, move |root, window, cx| {
-                root.open_row(&open, window, cx)
-            });
-        }))
-        .into_any_element()
+        );
+        let frame = row(
+            id,
+            group,
+            selected,
+            lifted,
+            self.list(cx).indent_of(entry),
+            &theme,
+        );
+        let pill = self.shape(entry, cx).pill();
+        let frame = match preview {
+            None => frame.child(mark).child(label).child(button),
+            // The lines under the name run the row's whole width, from under
+            // the mark: indented under the name they would be a column too
+            // narrow to say anything.
+            Some(preview) => frame
+                .h(px(pill))
+                .py(px(EXTENDED_PAD))
+                .flex_col()
+                .items_start()
+                .gap_0()
+                .child(
+                    div()
+                        .w_full()
+                        .h(px(TITLE_LINE))
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(ROW_GAP))
+                        .child(mark)
+                        .child(label)
+                        .child(button),
+                )
+                .child(
+                    div()
+                        .w_full()
+                        .h(px(DETAIL_LINE))
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(ROW_GAP))
+                        .child(
+                            detail(stamp::ago(facts.touched), &theme)
+                                .flex_none()
+                                .text_color(tint),
+                        )
+                        .when(!preview.is_empty(), |line| {
+                            line.child(detail(preview, &theme).flex_1())
+                        }),
+                )
+                .when(!facts.labels.is_empty(), |el| {
+                    el.child(detail(facts.labels.join(" · "), &theme).w_full())
+                }),
+        };
+        frame
+            .on_click(cx.listener(move |this, _, window, cx| {
+                let open = open.clone();
+                this.defer_window(window, cx, move |root, window, cx| {
+                    root.open_row(&open, window, cx)
+                });
+            }))
+            .into_any_element()
     }
 
     /// The button at the end of a row: archive, or — for a pinned row — the

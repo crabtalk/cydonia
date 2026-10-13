@@ -27,9 +27,9 @@ use bezel::ui::scroll as scrollbars;
 use bezel::{
     agent::orbs::{OrbState, engine::Frame},
     gpui::{
-        self, AnyElement, App, AppContext as _, Bounds, Context, Div, Empty, Entity, Hsla, Pixels,
-        Point, ScrollStrategy, SharedString, Stateful, Subscription, UniformListDecoration,
-        UniformListScrollHandle, WeakEntity, Window, div, prelude::*, px, uniform_list,
+        self, AnyElement, App, AppContext as _, Context, Div, Empty, Entity, Hsla, ListAlignment,
+        ListOffset, ListState, SharedString, Stateful, Subscription, Task, WeakEntity, Window, div,
+        prelude::*, px,
     },
     motion::Painter,
     theme::{self, TextStyle, Theme, Typeset},
@@ -44,7 +44,6 @@ use bezel::{
 use std::{
     cell::RefCell,
     collections::HashMap,
-    ops::Range,
     path::{Path, PathBuf},
     rc::Rc,
     time::Duration,
@@ -63,6 +62,24 @@ const ROW_GAP: f32 = 8.;
 const BUTTON_SIZE: f32 = Theme::BUTTON_HEIGHT;
 
 pub(crate) const ROW_HEIGHT: f32 = ROW_PILL + 2.;
+
+/// An extended entry's name line, and each line of text under it.
+const TITLE_LINE: f32 = 18.;
+const DETAIL_LINE: f32 = 16.;
+
+/// What an extended entry keeps above its name and below its last line.
+const EXTENDED_PAD: f32 = 5.;
+
+/// The wash an extended entry with no labels paints: its name and its
+/// preview. One with labels adds a [`DETAIL_LINE`] for them.
+const EXTENDED_PILL: f32 = 2. * EXTENDED_PAD + TITLE_LINE + DETAIL_LINE;
+
+/// How far past the visible rows the list lays out.
+const OVERDRAW: f32 = 10. * ROW_HEIGHT;
+
+/// How often an extended sidebar redraws, so how long ago each entry was
+/// touched stays true.
+const TICK: Duration = Duration::from_secs(60);
 
 /// How far the pinned heading's glass runs past the band it is seen in, and is
 /// clipped away.
@@ -99,10 +116,12 @@ struct Listed {
     closed: bool,
     labels: Vec<String>,
     number: Option<u64>,
+    /// Read only while the rows are extended, which is where it is drawn.
+    preview: Option<String>,
 }
 
 impl Listed {
-    fn of(chat: &ChatSession) -> Self {
+    fn of(chat: &ChatSession, extended: bool) -> Self {
         Self {
             label: chat.label(),
             streaming: chat.streaming,
@@ -110,6 +129,7 @@ impl Listed {
             closed: chat.closed,
             labels: chat.labels.clone(),
             number: chat.number,
+            preview: extended.then(|| chat.preview()),
         }
     }
 }
@@ -128,6 +148,33 @@ pub(crate) enum Row {
     Archive(PathBuf),
     /// An entry of the project at `project`.
     Entry { project: PathBuf, showing: Showing },
+}
+
+/// How a row is drawn, which is what its height follows.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum Shape {
+    /// One line: every heading, and every entry while the rows are not
+    /// extended.
+    Line,
+    /// An entry's name over its preview, and its labels under them where it
+    /// has any.
+    Extended { labelled: bool },
+}
+
+impl Shape {
+    /// The height the row takes in the list, the gap either side included.
+    pub(crate) fn pitch(self) -> f32 {
+        self.pill() + 2.
+    }
+
+    /// The height of the wash the row paints.
+    pub(crate) fn pill(self) -> f32 {
+        match self {
+            Shape::Line => ROW_PILL,
+            Shape::Extended { labelled: false } => EXTENDED_PILL,
+            Shape::Extended { labelled: true } => EXTENDED_PILL + DETAIL_LINE,
+        }
+    }
 }
 
 impl Row {
@@ -567,6 +614,25 @@ fn carried_rows(rows: &[Row], item: &Dragged) -> Vec<Dragged> {
         .collect()
 }
 
+/// Where each of `rows` starts down the list, and where the last one ends.
+fn tops(shapes: &[Shape]) -> Vec<f32> {
+    std::iter::once(0.)
+        .chain(shapes.iter().scan(0., |at, shape| {
+            *at += shape.pitch();
+            Some(*at)
+        }))
+        .collect()
+}
+
+/// The list offset `y` down a list whose rows start at `tops`.
+fn offset_at(tops: &[f32], y: f32) -> ListOffset {
+    let ix = tops.iter().rposition(|top| *top <= y).unwrap_or(0);
+    ListOffset {
+        item_ix: ix,
+        offset_in_item: px(y - tops[ix]),
+    }
+}
+
 /// What rides under the pointer while an item is carried to a pane.
 pub(crate) fn ghost(label: SharedString, theme: &Theme) -> AnyElement {
     div()
@@ -672,32 +738,6 @@ fn labelled(name: String, tint: Hsla, style: TextStyle) -> AnyElement {
         .into_any_element()
 }
 
-/// The heading of the project whose entries are under the scroll, held at the
-/// top of the list while they pass beneath it.
-///
-/// A decoration rather than a child of the column, because this is the one
-/// place the scroll offset for the frame being drawn is known. Read off the
-/// handle in `render` it would be the offset of the frame before, and the
-/// heading would lag the rows it belongs to by one.
-struct PinnedHead(Entity<Sidebar>);
-
-impl UniformListDecoration for PinnedHead {
-    fn compute(
-        &self,
-        visible: Range<usize>,
-        _bounds: Bounds<Pixels>,
-        scroll: Point<Pixels>,
-        item_height: Pixels,
-        _count: usize,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> AnyElement {
-        self.0.update(cx, |this, cx| {
-            this.pinned_head(visible.start, scroll.y, item_height, window, cx)
-        })
-    }
-}
-
 /// The rows a sidebar menu opens with, built when it opens; they act on the
 /// window.
 type MenuRows = Rc<dyn Fn(&mut Sidebar, &mut Context<Sidebar>) -> Vec<(Item, Act)>>;
@@ -730,7 +770,13 @@ pub(crate) struct Sidebar {
     name_field: Entity<NameField>,
     /// The drag domain of the list: a row moves within it, or out onto a pane.
     pub(crate) sort: drag::Domain<(), Dragged>,
-    rail: UniformListScrollHandle,
+    rail: ListState,
+    /// The rows `rail` holds measurements for, with how each was drawn. A row
+    /// whose shape changes is spliced out and measured again.
+    measured: Vec<(Row, Shape)>,
+    /// Redraws the extended rows every [`TICK`] while they are on.
+    tick: Option<Task<()>>,
+    boards: Watch,
     /// What each session's row showed when it was last drawn.
     listed: HashMap<u64, Listed>,
     sessions: Watch,
@@ -778,7 +824,10 @@ impl Sidebar {
             renaming: None,
             name_field,
             sort,
-            rail: UniformListScrollHandle::new(),
+            rail: ListState::new(0, ListAlignment::Top, px(OVERDRAW)),
+            measured: Vec::new(),
+            tick: None,
+            boards: Watch::default(),
             listed: HashMap::new(),
             sessions: Watch::default(),
             _subscriptions: subscriptions,
@@ -810,12 +859,93 @@ impl Sidebar {
             .collect();
         let mut sessions = std::mem::take(&mut self.sessions);
         sessions.set_in(&chats, window, cx, |this, chat, _, cx| {
-            let listed = Listed::of(chat.read(cx));
+            let extended = this.extended(cx);
+            let listed = Listed::of(chat.read(cx), extended);
             if this.listed.insert(chat.read(cx).id, listed.clone()) != Some(listed) {
                 cx.notify();
             }
         });
         self.sessions = sessions;
+    }
+
+    /// Whether the entries are drawn extended — see
+    /// [`crate::model::settings::Appearance::extended_sidebar`].
+    fn extended(&self, cx: &App) -> bool {
+        self.workspace.read(cx).settings.appearance.extended_sidebar
+    }
+
+    /// How `row` is drawn.
+    fn shape(&self, row: &Row, cx: &App) -> Shape {
+        let Row::Entry { showing, .. } = row else {
+            return Shape::Line;
+        };
+        if !self.extended(cx) {
+            return Shape::Line;
+        }
+        let workspace = self.workspace.read(cx);
+        let labelled = row
+            .located(workspace)
+            .and_then(|(project, _)| workspace.labels_of(project, showing, cx))
+            .is_some_and(|labels| !labels.is_empty());
+        Shape::Extended { labelled }
+    }
+
+    fn shapes(&self, rows: &[Row], cx: &App) -> Vec<Shape> {
+        rows.iter().map(|row| self.shape(row, cx)).collect()
+    }
+
+    /// Observe every board, whose description an extended row previews.
+    fn watch_boards(&mut self, cx: &mut Context<Self>) {
+        let boards: Vec<Entity<artifact::board::Board>> = self
+            .workspace
+            .read(cx)
+            .projects
+            .iter()
+            .flat_map(|project| &project.boards)
+            .map(|held| held.board.clone())
+            .collect();
+        let mut watch = std::mem::take(&mut self.boards);
+        watch.set(&boards, cx);
+        self.boards = watch;
+    }
+
+    /// Keep [`Self::tick`] running exactly while the rows are extended.
+    fn keep_time(&mut self, extended: bool, cx: &mut Context<Self>) {
+        match (extended, self.tick.is_some()) {
+            (true, false) => {
+                self.tick = Some(cx.spawn(async move |this, cx| {
+                    loop {
+                        cx.background_executor().timer(TICK).await;
+                        if this.update(cx, |_, cx| cx.notify()).is_err() {
+                            return;
+                        }
+                    }
+                }));
+            }
+            (false, true) => self.tick = None,
+            _ => {}
+        }
+    }
+
+    /// Bring the list's measurements in line with `rows`: the run between the
+    /// longest unchanged head and tail is spliced, so the rows outside it keep
+    /// their heights and the scroll position they anchor.
+    fn sync(&mut self, rows: &[Row], shapes: &[Shape]) {
+        let rows: Vec<(Row, Shape)> = rows.iter().cloned().zip(shapes.iter().copied()).collect();
+        if self.measured == rows {
+            return;
+        }
+        let held = &self.measured;
+        let head = held.iter().zip(&rows).take_while(|(a, b)| a == b).count();
+        let tail = held[head..]
+            .iter()
+            .rev()
+            .zip(rows[head..].iter().rev())
+            .take_while(|(a, b)| a == b)
+            .count();
+        self.rail
+            .splice(head..held.len() - tail, rows.len() - tail - head);
+        self.measured = rows;
     }
 
     fn hover(&mut self, menu: SidebarMenu, hovered: bool, cx: &mut Context<Self>) {
@@ -957,27 +1087,51 @@ impl Sidebar {
         cx.notify();
     }
 
-    /// Scroll the rail to a row, if it is not already on screen. `Nearest`
-    /// rather than `Top`: a step to the neighbour below should move the list by
-    /// a row, not throw the one you came from off the top of it.
+    /// Scroll the rail to a row, if it is not already on screen: by as little
+    /// as shows it, so a step to the neighbour below moves the list by a row
+    /// rather than throwing the one you came from off the top of it.
     pub(crate) fn reveal(&mut self, row: &Row, cx: &mut Context<Self>) {
-        if let Some(ix) = self.list(cx).rows().iter().position(|at| at == row) {
-            self.rail.scroll_to_item(ix, ScrollStrategy::Nearest);
-        }
+        let rows = self.list(cx).rows();
+        let Some(ix) = rows.iter().position(|at| at == row) else {
+            return;
+        };
+        let shapes = self.shapes(&rows, cx);
+        self.sync(&rows, &shapes);
+        let tops = tops(&shapes);
+        let scroll = self.scrolled(&tops);
+        let height = f32::from(self.rail.viewport_bounds().size.height);
+        let (top, bottom) = (tops[ix], tops[ix + 1]);
+        let to = match () {
+            _ if top < scroll => top,
+            _ if bottom > scroll + height => bottom - height,
+            _ => return,
+        };
+        self.rail.scroll_to(offset_at(&tops, to));
     }
 
     /// Take the list back to where a group starts, heading and all.
     fn scroll_to_group(&mut self, group: &Group, cx: &mut Context<Self>) {
-        let Some(at) = self
-            .list(cx)
-            .rows()
+        let rows = self.list(cx).rows();
+        let Some(at) = rows
             .iter()
             .position(|row| matches!(row, Row::Group(at) if at == group))
         else {
             return;
         };
-        self.rail.scroll_to_item(at, ScrollStrategy::Top);
+        let shapes = self.shapes(&rows, cx);
+        self.sync(&rows, &shapes);
+        self.rail.scroll_to(ListOffset {
+            item_ix: at,
+            offset_in_item: px(0.),
+        });
         cx.notify();
+    }
+
+    /// How far down the list is scrolled, over rows whose tops are `tops`.
+    fn scrolled(&self, tops: &[f32]) -> f32 {
+        let at = self.rail.logical_scroll_top();
+        let last = tops.len().saturating_sub(1);
+        tops.get(at.item_ix.min(last)).copied().unwrap_or(0.) + f32::from(at.offset_in_item)
     }
 
     /// Fold a group's rows away, or bring them back.
@@ -1005,48 +1159,39 @@ impl Sidebar {
     /// The rows as one drag region over the list: an entry moves within the
     /// region of its project it is in, a project's or a space's heading among
     /// the headings of its kind, and either can be carried out onto a pane.
-    fn sidebar_list(&self, rows: Vec<Row>, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    fn sidebar_list(&mut self, rows: Vec<Row>, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let shapes = self.shapes(&rows, cx);
+        self.sync(&rows, &shapes);
         let list = self.list(cx);
         let places = Rc::new(list.row_places(&rows));
         let narrowed: Vec<bool> = rows.iter().map(|row| list.narrowed(row)).collect();
         let rows = Rc::new(rows);
         let followers = rows.clone();
-        let count = rows.len();
-        let list = uniform_list(
-            "project-list",
-            count,
-            cx.processor(move |this, range: Range<usize>, window, cx| {
-                let lifted: Vec<Dragged> = rows
-                    .iter()
-                    .map(|row| Dragged::Row(row.clone()))
-                    .filter(|item| this.sort.carries(item))
-                    .flat_map(|item| {
-                        let followers = carried_rows(&rows, &item);
-                        std::iter::once(item).chain(followers)
-                    })
-                    .collect();
-                range
-                    .map(|ix| {
-                        let row = rows[ix].clone();
-                        let item = Dragged::Row(row.clone());
-                        let el = this.sidebar_row(&row, lifted.contains(&item), window, cx);
-                        match row {
-                            Row::Heading(_) | Row::Archive(_) => {
-                                this.sort.fixed(item, el).into_any_element()
-                            }
-                            _ if narrowed[ix] => this.sort.fixed(item, el).into_any_element(),
-                            _ => this.sort.handle(item, el).into_any_element(),
-                        }
-                    })
-                    .collect::<Vec<_>>()
-            }),
-        )
-        .track_scroll(&self.rail)
-        .with_decoration(PinnedHead(cx.entity()))
+        let view = cx.entity().downgrade();
+        let list = gpui::list(self.rail.clone(), move |ix, window, cx| {
+            let Some(row) = rows.get(ix).cloned() else {
+                return Empty.into_any_element();
+            };
+            view.update(cx, |this, cx| {
+                let item = Dragged::Row(row.clone());
+                let lifted = this.sort.carried().is_some_and(|carried| {
+                    carried == item || carried_rows(&rows, &carried).contains(&item)
+                });
+                let el = this.sidebar_row(&row, lifted, window, cx);
+                match row {
+                    Row::Heading(_) | Row::Archive(_) => {
+                        this.sort.fixed(item, el).into_any_element()
+                    }
+                    _ if narrowed[ix] => this.sort.fixed(item, el).into_any_element(),
+                    _ => this.sort.handle(item, el).into_any_element(),
+                }
+            })
+            .unwrap_or_else(|_| Empty.into_any_element())
+        })
         .size_full();
         self.sort
             .region("sidebar-list", (), gpui::Axis::Vertical, list)
-            .track_scroll(&self.rail.0.borrow().base_handle)
+            .track_scroll(&self.rail)
             .accepts(|item| matches!(item, Dragged::Row(_)))
             .carries(move |item| carried_rows(&followers, item))
             .lands(move |item, after, before| lands(&places, item, after, before))
@@ -1056,62 +1201,53 @@ impl Sidebar {
             }))
     }
 
-    /// The heading held at the top of the list, and where to hold it.
-    ///
-    /// Measured in the list's own space — the decoration is laid out over the
-    /// whole run of rows, so `y` here is counted from the first of them rather
-    /// than from the top of what is on screen.
+    /// The heading of the group whose rows are under the scroll, held at the
+    /// top of the list while they pass beneath it, and pushed out by the next
+    /// heading rather than sliding under it. Nothing while the heading's own
+    /// row is on screen.
     fn pinned_head(
         &self,
-        first: usize,
-        scroll: Pixels,
-        item_height: Pixels,
+        rows: &[Row],
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let rows = self.list(cx).rows();
+    ) -> Option<AnyElement> {
         let head = |row: &Row| matches!(row, Row::Group(_));
-        let Some(at) = rows
-            .get(..=first)
-            .and_then(|above| above.iter().rposition(head))
-        else {
-            return Empty.into_any_element();
-        };
+        let tops = tops(&self.shapes(rows, cx));
+        let scroll = self.scrolled(&tops);
+        let first = self
+            .rail
+            .logical_scroll_top()
+            .item_ix
+            .min(rows.len().checked_sub(1)?);
+        let at = rows[..=first].iter().rposition(head)?;
         let Row::Group(group) = rows[at].clone() else {
-            return Empty.into_any_element();
+            return None;
         };
-        // The next heading pushes this one out rather than sliding under it,
-        // which is what keeps two of them from ever reading as one block.
-        let next = rows[at + 1..]
+        let limit = rows[at + 1..]
             .iter()
             .position(head)
-            .map(|after| item_height * (at + 1 + after) - item_height);
-        let rest = item_height * at;
-        let y = next.map_or(-scroll, |limit| (-scroll).min(limit));
-        // Above its own place there is nothing to hold: the row itself is on
-        // screen, in the list, where it belongs.
-        if y <= rest {
-            return Empty.into_any_element();
+            .map(|after| tops[at + 1 + after] - ROW_HEIGHT);
+        let held = limit.map_or(scroll, |limit| scroll.min(limit));
+        if held <= tops[at] {
+            return None;
         }
-        div()
-            .size_full()
-            .relative()
-            .child(
-                // Stateful, and so an id scope of its own: the copy inside
-                // carries the same ids as the row it stands for.
-                //
-                // The band the glass is seen in, and what clips it to one row.
-                div()
-                    .id("pinned-head")
-                    .absolute()
-                    .top(y)
-                    .left_0()
-                    .w_full()
-                    .h(px(ROW_HEIGHT))
-                    .overflow_hidden()
-                    .child(self.group_head(group, true, false, window, cx)),
-            )
-            .into_any_element()
+        let y = held - scroll;
+        Some(
+            // Stateful, and so an id scope of its own: the copy inside
+            // carries the same ids as the row it stands for.
+            //
+            // The band the glass is seen in, and what clips it to one row.
+            div()
+                .id("pinned-head")
+                .absolute()
+                .top(px(y))
+                .left_0()
+                .w_full()
+                .h(px(ROW_HEIGHT))
+                .overflow_hidden()
+                .child(self.group_head(group, true, false, window, cx))
+                .into_any_element(),
+        )
     }
 
     /// What rides under the pointer while a sidebar row is carried: the row
@@ -1133,7 +1269,7 @@ impl Sidebar {
             .map_or(root::SIDEBAR_WIDTH, |root| root.read(cx).sidebar_width);
         div()
             .w(px(width - 2. * root::SIDEBAR_GUTTER))
-            .h(px(ROW_PILL))
+            .h(px(self.shape(row, cx).pill()))
             .rounded(px(Theme::control_radius()))
             .overflow_hidden()
             .child(self.sidebar_row(row, true, window, cx))
@@ -1278,7 +1414,13 @@ impl InWindow for Sidebar {
 impl Render for Sidebar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.watch_sessions(window, cx);
+        let extended = self.extended(cx);
+        if extended {
+            self.watch_boards(cx);
+        }
+        self.keep_time(extended, cx);
         let rows = self.list(cx).rows();
+        let pinned = self.pinned_head(&rows, window, cx);
         let visibility = self
             .workspace
             .read(cx)
@@ -1296,11 +1438,13 @@ impl Render for Sidebar {
                     .relative()
                     .flex_1()
                     .min_h_0()
+                    .overflow_hidden()
                     .child(self.sidebar_list(rows, cx))
+                    .children(pinned)
                     .child(
                         scrollbars::Overlay::new(
                             "sidebar-bar",
-                            &self.rail.0.borrow().base_handle,
+                            &self.rail,
                             bezel::gpui::Axis::Vertical,
                         )
                         .visibility(visibility.into()),

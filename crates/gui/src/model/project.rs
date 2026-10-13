@@ -478,6 +478,28 @@ impl Project {
         }
     }
 
+    /// The start of the `ix`th entry of `kind` as plain text: an article's
+    /// body, a session's last response from the agent, a board's description
+    /// or, for a board without one, its newest card. Empty for a table.
+    /// Panics past the end.
+    pub fn preview_at(&self, kind: Kind, ix: usize, cx: &App) -> String {
+        match kind {
+            Kind::Session => self.sessions[ix].chat.read(cx).preview(),
+            Kind::Board => {
+                let board = self.boards[ix].board.read(cx);
+                match board.description.is_empty() {
+                    false => artifact::text::preview(&board.description),
+                    true => board
+                        .newest_card()
+                        .map(|card| artifact::text::preview(&card.text))
+                        .unwrap_or_default(),
+                }
+            }
+            Kind::Article => self.articles[ix].preview().to_owned(),
+            Kind::Table => String::new(),
+        }
+    }
+
     pub fn ix_of(&self, showing: &Showing) -> Option<usize> {
         match showing {
             Showing::Session(id) => self.sessions.iter().position(|held| held.id == *id),

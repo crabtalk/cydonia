@@ -257,6 +257,7 @@ impl SettingsWindow {
         let workspace = self.workspace.read(cx);
         let on = workspace.indent_project_rows;
         let fits = workspace.settings.appearance.settings_sidebar_fits;
+        let extended = workspace.settings.appearance.extended_sidebar;
         let lights = workspace.settings.appearance.traffic_lights;
         group(&theme, "Sidebar")
             .child(
@@ -279,6 +280,20 @@ impl SettingsWindow {
                             },
                         ),
                     )
+                    .child(self.switch_row(
+                        Switch::new(
+                            "extended-sidebar",
+                            "Extended sidebar",
+                            "Show each item's preview, labels and when it was last changed.",
+                            extended,
+                        ),
+                        cx,
+                        move |this, cx| {
+                            this.workspace.update(cx, |workspace, cx| {
+                                workspace.set_extended_sidebar(!extended, cx);
+                            });
+                        },
+                    ))
                     .child(self.switch_row(
                         Switch::new(
                             "settings-sidebar-fits",

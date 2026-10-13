@@ -206,6 +206,9 @@ pub struct Appearance {
     pub board_view: artifact::board::View,
     /// Indent sidebar items beneath project and space headings by one icon width.
     pub indent_project_rows: bool,
+    /// Sidebar entries are three lines: the name, a preview, and the labels
+    /// with how long ago the entry was touched.
+    pub extended_sidebar: bool,
     /// The settings window's section sidebar is as wide as its widest row
     /// rather than a fixed width.
     pub settings_sidebar_fits: bool,
@@ -527,6 +530,7 @@ impl Default for Appearance {
             comments: CommentDisplay::default(),
             board_view: artifact::board::View::List,
             indent_project_rows: true,
+            extended_sidebar: false,
             settings_sidebar_fits: false,
             traffic_lights: false,
             scrollbars: Scrollbars::default(),
@@ -1421,6 +1425,7 @@ fn write_appearance(doc: &mut toml_edit::DocumentMut, appearance: &Appearance) -
     held["comments"] = toml_edit::value(appearance.comments.key());
     held["board_view"] = toml_edit::value(appearance.board_view.key());
     held["indent_project_rows"] = toml_edit::value(appearance.indent_project_rows);
+    held["extended_sidebar"] = toml_edit::value(appearance.extended_sidebar);
     held["traffic_lights"] = toml_edit::value(appearance.traffic_lights);
     held["settings_sidebar_fits"] = toml_edit::value(appearance.settings_sidebar_fits);
     held["scrollbars"] = toml_edit::value(appearance.scrollbars.key());

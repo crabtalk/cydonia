@@ -308,6 +308,14 @@ impl Board {
             .find(|card| card.handle == Some(handle))
     }
 
+    /// The card added last: the one with the highest handle.
+    pub fn newest_card(&self) -> Option<&Card> {
+        self.columns
+            .iter()
+            .flat_map(|column| column.cards.iter())
+            .max_by_key(|card| card.handle)
+    }
+
     pub fn card(&self, id: &str) -> Option<&Card> {
         self.columns
             .iter()

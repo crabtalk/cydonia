@@ -342,6 +342,7 @@ impl Workspace {
             comments: self.settings.appearance.comments,
             board_view: self.board_view,
             indent_project_rows: self.indent_project_rows,
+            extended_sidebar: self.settings.appearance.extended_sidebar,
             settings_sidebar_fits: self.settings.appearance.settings_sidebar_fits,
             traffic_lights: self.settings.appearance.traffic_lights,
             scrollbars: self.settings.appearance.scrollbars,
@@ -789,6 +790,12 @@ impl Workspace {
     pub fn set_traffic_lights(&mut self, on: bool, cx: &mut Context<Self>) {
         self.settings.appearance.traffic_lights = on;
         apply_caption_style(on, cx);
+        self.save_appearance();
+        cx.notify();
+    }
+
+    pub fn set_extended_sidebar(&mut self, extended: bool, cx: &mut Context<Self>) {
+        self.settings.appearance.extended_sidebar = extended;
         self.save_appearance();
         cx.notify();
     }

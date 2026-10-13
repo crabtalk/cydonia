@@ -113,6 +113,8 @@ pub struct Article {
     /// Its labels, normalised — see [`artifact::label`]. Cached like
     /// [`Article::archived`].
     pub labels: Vec<String>,
+    /// The start of its body as plain text — see [`Article::preview`].
+    preview: OnceCell<String>,
     /// The file moved under an open document that has edits of its own — see
     /// [`Article::adopt`]. Runtime only: what it marks is a disagreement
     /// between the buffer and the disk, and reopening the app ends it by
@@ -144,6 +146,7 @@ impl Article {
             full_width: properties.full_width,
             comment_display: properties.comments,
             labels: properties.labels,
+            preview: OnceCell::new(),
             id: held.id,
             store,
             field: None,
@@ -658,6 +661,17 @@ impl Article {
     fn forget_disk(&mut self) {
         self.disk = OnceCell::new();
         self.words = OnceCell::new();
+        self.preview = OnceCell::new();
+    }
+
+    /// The start of its body as plain text — see [`artifact::text::preview`]:
+    /// of what this process last wrote for an open article, and of the file,
+    /// read once, for one never opened.
+    pub fn preview(&self) -> &str {
+        self.preview.get_or_init(|| match self.document {
+            Some(_) => artifact::text::preview(&self.saved),
+            None => artifact::text::preview(&self.store.read_article(&self.id).unwrap_or_default()),
+        })
     }
 
     pub fn disk(&self) -> Rc<Disk> {

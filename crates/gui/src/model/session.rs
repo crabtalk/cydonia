@@ -159,6 +159,8 @@ pub struct ChatSession {
     pub connection: Connection,
     pub items: Vec<ChatItem>,
     history_unloaded: bool,
+    /// [`ChatSession::preview`] as it stood when the history was unloaded.
+    unloaded_preview: String,
     pub fork: Option<ForkOrigin>,
     /// See [`Record::replay`].
     pub replay: Option<usize>,
@@ -290,6 +292,7 @@ impl ChatSession {
             connection,
             items: Vec::new(),
             history_unloaded: false,
+            unloaded_preview: String::new(),
             fork: None,
             replay: None,
             draft: String::new(),
@@ -353,6 +356,7 @@ impl ChatSession {
             replay: record.replay,
             items: record.items,
             history_unloaded: false,
+            unloaded_preview: String::new(),
             fork: record.fork,
             draft: record.draft,
             draft_save: None,
@@ -426,6 +430,7 @@ impl ChatSession {
         if serde_json::to_value(&record).ok() != serde_json::to_value(self.to_record()).ok() {
             return;
         }
+        self.unloaded_preview = self.preview();
         self.items = Vec::new();
         self.sent_at = BTreeMap::new();
         self.fork = None;
@@ -440,6 +445,23 @@ impl ChatSession {
         self.usage = None;
         self.tool_started = BTreeMap::new();
         self.history_unloaded = true;
+    }
+
+    /// The start of the agent's last response as plain text — see
+    /// [`artifact::text::preview`]. Empty before the agent has said anything.
+    pub fn preview(&self) -> String {
+        if self.history_unloaded {
+            return self.unloaded_preview.clone();
+        }
+        self.items
+            .iter()
+            .rev()
+            .find_map(|item| match item {
+                ChatItem::Agent(text) if !text.trim().is_empty() => Some(text.as_str()),
+                _ => None,
+            })
+            .map(artifact::text::preview)
+            .unwrap_or_default()
     }
 
     /// Last user submission in milliseconds, used for sidebar ordering.
