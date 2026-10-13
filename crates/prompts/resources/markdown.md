@@ -157,7 +157,7 @@ shown. Spelled like a web link's forms:
   `cydonia://cydonia#12:5-7` shows lines 5 to 7 of article #12, and
   `cydonia://cydonia#12#setup` the section under its heading whose anchor is
   `setup`. A whole article's, board's or table's card is its title, kind and
-  number. A board card's card is its handle, board and status over its text.
+  number. A board card's card is its handle, board, label and blocked mark over its text.
 
 ## Supported formatting and limits
 

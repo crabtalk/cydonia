@@ -3,6 +3,7 @@
 
 use super::{Showing, Workspace};
 use crate::model::{article::Disk, project::Project};
+use artifact::board::Board;
 use artifact::error::Error;
 use artifact::{
     article::anchor,
@@ -10,7 +11,11 @@ use artifact::{
     reference::{self, Span, Target, Within},
 };
 use bezel::gpui::{App, Entity, Global, WeakEntity};
-use std::{ops::Range, path::PathBuf, rc::Rc};
+use std::{
+    ops::Range,
+    path::{Path, PathBuf},
+    rc::Rc,
+};
 
 /// An entry a reference resolved to.
 pub struct Resolved {
@@ -77,7 +82,7 @@ impl Workspace {
         let Some(reference) = reference::parse(text) else {
             return Err(format!("{text} is not a reference"));
         };
-        let Some(project) = self.named_project(reference.project) else {
+        let Some(project) = self.named_project(reference.project, None) else {
             return Err(Error::NoProjectNamed {
                 name: reference.project.unwrap_or_default().to_owned(),
                 open: self.projects.iter().map(|open| open.path.clone()).collect(),
@@ -116,13 +121,43 @@ impl Workspace {
         })
     }
 
-    fn named_project(&self, name: Option<&str>) -> Option<&Project> {
-        match name {
-            Some(name) => self
+    /// The board holding the card `text` names, `text` being a card
+    /// reference as written in the project at `home`. Nothing for one naming
+    /// no card.
+    pub fn card_board(&self, home: &Path, text: &str, cx: &App) -> Option<&Entity<Board>> {
+        let reference = reference::parse(text)?;
+        let Target::Card { key, handle } = reference.target else {
+            return None;
+        };
+        let held = self
+            .named_project(reference.project, Some(home))?
+            .keyed_board(key, cx)?;
+        held.read(cx).card_at(handle).map(|_| held)
+    }
+
+    /// The boards holding the cards `card` waits on, `card` being on a board
+    /// of the project at `home`.
+    pub fn blocking_boards<'a>(
+        &'a self,
+        home: &'a Path,
+        card: &'a artifact::board::Card,
+        cx: &'a App,
+    ) -> impl Iterator<Item = &'a Entity<Board>> {
+        card.blocked_by
+            .iter()
+            .filter_map(move |blocker| self.card_board(home, blocker, cx))
+    }
+
+    /// The project `name` names, or with none the one at `home`, else the
+    /// active one.
+    fn named_project(&self, name: Option<&str>, home: Option<&Path>) -> Option<&Project> {
+        match (name, home) {
+            (Some(name), _) => self
                 .projects
                 .iter()
                 .find(|project| reference::names(&project.path, name)),
-            None => self.active_project(),
+            (None, Some(home)) => self.projects.get(self.project_at(home)?),
+            (None, None) => self.active_project(),
         }
     }
 }
@@ -185,12 +220,7 @@ fn card(
     text: &str,
     cx: &App,
 ) -> Result<Resolved, String> {
-    let Some(board) = project
-        .boards
-        .iter()
-        .map(|held| held.board.read(cx))
-        .find(|board| board.keyed(key))
-    else {
+    let Some(board) = project.keyed_board(key, cx).map(|held| held.read(cx)) else {
         return Err(Error::NotFound {
             what: "board",
             named: key.to_owned(),

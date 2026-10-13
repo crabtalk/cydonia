@@ -84,7 +84,6 @@ fn open(
         root.update(cx, |root, cx| {
             root.workspace.update(cx, |workspace, cx| {
                 let mut project = Project::new(scratch.0.clone(), cx);
-                project.load_board(&board.id, cx);
                 project.board = Some(0);
                 workspace.projects.push(project);
                 workspace.active = Some(0);
@@ -296,13 +295,13 @@ fn save_preserves_agent_metadata_and_rejects_conflicting_text(cx: &mut TestAppCo
     type_card(&root, "My draft", &mut cx);
     let store = fs::Project::new(&scratch.0);
     let mut board = store.board(&member.id).unwrap();
-    board.set_card_status(&cards[0], Some(Status::Busy));
+    board.set_card_busy(&cards[0], true);
     board.card_mut(&cards[0]).unwrap().session = Some("agent-session".into());
     store.save_board(&mut board).unwrap();
     type_card(&root, "Mine", &mut cx);
     let saved = store.board(&member.id).unwrap();
     assert_eq!(saved.card(&cards[0]).unwrap().text.trim_end(), "Mine");
-    assert_eq!(saved.card(&cards[0]).unwrap().status, Some(Status::Busy));
+    assert!(saved.card(&cards[0]).unwrap().busy);
     assert_eq!(
         saved.card(&cards[0]).unwrap().session.as_deref(),
         Some("agent-session")
@@ -897,7 +896,7 @@ fn busy_orb_opens_its_session_without_opening_the_card(cx: &mut TestAppContext) 
                 .update(cx, |board, cx| {
                     board.view = View::List;
                     board.dispatch_card(&cards[0], "orb-session".into());
-                    board.set_card_status(&cards[0], None);
+                    board.set_card_busy(&cards[0], false);
                     cx.notify();
                 });
             // Linked and not busy: the session's number, not the orb.
@@ -918,7 +917,7 @@ fn busy_orb_opens_its_session_without_opening_the_card(cx: &mut TestAppContext) 
                 .board
                 .clone()
                 .update(cx, |board, cx| {
-                    board.set_card_status(&cards[0], Some(Status::Busy));
+                    board.set_card_busy(&cards[0], true);
                     cx.notify();
                 });
             let card = &root.workspace.read(cx).projects[0].boards[0]

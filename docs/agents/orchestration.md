@@ -46,17 +46,8 @@ See [Panes, tabs and spaces](./../working/spaces.md).
 
 ## The board as the status of the work
 
-A card carries the status the work on it is under:
+A card's column says where the work is. On top of that, an agent tags a card busy through `board_set_card_busy` while it works on it, and can tag several cards in one write — as it can move several in one write through `board_move_card`. The convention the tools ask for: tag a card busy before starting on it and take the tag off when the turn is over, so a tag left behind never says an agent is on a card that nobody is.
 
-| Status | What it says |
-| --- | --- |
-| `busy` | Being worked on now |
-| `blocked` | Cannot go on |
-| `done` | The work is finished |
+A card that cannot go on until others are finished names them through `board_set_card_blockers`, and shows `blocked` until they are taken off it.
 
-An agent sets these itself through `board_set_card_status`, and can tag several cards in one write — as it can move several in one write through `board_move_card`. The convention the tools ask for: tag a card `busy` before
-starting on it and clear the tag when the turn is over, so a tag left behind
-never says an agent is on a card that nobody is.
-
-With a board per project and a status per card, what is running — and what is
-stuck — is one screen rather than several transcripts.
+With a board per project, what is running — and what is stuck — is one screen rather than several transcripts.

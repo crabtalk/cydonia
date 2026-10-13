@@ -31,17 +31,15 @@ session of its own with the card's text as the first prompt. See
 - An agent lays a board out in one call per kind: the tools that add or drop cards and columns take a list where they take one.
 - A card can be moved to another column, another board, or a board in another project. Moving it to another board gives it a new handle and clears the session it was dispatched to. An agent can move several cards in one write, and they may come off different boards.
 
-### Card status
+### Busy, labels and blockers
 
-A card carries `busy`, `blocked` or `done`, and an orb while its run is going.
-An agent sets the status through the board tools and can tag several cards in
-one write; you can set it by hand from the card. Starting work records the
-session alongside the busy status. Hover the busy orb to see the linked
-session’s name, or click it to open that session.
+Where a card sits is its column: a finished card is moved to the column that says so.
 
-Status is how a board says what is being worked right now — see
-[Running several agents](./../agents/orchestration.md) for what that buys with
-more than one agent running.
+A card is tagged busy while an agent works on it, and shows an orb while its run is going. An agent tags several cards in one write. Starting work records the session alongside the tag. Hover the busy orb to see the linked session’s name, or click it to open that session. See [Running several agents](./../agents/orchestration.md) for what that buys with more than one agent running.
+
+A card carries at most one label. Open the card and click beside its handle to pick one or type a new one. The labels offered are the ones on that board's cards, apart from the labels on articles, boards and sessions.
+
+A card can wait on other cards, on any board of any open project. Open the card and click under its head to pick them. Each is kept the way a link to it is written from the card's project: `DEV-12` in the same project, `foo#DEV-12` in project `foo`. The card shows `blocked` while any of them still names a card. A blocker that is deleted, or moved to another board and so given a new handle, no longer counts. A card that waits on others or is busy cannot be run.
 
 ## Tables
 

@@ -145,10 +145,6 @@ impl Workspace {
         if ix >= open.boards.len() {
             return;
         }
-        let id = open.boards[ix].id.clone();
-        if !open.load_board(&id, cx) {
-            return;
-        }
         open.board = Some(ix);
         let id = open.boards[ix].id.clone();
         self.active = Some(project);
@@ -377,9 +373,6 @@ impl Workspace {
         mut edit: impl FnMut(&mut Board) -> T,
     ) -> Option<T> {
         for open in &mut self.projects {
-            if !open.load_board(id, cx) {
-                return None;
-            }
             let store = open.store();
             let Some(held) = open.boards.iter().find(|held| held.id == id) else {
                 continue;
@@ -454,12 +447,8 @@ impl Workspace {
         if live {
             return None;
         }
-        // Both boards in hand before either is touched: a board listed in the
-        // sidebar may not have been read off the disk yet, and moving a card
-        // onto the half of one that is in memory would write the other half
-        // away.
-        let mut source = self.loaded_board(from, cx)?;
-        let mut landing = self.loaded_board(to, cx)?;
+        let mut source = self.board_copy(from, cx)?;
+        let mut landing = self.board_copy(to, cx)?;
         let mut landed = artifact::board::carry_card(&mut source, &mut landing, card, column)?;
         // The landing is written first: refused there, nothing has moved, and
         // the carry is made again over both boards as their backends hold
@@ -498,12 +487,9 @@ impl Workspace {
         Some(landed.said)
     }
 
-    /// A board by where it sits, read off the disk if it has not been yet.
-    fn loaded_board(&mut self, (project, ix): (usize, usize), cx: &mut App) -> Option<Board> {
-        let open = self.projects.get_mut(project)?;
-        let id = open.boards.get(ix)?.id.clone();
-        open.load_board(&id, cx).then_some(())?;
-        open.board(ix, cx).cloned()
+    /// A copy of the board at `(project, ix)`.
+    fn board_copy(&self, (project, ix): (usize, usize), cx: &App) -> Option<Board> {
+        self.projects.get(project)?.board(ix, cx).cloned()
     }
 
     /// Change one board, named by the board, and write it back.

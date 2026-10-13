@@ -23,7 +23,7 @@ use crate::{
         window::{entry::Host, reach::InWindow, root::Cydonia},
     },
 };
-use artifact::kind::Kind;
+use artifact::{archive::Archived, kind::Kind};
 use bezel::{
     gpui::{
         self, AnyElement, App, AppContext as _, Context, Div, Entity, Pixels, SharedString,
@@ -175,30 +175,17 @@ impl Field {
     }
 }
 
-/// Which of a tab's entries are listed, by whether they are put away.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Status {
-    Active,
-    Archived,
-    All,
+/// What the library's status menu calls each filter.
+trait StatusLabel {
+    fn label(self) -> &'static str;
 }
 
-impl Status {
-    const ALL: [Self; 3] = [Self::Active, Self::Archived, Self::All];
-
+impl StatusLabel for Archived {
     fn label(self) -> &'static str {
         match self {
-            Self::Active => "Active",
-            Self::Archived => "Archived",
-            Self::All => "All",
-        }
-    }
-
-    fn keeps(self, archived: bool) -> bool {
-        match self {
-            Self::Active => !archived,
-            Self::Archived => archived,
-            Self::All => true,
+            Self::Exclude => "Active",
+            Self::Only => "Archived",
+            Self::Include => "All",
         }
     }
 }
@@ -222,7 +209,7 @@ impl Order {
 #[derive(Clone, PartialEq)]
 pub(crate) struct Shelf {
     tab: Tab,
-    status: Status,
+    status: Archived,
     project: Option<PathBuf>,
     agent: Option<String>,
     labels: Vec<String>,
@@ -256,7 +243,7 @@ pub(crate) struct Library {
     menu: ContextMenu<Self, LibraryMenu>,
     labels_picker: Labels,
     tab: Tab,
-    status: Status,
+    status: Archived,
     /// The one project listed, by its path, or every open one.
     project: Option<PathBuf>,
     /// The one agent whose sessions are listed, by name, or every one.
@@ -342,7 +329,7 @@ impl Library {
             menu: ContextMenu::default(),
             labels_picker: Labels::default(),
             tab: Tab::Articles,
-            status: Status::Active,
+            status: Archived::Exclude,
             project: None,
             agent: None,
             labels: Vec::new(),
@@ -572,7 +559,7 @@ impl Library {
         cx.notify();
     }
 
-    fn library_status(&mut self, status: Status, cx: &mut Context<Self>) {
+    fn library_status(&mut self, status: Archived, cx: &mut Context<Self>) {
         let library = &mut *self;
         library.status = status;
         library.selected.clear();
@@ -708,7 +695,7 @@ impl Library {
         let library = &*self;
         let selected = !library.selected.is_empty();
         let (listings, total) = self.library_listings(cx);
-        let archived = library.status == Status::Archived;
+        let archived = library.status == Archived::Only;
         let count = match listings.len() == total {
             true => library.tab.count(total, archived),
             false => format!(
@@ -1119,7 +1106,7 @@ impl Library {
     fn status_rows(&self) -> Vec<(MenuItem, Act<Self>)> {
         let library = self;
         let picked = library.status;
-        Status::ALL
+        Archived::ALL
             .into_iter()
             .map(|status| {
                 menu::row::<Self>(
@@ -1348,8 +1335,8 @@ impl Library {
                 Field::Agent => muted(listing.agent.clone()),
                 Field::Status => muted(Some(
                     match listing.archived {
-                        true => Status::Archived,
-                        false => Status::Active,
+                        true => Archived::Only,
+                        false => Archived::Exclude,
                     }
                     .label()
                     .into(),

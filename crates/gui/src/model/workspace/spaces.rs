@@ -748,15 +748,14 @@ impl Workspace {
     }
 
     /// Bring an entry up to what drawing it in a pane needs, without selecting
-    /// it. An article with no editor draws as the front door and an archived
-    /// board draws as an empty one. `false` where the entry is not there to
-    /// draw: no such project, or a board that would not load.
+    /// it. An article with no editor draws as the front door. `false` where
+    /// the entry is not there to draw: no such project, or no such board.
     fn bring_up(&mut self, project: usize, showing: &Showing, cx: &mut Context<Self>) -> bool {
         let Some(open) = self.projects.get_mut(project) else {
             return false;
         };
         match showing {
-            Showing::Board(id) => open.board_ix(id).is_some() && open.load_board(id, cx),
+            Showing::Board(id) => open.board_ix(id).is_some(),
             Showing::Article(id) => {
                 if let Some(ix) = open.article_ix(id) {
                     open.articles[ix].open(cx);

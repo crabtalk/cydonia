@@ -319,6 +319,7 @@ fn a_read_only_server_offers_no_way_to_write() {
         [
             "board_list",
             "board_search",
+            "board_search_cards",
             "board_read",
             "board_read_card"
         ],
@@ -425,8 +426,8 @@ fn a_card_is_tagged_and_untagged() {
     ));
 
     let tagged = said(server.call(
-        "board_set_card_status",
-        json!({ "project": scratch.path(), "card": "ROAD-1", "status": "busy" }),
+        "board_set_card_busy",
+        json!({ "project": scratch.path(), "card": "ROAD-1", "busy": true }),
         None,
     ));
     assert_eq!(tagged, "ROAD-1 is busy");
@@ -441,11 +442,11 @@ fn a_card_is_tagged_and_untagged() {
     );
 
     let cleared = said(server.call(
-        "board_set_card_status",
-        json!({ "project": scratch.path(), "card": "ROAD-1", "status": "none" }),
+        "board_set_card_busy",
+        json!({ "project": scratch.path(), "card": "ROAD-1", "busy": false }),
         None,
     ));
-    assert_eq!(cleared, "ROAD-1 is no longer tagged");
+    assert_eq!(cleared, "ROAD-1 is no longer busy");
     let text = said(server.call(
         "board_read",
         json!({ "project": scratch.path(), "board": "ROAD" }),
@@ -483,11 +484,11 @@ fn several_cards_are_tagged_in_one_call() {
     }
 
     let tagged = said(server.call(
-        "board_set_card_status",
+        "board_set_card_busy",
         json!({
             "project": scratch.path(),
             "card": ["ROAD-1", "ROAD-2", "DEV-1"],
-            "status": "busy",
+            "busy": true,
         }),
         None,
     ));
@@ -506,8 +507,8 @@ fn several_cards_are_tagged_in_one_call() {
     // A card nobody can find refuses the whole call, so the list is never half
     // applied without saying so.
     refused(server.call(
-        "board_set_card_status",
-        json!({ "project": scratch.path(), "card": ["ROAD-1", "ROAD-9"], "status": "none" }),
+        "board_set_card_busy",
+        json!({ "project": scratch.path(), "card": ["ROAD-1", "ROAD-9"], "busy": false }),
         None,
     ));
     let text = said(server.call(
@@ -518,10 +519,10 @@ fn several_cards_are_tagged_in_one_call() {
     assert!(text.contains("[busy]"), "and nothing was written: {text}");
 }
 
-/// A word nobody uses is refused with the ones that are.
+/// One label to a card: a second replaces the first, and `none` takes it off.
 #[test]
-fn an_unknown_status_is_refused_with_the_list() {
-    let scratch = Scratch::new("status-refused");
+fn a_card_takes_one_label() {
+    let scratch = Scratch::new("card-label");
     scratch
         .store()
         .create_board("Roadmap", "ROAD")
@@ -534,19 +535,125 @@ fn an_unknown_status_is_refused_with_the_list() {
     ));
     said(server.call(
         "board_add_card",
-        json!({ "project": scratch.path(), "board": "ROAD", "column": "Todo", "text": "Wire it" }),
+        json!({ "project": scratch.path(), "board": "ROAD", "column": "Todo", "text": ["Wire it", "Ship it"] }),
         None,
     ));
 
-    let refusal = refused(server.call(
-        "board_set_card_status",
-        json!({ "project": scratch.path(), "card": "ROAD-1", "status": "working" }),
+    let labelled = said(server.call(
+        "board_set_card_label",
+        json!({ "project": scratch.path(), "card": ["ROAD-1", "ROAD-2"], "label": "Big Bug" }),
         None,
     ));
-    assert_eq!(
-        refusal,
-        "working is not a status — say busy, blocked, done, none"
+    assert_eq!(labelled, "ROAD-1, ROAD-2 labelled big-bug");
+    said(server.call(
+        "board_set_card_label",
+        json!({ "project": scratch.path(), "card": "ROAD-1", "label": "chore" }),
+        None,
+    ));
+    let text = said(server.call(
+        "board_read",
+        json!({ "project": scratch.path(), "board": "ROAD" }),
+        None,
+    ));
+    assert!(text.contains("ROAD-1  Wire it  #chore"), "{text}");
+    assert!(text.contains("ROAD-2  Ship it  #big-bug"), "{text}");
+
+    said(server.call(
+        "board_set_card_label",
+        json!({ "project": scratch.path(), "card": "ROAD-1", "label": "none" }),
+        None,
+    ));
+    let card = said(server.call(
+        "board_read_card",
+        json!({ "project": scratch.path(), "card": "ROAD-1" }),
+        None,
+    ));
+    assert!(!card.contains("chore"), "{card}");
+}
+
+/// A card waits on cards of any board, in its project or another open one,
+/// kept as its project writes them; one that names no card any more is left
+/// out of what is read back.
+#[test]
+fn a_card_waits_on_cards_across_boards_and_projects() {
+    let scratch = Scratch::new("card-blockers");
+    let elsewhere = Scratch::new("card-blockers-elsewhere");
+    let foo = elsewhere.path().join("foo");
+    std::fs::create_dir(&foo).unwrap();
+    Rail::holding(&[scratch.path(), &foo]);
+    let other = artifact::project::fs::Project::new(&foo);
+    let mut ops = other.create_board("Operations", "OPS").expect("a board");
+    let lane = ops.add_column("Todo").id.clone();
+    ops.add_card(&lane, "Rotate the keys".into());
+    other.save_board(&mut ops).unwrap();
+
+    let store = scratch.store();
+    store.create_board("Roadmap", "ROAD").expect("a board");
+    store.create_board("Development", "DEV").expect("a board");
+    let server = scratch.server();
+    for board in ["ROAD", "DEV"] {
+        said(server.call(
+            "board_add_column",
+            json!({ "project": scratch.path(), "board": board, "name": "Todo" }),
+            None,
+        ));
+    }
+    said(server.call(
+        "board_add_card",
+        json!({ "project": scratch.path(), "board": "ROAD", "column": "Todo", "text": ["Ship it", "Wire it"] }),
+        None,
+    ));
+    said(server.call(
+        "board_add_card",
+        json!({ "project": scratch.path(), "board": "DEV", "column": "Todo", "text": "Fix the drag" }),
+        None,
+    ));
+
+    let set = said(server.call(
+        "board_set_card_blockers",
+        json!({ "project": scratch.path(), "card": "ROAD-1", "blocked_by": ["road-2", "DEV-1", "foo#OPS-1"] }),
+        None,
+    ));
+    assert_eq!(set, "ROAD-1 waits on ROAD-2, DEV-1, foo#OPS-1");
+    let card = said(server.call(
+        "board_read_card",
+        json!({ "project": scratch.path(), "card": "ROAD-1" }),
+        None,
+    ));
+    assert!(
+        card.contains("blocked by ROAD-2, DEV-1, foo#OPS-1"),
+        "{card}"
     );
+
+    refused(server.call(
+        "board_set_card_blockers",
+        json!({ "project": scratch.path(), "card": "ROAD-1", "blocked_by": "ROAD-1" }),
+        None,
+    ));
+    refused(server.call(
+        "board_set_card_blockers",
+        json!({ "project": scratch.path(), "card": "ROAD-1", "blocked_by": "bar#OPS-1" }),
+        None,
+    ));
+
+    said(server.call(
+        "board_remove_card",
+        json!({ "project": scratch.path(), "card": "DEV-1" }),
+        None,
+    ));
+    let text = said(server.call(
+        "board_read",
+        json!({ "project": scratch.path(), "board": "ROAD" }),
+        None,
+    ));
+    assert!(text.contains("(blocked by ROAD-2, foo#OPS-1)"), "{text}");
+
+    let cleared = said(server.call(
+        "board_set_card_blockers",
+        json!({ "project": scratch.path(), "card": "ROAD-1", "blocked_by": [] }),
+        None,
+    ));
+    assert_eq!(cleared, "ROAD-1 waits on nothing");
 }
 
 /// A lane and the cards in it are laid out in two calls rather than five: the
@@ -849,23 +956,23 @@ fn busy_cards_record_the_calling_session_and_keep_it_when_cleared() {
     store.save_board(&mut board).unwrap();
     let server = scratch.server();
     said(server.call_from(
-        "board_set_card_status",
-        json!({ "project": scratch.path(), "card": ["ROAD-1", "ROAD-2"], "status": "busy" }),
+        "board_set_card_busy",
+        json!({ "project": scratch.path(), "card": ["ROAD-1", "ROAD-2"], "busy": true }),
         None,
         Some("working-session"),
     ));
     for card in &store.boards()[0].columns[0].cards {
-        assert_eq!(card.status, Some(artifact::board::Status::Busy));
+        assert!(card.busy);
         assert_eq!(card.session.as_deref(), Some("working-session"));
     }
     said(server.call_from(
-        "board_set_card_status",
-        json!({ "project": scratch.path(), "card": ["ROAD-1", "ROAD-2"], "status": "none" }),
+        "board_set_card_busy",
+        json!({ "project": scratch.path(), "card": ["ROAD-1", "ROAD-2"], "busy": false }),
         None,
         Some("other-session"),
     ));
     for card in &store.boards()[0].columns[0].cards {
-        assert_eq!(card.status, None);
+        assert!(!card.busy);
         assert_eq!(card.session.as_deref(), Some("working-session"));
     }
 }
@@ -1054,4 +1161,81 @@ fn a_description_is_read_with_the_board_and_its_cards() {
         "{cards}"
     );
     assert_eq!(cards.matches("Tag cards busy first.").count(), 1, "{cards}");
+}
+
+/// Archived boards are left out of the board tools' lists and searches unless
+/// the call asks for them, and marked where it does; a name still reaches one.
+#[test]
+fn archived_boards_are_listed_and_searched_only_when_asked() {
+    let scratch = Scratch::new("archived-filter");
+    let store = scratch.store();
+    let mut live = store.create_board("Roadmap", "ROAD").expect("a board");
+    let lane = live.add_column("Todo").id.clone();
+    live.add_card(&lane, "Wire the picker".into());
+    store.save_board(&mut live).unwrap();
+    let mut old = store.create_board("Attic", "OLD").expect("a board");
+    let lane = old.add_column("Todo").id.clone();
+    old.add_card(&lane, "Wire the old picker".into());
+    old.archived = true;
+    store.save_board(&mut old).unwrap();
+    let server = scratch.server();
+    Rail::also(scratch.path());
+
+    let list = |archived: Option<&str>| {
+        let mut call = json!({ "project": scratch.path() });
+        if let Some(archived) = archived {
+            call["archived"] = json!(archived);
+        }
+        said(server.call("board_list", call, None))
+    };
+    let text = list(None);
+    assert!(text.contains("ROAD") && !text.contains("OLD"), "{text}");
+    let text = list(Some("include"));
+    assert!(text.contains("ROAD") && text.contains("OLD"), "{text}");
+    assert!(text.contains("— archived"), "{text}");
+    let text = list(Some("only"));
+    assert!(!text.contains("ROAD") && text.contains("OLD"), "{text}");
+    refused(server.call(
+        "board_list",
+        json!({ "project": scratch.path(), "archived": "sometimes" }),
+        None,
+    ));
+
+    let text = said(server.call("board_search", json!({ "board": "OLD" }), None));
+    assert!(text.starts_with("no board OLD"), "{text}");
+    let text = said(server.call(
+        "board_search",
+        json!({ "board": "OLD", "archived": "include" }),
+        None,
+    ));
+    assert!(text.ends_with("— archived"), "{text}");
+
+    let text = said(server.call(
+        "board_search_cards",
+        json!({ "project": scratch.path(), "query": "picker" }),
+        None,
+    ));
+    assert_eq!(text, "ROAD-1 · ROAD (Roadmap) · TODO — Wire the picker");
+    let text = said(server.call(
+        "board_search_cards",
+        json!({ "project": scratch.path(), "query": "picker", "archived": "only" }),
+        None,
+    ));
+    assert_eq!(
+        text,
+        "OLD-1 · OLD (Attic) · TODO — archived — Wire the old picker"
+    );
+    let text = said(server.call(
+        "board_search_cards",
+        json!({ "project": scratch.path(), "query": "nothing like it" }),
+        None,
+    ));
+    assert_eq!(text, "no card matches nothing like it");
+
+    let card = said(server.call(
+        "board_read_card",
+        json!({ "project": scratch.path(), "card": "OLD-1" }),
+        None,
+    ));
+    assert!(card.contains("Wire the old picker"), "{card}");
 }

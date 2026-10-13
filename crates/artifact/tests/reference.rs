@@ -183,3 +183,15 @@ fn text_no_reference_starts_with_is_none() {
         assert_eq!(partial(text), None, "{text:?}");
     }
 }
+
+/// A reference written in the project it names drops the name: `DEV-12` and
+/// `#43` at home, `foo#DEV-12` and `foo#43` elsewhere.
+#[test]
+fn a_reference_at_home_drops_its_project() {
+    let card = card(Some("foo"), "DEV", 12).unwrap();
+    assert_eq!(card.clone().relative(true).to_string(), "DEV-12");
+    assert_eq!(card.relative(false).to_string(), "foo#DEV-12");
+    let entry = entry(Some("foo"), 43, None).unwrap();
+    assert_eq!(entry.clone().relative(true).to_string(), "#43");
+    assert_eq!(entry.relative(false).to_string(), "foo#43");
+}

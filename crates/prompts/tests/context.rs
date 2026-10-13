@@ -57,15 +57,12 @@ fn callers_with_tools_are_told_to_tag_and_untag_cards() {
         prompts::tool_context(true, &[]),
         prompts::tool_context(false, &[]),
     ] {
-        assert!(context.contains("board_set_card_status"), "{context}");
+        assert!(context.contains("board_set_card_busy"), "{context}");
         assert!(
             context.contains("A request that names a card is a card you are working"),
             "{context}",
         );
-        assert!(
-            context.contains("clear it with none when you answer"),
-            "{context}"
-        );
+        assert!(context.contains("with false when you answer"), "{context}");
         assert!(
             context.contains("however often one card comes back"),
             "{context}"
@@ -73,7 +70,7 @@ fn callers_with_tools_are_told_to_tag_and_untag_cards() {
     }
     // Nothing is said to a caller with no tools to say it about.
     let unavailable = prompts::session_context(Path::new("/project"), None, None, false, &[]);
-    assert!(!unavailable.contains("board_set_card_status"));
+    assert!(!unavailable.contains("board_set_card_busy"));
 }
 
 #[test]

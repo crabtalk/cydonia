@@ -1,6 +1,7 @@
 //! The board pane: lanes of cards or a list of them, and the one field that
 //! writes them.
 
+mod blockers;
 pub mod embed;
 pub mod info;
 
@@ -11,6 +12,7 @@ use crate::{
     view::{
         component::transcript,
         kit::{
+            labels::{LabelHost, Labels, Target as LabelTarget},
             rename::{NameEvent, NameField},
             text::CardTitle,
             watch::Watch,
@@ -24,7 +26,7 @@ use crate::{
 };
 use artifact::kind::Kind;
 use artifact::{
-    board::{Card, Page, Status, View},
+    board::{Card, Page, View},
     space::Member,
 };
 use bezel::agent::orbs::engine::Frame;
@@ -42,9 +44,10 @@ use bezel::{
         icons,
         input::{self, Shape, TextField},
         menu::Item,
+        multi_select,
         scroll::{self, Axes, FollowState, Scroller},
         tooltip::Tooltip,
-        widgets::Buttons,
+        widgets::{Buttons, Content as _},
     },
 };
 use editor::{Editor, EditorEvent};
@@ -52,7 +55,7 @@ use markdown::AppExt as _;
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
-    path::PathBuf,
+    path::{Path, PathBuf},
     rc::Rc,
 };
 
@@ -105,7 +108,7 @@ const CARD_EDITOR_MAX_ROWS: usize = 512;
 /// as a heading, in a lane 272 wide rather than on a page.
 const CARD_TEXT_SCALE: f32 = TextStyle::Callout.size() / TextStyle::Body.size();
 
-const STATUS_CHIP_HEIGHT: f32 = 16.;
+const BLOCKED_CHIP_HEIGHT: f32 = 16.;
 
 /// When this window opened, for the one orb with nothing better to count from
 /// — see [`Cydonia::card_working`].
@@ -184,38 +187,52 @@ pub fn field(cx: &mut App) -> Entity<TextField> {
     })
 }
 
-/// The statuses a chip is drawn for, which is the ones with no motion of their
-/// own. `busy` is the orb instead — see the `running` a card is built with.
-fn resting(status: Option<Status>) -> Option<Status> {
-    status.filter(|status| *status != Status::Busy)
+/// What a card says about itself beside its handle: its label, and that it
+/// waits on other cards.
+#[derive(Clone, Default)]
+struct Tags {
+    label: Option<String>,
+    blocked: bool,
 }
 
-/// How the work on a card is going, said in a word — see
-/// [`artifact::board::Status`]. Written by whoever is doing the work, which is
-/// usually an agent through `board_set_card_status`.
-fn status_chip(status: Status, theme: &Theme) -> AnyElement {
-    let tint = match status {
-        // Never drawn — see [`resting`]. Named so the match stays total if the
-        // set grows.
-        Status::Busy => theme.accent,
-        Status::Blocked => theme.danger,
-        Status::Done => theme.text_faint,
-    };
+impl Tags {
+    /// `card`'s, on a board of the project at `home`. Blocked while any card
+    /// it waits on is still there.
+    fn of(card: &Card, home: &Path, workspace: &Workspace, cx: &App) -> Self {
+        Self {
+            label: card.label.clone(),
+            blocked: workspace.blocking_boards(home, card, cx).next().is_some(),
+        }
+    }
+
+    fn chips(&self, theme: &Theme) -> Vec<AnyElement> {
+        let label = self.label.as_ref().map(|label| {
+            theme
+                .chip(label.clone(), multi_select::tint(theme, label))
+                .into_any_element()
+        });
+        let blocked = self.blocked.then(|| blocked_chip(theme));
+        label.into_iter().chain(blocked).collect()
+    }
+}
+
+/// A card waiting on others, said in a word.
+fn blocked_chip(theme: &Theme) -> AnyElement {
     // A fixed height with the text box held to the glyphs, so the word sits in
     // the middle of the border and the chip on the row's centre line.
     div()
         .flex_none()
-        .h(px(STATUS_CHIP_HEIGHT))
+        .h(px(BLOCKED_CHIP_HEIGHT))
         .flex()
         .items_center()
         .px(px(6.))
         .rounded_full()
         .border_1()
-        .border_color(tint)
+        .border_color(theme.danger)
         .text_style(TextStyle::Caption)
         .line_height(gpui::relative(1.))
-        .text_color(tint)
-        .child(status.key())
+        .text_color(theme.danger)
+        .child("blocked")
         .into_any_element()
 }
 
@@ -843,6 +860,10 @@ pub(crate) struct BoardView {
     /// The pane's drawer as of the last render.
     shown: PaneState,
     watch: Watch,
+    /// The open card's label picker.
+    labels: Labels,
+    /// The open card's blocker picker.
+    blockers: blockers::Blockers,
     _name: gpui::Subscription,
 }
 
@@ -862,7 +883,7 @@ fn card_session<'a>(card: &Card, workspace: &'a Workspace, cx: &'a App) -> Optio
 fn card_working(card: &Card, chat: Option<&ChatSession>, marks: &Marks) -> Option<Working> {
     let session = chat.map(|chat| (chat.id, chat.label()));
     let number = chat.and_then(|chat| chat.number);
-    if card.status != Some(Status::Busy) {
+    if !card.busy {
         return chat.map(|chat| Working {
             busy: false,
             number,
@@ -952,13 +973,13 @@ fn lane_cards(
         .collect();
     Some((column.name.clone(), column.cards.len(), cards))
 }
-/// What a list row says about its card: its handle, its title, its status
-/// and its run.
+/// What a list row says about its card: its handle, its title, its tags and
+/// its run.
 #[allow(clippy::too_many_arguments)]
 fn list_row_cells<V: 'static>(
     handle: Option<String>,
     text: &str,
-    status: Option<Status>,
+    tags: &Tags,
     working: Option<Working>,
     docs: &Docs,
     root: &WeakEntity<Cydonia>,
@@ -987,7 +1008,7 @@ fn list_row_cells<V: 'static>(
             .child(docs.title(text))
             .into_any_element(),
     ];
-    cells.extend(resting(status).map(|status| status_chip(status, &theme)));
+    cells.extend(tags.chips(&theme));
     // On show, not behind a hover — a card's run is what you look at the
     // board to see, and hiding it would mean hunting for the one that is
     // working.
@@ -1215,7 +1236,7 @@ impl Cydonia {
     }
 
     /// Card `id` of the board at `board_at`, as a link embeds it: its handle,
-    /// its board and its status over the lane's preview of its text. Pressing
+    /// its board, label and blocked mark over the lane's preview of its text. Pressing
     /// it opens `reference`.
     pub(crate) fn card_embed(
         &self,
@@ -1231,13 +1252,14 @@ impl Cydonia {
         board.board.read(cx).card(id)?;
         let board = board.board.clone();
         let base = card_base(workspace, project, &board.read(cx).id, id);
+        let home = workspace.projects.get(project)?.path.clone();
         let (card, reference) = (id.to_owned(), reference.to_owned());
         let (docs, root) = (self.card_docs.clone(), cx.entity().downgrade());
         let key = format!("card-embed-{reference}-{}", board.entity_id());
         Some(
             window
                 .use_keyed_state(SharedString::from(key), cx, move |_, cx| {
-                    embed::CardEmbed::new(board, card, reference, base, docs, root, cx)
+                    embed::CardEmbed::new(board, home, card, reference, base, docs, root, cx)
                 })
                 .into_any_element(),
         )
@@ -1288,7 +1310,7 @@ impl Cydonia {
                 continue;
             }
             for id in cards {
-                let Some((handle, text, status, working)) = self
+                let Some((handle, text, tags, working)) = self
                     .workspace
                     .read(cx)
                     .board_in(project, board_at, cx)
@@ -1298,7 +1320,7 @@ impl Cydonia {
                         Some((
                             board.handle_of(card),
                             card.text.clone(),
-                            card.status,
+                            Tags::of(card, &member.project, self.workspace.read(cx), cx),
                             card_working(card, chat, &self.card_marks),
                         ))
                     })
@@ -1321,7 +1343,7 @@ impl Cydonia {
                         .children(list_row_cells(
                             handle,
                             &text,
-                            status,
+                            &tags,
                             working,
                             &self.card_docs,
                             &root,
@@ -1406,6 +1428,8 @@ impl BoardView {
             find: Find::default(),
             shown: PaneState::default(),
             watch: Watch::default(),
+            labels: Labels::default(),
+            blockers: blockers::Blockers::default(),
             _name: name,
         }
     }
@@ -1421,6 +1445,29 @@ impl BoardView {
     /// The page open in the pane's drawer.
     pub(crate) fn opened(&self) -> Option<&Page> {
         self.opened.as_ref().map(|opened| &opened.page)
+    }
+
+    /// What the pane draws from: its board, and the boards holding the cards
+    /// its cards wait on.
+    fn watched(&self, cx: &App) -> Vec<Entity<artifact::board::Board>> {
+        let workspace = self.workspace.read(cx);
+        let Some(board) = workspace.board_entity(&self.board.id) else {
+            return Vec::new();
+        };
+        let mut watched = vec![board.clone()];
+        for card in board
+            .read(cx)
+            .columns
+            .iter()
+            .flat_map(|column| &column.cards)
+        {
+            for other in workspace.blocking_boards(&self.board.project, card, cx) {
+                if !watched.contains(other) {
+                    watched.push(other.clone());
+                }
+            }
+        }
+        watched
     }
 
     /// The card open in the pane's drawer, by id.
@@ -1618,7 +1665,9 @@ impl BoardView {
                 .unwrap_or_else(|| "Missing card".into()),
             Page::Description => "Description".into(),
         };
-        let status = card.and_then(|card| card.status);
+        let tags = card
+            .map(|card| Tags::of(card, &self.board.project, self.workspace.read(cx), cx))
+            .unwrap_or_default();
         let draft = self.draft();
         let error = draft.and_then(|draft| draft.error.clone()).or_else(|| {
             text.is_none().then(|| {
@@ -1682,7 +1731,21 @@ impl BoardView {
                     .child(handle)
                     .into_any_element(),
             )
-            .chain(resting(status).map(|status| status_chip(status, &theme).into_any_element()))
+            .chain(card.map(|card| {
+                let target = LabelTarget::Card {
+                    board: self.board.id.clone(),
+                    card: card.id.clone(),
+                };
+                let trigger = div()
+                    .id("card-label")
+                    .group("card-label")
+                    .flex()
+                    .flex_row()
+                    .items_center();
+                let labels: Vec<String> = tags.label.iter().cloned().collect();
+                self.label_chips(trigger, target, &labels, "card-label", cx)
+                    .into_any_element()
+            }))
             .chain(working.map(|at| card_orb(at, self.root.clone(), sessions, cx)))
             .collect(),
             actions: (error.is_some() && editor.is_some())
@@ -1704,16 +1767,27 @@ impl BoardView {
                 })
                 .into_iter()
                 .collect(),
-            notice: error.map(|error| {
-                div()
-                    .flex_none()
-                    .px(px(16.))
-                    .pb(px(8.))
-                    .text_style(TextStyle::Caption)
-                    .text_color(theme.danger)
-                    .child(error)
-                    .into_any_element()
-            }),
+            notice: {
+                let blocked_by = card.map(|card| self.blocked_by_line(&card.id, cx));
+                let error = error.map(|error| {
+                    div()
+                        .flex_none()
+                        .px(px(16.))
+                        .pb(px(8.))
+                        .text_style(TextStyle::Caption)
+                        .text_color(theme.danger)
+                        .child(error)
+                        .into_any_element()
+                });
+                (blocked_by.is_some() || error.is_some()).then(|| {
+                    div()
+                        .flex()
+                        .flex_col()
+                        .children(blocked_by)
+                        .children(error)
+                        .into_any_element()
+                })
+            },
             body,
             scrolls: true,
             open: None,
@@ -2954,7 +3028,8 @@ impl BoardView {
             .as_ref()
             .is_some_and(|query| card_matches(card, handle.as_deref(), query.text()));
         let text = card.text.clone();
-        let status = card.status;
+        let tags = Tags::of(card, &self.board.project, self.workspace.read(cx), cx);
+        let busy = card.busy;
         let on_board = self
             .workspace
             .read(cx)
@@ -3055,7 +3130,7 @@ impl BoardView {
             })
             .children(reveal)
             .children(list_row_cells(
-                handle, &text, status, working, &self.docs, &self.root, sessions, cx,
+                handle, &text, &tags, working, &self.docs, &self.root, sessions, cx,
             ))
             .when(actions, |row| {
                 row.child(
@@ -3064,18 +3139,19 @@ impl BoardView {
                         .flex_row()
                         .items_center()
                         .gap(px(2.))
-                        // Handing a card to an agent is refused once the card says
-                        // something about itself: a tag is somebody already holding
-                        // it, and a second agent at one task is work done twice.
-                        // Opening the session it has stays — reading is not doing.
-                        .children((sessions && live.is_none() && status.is_none()).then(|| {
-                            card_action("list-run", id, icons::multimedia::Play, cx).on_click(
-                                cx.listener(move |this, _, _, cx| {
-                                    cx.stop_propagation();
-                                    this.dispatch_card(&sent, &run, cx);
-                                }),
-                            )
-                        })),
+                        // Handing a card to an agent is refused while it is busy
+                        // or waits on other cards. Opening the session it has
+                        // stays — reading is not doing.
+                        .children((sessions && live.is_none() && !busy && !tags.blocked).then(
+                            || {
+                                card_action("list-run", id, icons::multimedia::Play, cx).on_click(
+                                    cx.listener(move |this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        this.dispatch_card(&sent, &run, cx);
+                                    }),
+                                )
+                            },
+                        )),
                 )
                 .child(
                     self.card_menu_button(
@@ -3547,7 +3623,8 @@ impl BoardView {
             .as_ref()
             .is_some_and(|query| card_matches(card, handle.as_deref(), query.text()));
         let text = card.text.clone();
-        let status = card.status;
+        let tags = Tags::of(card, &self.board.project, self.workspace.read(cx), cx);
+        let busy = card.busy;
         let on_board = self
             .workspace
             .read(cx)
@@ -3660,11 +3737,15 @@ impl BoardView {
                             .child(handle)
                     }))
                     .child(div().flex_1())
-                    .children(resting(status).map(|status| {
+                    .children((tags.label.is_some() || tags.blocked).then(|| {
                         div()
                             .flex_none()
-                            .when(working.is_some(), |chip| chip.mr(px(6.)))
-                            .child(status_chip(status, &theme))
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(4.))
+                            .when(working.is_some(), |chips| chips.mr(px(6.)))
+                            .children(tags.chips(&theme))
                     }))
                     // Where ▶ stands, because it is what ▶ becomes: a card is
                     // either one you can start or one that is running, and the
@@ -3684,12 +3765,10 @@ impl BoardView {
                             // so the control goes with them: with sessions off
                             // the play would start nothing, and the card is
                             // still a card without it.
-                            // Handing a card to an agent is refused once the card
-                            // says something about itself: a tag is somebody
-                            // already holding it, and a second agent at one task is
-                            // the work done twice. Opening the session it has
-                            // stays — reading is not doing.
-                            .children((sessions && live.is_none() && status.is_none()).then(
+                            // Handing a card to an agent is refused while it is
+                            // busy or waits on other cards. Opening the session it
+                            // has stays — reading is not doing.
+                            .children((sessions && live.is_none() && !busy && !tags.blocked).then(
                                 || {
                                     card_action("run", id, icons::multimedia::Play, cx).on_click(
                                         cx.listener(move |this, _, _, cx| {
@@ -3740,6 +3819,24 @@ impl BoardView {
     }
 }
 
+impl LabelHost for BoardView {
+    fn labels(&self) -> &Labels {
+        &self.labels
+    }
+
+    fn labels_mut(&mut self) -> &mut Labels {
+        &mut self.labels
+    }
+
+    fn label_workspace(&self) -> &Entity<Workspace> {
+        &self.workspace
+    }
+
+    fn label_root(&self) -> &WeakEntity<Cydonia> {
+        &self.root
+    }
+}
+
 impl Searchable for BoardView {
     fn set_find(&mut self, find: Find, cx: &mut Context<Self>) {
         self.find = find;
@@ -3778,12 +3875,8 @@ impl Searchable for BoardView {
 
 impl Render for BoardView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let board = self
-            .workspace
-            .read(cx)
-            .board_entity(&self.board.id)
-            .cloned();
-        self.watch.set(board.as_ref(), cx);
+        let watched = self.watched(cx);
+        self.watch.set(&watched, cx);
         let me = cx.entity_id();
         self.shown = self
             .root

@@ -5,7 +5,7 @@ mod common;
 
 use common::Scratch;
 use cydonia_artifact::{
-    board::{Board, Card, Column, Status, View},
+    board::{Board, Card, Column, View},
     project::Project as _,
 };
 use std::{collections::HashSet, fs};
@@ -334,7 +334,7 @@ fn a_dispatched_card_keeps_its_session() {
 
     let body = toml::to_string_pretty(&board).unwrap();
     let back: Board = toml::from_str(&body).unwrap();
-    assert_eq!(back.card(&card).unwrap().status, Some(Status::Busy));
+    assert!(back.card(&card).unwrap().busy);
     assert_eq!(
         back.card(&card).unwrap().session.as_deref(),
         Some("1757000009999")
@@ -372,7 +372,9 @@ fn unnamed(name: &str, cards: usize) -> Column {
             handle: None,
             text: format!("card {n}"),
             session: None,
-            status: None,
+            busy: false,
+            label: None,
+            blocked_by: Vec::new(),
             version: None,
         })
         .collect();
@@ -454,36 +456,67 @@ fn prepending_into_a_missing_column_adds_nothing() {
     assert!(board.columns.is_empty());
 }
 
-/// A status is the agent's word on how the work is going, set and cleared
-/// through the same call.
 #[test]
-fn a_cards_status_is_set_and_taken_off_again() {
+fn a_card_is_tagged_busy_and_untagged_again() {
     let mut board = Board::new("1757000000000".into(), "Roadmap");
     board.key = "ROA".into();
     let todo = board.add_column("Todo").id.clone();
     let card = board.add_card(&todo, "ship it".into()).unwrap().id.clone();
-    assert_eq!(board.card(&card).unwrap().status, None, "none to start");
+    assert!(!board.card(&card).unwrap().busy, "not busy to start");
 
-    assert!(board.set_card_status(&card, Some(Status::Busy)));
-    assert_eq!(board.card(&card).unwrap().status, Some(Status::Busy));
+    assert!(board.set_card_busy(&card, true));
+    assert!(board.card(&card).unwrap().busy);
 
-    assert!(board.set_card_status(&card, None));
-    assert_eq!(board.card(&card).unwrap().status, None);
+    assert!(board.set_card_busy(&card, false));
+    assert!(!board.card(&card).unwrap().busy);
 
-    assert!(!board.set_card_status("nowhere", Some(Status::Busy)));
+    assert!(!board.set_card_busy("nowhere", true));
 }
 
-/// The words a tool call and a file both use.
 #[test]
-fn every_status_round_trips_through_its_word() {
-    for status in Status::ALL {
-        assert_eq!(Status::parse(status.key()), Some(status));
-    }
-    assert_eq!(Status::parse("BUSY"), Some(Status::Busy));
-    assert_eq!(Status::parse(" busy "), Some(Status::Busy));
-    // `none` is the absence of a status, never one of them.
-    assert_eq!(Status::parse("none"), None);
-    assert_eq!(Status::parse("working"), None);
+fn a_card_holds_one_label_normalised() {
+    let mut board = Board::new("1757000000000".into(), "Roadmap");
+    let todo = board.add_column("Todo").id.clone();
+    let one = board.add_card(&todo, "one".into()).unwrap().id.clone();
+    let two = board.add_card(&todo, "two".into()).unwrap().id.clone();
+
+    assert!(board.set_card_label(&one, Some("  Big Bug ")));
+    assert_eq!(board.card(&one).unwrap().label.as_deref(), Some("big-bug"));
+    assert!(board.set_card_label(&one, Some("chore")));
+    assert_eq!(board.card(&one).unwrap().label.as_deref(), Some("chore"));
+    board.set_card_label(&two, Some("bug"));
+    assert_eq!(
+        board.card_labels().into_iter().collect::<Vec<_>>(),
+        ["bug", "chore"]
+    );
+
+    assert!(board.set_card_label(&one, None));
+    assert_eq!(board.card(&one).unwrap().label, None);
+    assert!(board.set_card_label(&two, Some("   ")));
+    assert_eq!(board.card(&two).unwrap().label, None, "blank is no label");
+    assert!(!board.set_card_label("nowhere", Some("bug")));
+}
+
+#[test]
+fn a_card_waits_on_each_blocker_once_and_never_on_itself() {
+    let mut board = Board::new("1757000000000".into(), "Roadmap");
+    board.key = "ROAD".into();
+    let todo = board.add_column("Todo").id.clone();
+    let one = board.add_card(&todo, "one".into()).unwrap().id.clone();
+
+    assert!(
+        board.set_card_blockers(
+            &one,
+            ["ROAD-2", "ROAD-1", "ROAD-2", "foo#DEV-3"]
+                .map(String::from)
+                .to_vec()
+        )
+    );
+    assert_eq!(
+        board.card(&one).unwrap().blocked_by,
+        ["ROAD-2", "foo#DEV-3"]
+    );
+    assert!(!board.set_card_blockers("nowhere", Vec::new()));
 }
 
 /// A lane can be written beside another rather than only at the end, on

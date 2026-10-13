@@ -24,6 +24,7 @@ use crate::{
     rail,
     tool::{Arg, Args, Trouble},
 };
+use artifact::archive::Archived;
 use artifact::error::{Act, Error};
 use artifact::reference::{Reference, Target, Within};
 use serde_json::{Value, json};
@@ -37,6 +38,43 @@ pub(crate) const PROJECT: Arg = Arg {
 already in a project may leave this out to mean that one, and must name a \
 project cydonia has open to mean another.",
 };
+/// What a search tool looks for.
+pub(crate) const QUERY: Arg = Arg {
+    name: "query",
+    about: "The text to find, matched case-insensitively.",
+};
+/// Which entries a list or a search lets through — see
+/// [`artifact::archive::Archived`].
+pub(crate) const ARCHIVED_FILTER: Arg = Arg {
+    name: "archived",
+    about: "Archived ones: exclude (the default), include, or only.",
+};
+
+/// How many hits a search answers before it says there are more.
+pub(crate) const HITS: usize = 20;
+
+/// Offer [`ARCHIVED_FILTER`], its words as the schema's `enum`.
+pub(crate) fn offer_archived(schema: &mut Value) {
+    let words: Vec<&str> = Archived::ALL.iter().map(|filter| filter.key()).collect();
+    schema["properties"][ARCHIVED_FILTER.name] = json!({
+        "type": "string",
+        "description": ARCHIVED_FILTER.about,
+        "enum": words,
+        "default": Archived::default().key(),
+    });
+}
+
+/// The [`ARCHIVED_FILTER`] a call asked for, [`Archived::Exclude`] where it
+/// asked for none.
+pub(crate) fn archived(args: &Args<'_>) -> Result<Archived, Trouble> {
+    let Some(word) = args.maybe(ARCHIVED_FILTER) else {
+        return Ok(Archived::default());
+    };
+    Archived::parse(word).ok_or_else(|| {
+        let words: Vec<&str> = Archived::ALL.iter().map(|filter| filter.key()).collect();
+        Trouble::Refused(format!("{word} is not a filter — say {}", words.join(", ")))
+    })
+}
 
 /// The directory a call is about: the one it named, or the one the caller was
 /// opened in.
@@ -82,9 +120,14 @@ pub(crate) fn on_the_rail(path: &Path) -> Result<&Path, Trouble> {
 /// against the projects cydonia has open. None open under it, or more than one,
 /// is refused.
 pub fn project_of(args: &Args<'_>, reference: &Reference<'_>) -> Result<PathBuf, Trouble> {
-    let Some(name) = reference.project else {
-        return root(args).map(Path::to_path_buf);
-    };
+    match reference.project {
+        Some(name) => project_named(name),
+        None => root(args).map(Path::to_path_buf),
+    }
+}
+
+/// The open project `name`, as written before a reference's `#`, names.
+pub(crate) fn project_named(name: &str) -> Result<PathBuf, Trouble> {
     let open = rail::open();
     let mut named = open
         .iter()

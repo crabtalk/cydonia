@@ -14,7 +14,7 @@
 
 use crate::{
     tool::{Answer, Arg, Args, Outcome, Tool, Trouble},
-    tools::{PROJECT, fields, many, on_the_rail, root, session},
+    tools::{HITS, PROJECT, QUERY, fields, many, on_the_rail, root, session},
 };
 use artifact::error::{Act, Error};
 use artifact::{
@@ -123,14 +123,6 @@ const ANSWER: Arg = Arg {
     name: "answer",
     about: "The answer, in Cydonia Markdown. Shown in the note's thread under the follow-up it answers.",
 };
-
-const QUERY: Arg = Arg {
-    name: "query",
-    about: "The text to find, matched case-insensitively.",
-};
-
-/// Hits a search answers with, at most.
-const HITS: usize = 20;
 
 pub static TOOLS: [Tool; 14] = [
     Tool {

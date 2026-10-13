@@ -51,7 +51,7 @@ fn prose_before_a_trailing_tool_call_is_not_work() {
         ChatItem::Tool {
             id: "status".into(),
             kind: ToolKind::Other,
-            label: "board_set_card_status".into(),
+            label: "board_set_card_busy".into(),
             status: ToolStatus::Success,
             output: String::new(),
         },

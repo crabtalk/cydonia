@@ -80,7 +80,6 @@ pub struct Project {
     pub sessions: Vec<HeldSession>,
     pub active: Option<u64>,
     pub boards: Vec<HeldBoard>,
-    unloaded_boards: std::collections::HashSet<String>,
     /// Which board the board pane shows.
     pub board: Option<usize>,
     pub articles: Vec<Article>,
@@ -133,7 +132,6 @@ impl Project {
                 .into_iter()
                 .map(|board| HeldBoard::new(board, cx))
                 .collect(),
-            unloaded_boards: Default::default(),
             articles: article::list(&path),
             data: Data::attach(&path),
             path,
@@ -151,44 +149,15 @@ impl Project {
             watch: None,
         };
         this.reload_tables();
-        this.unload_boards(None, cx);
         this
     }
 
-    pub fn load_board(&mut self, id: &str, cx: &mut App) -> bool {
-        if !self.unloaded_boards.contains(id) {
-            return true;
-        }
-        let Some(fresh) = self.store().board(id) else {
-            return false;
-        };
-        let Some(held) = self.boards.iter().find(|held| held.id == id) else {
-            return false;
-        };
-        held.board.update(cx, |board, cx| {
-            *board = fresh;
-            cx.notify();
-        });
-        self.unloaded_boards.remove(id);
-        true
-    }
-
-    pub fn unload_boards(&mut self, visible: Option<usize>, cx: &mut App) {
-        let store = self.store();
-        for (ix, held) in self.boards.iter().enumerate() {
-            let board = held.board.read(cx);
-            if !board.archived || visible == Some(ix) || self.unloaded_boards.contains(&held.id) {
-                continue;
-            }
-            let Some(saved) = store.board(&held.id) else {
-                continue;
-            };
-            if serde_json::to_value(&saved).ok() != serde_json::to_value(board).ok() {
-                continue;
-            }
-            held.board.update(cx, |board, _| board.columns = Vec::new());
-            self.unloaded_boards.insert(held.id.clone());
-        }
+    /// The board whose key is `key`, matched as a handle matches it.
+    pub fn keyed_board(&self, key: &str, cx: &App) -> Option<&Entity<Board>> {
+        self.boards
+            .iter()
+            .map(|held| &held.board)
+            .find(|board| board.read(cx).keyed(key))
     }
 
     /// The board listed at `ix`.
@@ -275,7 +244,6 @@ impl Project {
             .drain(..)
             .map(|held| (held.id.clone(), held))
             .collect();
-        self.unloaded_boards.clear();
         let mut moved = false;
         let fresh = self.store().boards();
         self.boards = fresh
@@ -294,7 +262,6 @@ impl Project {
             })
             .collect();
         self.board = open.and_then(|id| self.boards.iter().position(|at| at.id == id));
-        self.unload_boards(self.board, cx);
         moved
     }
 

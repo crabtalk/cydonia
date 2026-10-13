@@ -3,13 +3,13 @@
 //!
 //! `board.toml` holds each column's cards as an ordered list of card ids. A
 //! card's directory is a [`crate::document`]: `content.md` is its text,
-//! `properties.toml` its handle, status and session, and `assets/` its
+//! `properties.toml` its handle, status, session, label and blockers, and `assets/` its
 //! pictures, referenced as `assets/<name>`. The card's id is its directory's
 //! name. The board directory is a document too: its `content.md` is the
 //! board's description, absent for none.
 
 use crate::{
-    board::{Board, Card, Column, Status, View},
+    board::{Board, Card, Column, View, card::BUSY},
     document,
 };
 use serde::{Deserialize, Serialize};
@@ -20,6 +20,8 @@ pub const CARDS: &str = "cards";
 const HANDLE: &str = "handle";
 const STATUS: &str = "status";
 const SESSION: &str = "session";
+const LABEL: &str = "label";
+const BLOCKED_BY: &str = "blocked_by";
 
 #[derive(Serialize, Deserialize)]
 struct Disk {
@@ -101,11 +103,15 @@ pub fn card_properties(card: &Card, held: &str) -> Option<String> {
                     .and_then(|handle| i64::try_from(handle).ok())
                     .map(toml_edit::value),
             ),
-            (
-                STATUS,
-                card.status.map(|status| toml_edit::value(status.key())),
-            ),
+            (STATUS, card.busy.then(|| toml_edit::value(BUSY))),
             (SESSION, card.session.as_deref().map(toml_edit::value)),
+            (LABEL, card.label.as_deref().map(toml_edit::value)),
+            (
+                BLOCKED_BY,
+                (!card.blocked_by.is_empty()).then(|| {
+                    toml_edit::value(card.blocked_by.iter().collect::<toml_edit::Array>())
+                }),
+            ),
         ],
     )
 }
@@ -125,10 +131,23 @@ pub fn parse_card(id: &str, content: &str, properties: &str) -> Card {
             .get(SESSION)
             .and_then(|session| session.as_str())
             .map(str::to_owned),
-        status: doc
+        busy: doc
             .get(STATUS)
             .and_then(|status| status.as_str())
-            .and_then(Status::parse),
+            .is_some_and(|status| status == BUSY),
+        label: doc
+            .get(LABEL)
+            .and_then(|label| label.as_str())
+            .and_then(crate::label::normalize),
+        blocked_by: doc
+            .get(BLOCKED_BY)
+            .and_then(|ids| ids.as_array())
+            .map(|ids| {
+                ids.iter()
+                    .filter_map(|id| id.as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default(),
         version: None,
     }
 }

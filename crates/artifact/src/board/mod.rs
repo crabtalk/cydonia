@@ -17,12 +17,12 @@ pub mod card;
 pub mod column;
 pub mod key;
 
-pub use card::{Card, Status};
+pub use card::Card;
 pub use column::Column;
 
 use crate::{id, stamp};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 /// What a board is called before it is named, and what one whose name has been
 /// taken off is shown as.
@@ -376,16 +376,56 @@ impl Board {
         (!self.key.is_empty()).then(|| format!("{}-{handle}", self.key))
     }
 
-    /// Say how the work on a card is going, or take the answer off. Says
-    /// whether there was a card to say it about.
-    pub fn set_card_status(&mut self, id: &str, status: Option<Status>) -> bool {
+    /// Say someone is working on a card now, or take that off. Says whether
+    /// there was a card to say it about.
+    pub fn set_card_busy(&mut self, id: &str, busy: bool) -> bool {
         match self.card_mut(id) {
             Some(card) => {
-                card.status = status;
+                card.busy = busy;
                 true
             }
             None => false,
         }
+    }
+
+    /// Give a card `label`, normalised, or take its label off. Says whether
+    /// there was a card.
+    pub fn set_card_label(&mut self, id: &str, label: Option<&str>) -> bool {
+        match self.card_mut(id) {
+            Some(card) => {
+                card.label = label.and_then(crate::label::normalize);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Give a card exactly `blockers`, references to the cards it waits on
+    /// as written in its project (see [`crate::reference`]), each once and
+    /// never its own handle. Says whether there was a card.
+    pub fn set_card_blockers(&mut self, id: &str, blockers: Vec<String>) -> bool {
+        let Some(own) = self.card(id).map(|card| self.handle_of(card)) else {
+            return false;
+        };
+        let mut kept: Vec<String> = Vec::new();
+        for blocker in blockers {
+            if Some(&blocker) != own.as_ref() && !kept.contains(&blocker) {
+                kept.push(blocker);
+            }
+        }
+        if let Some(card) = self.card_mut(id) {
+            card.blocked_by = kept;
+        }
+        true
+    }
+
+    /// The labels this board's cards carry, in name order.
+    pub fn card_labels(&self) -> BTreeSet<&str> {
+        self.columns
+            .iter()
+            .flat_map(|column| &column.cards)
+            .filter_map(|card| card.label.as_deref())
+            .collect()
     }
 
     /// What `page` says. `None` for a card the board does not hold.
@@ -476,7 +516,7 @@ impl Board {
         match self.card_mut(id) {
             Some(card) => {
                 card.session = Some(session);
-                card.status = Some(Status::Busy);
+                card.busy = true;
                 true
             }
             None => false,
