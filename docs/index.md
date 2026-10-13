@@ -21,9 +21,8 @@ no sync.
   project Cydonia has open.
 - **Panes, tabs and spaces** put several of those on screen at once, so a
   running agent is something you watch rather than something you poll.
-- A **card** on a board can be handed to an agent: it opens a session of its
-  own with the card's text as the first prompt, and spins an orb while the run
-  is going. Dispatching a second card does not queue behind the first.
+- A **card** on a board, or a whole column of them, can be sent to a session
+  you pick or to a new one, and spins an orb while an agent works on it.
 - **Cydonia's own MCP tools** let an agent read and write the project's
   articles and boards directly, which is how a turn ends as an artifact rather
   than as scrollback.

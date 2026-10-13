@@ -29,13 +29,13 @@ session of its own with the card's text as the first prompt. See
   Switching cards or closing with **×** or Escape keeps unsaved drafts in the
   current pane for this app session. Save before closing the pane or quitting.
 - An agent lays a board out in one call per kind: the tools that add or drop cards and columns take a list where they take one.
-- A card can be moved to another column, another board, or a board in another project. Moving it to another board gives it a new handle and clears the session it was dispatched to. An agent can move several cards in one write, and they may come off different boards.
+- A card can be moved to another column, another board, or a board in another project. Moving it to another board gives it a new handle. An agent can move several cards in one write, and they may come off different boards.
 
 ### Busy, labels and blockers
 
 Where a card sits is its column: a finished card is moved to the column that says so.
 
-A card is tagged busy while an agent works on it, and shows an orb while its run is going. An agent tags several cards in one write. Starting work records the session alongside the tag. Hover the busy orb to see the linked session’s name, or click it to open that session. See [Running several agents](./../agents/orchestration.md) for what that buys with more than one agent running.
+A card is tagged busy while an agent works on it, and shows an orb while its run is going. An agent tags several cards in one write. A card remembers the session that last held it: the one that made it, the one it was last sent to, or the one that last tagged it busy. Hover the busy orb to see the linked session’s name, or click it to open that session. See [Running several agents](./../agents/orchestration.md) for what that buys with more than one agent running.
 
 A card carries at most one label. Open the card and click beside its handle to pick one or type a new one. The labels offered are the ones on that board's cards, apart from the labels on articles, boards and sessions.
 

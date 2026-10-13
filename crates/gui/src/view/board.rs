@@ -4,6 +4,7 @@
 mod blockers;
 pub mod embed;
 pub mod info;
+mod send;
 
 use crate::model::language::Grammars as _;
 use crate::view::kit::menu;
@@ -785,6 +786,8 @@ enum BoardMenu {
     Lane(String),
     /// A card's `···`, by card id.
     Card(String),
+    /// A card's or a lane's ▶.
+    Send(send::Sent),
 }
 
 /// Where the pane's drawer stands around a board view, read from the window
@@ -867,8 +870,7 @@ pub(crate) struct BoardView {
     _name: gpui::Subscription,
 }
 
-/// The session a card was dispatched to, while it is still open — a card
-/// whose session has been closed is a card you can run again.
+/// The session that last held a card, while it is still open.
 fn card_session<'a>(card: &Card, workspace: &'a Workspace, cx: &'a App) -> Option<&'a ChatSession> {
     let record = card.session.as_deref()?;
     workspace.session_by_record(record, cx)
@@ -1987,8 +1989,21 @@ impl BoardView {
         cx: &Context<Self>,
     ) -> Stateful<Div> {
         let open = self.menu.key() == Some(&menu);
+        let button = menu::button(id, icons::layout::Ellipsis, reveal, open, cx);
+        self.opens(button, menu, rows, cx)
+    }
+
+    /// `el`, opening `menu` below itself on a press, or shutting it when it
+    /// is the one up.
+    fn opens(
+        &self,
+        el: Stateful<Div>,
+        menu: BoardMenu,
+        rows: menu::Rows<Self>,
+        cx: &Context<Self>,
+    ) -> Stateful<Div> {
         let rows = Rc::new(rows);
-        let button = menu::button(id, icons::layout::Ellipsis, reveal, open, cx).on_click({
+        let el = el.on_click({
             let menu = menu.clone();
             cx.listener(move |this, _, window, cx| {
                 cx.stop_propagation();
@@ -2004,7 +2019,7 @@ impl BoardView {
                 );
             })
         });
-        ContextMenu::trigger(button, |this: &mut Self| &mut this.menu, menu, cx)
+        ContextMenu::trigger(el, |this: &mut Self| &mut this.menu, menu, cx)
     }
 
     /// `menu`, placed, while it is on screen.
@@ -2183,39 +2198,6 @@ impl BoardView {
             return;
         };
         cx.write_to_clipboard(ClipboardItem::new_string(text));
-    }
-
-    /// Hand the card to an agent: a session of its own, opened in the project
-    /// with the card's text as its first prompt.
-    ///
-    /// A session of its own rather than the one in front, so the card's dot
-    /// reports its own run — and so dispatching a second card doesn't queue
-    /// behind the first. The board stays up: the card goes live where you are
-    /// looking, and clicking it is what follows the work into the transcript.
-    fn dispatch_card(&mut self, board: &str, card: &str, cx: &mut Context<Self>) {
-        self.commit_edit(cx);
-        let (board, card) = (board.to_owned(), card.to_owned());
-        self.workspace.update(cx, |workspace, cx| {
-            let text = workspace
-                .board_at(&board, cx)
-                .and_then(|board| board.card(&card))
-                .map(|card| card.text.clone());
-            let (Some(text), Some(entry)) = (text, workspace.preferred_agent(cx)) else {
-                return;
-            };
-            // Nothing to link to is nothing to write: clearing the field on a
-            // refused dispatch would take the card's last session off it.
-            let Some(record) = workspace
-                .new_session(entry, Some(text), cx)
-                .and_then(|id| workspace.mint_record(id, cx))
-            else {
-                return;
-            };
-            // The link lands on the board, so the board is written — it is what
-            // the ▶ reads after a quit.
-            workspace.write_board(&board, cx, |held| held.dispatch_card(&card, record.clone()));
-        });
-        cx.notify();
     }
 
     /// The `···` on a card: what the row of glyphs underneath should not carry,
@@ -2977,6 +2959,7 @@ impl BoardView {
                         this.edit(Editing::New(Place::Top, add_column.clone()), window, cx);
                     }))
             }))
+            .children(self.send_lane_button(board, id, "list-group", window, cx))
             .child(
                 self.menu_button(
                     SharedString::from(format!("list-group-menu-{id}")),
@@ -3037,11 +3020,10 @@ impl BoardView {
             .map(|board| board.id.clone())
             .unwrap_or_default();
         let chat = card_session(card, self.workspace.read(cx), cx);
-        let live = chat.map(|chat| chat.id);
         let sessions = self.workspace.read(cx).settings.features.sessions;
         let working = card_working(card, chat, &self.marks);
-        let (opened, run) = (id.to_owned(), id.to_owned());
-        let sent = on_board.clone();
+        let opened = id.to_owned();
+        let sending = self.menu.key() == Some(&BoardMenu::Send(send::Sent::Card(id.to_owned())));
         let selected = self.opened_card() == Some(id);
 
         let viewport = self.scroll.down.clone();
@@ -3092,8 +3074,12 @@ impl BoardView {
         // and decided here rather than in a hover style: gpui can resolve hover
         // differently in prepaint and paint.
         let actions = selected
+            || sending
             || self.list_hovered.as_deref() == Some(id)
             || self.menu.key() == Some(&BoardMenu::Card(id.to_owned()));
+        // Refused while the card is busy or waits on other cards.
+        let send = (sessions && !busy && !tags.blocked)
+            .then(|| self.send_card_button("list-run", &on_board, id, window, cx));
         let hovered_id = id.to_owned();
         let row = div()
             .id(SharedString::from(format!("list-row-{id}")))
@@ -3139,19 +3125,7 @@ impl BoardView {
                         .flex_row()
                         .items_center()
                         .gap(px(2.))
-                        // Handing a card to an agent is refused while it is busy
-                        // or waits on other cards. Opening the session it has
-                        // stays — reading is not doing.
-                        .children((sessions && live.is_none() && !busy && !tags.blocked).then(
-                            || {
-                                card_action("list-run", id, icons::multimedia::Play, cx).on_click(
-                                    cx.listener(move |this, _, _, cx| {
-                                        cx.stop_propagation();
-                                        this.dispatch_card(&sent, &run, cx);
-                                    }),
-                                )
-                            },
-                        )),
+                        .children(send),
                 )
                 .child(
                     self.card_menu_button(
@@ -3543,6 +3517,7 @@ impl BoardView {
                     }),
             )
             .child(div().flex_1())
+            .children(self.send_lane_button(board, id, "column", window, cx))
             .child(
                 self.menu_button(
                     SharedString::from(format!("column-menu-{id}")),
@@ -3632,11 +3607,10 @@ impl BoardView {
             .map(|board| board.id.clone())
             .unwrap_or_default();
         let chat = card_session(card, self.workspace.read(cx), cx);
-        let live = chat.map(|chat| chat.id);
         let sessions = self.workspace.read(cx).settings.features.sessions;
         let working = card_working(card, chat, &self.marks);
-        let (opened, run) = (id.to_owned(), id.to_owned());
-        let sent = on_board.clone();
+        let opened = id.to_owned();
+        let sending = self.menu.key() == Some(&BoardMenu::Send(send::Sent::Card(id.to_owned())));
         let selected = self.opened_card() == Some(id);
         let overflow = window.use_keyed_state(
             SharedString::from(format!("card-overflow-{}-{id}", cx.entity_id())),
@@ -3655,6 +3629,9 @@ impl BoardView {
             .absolute()
             .size_full()
         });
+        // Refused while the card is busy or waits on other cards.
+        let send = (sessions && !busy && !tags.blocked)
+            .then(|| self.send_card_button("run", &on_board, id, window, cx));
         let card = div()
             .id(SharedString::from(format!("card-{id}")))
             .group("card")
@@ -3755,29 +3732,14 @@ impl BoardView {
                     .children(working.map(|at| card_orb(at, self.root.clone(), sessions, cx)))
                     .child(
                         div()
-                            .invisible()
-                            .group_hover("card", |el| el.visible())
+                            .when(!sending, |el| {
+                                el.invisible().group_hover("card", |el| el.visible())
+                            })
                             .flex()
                             .flex_row()
                             .items_center()
                             .gap(px(2.))
-                            // Handing a card to an agent is opening a session,
-                            // so the control goes with them: with sessions off
-                            // the play would start nothing, and the card is
-                            // still a card without it.
-                            // Handing a card to an agent is refused while it is
-                            // busy or waits on other cards. Opening the session it
-                            // has stays — reading is not doing.
-                            .children((sessions && live.is_none() && !busy && !tags.blocked).then(
-                                || {
-                                    card_action("run", id, icons::multimedia::Play, cx).on_click(
-                                        cx.listener(move |this, _, _, cx| {
-                                            cx.stop_propagation();
-                                            this.dispatch_card(&sent, &run, cx);
-                                        }),
-                                    )
-                                },
-                            )),
+                            .children(send),
                     ),
             )
             .on_click(cx.listener(move |this, _, window, cx| {

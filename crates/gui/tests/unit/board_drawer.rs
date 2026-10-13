@@ -895,8 +895,7 @@ fn busy_orb_opens_its_session_without_opening_the_card(cx: &mut TestAppContext) 
                 .clone()
                 .update(cx, |board, cx| {
                     board.view = View::List;
-                    board.dispatch_card(&cards[0], "orb-session".into());
-                    board.set_card_busy(&cards[0], false);
+                    board.hold_card(&cards[0], "orb-session".into());
                     cx.notify();
                 });
             // Linked and not busy: the session's number, not the orb.

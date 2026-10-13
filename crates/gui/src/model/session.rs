@@ -212,7 +212,7 @@ pub struct ChatSession {
     pub(crate) turn_started: Option<Instant>,
     pub(crate) tool_started: BTreeMap<String, Instant>,
     /// Prompts waiting for an agent to send them to: what was typed while a
-    /// turn was in flight, and what a dispatched card opened the session with.
+    /// turn was in flight, and what a card sent to a new session opened it with.
     pub queue: VecDeque<String>,
     /// The geometry of the sidebar's orb for this session, reused tick to
     /// tick. Its own buffer: each orb on screen is filled where it is built
@@ -245,7 +245,7 @@ impl ChatSession {
     }
 
     /// Open a session on `entry`. `seed` is its first prompt, sent as soon as
-    /// the agent is up — what a dispatched card rides in on.
+    /// the agent is up — what a card sent to a new session rides in on.
     pub fn connect(
         id: u64,
         entry: settings::Agent,
@@ -515,10 +515,9 @@ impl ChatSession {
 
     /// The id this session is filed under, minted now if it has none.
     ///
-    /// A dispatched card writes the link on the click that made it, and until
-    /// then a session that has said nothing has no id to be written down.
-    /// Bringing the mint forward costs nothing: a dispatched session carries a
-    /// first prompt, so it is about to have something to file anyway.
+    /// A card sent to a session writes the session down on the click that sent
+    /// it, and until then a session that has said nothing has no id to be
+    /// written down.
     pub fn mint_record(&mut self) -> Option<&str> {
         if self.record.is_none() {
             self.record = self.store().create_session().ok();

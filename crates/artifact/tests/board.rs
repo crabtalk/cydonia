@@ -95,7 +95,7 @@ fn moving_a_card_takes_its_session_with_it() {
         .unwrap()
         .id
         .clone();
-    board.dispatch_card(&card, "1757000009999".into());
+    board.hold_card(&card, "1757000009999".into());
 
     assert!(board.move_card(&card, &doing));
     assert!(board.column(&todo).unwrap().cards.is_empty());
@@ -307,10 +307,10 @@ fn boards_in_a_project_take_different_keys() {
     assert_ne!(one.key, two.key);
 }
 
-/// A card that was never dispatched has no key for a session, rather than an
-/// empty one every reader has to know to expect.
+/// A card no session has held has no key for a session, rather than an empty
+/// one every reader has to know to expect.
 #[test]
-fn an_undispatched_card_has_no_session_key() {
+fn an_unheld_card_has_no_session_key() {
     let mut board = Board::new("1757000000000".into(), "Roadmap");
     let todo = board.add_column("Todo").id.clone();
     board.add_card(&todo, "Retire Spot".into());
@@ -319,10 +319,10 @@ fn an_undispatched_card_has_no_session_key() {
     assert!(!body.contains("session"), "{body}");
 }
 
-/// And the link a dispatch writes outlives the launch that wrote it, which is
-/// the whole of why the field is on the file at all.
+/// And the session written down outlives the launch that wrote it, without
+/// tagging the card busy.
 #[test]
-fn a_dispatched_card_keeps_its_session() {
+fn a_held_card_keeps_its_session() {
     let mut board = Board::new("1757000000000".into(), "Roadmap");
     let todo = board.add_column("Doing").id.clone();
     let card = board
@@ -330,11 +330,11 @@ fn a_dispatched_card_keeps_its_session() {
         .unwrap()
         .id
         .clone();
-    board.dispatch_card(&card, "1757000009999".into());
+    board.hold_card(&card, "1757000009999".into());
 
     let body = toml::to_string_pretty(&board).unwrap();
     let back: Board = toml::from_str(&body).unwrap();
-    assert!(back.card(&card).unwrap().busy);
+    assert!(!back.card(&card).unwrap().busy);
     assert_eq!(
         back.card(&card).unwrap().session.as_deref(),
         Some("1757000009999")

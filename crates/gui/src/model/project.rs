@@ -355,6 +355,17 @@ impl Project {
         self.sessions.iter().map(|held| held.chat.read(cx))
     }
 
+    /// The sessions not archived, most recently touched first, without the
+    /// articles' threads.
+    pub fn recent_sessions<'a>(&'a self, cx: &'a App) -> Vec<&'a ChatSession> {
+        let mut chats: Vec<&ChatSession> = self
+            .chats(cx)
+            .filter(|chat| !chat.closed && chat.article.is_none())
+            .collect();
+        chats.sort_by_key(|chat| std::cmp::Reverse(chat.touched()));
+        chats
+    }
+
     /// Where the entry `showing` names is listed among its kind.
     /// The entry a stored id names: a session by its record, every other kind
     /// by its id or key.

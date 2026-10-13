@@ -239,7 +239,7 @@ pub static TOOLS: [Tool; 21] = [
     },
     Tool {
         name: "board_read_card",
-        description: "Read one card or several by handle: each one's whole text, its column, its label, whether it is busy, the cards it waits on and the session it was dispatched to, after the description of the board it is on.",
+        description: "Read one card or several by handle: each one's whole text, its column, its label, whether it is busy, the cards it waits on and the session that last held it, after the description of the board it is on.",
         schema: |bound| {
             let mut schema = fields(bound, &[PROJECT, CARDS]);
             many(&mut schema, CARDS);
@@ -341,7 +341,7 @@ pub static TOOLS: [Tool; 21] = [
     },
     Tool {
         name: "board_move_card",
-        description: "Carry a card or several to the end of another column, another board, or a board in another project. Moving to another board gives each a new handle and clears the session it was dispatched to.",
+        description: "Carry a card or several to the end of another column, another board, or a board in another project. Moving to another board gives each a new handle.",
         schema: |bound| {
             let mut schema = fields(bound, &[PROJECT, CARDS]);
             for arg in [COLUMN, TO_BOARD, TO_PROJECT] {
@@ -757,9 +757,6 @@ pub(crate) fn cards(project: &fs::Project, needles: &[&str]) -> Outcome {
         if card.busy {
             head.push_str(" · busy");
         }
-        if card.session.is_some() {
-            head.push_str(" · dispatched");
-        }
         let blockers = blockers(project.root(), card);
         if !blockers.is_empty() {
             head.push_str(&format!(" · blocked by {}", blockers.join(", ")));
@@ -805,6 +802,9 @@ fn add_card(args: Args<'_>) -> Outcome {
             .add_card(&column, text.to_owned())
             .cloned()
             .expect("the column was resolved above");
+        if let Some(session) = args.session() {
+            board.hold_card(&card.id, session.to_owned());
+        }
         let handle = board.handle_of(&card).unwrap_or_else(|| card.id.clone());
         added.push(json!({ "id": card.id, "handle": handle }));
         handles.push(handle);
@@ -853,7 +853,7 @@ fn set_card_busy(args: Args<'_>) -> Outcome {
             let handle = named(&board, &id);
             board.set_card_busy(&id, busy);
             if busy && let Some(session) = args.session() {
-                board.dispatch_card(&id, session.to_owned());
+                board.hold_card(&id, session.to_owned());
             }
             tagged.push(json!({ "id": id, "handle": handle, "busy": busy }));
             handles.push(handle);
@@ -1456,11 +1456,6 @@ fn outline(board: &Board, lanes: &[Lane<'_>], here: &Path) -> String {
             let blockers = blockers(here, card);
             if !blockers.is_empty() {
                 out.push_str(&format!("  (blocked by {})", blockers.join(", ")));
-            }
-            // What the card was handed to, which is what ▶ and 💬 are drawn
-            // off. Whether that session is *running* is the app's to know.
-            if card.session.is_some() {
-                out.push_str("  (dispatched)");
             }
         }
         if let Some(last) = lane.cards.last().filter(|_| lane.more > 0) {

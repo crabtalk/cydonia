@@ -424,10 +424,8 @@ impl Workspace {
     /// Carry a card to another board, which may be in another project.
     ///
     /// Answers what it is called where it landed — `PLAN-3` — and nothing where
-    /// it did not move. It arrives under a new handle with no session on it;
-    /// see [`artifact::board::carry_card`].
-    ///
-    /// A card whose session is still open does not move.
+    /// it did not move. It arrives under a new handle; see
+    /// [`artifact::board::carry_card`].
     pub fn carry_card(
         &mut self,
         from: (usize, usize),
@@ -437,14 +435,6 @@ impl Workspace {
         cx: &mut App,
     ) -> Option<String> {
         if from == to {
-            return None;
-        }
-        let live = self
-            .board_in(from.0, from.1, cx)
-            .and_then(|board| board.card(card))
-            .and_then(|card| card.session.clone())
-            .is_some_and(|record| self.session_by_record(&record, cx).is_some());
-        if live {
             return None;
         }
         let mut source = self.board_copy(from, cx)?;

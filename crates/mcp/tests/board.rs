@@ -977,6 +977,25 @@ fn busy_cards_record_the_calling_session_and_keep_it_when_cleared() {
     }
 }
 
+#[test]
+fn added_cards_record_the_calling_session_without_busy() {
+    let scratch = Scratch::new("add-session");
+    let store = scratch.store();
+    let mut board = store.create_board("Roadmap", "ROAD").unwrap();
+    board.add_column("Todo");
+    store.save_board(&mut board).unwrap();
+    said(scratch.server().call_from(
+        "board_add_card",
+        json!({ "project": scratch.path(), "board": "ROAD", "column": "Todo", "text": ["First", "Second"] }),
+        None,
+        Some("making-session"),
+    ));
+    for card in &store.boards()[0].columns[0].cards {
+        assert!(!card.busy);
+        assert_eq!(card.session.as_deref(), Some("making-session"));
+    }
+}
+
 /// A key, or a handle on the board, finds the open project the board is in;
 /// several are asked in one call.
 #[test]

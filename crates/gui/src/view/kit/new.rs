@@ -3,10 +3,7 @@
 
 use crate::{
     model::workspace::Workspace,
-    view::{
-        kit::menu::{self, Act},
-        window::root::Cydonia,
-    },
+    view::kit::menu::{self, Act},
 };
 use bezel::{
     gpui::{Context, Window},
@@ -86,10 +83,10 @@ pub(crate) fn offered(workspace: &Workspace) -> Offered {
 /// The menu rows for `offered`: "New session", or a submenu of agents where
 /// there is more than one, then a row a kind. `act` is what picking one does.
 /// A lone "New session" is [`New::Session`] of `None`.
-pub(crate) fn rows(
+pub(crate) fn rows<V: 'static>(
     offered: Offered,
-    act: impl Fn(New) -> Box<dyn Fn(&mut Cydonia, &mut Window, &mut Context<Cydonia>)>,
-) -> Vec<(Item, Act)> {
+    act: impl Fn(New) -> Box<dyn Fn(&mut V, &mut Window, &mut Context<V>)>,
+) -> Vec<(Item, Act<V>)> {
     let mut rows = Vec::new();
     if offered.sessions && offered.agents.len() > 1 {
         let picks = offered
@@ -112,9 +109,9 @@ pub(crate) fn rows(
     rows
 }
 
-fn entry(
+fn entry<V: 'static>(
     kind: New,
-    act: &impl Fn(New) -> Box<dyn Fn(&mut Cydonia, &mut Window, &mut Context<Cydonia>)>,
-) -> (Item, Act) {
+    act: &impl Fn(New) -> Box<dyn Fn(&mut V, &mut Window, &mut Context<V>)>,
+) -> (Item, Act<V>) {
     menu::row(Item::action(kind.label()).with_icon(kind.icon()), act(kind))
 }

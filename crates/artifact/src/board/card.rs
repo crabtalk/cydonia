@@ -1,4 +1,4 @@
-//! A card: what needs doing, the session it was handed to, whether someone is
+//! A card: what needs doing, the session that last held it, whether someone is
 //! on it, its label and the cards it waits on.
 
 use serde::{Deserialize, Serialize};
@@ -18,8 +18,8 @@ pub struct Card {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub handle: Option<u64>,
     pub text: String,
-    /// The session this card was dispatched to, by the id it is filed under.
-    /// Persisted, so ▶/💬 still tells the truth after a quit.
+    /// The session that last held this card, by the id it is filed under: the
+    /// one that made it, was last sent it, or last tagged it busy.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session: Option<String>,
     /// Someone is working on it now, as whoever is doing the work says.

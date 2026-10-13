@@ -447,6 +447,15 @@ impl Workspace {
             .cloned()
     }
 
+    /// The agent at `at` in the settings, or the preferred one where `at` is
+    /// `None` — what a "New session" choice names.
+    pub fn agent_at(&self, at: Option<usize>, cx: &App) -> Option<settings::Agent> {
+        match at {
+            Some(at) => self.settings.agents.get(at).cloned(),
+            None => self.preferred_agent(cx),
+        }
+    }
+
     /// The configured agents as the tools offer them.
     pub(super) fn rail_agents(&self) -> Vec<rail::Agent> {
         self.settings

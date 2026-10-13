@@ -21,7 +21,7 @@ pub enum ArticleChange {
 
 impl Workspace {
     /// Open a session in the active project. `seed` is its first prompt, sent
-    /// as soon as the agent is up — what a dispatched card rides in on.
+    /// as soon as the agent is up — what a card sent to a new session rides in on.
     ///
     /// The one place a session is born, so it is where the sessions switch
     /// bites: nothing spawns an agent until it has been turned on.
@@ -64,7 +64,7 @@ impl Workspace {
     /// [`Self::new_session`] in the project at `ix` rather than the active one.
     /// `front` puts it in front of its project; without it, whatever the
     /// window shows stays put.
-    fn new_session_in(
+    pub fn new_session_in(
         &mut self,
         ix: usize,
         entry: settings::Agent,
@@ -654,7 +654,7 @@ impl Workspace {
     }
 
     /// The id a session is filed under, minted if it has none — what a
-    /// dispatched card writes down.
+    /// card sent to it writes down.
     pub fn mint_record(&self, id: u64, cx: &mut App) -> Option<String> {
         self.update_session(id, cx, |chat| chat.mint_record().map(str::to_owned))?
     }

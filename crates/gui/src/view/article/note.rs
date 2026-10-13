@@ -1,5 +1,6 @@
-//! The text of an open comment: the words it is on, its note and its replies,
-//! each one selectable and copied the way the transcript's prose is.
+//! The text of an open comment: the words it is on, which close it on a press,
+//! and its note and replies, each one selectable and copied the way the
+//! transcript's prose is.
 
 use super::comment_paint;
 use crate::{
@@ -24,7 +25,6 @@ const NOTE_MAX_HEIGHT: f32 = 320.;
 /// Which of an open comment's texts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Part {
-    Quote,
     Note,
     Reply(usize),
 }
@@ -103,13 +103,15 @@ impl Render for NoteText {
         let Some(comment) = self.comment(cx) else {
             return div().into_any_element();
         };
-        let quoted = self.prose(
-            Part::Quote,
-            &artifact::text::one_line(&comment.quote),
-            window,
-            cx,
-        );
         let quote = div()
+            .id(("comment-quote", self.id))
+            .cursor_pointer()
+            .on_click(cx.listener(|this, _, _, cx| {
+                let path = this.path.clone();
+                this.workspace.update(cx, |workspace, cx| {
+                    workspace.activate_comment(&path, None, cx)
+                });
+            }))
             .flex()
             .items_start()
             .gap(px(6.))
@@ -124,7 +126,7 @@ impl Render for NoteText {
                     .overflow_hidden()
                     .text_style(TextStyle::Callout)
                     .text_color(theme.text_muted)
-                    .child(quoted),
+                    .child(artifact::text::one_line(&comment.quote)),
             )
             .when(comment.detached(), |el| {
                 el.child(

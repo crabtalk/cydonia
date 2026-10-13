@@ -511,12 +511,11 @@ impl Board {
         None
     }
 
-    /// Write down the session a card was handed to.
-    pub fn dispatch_card(&mut self, id: &str, session: String) -> bool {
+    /// Write down the session that last held a card — see [`Card::session`].
+    pub fn hold_card(&mut self, id: &str, session: String) -> bool {
         match self.card_mut(id) {
             Some(card) => {
                 card.session = Some(session);
-                card.busy = true;
                 true
             }
             None => false,
@@ -566,8 +565,6 @@ fn mint(taken: &mut HashSet<String>) -> String {
 /// is `PLAN-3` from here on. Anything that already said `ROAD-12` still says
 /// it.
 ///
-/// Its session is left behind — see [`Card::session`].
-///
 /// Lands in `column` where one is named, otherwise in the lane of the same name
 /// as the one it came out of, otherwise in the first lane. A board with no lanes
 /// answers `None`, with the card where it was.
@@ -594,7 +591,6 @@ pub fn carry_card(
     }
     card.version = None;
     card.handle = Some(to.take_handle());
-    card.session = None;
     let said = to.handle_of(&card).unwrap_or_else(|| card.id.clone());
     let id = card.id.clone();
     match to.column_mut(&landing) {

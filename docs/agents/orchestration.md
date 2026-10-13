@@ -1,6 +1,6 @@
 ---
 title: Running several agents
-description: More than one agent at a time — dispatching cards, watching runs, and the board that tracks them.
+description: More than one agent at a time — sending cards to sessions, watching runs, and the board that tracks them.
 ---
 
 One agent in one project is a session. Several of them is what the panes and
@@ -15,21 +15,13 @@ second one gets a turn while the first is still working.
 Sessions run independently. A turn in one does not queue behind a turn in
 another, and each reports its own progress.
 
-## Dispatching a card
+## Sending cards to a session
 
-A card on a board can be handed straight to an agent. Running it opens a
-session of its own, in that project, with the card's text as the first prompt.
+▶ on a card, or on a column's heading, opens a menu of sessions to send it to: the session that last held the card, then the project's sessions most recently used, then New session.
 
-- The session is the card's own, not the one in front, so the card reports its
-  own run — and dispatching a second card does not queue behind the first.
-- The card spins an orb while its run is going. It is the same orb the sidebar
-  and the transcript use, because it is the same run.
-- The board stays up. Clicking the card is what follows the work into the
-  transcript.
-- A card whose session has been closed is a card you can run again.
-
-Moving a card to another board gives it a new handle and clears the session it
-was dispatched to.
+- What is sent is a link to each card. A column sends its cards that are neither busy nor blocked, under the column's name.
+- The session picked is written down on each card as the one that last held it, the way a session that made a card or tagged it busy is.
+- The board stays up. A card spins an orb while an agent has it busy; clicking the orb follows the work into the transcript.
 
 ## Watching them
 
