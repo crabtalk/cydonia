@@ -27,6 +27,7 @@
 
 pub mod host;
 pub mod node;
+pub mod tables;
 pub mod wire;
 
 use node::{Handle, Handlers, Node};
@@ -58,6 +59,9 @@ pub mod abi {
     pub const SET_INPUT: &str = "set_input";
     /// Import `(message, len)`: the message of a panic about to trap.
     pub const PANIC: &str = "panic";
+    /// Import `(id, request, len)`: the JSON [`crate::wire::Call`] numbered
+    /// `id`, answered by an [`crate::wire::Event::Answer`].
+    pub const CALL: &str = "call";
 }
 
 /// An app: its state, the messages its nodes send, and what it draws.
@@ -103,8 +107,8 @@ impl<A: App> Runtime<A> {
         self.buffer.as_mut_ptr()
     }
 
-    /// Deliver the event in the buffer. An event for a handler no longer drawn
-    /// is dropped.
+    /// Deliver the event in the buffer. An event for a handler no longer drawn,
+    /// or an answer to no call waiting, is dropped.
     pub fn update(&mut self) {
         let event: wire::Event =
             serde_json::from_slice(&self.buffer).expect("Cydonia sends a JSON event");
@@ -120,6 +124,10 @@ impl<A: App> Runtime<A> {
             } => match self.handlers.get(handler) {
                 Some(Handle::Text(msg)) => msg(text),
                 _ => return,
+            },
+            wire::Event::Answer { call, answer } => match host::answered(call, answer) {
+                Some(msg) => msg,
+                None => return,
             },
         };
         self.app.update(msg);

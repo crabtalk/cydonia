@@ -242,13 +242,103 @@ pub struct List {
     pub row_height: f32,
 }
 
-/// What Cydonia tells an app, delivered to the handler it names.
+/// What Cydonia tells an app: an event for a handler it drew, or the answer to
+/// a call it made.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum Event {
     Click { handler: Handler },
     Input { handler: Handler, text: String },
     Select { handler: Handler, value: String },
+    Answer { call: CallId, answer: Answer },
+}
+
+/// A call an app made, by the number the app gave it.
+pub type CallId = u32;
+
+/// What an app asks of Cydonia. Each is answered later with an
+/// [`Event::Answer`] carrying its [`CallId`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "call", rename_all = "snake_case")]
+pub enum Call {
+    /// The project's tables. Answers [`Answer::Tables`].
+    Tables,
+    /// A read-only SQL statement on the project's tables. Answers
+    /// [`Answer::Rows`].
+    Query { sql: String },
+    /// A table named `name` with these columns. Answers [`Answer::Table`].
+    CreateTable { name: String, columns: Vec<Column> },
+    /// Rows into `table`, each by column name, all or none. Answers
+    /// [`Answer::Ids`] with the new rows' ids in order.
+    Insert {
+        table: String,
+        rows: Vec<serde_json::Map<String, serde_json::Value>>,
+    },
+    /// The rows of `table` whose `column` holds `value`. Answers
+    /// [`Answer::Done`].
+    Delete {
+        table: String,
+        column: String,
+        value: serde_json::Value,
+    },
+}
+
+impl Call {
+    /// Whether the call changes what the project holds.
+    pub fn writes(&self) -> bool {
+        match self {
+            Call::Tables | Call::Query { .. } => false,
+            Call::CreateTable { .. } | Call::Insert { .. } | Call::Delete { .. } => true,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Answer {
+    Tables(Vec<Table>),
+    Table(Table),
+    Rows(Rows),
+    Ids(Vec<i64>),
+    Done,
+    Error(String),
+}
+
+/// One of the project's tables. `key` is what SQL names it by; `name` is what
+/// Cydonia shows.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Table {
+    pub key: String,
+    pub name: String,
+    /// Its entry number, `#N`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub number: Option<u64>,
+    pub columns: Vec<Column>,
+    pub rows: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Column {
+    pub name: String,
+    pub kind: ColType,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ColType {
+    Text,
+    Number,
+    /// Unix seconds.
+    Date,
+    /// 0 or 1.
+    Check,
+}
+
+/// A query's answer: the column names once, then the rows.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Rows {
+    pub columns: Vec<String>,
+    pub rows: Vec<Vec<serde_json::Value>>,
 }
 
 fn is_default<T: Default + PartialEq>(value: &T) -> bool {

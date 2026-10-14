@@ -6,7 +6,10 @@
 //! hover. The app hears a committed change as an event.
 
 use crate::{
-    model::apps::{Command, Event, Node, Runner as _, Runtime},
+    model::{
+        apps::{Command, Event, Node, Runner as _, Runtime},
+        workspace::Workspace,
+    },
     view::kit::link::Links,
 };
 use bezel::{
@@ -28,6 +31,7 @@ use markdown::Links as _;
 use std::{
     collections::{HashMap, HashSet},
     ops::Range,
+    path::PathBuf,
     rc::Rc,
     sync::Arc,
 };
@@ -36,6 +40,9 @@ use std::{
 const RADIUS: f32 = 8.;
 
 pub struct AppView {
+    /// The project whose tables the app's calls reach.
+    project: PathBuf,
+    workspace: Entity<Workspace>,
     state: State,
     lists: HashMap<String, Listed>,
     inputs: HashMap<String, Field>,
@@ -84,7 +91,12 @@ struct Picker {
 
 impl AppView {
     /// Start the app `wasm` off the main thread, and draw it once it is up.
-    pub fn new(wasm: Arc<[u8]>, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        wasm: Arc<[u8]>,
+        project: PathBuf,
+        workspace: Entity<Workspace>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let starting = cx.spawn(async move |this, cx| {
             let started = cx
                 .background_executor()
@@ -103,6 +115,8 @@ impl AppView {
             });
         });
         Self {
+            project,
+            workspace,
             state: State::Starting { _task: starting },
             lists: HashMap::new(),
             inputs: HashMap::new(),
@@ -165,6 +179,18 @@ impl AppView {
                         self.pending.insert(key, value);
                     }
                 },
+                Command::Call { id, call } => {
+                    let project = self.project.clone();
+                    let answer = self
+                        .workspace
+                        .update(cx, |workspace, cx| workspace.table_call(&project, call, cx));
+                    cx.spawn(async move |this, cx| {
+                        let _ = this.update(cx, |this, cx| {
+                            this.dispatch(Event::Answer { call: id, answer }, cx)
+                        });
+                    })
+                    .detach();
+                }
             }
         }
     }

@@ -4,7 +4,7 @@
 use anyhow::Result;
 use std::ops::Range;
 
-pub use guest::wire::{Event, Node};
+pub use guest::wire::{Answer, Call, CallId, Event, Node};
 
 /// What this build runs apps on.
 #[cfg(feature = "desktop")]
@@ -20,10 +20,12 @@ mod none;
 
 /// What an app asked of Cydonia during a call, for Cydonia to do once the
 /// call has returned.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Command {
     /// Put `value` in the input `key`.
     SetInput { key: String, value: String },
+    /// Do `call`, and deliver its answer as an [`Event::Answer`] numbered `id`.
+    Call { id: CallId, call: Call },
 }
 
 /// One running instance of an app. A call that fails leaves the instance

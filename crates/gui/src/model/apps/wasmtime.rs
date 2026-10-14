@@ -185,6 +185,20 @@ fn linker(engine: &Engine) -> Result<Linker<Ctx>> {
             },
         )
         .map_err(|error| anyhow!("{error:#}"))?;
+    linker
+        .func_wrap(
+            abi::MODULE,
+            abi::CALL,
+            |mut caller: Caller<'_, Ctx>, id: u32, request: u32, len: u32| {
+                let request = string(&mut caller, request, len)?;
+                let call = serde_json::from_str(&request).map_err(|error| {
+                    syntax::wasmtime::Error::msg(format!("a call Cydonia cannot read: {error}"))
+                })?;
+                caller.data_mut().commands.push(Command::Call { id, call });
+                Ok(())
+            },
+        )
+        .map_err(|error| anyhow!("{error:#}"))?;
     Ok(linker)
 }
 

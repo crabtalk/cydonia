@@ -69,6 +69,18 @@ impl Data {
         match *self {}
     }
 
+    pub fn insert(
+        &mut self,
+        _: &str,
+        _: &[serde_json::Map<String, serde_json::Value>],
+    ) -> Result<Vec<i64>> {
+        match *self {}
+    }
+
+    pub fn delete_where(&mut self, _: &str, _: &str, _: &serde_json::Value) -> Result<()> {
+        match *self {}
+    }
+
     pub fn delete_rows(&mut self, _: &str, _: &[i64]) -> Result<()> {
         match *self {}
     }

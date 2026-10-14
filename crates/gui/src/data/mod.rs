@@ -18,6 +18,8 @@ pub use artifact::table::{
 
 pub(crate) const FILE: &str = artifact::project::fs::DATA;
 
+mod call;
+
 #[cfg(feature = "desktop")]
 mod sqlite;
 #[cfg(feature = "desktop")]
