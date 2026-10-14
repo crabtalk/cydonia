@@ -396,9 +396,14 @@ impl Cydonia {
                     ),
                 )
             }
-            Row::Group(Group::Project(_)) | Row::Archive(_) | Row::Heading(_) => {
-                (None, UNDONE.to_owned())
+            // Not offered: an app is deleted with its crate.
+            Row::Entry {
+                showing: Showing::App(_),
+                ..
             }
+            | Row::Group(Group::Project(_))
+            | Row::Archive(_)
+            | Row::Heading(_) => (None, UNDONE.to_owned()),
         }
     }
 }

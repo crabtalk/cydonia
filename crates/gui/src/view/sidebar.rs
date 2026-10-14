@@ -295,6 +295,18 @@ impl Row {
             .is_some_and(|project| workspace.is_pinned(project, showing.clone(), cx))
     }
 
+    /// The program an app's row names.
+    pub(crate) fn program(
+        &self,
+        workspace: &Workspace,
+    ) -> Option<Entity<crate::model::apps::Program>> {
+        let (project, ix) = self.located(workspace)?;
+        let Some(Showing::App(_)) = self.showing() else {
+            return None;
+        };
+        Some(workspace.projects[project].apps.get(ix)?.program.clone())
+    }
+
     /// Where an entry row is on disk, for a backend that is the disk.
     pub(crate) fn place(&self, workspace: &Workspace, cx: &App) -> Option<PathBuf> {
         let (project, _) = self.located(workspace)?;
@@ -304,17 +316,20 @@ impl Row {
             Showing::Board(id) => (Kind::Board, id.clone()),
             Showing::Session(id) => (Kind::Session, open.session(*id, cx)?.filed()?.to_owned()),
             Showing::Table(_) => return None,
+            Showing::App(name) => (Kind::App, name.clone()),
         };
         open.store().place(kind, &id)
     }
 }
 
-/// The two sections of the list.
+/// The sections of the list.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub(crate) enum Heading {
     Projects,
     /// Drawn only while there is a space.
     Spaces,
+    /// Every open project's apps. Drawn only while there is one.
+    Apps,
 }
 
 impl Heading {
@@ -323,6 +338,7 @@ impl Heading {
         match self {
             Self::Projects => "Projects",
             Self::Spaces => "Spaces",
+            Self::Apps => "Apps",
         }
     }
 
@@ -330,6 +346,7 @@ impl Heading {
         match self {
             Self::Projects => "projects",
             Self::Spaces => "spaces",
+            Self::Apps => "apps",
         }
     }
 }
@@ -402,6 +419,7 @@ impl Lit {
             Showing::Board(_) => pane == Some(Kind::Board) && open.board == Some(ix),
             Showing::Article(_) => pane == Some(Kind::Article) && open.article == Some(ix),
             Showing::Table(_) => pane == Some(Kind::Table) && open.table == Some(ix),
+            Showing::App(_) => pane == Some(Kind::App) && open.app == Some(ix),
         }
     }
 
@@ -458,7 +476,7 @@ fn project_of(row: &Row) -> Option<&Path> {
     }
 }
 
-/// Whether the kind a row names is switched on. Articles have no switch, and
+/// Whether the kind a row names is switched on. Articles and apps have no switch, and
 /// neither do the two rows that are not entries — a project heading and the
 /// line its archive folds under stand whatever is listed beneath them.
 pub(crate) fn shown(row: &Row, features: &Features) -> bool {
@@ -466,7 +484,7 @@ pub(crate) fn shown(row: &Row, features: &Features) -> bool {
         Some(Showing::Session(_)) => features.sessions,
         Some(Showing::Board(_)) => features.boards,
         Some(Showing::Table(_)) => features.tables,
-        Some(Showing::Article(_)) | None => true,
+        Some(Showing::Article(_) | Showing::App(_)) | None => true,
     }
 }
 
@@ -501,7 +519,7 @@ impl Renaming {
             } => Some(Self::Table(key.clone())),
             Row::Group(Group::Space(id)) => Some(Self::Space(id.clone())),
             Row::Entry {
-                showing: Showing::Article(_) | Showing::Board(_),
+                showing: Showing::Article(_) | Showing::Board(_) | Showing::App(_),
                 ..
             }
             | Row::Group(Group::Project(_))
@@ -640,6 +658,7 @@ pub(crate) fn key_of(entry: &Row) -> String {
         Row::Group(Group::Space(id)) => format!("space-{id}"),
         Row::Heading(Heading::Projects) => "projects".to_owned(),
         Row::Heading(Heading::Spaces) => "spaces".to_owned(),
+        Row::Heading(Heading::Apps) => "apps".to_owned(),
         Row::Archive(path) => format!("archive-{}", path.display()),
         Row::Entry { project, showing } => {
             let project = project.display();
@@ -648,6 +667,7 @@ pub(crate) fn key_of(entry: &Row) -> String {
                 Showing::Board(id) => format!("board-{project}-{id}"),
                 Showing::Article(id) => format!("article-{project}-{id}"),
                 Showing::Table(key) => format!("table-{project}-{key}"),
+                Showing::App(name) => format!("app-{project}-{name}"),
             }
         }
     }
@@ -763,6 +783,8 @@ pub(crate) struct Sidebar {
     /// Redraws the extended rows every [`TICK`] while they are on.
     tick: Option<Task<()>>,
     boards: Watch,
+    /// Every app's program, whose build names its row.
+    apps: Watch,
     /// What each session's row showed when it was last drawn.
     listed: HashMap<u64, Listed>,
     sessions: Watch,
@@ -814,6 +836,7 @@ impl Sidebar {
             measured: Vec::new(),
             tick: None,
             boards: Watch::default(),
+            apps: Watch::default(),
             listed: HashMap::new(),
             sessions: Watch::default(),
             _subscriptions: subscriptions,
@@ -1412,6 +1435,10 @@ impl InWindow for Sidebar {
 impl Render for Sidebar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.watch_sessions(window, cx);
+        let programs: Vec<_> = self.workspace.read(cx).programs().cloned().collect();
+        let mut apps = std::mem::take(&mut self.apps);
+        apps.set(&programs, cx);
+        self.apps = apps;
         let extended = self.extended(cx);
         if extended {
             self.watch_boards(cx);

@@ -40,7 +40,7 @@ const LABELS: Arg = Arg {
 pub static TOOLS: [Tool; 5] = [
     Tool {
         name: "project_entries",
-        description: "List articles, boards, tables, and saved chats with stable project-wide numeric references and their labels, including archived entries.",
+        description: "List articles, boards, tables, apps, and saved chats with stable project-wide numeric references and their labels, including archived entries.",
         schema: |bound| fields(bound, &[PROJECT]),
         writes: false,
         deletes: false,

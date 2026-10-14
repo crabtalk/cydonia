@@ -306,3 +306,81 @@ fn an_insert_naming_a_missing_column_writes_nothing() {
     assert!(answer.is_err());
     assert_eq!(data.list().unwrap()[0].rows, 0);
 }
+
+/// Put an app named `hello` in `project`'s `apps/`, its crate root `lib`.
+fn write_app(project: &std::path::Path, lib: &str) {
+    let dir = project.join("apps/hello");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    let guest = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../guest");
+    std::fs::write(
+        dir.join("Cargo.toml"),
+        format!(
+            "[package]\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n\
+             [lib]\ncrate-type = [\"cdylib\"]\n\n\
+             [dependencies]\ncydonia-guest = {{ path = {:?} }}\n\n[workspace]\n",
+            guest.canonicalize().unwrap()
+        ),
+    )
+    .unwrap();
+    std::fs::write(dir.join("src/lib.rs"), lib).unwrap();
+}
+
+const HELLO: &str = r#"
+use cydonia_guest::{App, node::*};
+
+struct Hello;
+
+impl App for Hello {
+    type Msg = ();
+    fn init() -> Self {
+        Hello
+    }
+    fn update(&mut self, _: ()) {}
+    fn view(&self) -> Node<()> {
+        text("Hello").into()
+    }
+}
+
+cydonia_guest::app!(Hello, name = "Hello there", calls = [tables]);
+"#;
+
+#[test]
+fn an_app_in_apps_is_built_and_listed_by_its_manifest() {
+    use artifact::{app::Source, entry, kind::Kind};
+    use cydonia_gui::model::apps::Program;
+
+    let scratch = Scratch::new("build");
+    std::fs::create_dir_all(scratch.0.join("apps/not-a-crate")).unwrap();
+    write_app(&scratch.0, HELLO);
+    let apps = Source::list(&scratch.0);
+    assert_eq!(apps, [Source::new(&scratch.0, "hello")]);
+    assert_eq!(apps[0].title(), "hello");
+
+    let (wasm, manifest) = Program::compile(&apps[0]).unwrap();
+    assert_eq!(
+        (manifest.id.as_str(), manifest.name.as_str()),
+        ("hello", "Hello there")
+    );
+    assert!(manifest.calls("tables"));
+    assert_eq!(apps[0].title(), "Hello there");
+    let (mut app, _) = Runtime::start(&wasm).unwrap();
+    assert!(shows(&app.view().unwrap(), "Hello"));
+
+    let listed = entry::list(&scratch.0).unwrap();
+    let found = listed.iter().find(|entry| entry.kind == Kind::App).unwrap();
+    assert_eq!(
+        (found.id.as_str(), found.title.as_str()),
+        ("hello", "Hello there")
+    );
+
+    write_app(
+        &scratch.0,
+        &HELLO.replace(
+            "Hello;\n\nimpl",
+            "Hello;\n\nfn broken() -> u32 { \"no\" }\n\nimpl",
+        ),
+    );
+    let error = format!("{:#}", Program::compile(&apps[0]).unwrap_err());
+    assert!(error.contains("mismatched types"), "{error}");
+    assert_eq!(apps[0].title(), "Hello there");
+}

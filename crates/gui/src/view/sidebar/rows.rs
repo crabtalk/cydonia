@@ -463,6 +463,11 @@ impl Sidebar {
                 "table-row",
                 glyph(icons::files::Table2.into()),
             ),
+            Showing::App(_) => (
+                SharedString::from(key_of(entry)).into(),
+                "app-row",
+                glyph(crate::view::kit::icon::kind_icon(artifact::kind::Kind::App)),
+            ),
         };
         // An article is named at the head of its own page and a board by its
         // identity panel, so neither row is ever a field.
@@ -715,6 +720,7 @@ impl Sidebar {
         let group: &'static str = match heading {
             Heading::Projects => "projects-heading",
             Heading::Spaces => "spaces-heading",
+            Heading::Apps => "apps-heading",
         };
         let open = matches!(heading, Heading::Projects).then(|| {
             let chord = keymap::label(Command::OpenProject, &workspace.settings.shortcuts);

@@ -209,6 +209,13 @@ fn entry(project: &Project, number: u64, cx: &App) -> Option<(Kind, Showing, Str
                     )
                 })
         })
+        .or_else(|| {
+            project.apps.iter().find_map(|held| {
+                let program = held.read(cx);
+                (program.number == Some(number))
+                    .then(|| (Kind::App, Showing::App(held.name.clone()), program.label()))
+            })
+        })
 }
 
 /// The card `key-handle` names in `project`, as a part of its board. `text`

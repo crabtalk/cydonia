@@ -955,6 +955,8 @@ impl Cydonia {
                 .map(|view| view.read(cx))
                 .filter(|view| view.cell.is_some())
                 .map(|view| view.cell_field.read(cx).focus_handle(cx)),
+            // An app's fields take the caret when they are pressed.
+            Showing::App(_) => None,
         };
         // The pane's own handle, not the window's: the root's is tracked on a
         // sibling of the panes, so landing there puts the focus outside the
@@ -1266,6 +1268,9 @@ impl Cydonia {
             Kind::Table => open
                 .table
                 .and_then(|ix| Some(Showing::Table(open.tables.get(ix)?.key.clone()))),
+            Kind::App => open
+                .app
+                .and_then(|ix| Some(Showing::App(open.apps.get(ix)?.name.clone()))),
         }
         .map(|showing| Row::Entry {
             project: open.path.clone(),
@@ -1502,9 +1507,7 @@ impl Cydonia {
         if self.has_pane(self.leaf().read(cx).kind, cx) {
             return Some(self.leaf().read(cx).kind);
         }
-        [Kind::Session, Kind::Board, Kind::Article, Kind::Table]
-            .into_iter()
-            .find(|&pane| self.has_pane(pane, cx))
+        Kind::ALL.into_iter().find(|&pane| self.has_pane(pane, cx))
     }
 
     /// Whether the active project has anything open in `pane` — what makes it
@@ -1524,6 +1527,9 @@ impl Cydonia {
             Kind::Board => workspace.active_board(cx).is_some(),
             Kind::Article => workspace.active_article().is_some(),
             Kind::Table => workspace.active_table().is_some(),
+            Kind::App => workspace
+                .active_project()
+                .is_some_and(|open| open.app.is_some()),
         }
     }
 

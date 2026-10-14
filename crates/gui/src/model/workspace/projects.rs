@@ -221,6 +221,7 @@ impl Workspace {
                 project.table = at;
                 project.reload_page();
             }
+            Kind::App => project.app = at,
         }
         // Landing back in a session is being in front of it — see
         // [`Self::wake_session`]. Landing in an article or a board is not, and
@@ -329,10 +330,44 @@ impl Workspace {
         let Some(path) = self.projects.get(ix).map(|open| open.path.clone()) else {
             return;
         };
-        let watch = Watch::open(path, cx);
+        let watch = Watch::open(path.clone(), cx);
+        let apps = Watch::apps(path, cx);
         if let Some(project) = self.projects.get_mut(ix) {
             project.watch = Some(watch);
+            project.apps_watch = Some(apps);
         }
+    }
+
+    /// Open the app listed at `ix` in `project`, bringing the project forward
+    /// with it.
+    pub fn open_app(&mut self, project: usize, ix: usize, cx: &mut Context<Self>) {
+        let Some(open) = self.projects.get_mut(project) else {
+            return;
+        };
+        let Some(name) = open.apps.get(ix).map(|held| held.name.clone()) else {
+            return;
+        };
+        open.app = Some(ix);
+        self.active = Some(project);
+        self.remember(project, Kind::App, name, cx);
+        cx.notify();
+    }
+
+    /// The apps named moved in the project at `path`: re-list them, and build
+    /// again each of the named ones a view runs.
+    pub fn apps_changed(&mut self, path: &Path, names: &[String], cx: &mut Context<Self>) {
+        let Some(ix) = self.projects.iter().position(|open| open.path == path) else {
+            return;
+        };
+        if self.projects[ix].reload_apps(cx) {
+            self.prune_spaces(cx);
+        }
+        for held in &self.projects[ix].apps {
+            if names.contains(&held.name) {
+                held.program.update(cx, |program, cx| program.changed(cx));
+            }
+        }
+        cx.notify();
     }
 
     /// Re-read one project off disk and reconcile it. Addressed by path rather

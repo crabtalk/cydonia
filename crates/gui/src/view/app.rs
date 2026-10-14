@@ -7,11 +7,12 @@
 
 use crate::{
     model::{
-        apps::{Command, Event, Node, Runner as _, Runtime},
+        apps::{Answer, Build, Command, Event, Node, Program, Runner as _, Runtime},
         workspace::Workspace,
     },
-    view::kit::link::Links,
+    view::{kit::link::Links, window::root::Cydonia},
 };
+use artifact::{kind::Kind, space::Member};
 use bezel::{
     gpui::{
         self, AnyElement, Context, ElementId, Entity, EntityInputHandler as _, ImageSource,
@@ -26,12 +27,14 @@ use bezel::{
         widgets::{ButtonStyle, Buttons},
     },
 };
-use guest::wire::{self, Align, Axis, Choice, Handler, Justify, Source, Space, Surface, Tone};
+use guest::{
+    manifest::calls,
+    wire::{self, Align, Axis, Choice, Handler, Justify, Source, Space, Surface, Tone},
+};
 use markdown::Links as _;
 use std::{
     collections::{HashMap, HashSet},
     ops::Range,
-    path::PathBuf,
     rc::Rc,
     sync::Arc,
 };
@@ -39,10 +42,34 @@ use std::{
 /// The corner of a layout drawn on a surface.
 const RADIUS: f32 = 8.;
 
+impl Cydonia {
+    pub(crate) fn open_app(
+        &mut self,
+        project: usize,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.commit(cx);
+        let member = self.workspace.read(cx).app_member(project, ix);
+        if self.enter_member(member, window, cx) {
+            return;
+        }
+        self.workspace
+            .update(cx, |workspace, cx| workspace.open_app(project, ix, cx));
+        self.leaf().update(cx, |pane, _| pane.kind = Kind::App);
+        cx.notify();
+    }
+}
+
 pub struct AppView {
-    /// The project whose tables the app's calls reach.
-    project: PathBuf,
+    /// The app, as a space names it.
+    pub(crate) app: Member,
     workspace: Entity<Workspace>,
+    /// Its program. `None` once the app is gone from the project.
+    program: Option<Entity<Program>>,
+    /// The build the instance was started from.
+    running: Option<Arc<[u8]>>,
     state: State,
     lists: HashMap<String, Listed>,
     inputs: HashMap<String, Field>,
@@ -51,9 +78,12 @@ pub struct AppView {
     selects: HashMap<String, Picker>,
     /// The inputs and selects drawn since the last render.
     drawn: HashSet<String>,
+    _program: Option<Subscription>,
 }
 
 enum State {
+    /// No build to run yet.
+    Idle,
     Starting {
         _task: Task<()>,
     },
@@ -90,13 +120,54 @@ struct Picker {
 }
 
 impl AppView {
-    /// Start the app `wasm` off the main thread, and draw it once it is up.
-    pub fn new(
-        wasm: Arc<[u8]>,
-        project: PathBuf,
-        workspace: Entity<Workspace>,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    /// A view of `app`, which asks for a build and runs each new one.
+    pub fn new(app: Member, workspace: Entity<Workspace>, cx: &mut Context<Self>) -> Self {
+        let program = workspace.read(cx).program_of(&app).cloned();
+        let observing = program
+            .as_ref()
+            .map(|program| cx.observe(program, |this, _, cx| this.sync(cx)));
+        if let Some(program) = &program {
+            program.update(cx, |program, cx| program.want(cx));
+        }
+        let mut this = Self {
+            app,
+            workspace,
+            program,
+            running: None,
+            state: State::Idle,
+            lists: HashMap::new(),
+            inputs: HashMap::new(),
+            pending: HashMap::new(),
+            selects: HashMap::new(),
+            drawn: HashSet::new(),
+            _program: observing,
+        };
+        this.sync(cx);
+        this
+    }
+
+    /// Start the program's latest build, unless it is the one running.
+    fn sync(&mut self, cx: &mut Context<Self>) {
+        let Some(program) = &self.program else {
+            return;
+        };
+        let Some(wasm) = program.read(cx).wasm.clone() else {
+            cx.notify();
+            return;
+        };
+        if self
+            .running
+            .as_ref()
+            .is_some_and(|running| Arc::ptr_eq(running, &wasm))
+        {
+            cx.notify();
+            return;
+        }
+        self.running = Some(wasm.clone());
+        self.lists.clear();
+        self.inputs.clear();
+        self.selects.clear();
+        self.pending.clear();
         let starting = cx.spawn(async move |this, cx| {
             let started = cx
                 .background_executor()
@@ -114,24 +185,8 @@ impl AppView {
                 Err(error) => this.fail(error, cx),
             });
         });
-        Self {
-            project,
-            workspace,
-            state: State::Starting { _task: starting },
-            lists: HashMap::new(),
-            inputs: HashMap::new(),
-            pending: HashMap::new(),
-            selects: HashMap::new(),
-            drawn: HashSet::new(),
-        }
-    }
-
-    /// Why the app stopped, once it has.
-    pub fn failure(&self) -> Option<&SharedString> {
-        match &self.state {
-            State::Failed(error) => Some(error),
-            _ => None,
-        }
+        self.state = State::Starting { _task: starting };
+        cx.notify();
     }
 
     /// Deliver `event`, and draw what the app draws after it.
@@ -180,10 +235,23 @@ impl AppView {
                     }
                 },
                 Command::Call { id, call } => {
-                    let project = self.project.clone();
-                    let answer = self
-                        .workspace
-                        .update(cx, |workspace, cx| workspace.table_call(&project, call, cx));
+                    let declared = self.program.as_ref().is_some_and(|program| {
+                        program
+                            .read(cx)
+                            .manifest
+                            .as_ref()
+                            .is_some_and(|manifest| manifest.calls(calls::TABLES))
+                    });
+                    let project = self.app.project.clone();
+                    let answer = match declared {
+                        true => self
+                            .workspace
+                            .update(cx, |workspace, cx| workspace.table_call(&project, call, cx)),
+                        false => Answer::Error(format!(
+                            "The app's manifest does not declare `{}` among its calls",
+                            calls::TABLES
+                        )),
+                    };
                     cx.spawn(async move |this, cx| {
                         let _ = this.update(cx, |this, cx| {
                             this.dispatch(Event::Answer { call: id, answer }, cx)
@@ -199,6 +267,34 @@ impl AppView {
         self.state = State::Failed(format!("{error:#}").into());
         self.lists.clear();
         cx.notify();
+    }
+
+    /// What stands in the app's place while it is not running: a headline,
+    /// and what cargo or the app said.
+    fn notice(headline: SharedString, detail: SharedString, theme: &Theme) -> AnyElement {
+        div()
+            .id("app-notice")
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .flex()
+            .flex_col()
+            .gap(px(Space::Small.value(theme)))
+            .p(px(Space::Large.value(theme)))
+            .child(
+                div()
+                    .text_style(TextStyle::Headline)
+                    .text_color(theme.text)
+                    .child(headline),
+            )
+            .child(
+                div()
+                    .text_style(TextStyle::Callout)
+                    .text_color(theme.text_muted)
+                    .font_family(theme.font_mono.clone())
+                    .child(detail),
+            )
+            .into_any_element()
     }
 
     /// A node's identity among its siblings: its key, or its place.
@@ -551,34 +647,31 @@ impl Render for AppView {
         self.inputs.retain(|key, _| drawn.contains(key));
         self.selects.retain(|key, _| drawn.contains(key));
         let theme = Theme::of(cx).clone();
-        let body = match &self.state {
-            State::Starting { .. } => div().into_any_element(),
-            State::Running { tree, .. } => {
+        let build = self
+            .program
+            .as_ref()
+            .map(|program| program.read(cx).build.clone());
+        let notice = match (&build, &self.state) {
+            (None, _) => Some(("The app is gone".into(), SharedString::default())),
+            (Some(Build::Failed(error)), _) => {
+                Some(("The app did not build".into(), error.clone().into()))
+            }
+            (Some(Build::Running), State::Idle) => {
+                Some(("Building…".into(), SharedString::default()))
+            }
+            (_, State::Failed(error)) => Some(("The app stopped".into(), error.clone())),
+            _ => None,
+        };
+        let body = match (notice, &self.state) {
+            (Some((headline, detail)), _) => Self::notice(headline, detail, &theme),
+            (None, State::Running { tree, .. }) => {
                 let tree = tree.clone();
                 match &*tree {
                     Node::Layout(layout) => self.layout(layout, 0, true, &theme, window, cx),
                     node => self.draw(node, 0, &theme, window, cx),
                 }
             }
-            State::Failed(error) => div()
-                .flex_1()
-                .flex()
-                .flex_col()
-                .gap(px(Space::Small.value(&theme)))
-                .p(px(Space::Large.value(&theme)))
-                .child(
-                    div()
-                        .text_style(TextStyle::Headline)
-                        .text_color(theme.text)
-                        .child("The app stopped"),
-                )
-                .child(
-                    div()
-                        .text_style(TextStyle::Callout)
-                        .text_color(theme.text_muted)
-                        .child(error.clone()),
-                )
-                .into_any_element(),
+            (None, _) => div().into_any_element(),
         };
         div()
             .size_full()

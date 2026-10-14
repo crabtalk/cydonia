@@ -147,7 +147,7 @@ impl Cydonia {
                         down: scroll.down.offset(),
                     }
                 }
-                Showing::Table(_) => return None,
+                Showing::Table(_) | Showing::App(_) => return None,
             })
         });
         Stop {

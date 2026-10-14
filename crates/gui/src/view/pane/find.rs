@@ -175,7 +175,7 @@ impl Tab {
             Kind::Article => Some(self.article_shown(cx)?.read(cx).hits(cx)),
             Kind::Board => Some(self.board_shown(cx)?.read(cx).hits(cx)),
             Kind::Session => Some(self.session_shown(cx)?.read(cx).hits(cx)),
-            Kind::Table => None,
+            Kind::Table | Kind::App => None,
         }
     }
 
@@ -269,7 +269,7 @@ impl Tab {
                     view.update(cx, |view, cx| view.reveal_hit(cx));
                 }
             }
-            Kind::Table => {}
+            Kind::Table | Kind::App => {}
         }
     }
 

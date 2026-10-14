@@ -290,8 +290,8 @@ pub fn disk(project: &fs::Project, kinds: &[Kind], query: &Query, found: &Sender
                     found,
                 )
             }
-            // Boards are read whole above; tables are not searched.
-            Kind::Board | Kind::Table => true,
+            // Boards are read whole above; tables and apps are not searched.
+            Kind::Board | Kind::Table | Kind::App => true,
         }
     });
 }

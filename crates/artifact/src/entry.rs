@@ -208,6 +208,17 @@ pub fn list(project: &Path) -> Result<Vec<Entry>> {
             });
         }
     }
+    for app in crate::app::Source::list(project) {
+        entries.push(Entry {
+            number: store.number(Kind::App, &app.name)?,
+            kind: Kind::App,
+            title: app.title(),
+            id: app.name,
+            archived: false,
+            labels: Vec::new(),
+            article: None,
+        });
+    }
     entries.sort_by_key(|entry| entry.number);
     Ok(entries)
 }
@@ -263,6 +274,14 @@ pub fn read(project: &Path, entry: &Entry) -> Result<serde_json::Value> {
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             serde_json::json!({"key": entry.id, "columns": columns, "rows": rows, "total": total, "limit": 200})
+        }
+        Kind::App => {
+            let app = crate::app::Source::new(project, &entry.id);
+            serde_json::json!({
+                "name": entry.id,
+                "source": app.dir(),
+                "manifest": app.manifest(),
+            })
         }
         _ => anyhow::bail!("unknown entry kind {}", entry.kind),
     })

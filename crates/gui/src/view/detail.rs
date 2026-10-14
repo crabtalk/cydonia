@@ -609,6 +609,7 @@ impl Cydonia {
                 .table
                 .and_then(|at| workspace.page_in(workspace.active?, at))
                 .is_some(),
+            Kind::App => open.app.is_some(),
         }
     }
 

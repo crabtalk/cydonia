@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 impl Workspace {
     /// The labels the entry `showing` carries in the project at `project`.
-    /// `None` for an entry that cannot carry any, which is a table.
+    /// `None` for an entry that cannot carry any: a table or an app.
     pub fn labels_of<'a>(
         &'a self,
         project: usize,
@@ -23,7 +23,7 @@ impl Workspace {
             Showing::Board(id) => open
                 .board_ix(id)
                 .map(|ix| open.boards[ix].board.read(cx).labels.as_slice()),
-            Showing::Table(_) => None,
+            Showing::Table(_) | Showing::App(_) => None,
         }
     }
 
@@ -53,7 +53,7 @@ impl Workspace {
             Showing::Board(id) => {
                 self.with_board(id, cx, |board| board.labels = labels.clone());
             }
-            Showing::Table(_) => return,
+            Showing::Table(_) | Showing::App(_) => return,
         }
         cx.notify();
     }

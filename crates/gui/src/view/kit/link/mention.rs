@@ -529,6 +529,7 @@ pub(crate) fn preview(url: &str, cx: &App) -> Option<Preview> {
         Kind::Article => "Untitled article",
         Kind::Board => "Untitled board",
         Kind::Table => "Untitled table",
+        Kind::App => "Untitled app",
     };
     let title = untitled(&resolved.title, fallback);
     let title = match resolved.part {

@@ -4,7 +4,7 @@
 use crate::{
     model::workspace::{Showing, Workspace},
     view::{
-        article,
+        app, article,
         board::{self, DismissFind},
         component::{composer::Composer, ribbon::Ribbon, transcript},
         kit::watch::Watch,
@@ -88,6 +88,8 @@ pub(crate) struct Tab {
     pub(crate) sessions: Vec<Entity<transcript::SessionView>>,
     /// The same for each table.
     pub(crate) tables: Vec<Entity<table::TableView>>,
+    /// The same for each app.
+    pub(crate) apps: Vec<Entity<app::AppView>>,
     /// The board's find field, and whether its bar is up.
     ///
     /// The bar stands whenever the query does: a board narrowed with nothing on
@@ -151,6 +153,7 @@ impl Tab {
             articles: Vec::new(),
             sessions: Vec::new(),
             tables: Vec::new(),
+            apps: Vec::new(),
             find_field,
             finding: false,
             find_at: 0,
@@ -249,6 +252,16 @@ impl Tab {
             }
             Showing::Table(_) => match self.table_shown(cx) {
                 Some(view) => view.into_any_element(),
+                None => div().flex_1().into_any_element(),
+            },
+            Showing::App(_) => match self.app_shown(cx) {
+                Some(view) => div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .child(view)
+                    .into_any_element(),
                 None => div().flex_1().into_any_element(),
             },
         }

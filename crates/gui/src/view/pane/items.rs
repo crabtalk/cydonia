@@ -1,9 +1,10 @@
-//! The views a pane holds: one per board, article, table and session it has
+//! The views a pane holds: one per board, article, table, app and session it has
 //! shown, made the first time it shows each and kept so that showing one again
 //! finds it where the pane left it.
 
 use super::{Tab, find::Searchable as _};
 use crate::view::{
+    app::AppView,
     article::ArticleView,
     board::BoardView,
     component::transcript::{Drawn, SessionView},
@@ -26,6 +27,7 @@ impl Tab {
             Kind::Board => workspace.board_member(project, open.board?),
             Kind::Article => workspace.article_member(project, open.article?),
             Kind::Table => workspace.table_member(project, open.table?),
+            Kind::App => workspace.app_member(project, open.app?),
             Kind::Session => None,
         }
     }
@@ -48,6 +50,9 @@ impl Tab {
         }
         if let Some(table) = self.shown_of(Kind::Table, cx) {
             self.table_view(table, cx);
+        }
+        if let Some(app) = self.shown_of(Kind::App, cx) {
+            self.app_view(app, cx);
         }
         if let Some(session) = self.shown_session(cx) {
             self.session_view(session, cx);
@@ -138,6 +143,26 @@ impl Tab {
         self.tables
             .iter()
             .find(|view| view.read(cx).table == table)
+            .cloned()
+    }
+
+    /// The pane's view of `app`, made the first time it shows it.
+    pub(crate) fn app_view(&mut self, app: Member, cx: &mut Context<Self>) -> Entity<AppView> {
+        if let Some(view) = self.apps.iter().find(|view| view.read(cx).app == app) {
+            return view.clone();
+        }
+        let workspace = self.workspace.clone();
+        let view = cx.new(|cx| AppView::new(app, workspace, cx));
+        self.apps.push(view.clone());
+        view
+    }
+
+    /// The app view the pane draws, where it shows an app.
+    pub(crate) fn app_shown(&self, cx: &App) -> Option<Entity<AppView>> {
+        let app = self.shown_of(Kind::App, cx)?;
+        self.apps
+            .iter()
+            .find(|view| view.read(cx).app == app)
             .cloned()
     }
 

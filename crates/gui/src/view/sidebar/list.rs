@@ -81,8 +81,10 @@ impl<'a> List<'a> {
             project: open.path.clone(),
             showing,
         };
+        // Apps are listed under their own heading — see [`Self::apps`].
         let mut entries: Vec<Ranked> = Kind::ALL
             .into_iter()
+            .filter(|kind| *kind != Kind::App)
             .flat_map(|kind| open.every(kind, cx))
             // An article's thread is reached from its article.
             .filter(|facts| match facts.showing {
@@ -133,6 +135,28 @@ impl<'a> List<'a> {
             })
         });
         entries
+    }
+
+    /// Every open project's apps, by name, for the Apps heading.
+    fn apps(&self) -> Vec<Row> {
+        let mut apps: Vec<(String, Row)> = self
+            .workspace
+            .projects
+            .iter()
+            .flat_map(|open| {
+                open.every(Kind::App, self.cx).map(|facts| {
+                    (
+                        facts.label.to_lowercase(),
+                        Row::Entry {
+                            project: open.path.clone(),
+                            showing: facts.showing,
+                        },
+                    )
+                })
+            })
+            .collect();
+        apps.sort_by(|a, b| a.0.cmp(&b.0));
+        apps.into_iter().map(|(_, row)| row).collect()
     }
 
     /// Drop the rows an open space holds: they are listed under it instead,
@@ -252,6 +276,10 @@ impl<'a> List<'a> {
             // several — so its row starts at the column's edge, where the
             // project headings are.
             Row::Group(Group::Space(_)) | Row::Heading(_) => 0,
+            Row::Entry {
+                showing: crate::model::workspace::Showing::App(_),
+                ..
+            } => 0,
             _ => u8::from(self.workspace.indent_project_rows),
         }
     }
@@ -276,6 +304,7 @@ impl<'a> List<'a> {
         if !workspace.spaces.is_empty() {
             sections.push((Heading::Spaces, spaces.collect()));
         }
+        let apps = self.apps();
         let mut rows = Vec::new();
         if let Some(matches) = self.search.rows(self.cx) {
             for (heading, groups) in sections {
@@ -307,6 +336,14 @@ impl<'a> List<'a> {
                     rows.pop();
                 }
             }
+            let apps: Vec<Row> = apps
+                .into_iter()
+                .filter(|row| matches.contains(row))
+                .collect();
+            if !apps.is_empty() {
+                rows.push(Row::Heading(Heading::Apps));
+                rows.extend(apps);
+            }
             return rows;
         }
         for (heading, groups) in sections {
@@ -322,6 +359,12 @@ impl<'a> List<'a> {
                 let members = open.then(|| self.members(&group));
                 rows.push(Row::Group(group));
                 rows.extend(members.into_iter().flatten());
+            }
+        }
+        if !apps.is_empty() {
+            rows.push(Row::Heading(Heading::Apps));
+            if !workspace.section_folded(Heading::Apps.key()) {
+                rows.extend(apps);
             }
         }
         rows
@@ -350,11 +393,13 @@ impl<'a> List<'a> {
                 let kind = match row {
                     Row::Heading(heading) => {
                         section = *heading;
+                        group = None;
                         "heading".into()
                     }
                     Row::Archive(_) => "archive".into(),
                     Row::Group(Group::Project(_)) => "projects".into(),
                     Row::Group(Group::Space(_)) => "spaces".into(),
+                    Row::Entry { .. } if section == Heading::Apps => "apps".into(),
                     Row::Entry { project, .. } => match group {
                         Some(Group::Space(id)) => format!("space-{id}").into(),
                         _ => format!(

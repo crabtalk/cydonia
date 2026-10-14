@@ -438,6 +438,7 @@ impl Cydonia {
             Kind::Article => "Article",
             Kind::Board => "Board",
             Kind::Table => "Table",
+            Kind::App => "App",
         };
         let columns = match &named.row {
             Row::Entry {

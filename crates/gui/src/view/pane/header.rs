@@ -52,6 +52,9 @@ pub(crate) enum Naming {
     /// document, so the pane already holds the field — see
     /// [`crate::view::article`]. Nothing for the band to draw or offer.
     Page,
+    /// In the app's crate, as the name its manifest declares. Nothing for the
+    /// band to draw or offer.
+    Manifest,
 }
 
 impl Cydonia {
@@ -80,6 +83,7 @@ impl Cydonia {
             Showing::Board(id) => Naming::Panel(id),
             Showing::Article(_) => Naming::Page,
             Showing::Table(key) => Naming::Inline(Renaming::Table(key)),
+            Showing::App(_) => Naming::Manifest,
         };
         Some(Toolbar {
             title: facts.label,

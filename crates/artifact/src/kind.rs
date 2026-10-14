@@ -1,8 +1,8 @@
-//! The four things a project holds.
+//! The five things a project holds.
 
 use serde::{Deserialize, Serialize};
 
-/// A session, board, article or table. Serialized as its [`Kind::key`].
+/// A session, board, article, table or app. Serialized as its [`Kind::key`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Kind {
@@ -10,10 +10,17 @@ pub enum Kind {
     Board,
     Article,
     Table,
+    App,
 }
 
 impl Kind {
-    pub const ALL: [Self; 4] = [Self::Session, Self::Board, Self::Article, Self::Table];
+    pub const ALL: [Self; 5] = [
+        Self::Session,
+        Self::Board,
+        Self::Article,
+        Self::Table,
+        Self::App,
+    ];
 
     /// The word entry numbers are issued under — see
     /// [`crate::project::Project::number`].
@@ -23,6 +30,7 @@ impl Kind {
             Self::Board => "board",
             Self::Article => "article",
             Self::Table => "table",
+            Self::App => "app",
         }
     }
 }

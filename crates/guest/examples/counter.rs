@@ -114,4 +114,4 @@ impl App for Counter {
     }
 }
 
-cydonia_guest::app!(Counter);
+cydonia_guest::app!(Counter, name = "Counter");

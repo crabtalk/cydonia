@@ -26,6 +26,7 @@
 //! ```
 
 pub mod host;
+pub mod manifest;
 pub mod node;
 pub mod tables;
 pub mod wire;
@@ -153,10 +154,39 @@ impl<A: App> Runtime<A> {
     }
 }
 
-/// Export `$app` to Cydonia. Once, in the app's crate root.
+/// Export `$app` to Cydonia, with its [`manifest::Manifest`]. Once, in the
+/// app's crate root.
+///
+/// ```ignore
+/// cydonia_guest::app!(Yc, name = "Y Combinator", calls = [tables], hosts = ["yc-oss.github.io"]);
+/// ```
+///
+/// `name` defaults to the crate's name; `calls` names the groups in
+/// [`manifest::calls`] the app makes, and `hosts` the hosts it fetches from.
 #[macro_export]
 macro_rules! app {
-    ($app:ty) => {
+    (
+        $app:ty
+        $(, name = $name:literal)?
+        $(, calls = [$($call:ident),* $(,)?])?
+        $(, hosts = [$($host:literal),* $(,)?])?
+        $(,)?
+    ) => {
+        #[cfg(target_arch = "wasm32")]
+        const _: () = {
+            const DECLARED: $crate::manifest::Declared<'static> = $crate::manifest::Declared {
+                id: ::std::env!("CARGO_PKG_NAME"),
+                name: $crate::__first!($($name)? ; ::std::env!("CARGO_PKG_NAME")),
+                version: ::std::env!("CARGO_PKG_VERSION"),
+                calls: &[$($(::std::stringify!($call)),*)?],
+                hosts: &[$($($host),*)?],
+            };
+            const SIZE: usize = DECLARED.size();
+            #[unsafe(link_section = "cydonia.manifest")]
+            #[used]
+            static MANIFEST: [u8; SIZE] = DECLARED.bytes::<SIZE>();
+        };
+
         // A native build of the app's crate exports nothing; this keeps the
         // app in use there.
         #[cfg(not(target_arch = "wasm32"))]
@@ -200,5 +230,16 @@ macro_rules! app {
                 with(|runtime| runtime.rows(start, end))
             }
         };
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __first {
+    ($given:expr ; $default:expr) => {
+        $given
+    };
+    (; $default:expr) => {
+        $default
     };
 }

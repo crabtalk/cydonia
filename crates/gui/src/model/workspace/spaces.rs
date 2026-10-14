@@ -29,6 +29,8 @@ pub enum Showing {
     Article(String),
     /// A table's key.
     Table(String),
+    /// An app's directory name.
+    App(String),
 }
 
 impl Showing {
@@ -38,6 +40,7 @@ impl Showing {
             Self::Board(_) => Kind::Board,
             Self::Article(_) => Kind::Article,
             Self::Table(_) => Kind::Table,
+            Self::App(_) => Kind::App,
         }
     }
 }
@@ -462,6 +465,7 @@ impl Workspace {
                 .tables
                 .iter()
                 .any(|table| table.archived && table.key == member.id),
+            Kind::App => false,
         }
     }
 
@@ -539,6 +543,9 @@ impl Workspace {
             for table in &open.tables {
                 live.push(Member::new(path.clone(), Kind::Table, table.key.clone()));
             }
+            for held in &open.apps {
+                live.push(Member::new(path.clone(), Kind::App, held.name.clone()));
+            }
         }
         let open: Vec<PathBuf> = self.projects.iter().map(|open| open.path.clone()).collect();
         for space in &mut self.spaces {
@@ -601,6 +608,10 @@ impl Workspace {
                 open.table_ix(&key)?;
                 Member::new(path, Kind::Table, key)
             }
+            Showing::App(name) => {
+                open.app_ix(&name)?;
+                Member::new(path, Kind::App, name)
+            }
         })
     }
 
@@ -620,6 +631,34 @@ impl Workspace {
     pub fn table_member(&self, project: usize, ix: usize) -> Option<Member> {
         let key = self.projects.get(project)?.tables.get(ix)?.key.clone();
         self.filed_member(project, Showing::Table(key))
+    }
+
+    /// The member naming the app listed at `ix` in `project`.
+    pub fn app_member(&self, project: usize, ix: usize) -> Option<Member> {
+        let name = self.projects.get(project)?.apps.get(ix)?.name.clone();
+        self.filed_member(project, Showing::App(name))
+    }
+
+    /// Every open project's programs, which what lists apps observes.
+    pub fn programs(
+        &self,
+    ) -> impl Iterator<Item = &bezel::gpui::Entity<crate::model::apps::Program>> {
+        self.projects
+            .iter()
+            .flat_map(|open| &open.apps)
+            .map(|held| &held.program)
+    }
+
+    /// The program a pane's member names, wherever its project is open.
+    pub fn program_of(
+        &self,
+        member: &Member,
+    ) -> Option<&bezel::gpui::Entity<crate::model::apps::Program>> {
+        let open = self
+            .projects
+            .iter()
+            .find(|open| open.path == member.project)?;
+        Some(&open.apps.get(open.app_ix(&member.id)?)?.program)
     }
 
     /// The board a pane is on, by its place in its project. Named apart from
@@ -739,6 +778,7 @@ impl Workspace {
                     open.reload_page();
                 }
             }
+            Showing::App(name) => open.app = open.app_ix(name),
         }
         self.active = Some(project);
         if let Showing::Session(id) = showing {
@@ -762,7 +802,7 @@ impl Workspace {
                 }
                 true
             }
-            Showing::Session(_) | Showing::Table(_) => true,
+            Showing::Session(_) | Showing::Table(_) | Showing::App(_) => true,
         }
     }
 

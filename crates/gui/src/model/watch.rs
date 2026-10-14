@@ -89,4 +89,47 @@ impl Watch {
         });
         Self { _pump: pump }
     }
+
+    /// Watch a project's `apps/`, and tell the workspace which apps moved
+    /// once it goes quiet.
+    pub fn apps(root: PathBuf, cx: &mut Context<Workspace>) -> Self {
+        let pump = cx.spawn(async move |workspace, cx| {
+            loop {
+                let (tx, mut changes) = mpsc::unbounded::<String>();
+                let changed = move |name: &str| {
+                    let _ = tx.unbounded_send(name.to_owned());
+                };
+                let Some(watching) = artifact::app::watch(&root, changed) else {
+                    return;
+                };
+                loop {
+                    let Some(first) = changes.next().await else {
+                        return;
+                    };
+                    let settle = workspace
+                        .read_with(cx, |workspace, _| bounce(workspace.settings.watch_bounce))
+                        .unwrap_or_else(|_| bounce(BOUNCE));
+                    cx.background_executor().timer(settle).await;
+                    let mut names = vec![first];
+                    while let Ok(name) = changes.try_recv() {
+                        if !names.contains(&name) {
+                            names.push(name);
+                        }
+                    }
+                    let held = workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.apps_changed(&root, &names, cx)
+                        })
+                        .is_ok();
+                    if !held {
+                        return;
+                    }
+                    if !watching.settled {
+                        break;
+                    }
+                }
+            }
+        });
+        Self { _pump: pump }
+    }
 }
