@@ -600,20 +600,6 @@ fn lands(
     }
 }
 
-/// The rows a project's or a space's heading takes along: its group's, down
-/// to the next heading.
-fn carried_rows(rows: &[Row], item: &Dragged) -> Vec<Dragged> {
-    let Dragged::Row(row @ Row::Group(_)) = item else {
-        return Vec::new();
-    };
-    rows.iter()
-        .skip_while(|at| *at != row)
-        .skip(1)
-        .take_while(|at| !matches!(at, Row::Heading(_) | Row::Group(_)))
-        .map(|at| Dragged::Row(at.clone()))
-        .collect()
-}
-
 /// Where each of `rows` starts down the list, and where the last one ends.
 fn tops(shapes: &[Shape]) -> Vec<f32> {
     std::iter::once(0.)
@@ -837,6 +823,22 @@ impl Sidebar {
     /// The list as it stands.
     fn list<'a>(&self, cx: &'a App) -> List<'a> {
         List::new(self.workspace.read(cx), self.search.read(cx), cx)
+    }
+
+    /// The rows drawn: the list's, less the rows of a project or a space whose
+    /// heading is being carried, down to the next heading.
+    fn drawn(&self, cx: &App) -> Vec<Row> {
+        let mut rows = self.list(cx).rows();
+        if let Some(Dragged::Row(head @ Row::Group(_))) = self.sort.carried()
+            && let Some(at) = rows.iter().position(|row| *row == head)
+        {
+            let end = rows[at + 1..]
+                .iter()
+                .position(|row| matches!(row, Row::Heading(_) | Row::Group(_)))
+                .map_or(rows.len(), |after| at + 1 + after);
+            rows.drain(at + 1..end);
+        }
+        rows
     }
 
     /// What the window is showing, handed over as it changes.
@@ -1166,7 +1168,6 @@ impl Sidebar {
         let places = Rc::new(list.row_places(&rows));
         let narrowed: Vec<bool> = rows.iter().map(|row| list.narrowed(row)).collect();
         let rows = Rc::new(rows);
-        let followers = rows.clone();
         let view = cx.entity().downgrade();
         let list = gpui::list(self.rail.clone(), move |ix, window, cx| {
             let Some(row) = rows.get(ix).cloned() else {
@@ -1174,9 +1175,7 @@ impl Sidebar {
             };
             view.update(cx, |this, cx| {
                 let item = Dragged::Row(row.clone());
-                let lifted = this.sort.carried().is_some_and(|carried| {
-                    carried == item || carried_rows(&rows, &carried).contains(&item)
-                });
+                let lifted = this.sort.carried().as_ref() == Some(&item);
                 let el = this.sidebar_row(&row, lifted, window, cx);
                 match row {
                     Row::Heading(_) | Row::Archive(_) => {
@@ -1193,7 +1192,6 @@ impl Sidebar {
             .region("sidebar-list", (), gpui::Axis::Vertical, list)
             .track_scroll(&self.rail)
             .accepts(|item| matches!(item, Dragged::Row(_)))
-            .carries(move |item| carried_rows(&followers, item))
             .lands(move |item, after, before| lands(&places, item, after, before))
             .size_full()
             .on_drop(cx.listener(|this, event: &drag::Drop<(), Dragged>, _, cx| {
@@ -1419,7 +1417,7 @@ impl Render for Sidebar {
             self.watch_boards(cx);
         }
         self.keep_time(extended, cx);
-        let rows = self.list(cx).rows();
+        let rows = self.drawn(cx);
         let pinned = self.pinned_head(&rows, window, cx);
         let visibility = self
             .workspace

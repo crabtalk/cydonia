@@ -2614,7 +2614,6 @@ impl BoardView {
         let viewport = (self.editing.is_none() && !cx.has_active_drag())
             .then_some((-scroll.down.offset().y, height));
         let mut group_top = px(0.);
-        let mut carried = HashMap::new();
         let groups: Vec<AnyElement> = ids
             .iter()
             .enumerate()
@@ -2630,7 +2629,6 @@ impl BoardView {
                     },
                     &mut group_top,
                     viewport,
-                    &mut carried,
                     window,
                     cx,
                 )
@@ -2662,12 +2660,6 @@ impl BoardView {
                             BoardItem::Card(..) => true,
                             BoardItem::Lane(at, _) => *at == key,
                         }
-                    })
-                    .carries(move |item| match item {
-                        BoardItem::Lane(_, column) => {
-                            carried.get(column).cloned().unwrap_or_default()
-                        }
-                        BoardItem::Card(..) => Vec::new(),
                     })
                     // A card lands under a heading; a heading lands in front
                     // of another or at the end.
@@ -2714,7 +2706,6 @@ impl BoardView {
         lane: Lane<'_>,
         group_top: &mut Pixels,
         viewport: Option<(Pixels, Pixels)>,
-        carried: &mut HashMap<String, Vec<BoardItem>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
@@ -2749,7 +2740,9 @@ impl BoardView {
         // otherwise happen out of sight: a query narrowing the board, and the
         // field writing a card into this lane.
         let writing = matches!(&self.editing, Some(Editing::New(_, at)) if *at == id);
-        let folded = folded && query.trim().is_empty() && !writing;
+        // A lane being carried leaves its cards out until it lands.
+        let carried = self.sort.carried() == Some(BoardItem::Lane(key.clone(), id.clone()));
+        let folded = carried || (folded && query.trim().is_empty() && !writing);
         let count = if folded { 0 } else { cards.len() };
         let visible = viewport
             .map(|(top, height)| {
@@ -2815,15 +2808,6 @@ impl BoardView {
             }
         }
         let written = id.clone();
-        if !folded {
-            carried.insert(
-                id.clone(),
-                cards
-                    .iter()
-                    .map(|card| BoardItem::Card(key.clone(), card.clone()))
-                    .collect(),
-            );
-        }
         let heading = self.list_group_header(
             &id,
             name,
