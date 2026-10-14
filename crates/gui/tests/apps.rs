@@ -218,20 +218,35 @@ impl Drop for Scratch {
     }
 }
 
-/// Answer every call the app makes on `data`, and the calls those answers
-/// lead to, until it makes none.
-fn settle(app: &mut Runtime, data: &mut Data, mut commands: Vec<Command>) {
+/// Answer every call the app makes, its tables on `data` and its fetches by
+/// `fetch`, and the calls those answers lead to, until it makes none.
+fn settle_with(
+    app: &mut Runtime,
+    data: &mut Data,
+    mut commands: Vec<Command>,
+    fetch: &dyn Fn(&wire::Request) -> Answer,
+) {
     while !commands.is_empty() {
         for command in std::mem::take(&mut commands) {
             let Command::Call { id, call } = command else {
                 continue;
             };
-            let answer = data
-                .call(call)
-                .unwrap_or_else(|error| Answer::Error(format!("{error:#}")));
+            let answer = match call {
+                Call::Fetch(request) => fetch(&request),
+                call => data
+                    .call(call)
+                    .unwrap_or_else(|error| Answer::Error(format!("{error:#}"))),
+            };
             commands.extend(app.update(&Event::Answer { call: id, answer }).unwrap());
         }
     }
+}
+
+/// [`settle_with`] for an app that fetches nothing.
+fn settle(app: &mut Runtime, data: &mut Data, commands: Vec<Command>) {
+    settle_with(app, data, commands, &|request| {
+        Answer::Error(format!("{} was not expected", request.url))
+    });
 }
 
 #[test]
@@ -443,4 +458,126 @@ fn a_redirect_comes_back_unfollowed() {
         Some("https://elsewhere.example/")
     );
     served.join().unwrap();
+}
+
+/// `apps/yc`'s `.wasm`, built once per test run.
+fn yc() -> Vec<u8> {
+    static WASM: OnceLock<Vec<u8>> = OnceLock::new();
+    WASM.get_or_init(|| {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let target = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("yc");
+        let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+        let status = Process::new(cargo)
+            .current_dir(&root)
+            .args(["build", "--manifest-path", "apps/yc/Cargo.toml"])
+            .args(["--target", "wasm32-unknown-unknown", "--target-dir"])
+            .arg(&target)
+            .status()
+            .expect("cargo runs");
+        assert!(status.success(), "apps/yc builds for wasm32");
+        std::fs::read(target.join("wasm32-unknown-unknown/debug/yc.wasm")).expect("yc's wasm")
+    })
+    .clone()
+}
+
+/// What yc's fixtures answer a fetch of `request` with: yc-oss's listing and
+/// one company's page, and a 404 for every other page.
+fn yc_fetch(request: &wire::Request) -> Answer {
+    let fixture = |name: &str| {
+        std::fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../apps/yc/tests/fixtures")
+                .join(name),
+        )
+        .unwrap()
+    };
+    let (status, body) = match request.url.as_str() {
+        "https://yc-oss.github.io/api/meta.json" => (200, fixture("meta.json")),
+        "https://yc-oss.github.io/api/batches/fall-2025.json" => (200, fixture("listing.json")),
+        "https://www.ycombinator.com/companies/egress-health" => (200, fixture("page.html")),
+        _ => (404, Vec::new()),
+    };
+    Answer::Response(wire::Response {
+        status,
+        headers: Vec::new(),
+        body,
+    })
+}
+
+fn labels(nodes: &[Node]) -> Vec<String> {
+    let mut out = Vec::new();
+    for node in nodes {
+        match node {
+            Node::Layout(layout) => out.extend(labels(&layout.children)),
+            Node::Button(button) => out.push(button.label.clone()),
+            Node::Text(text) => out.push(text.content.clone()),
+            _ => {}
+        }
+    }
+    out
+}
+
+#[test]
+fn yc_refreshes_a_batch_into_its_tables_and_lists_it() {
+    let scratch = Scratch::new("yc");
+    let mut data = Data::open(&scratch.0).unwrap();
+    let (mut app, commands) = Runtime::start(&yc()).unwrap();
+    settle_with(&mut app, &mut data, commands, &yc_fetch);
+    let keys: Vec<String> = data
+        .list()
+        .unwrap()
+        .into_iter()
+        .map(|table| table.key)
+        .collect();
+    assert!(keys.contains(&"companies".into()) && keys.contains(&"founders".into()));
+    let view = app.view().unwrap();
+    assert!(shows(
+        &view,
+        "No companies kept for this batch yet. Refresh fetches them."
+    ));
+
+    let refresh = button(&view, "Refresh");
+    let commands = app.update(&Event::Click { handler: refresh }).unwrap();
+    settle_with(&mut app, &mut data, commands, &yc_fetch);
+    let view = app.view().unwrap();
+    assert!(shows(&view, "Fall 2025: 2 companies and 1 founder kept"));
+    let mut texts_shown = Vec::new();
+    texts(&view, &mut texts_shown);
+    assert!(
+        texts_shown
+            .iter()
+            .any(|text| text.starts_with("1 page failed: Gone Inc (HTTP 404)")),
+        "{texts_shown:?}"
+    );
+
+    let rows = app.rows("companies", 0..2).unwrap();
+    assert_eq!(
+        labels(&rows),
+        [
+            "Egress Health",
+            "Automated revenue cycle management",
+            "Gone Inc",
+            "A page that is not there"
+        ]
+    );
+    let founders = data
+        .query("SELECT name, avatar, batch FROM founders")
+        .unwrap();
+    assert_eq!(
+        founders.rows,
+        [[
+            serde_json::json!("Alex Pedersen"),
+            serde_json::json!("https://bookface-images.s3.amazonaws.com/avatars/7456.jpg"),
+            serde_json::json!("fall-2025"),
+        ]]
+    );
+
+    // A second refresh replaces the batch's rows rather than adding to them.
+    let refresh = button(&app.view().unwrap(), "Refresh");
+    let commands = app.update(&Event::Click { handler: refresh }).unwrap();
+    settle_with(&mut app, &mut data, commands, &yc_fetch);
+    let counts = data
+        .query("SELECT (SELECT count(*) FROM companies), (SELECT count(*) FROM founders)")
+        .unwrap();
+    assert_eq!(counts.rows, [[serde_json::json!(2), serde_json::json!(1)]]);
 }

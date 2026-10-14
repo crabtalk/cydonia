@@ -1,0 +1,19 @@
+[{
+    "slug": "egress-health",
+    "name": "Egress Health",
+    "batch": "Winter 2025",
+    "one_liner": "Automated revenue cycle management",
+    "website": "https://tryegress.com",
+    "url": "https://www.ycombinator.com/companies/egress-health",
+    "small_logo_thumb_url": "https://bookface-images.s3.amazonaws.com/small_logos/392f.png",
+    "status": "Acquired",
+    "team_size": 2,
+    "industry": "Healthcare",
+    "tags": ["AI", "Dental"]
+}, {
+    "slug": "gone",
+    "name": "Gone Inc",
+    "batch": "Winter 2025",
+    "one_liner": "A page that is not there",
+    "url": "https://www.ycombinator.com/companies/gone"
+}]
