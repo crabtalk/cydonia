@@ -23,6 +23,18 @@ pub enum Node {
     Link(Link),
     Image(Image),
     List(List),
+    /// A node of a contract newer than the reader's, by the size it declares.
+    #[serde(untagged)]
+    Unknown(Unknown),
+}
+
+/// What is read of a node the reader does not know.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Unknown {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<f32>,
 }
 
 /// Children in a row or a column.

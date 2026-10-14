@@ -849,7 +849,7 @@ pub(crate) fn version(bytes: &[u8]) -> String {
 
 /// An id or asset name as one path component, refused where it would reach
 /// outside the directory it names something in.
-fn component(name: &str) -> Result<&str> {
+pub(crate) fn component(name: &str) -> Result<&str> {
     anyhow::ensure!(
         !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\\']),
         "{name:?} is not a name"

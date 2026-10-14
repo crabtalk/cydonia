@@ -113,6 +113,7 @@ actions!(
         NewBoard,
         NewArticle,
         NewTable,
+        InstallApp,
         OpenProject,
         CloseProject,
         OpenSettings,

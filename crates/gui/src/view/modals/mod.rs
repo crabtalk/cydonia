@@ -4,6 +4,7 @@
 
 pub mod confirm;
 pub mod desktop;
+pub mod install_app;
 pub mod new_board;
 pub mod palette;
 #[cfg(not(feature = "desktop"))]

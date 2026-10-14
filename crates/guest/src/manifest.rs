@@ -56,6 +56,20 @@ impl Manifest {
         Ok(None)
     }
 
+    /// Refuses an app built against a newer [`crate::CONTRACT`] than this
+    /// one, naming the version it needs.
+    pub fn supported(&self) -> Result<(), String> {
+        match self.contract > crate::CONTRACT {
+            true => Err(format!(
+                "{} needs view contract {}, and this Cydonia has {}",
+                self.name,
+                self.contract,
+                crate::CONTRACT
+            )),
+            false => Ok(()),
+        }
+    }
+
     /// Whether `url` is an `http` or `https` URL on one of the hosts the app
     /// names. A URL carrying a user or a password is not.
     pub fn reaches(&self, url: &str) -> bool {

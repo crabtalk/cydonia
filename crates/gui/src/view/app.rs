@@ -9,7 +9,7 @@ use crate::{
     model::{
         apps::{
             Answer, Build, Call, CallId, Command, Event, Fetcher as _, Http, Manifest, Node,
-            Program, Runner as _, Runtime,
+            Origin, Program, Runner as _, Runtime,
         },
         workspace::Workspace,
     },
@@ -158,6 +158,10 @@ impl AppView {
         let Some(program) = &self.program else {
             return;
         };
+        if !program.read(cx).origin.allowed() {
+            cx.notify();
+            return;
+        }
         let Some(wasm) = program.read(cx).wasm.clone() else {
             cx.notify();
             return;
@@ -302,6 +306,66 @@ impl AppView {
         cx.notify();
     }
 
+    /// The question an installed app asks before it first runs a digest in a
+    /// project: what its manifest says it reaches.
+    fn ask(&self, program: &Entity<Program>, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        let held = program.read(cx);
+        let Origin::Installed { app, .. } = &held.origin else {
+            return div().into_any_element();
+        };
+        let mut reaches = Vec::new();
+        if let Some(manifest) = &held.manifest {
+            if manifest.calls(calls::TABLES) {
+                reaches.push("It reads and writes this project's tables.".to_owned());
+            }
+            if !manifest.hosts.is_empty() {
+                reaches.push(format!("It fetches from {}.", manifest.hosts.join(", ")));
+            }
+        }
+        if reaches.is_empty() {
+            reaches.push("It reaches nothing outside its own view.".to_owned());
+        }
+        let line = |text: String, tone: gpui::Hsla| {
+            div()
+                .text_style(TextStyle::Callout)
+                .text_color(tone)
+                .child(text)
+                .into_any_element()
+        };
+        let program = program.clone();
+        div()
+            .flex_1()
+            .flex()
+            .flex_col()
+            .gap(px(Space::Medium.value(theme)))
+            .p(px(Space::Large.value(theme)))
+            .child(
+                div()
+                    .text_style(TextStyle::Headline)
+                    .text_color(theme.text)
+                    .child(format!("Run {} in this project?", held.label())),
+            )
+            .children(reaches.into_iter().map(|text| line(text, theme.text)))
+            .child(line(
+                format!("{}:{} at {}", app.reference, app.tag, app.digest),
+                theme.text_muted,
+            ))
+            .child(
+                div().flex().child(
+                    theme
+                        .button("Run", ButtonStyle::Prominent, None)
+                        .id("app-allow")
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if let Err(error) = program.update(cx, |program, cx| program.allow(cx))
+                            {
+                                this.fail(error, cx);
+                            }
+                        })),
+                ),
+            )
+            .into_any_element()
+    }
+
     /// What stands in the app's place while it is not running: a headline,
     /// and what cargo or the app said.
     fn notice(headline: SharedString, detail: SharedString, theme: &Theme) -> AnyElement {
@@ -407,6 +471,11 @@ impl AppView {
                     .into_any_element()
             }
             Node::List(list) => self.list(list, theme, cx),
+            Node::Unknown(unknown) => div()
+                .flex_none()
+                .w(px(unknown.width.unwrap_or_default()))
+                .h(px(unknown.height.unwrap_or_default()))
+                .into_any_element(),
         }
     }
 
@@ -699,8 +768,14 @@ impl Render for AppView {
             (_, State::Failed(error)) => Some(("The app stopped".into(), error.clone())),
             _ => None,
         };
+        let asking = self
+            .program
+            .as_ref()
+            .filter(|program| !program.read(cx).origin.allowed())
+            .cloned();
         let body = match (notice, &self.state) {
             (Some((headline, detail)), _) => Self::notice(headline, detail, &theme),
+            (None, _) if let Some(program) = asking => self.ask(&program, &theme, cx),
             (None, State::Running { tree, .. }) => {
                 let tree = tree.clone();
                 match &*tree {

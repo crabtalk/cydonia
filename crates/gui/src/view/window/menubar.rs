@@ -30,7 +30,7 @@ use crate::{
         article::{ToggleOutline, TogglePlainText},
         keymap,
         window::root::{
-            CloseProject, Cydonia, NewArticle, NewBoard, NewSession, NewSessionNext,
+            CloseProject, Cydonia, InstallApp, NewArticle, NewBoard, NewSession, NewSessionNext,
             NewSessionWith, NewTable, NextEntry, OpenProject, OpenSettings, PrevEntry,
             ToggleChanges, ToggleSidebar, ToggleTerminal,
         },
@@ -262,6 +262,7 @@ fn file_menu() -> Vec<MenuItem> {
         MenuItem::action("New Board", NewBoard),
         MenuItem::action("New Article", NewArticle),
         MenuItem::action("New Table", NewTable),
+        MenuItem::action("Install App…", InstallApp),
         MenuItem::separator(),
         MenuItem::action("Open Project…", OpenProject),
         MenuItem::action("Close Project", CloseProject),
@@ -342,6 +343,7 @@ impl Cydonia {
                     .when(tables, |root| {
                         root.on_action(cx.listener(Self::new_table_action))
                     })
+                    .on_action(cx.listener(Self::install_app_action))
             })
             // The bottom panel is the window's, not a pane's: it stands under
             // whatever is showing, a space included. A project is what it

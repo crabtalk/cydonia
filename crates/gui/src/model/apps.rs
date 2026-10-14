@@ -1,9 +1,9 @@
-//! Mini-apps: crates in a project's `apps/` built against `cydonia-guest`,
-//! each a [`Program`], and each open view holding one running instance of it
-//! through [`Runner`].
+//! Mini-apps: crates in a project's `apps/` built against `cydonia-guest`, and
+//! apps installed from a registry, each a [`Program`], and each open view
+//! holding one running instance of it through [`Runner`].
 
 use anyhow::{Context as _, Result, bail};
-use artifact::app::Source;
+use artifact::app::{Installed, Source};
 use bezel::gpui::{App, AppContext as _, Context, Entity, Task};
 use std::{ops::Range, process, sync::Arc};
 
@@ -26,6 +26,8 @@ pub type Runtime = none::Absent;
 pub type Http = http::Ureq;
 #[cfg(not(feature = "desktop"))]
 pub type Http = none::Offline;
+
+pub mod oci;
 
 #[cfg(feature = "desktop")]
 mod http;
@@ -69,13 +71,47 @@ pub trait Runner: Sized + Send + 'static {
 /// An app a project holds: its directory's name, which never changes, and the
 /// program, which every view drawing any of it observes.
 pub struct HeldApp {
+    /// A crate's directory name, or an installed app's reference.
     pub name: String,
     pub program: Entity<Program>,
 }
 
-/// One app's source, and what building it gave.
+/// Where an app comes from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Origin {
+    /// A crate in the project's `apps/`, which Cydonia builds.
+    Source(Source),
+    /// An app installed from a registry, applied to the project at `project`.
+    Installed {
+        project: std::path::PathBuf,
+        app: Installed,
+    },
+}
+
+impl Origin {
+    /// What the project lists it by: a crate's directory name, or an
+    /// installed app's reference.
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Source(source) => &source.name,
+            Self::Installed { app, .. } => &app.reference,
+        }
+    }
+
+    /// Whether the app may run without asking first. An installed app asks
+    /// for each digest it runs.
+    pub fn allowed(&self) -> bool {
+        match self {
+            Self::Source(_) => true,
+            Self::Installed { app, .. } => app.allowed(),
+        }
+    }
+}
+
+/// One app, and the build its views run: what cargo made of a crate, or an
+/// installed app's pinned `.wasm`.
 pub struct Program {
-    pub source: Source,
+    pub origin: Origin,
     pub number: Option<u64>,
     /// The last good build's manifest.
     pub manifest: Option<Manifest>,
@@ -96,10 +132,13 @@ pub enum Build {
 }
 
 impl Program {
-    pub fn new(source: Source, number: Option<u64>) -> Self {
+    pub fn new(origin: Origin, number: Option<u64>) -> Self {
         Self {
-            manifest: source.manifest(),
-            source,
+            manifest: match &origin {
+                Origin::Source(source) => source.manifest(),
+                Origin::Installed { app, .. } => app.manifest(),
+            },
+            origin,
             number,
             wasm: None,
             build: Build::Idle,
@@ -108,13 +147,37 @@ impl Program {
         }
     }
 
-    /// What the app is listed as: its manifest's name, or its directory's
-    /// before a build has given it one.
+    /// What the app is listed as: its manifest's name, or before a build has
+    /// given it one, what the project lists it by.
     pub fn label(&self) -> String {
         self.manifest
             .as_ref()
             .map(|manifest| manifest.name.clone())
-            .unwrap_or_else(|| self.source.name.clone())
+            .unwrap_or_else(|| self.origin.name().to_owned())
+    }
+
+    /// Take a re-read of where the app comes from: an installed app pulled
+    /// again, or let run.
+    pub fn adopt(&mut self, origin: Origin, cx: &mut Context<Self>) {
+        if self.origin == origin {
+            return;
+        }
+        self.origin = origin;
+        if self.wanted {
+            self.rebuild(cx);
+        }
+        cx.notify();
+    }
+
+    /// Let an installed app's pinned digest run in its project.
+    pub fn allow(&mut self, cx: &mut Context<Self>) -> Result<()> {
+        let Origin::Installed { project, app } = &mut self.origin else {
+            return Ok(());
+        };
+        app.allowed = Some(app.digest.clone());
+        app.save(project)?;
+        cx.notify();
+        Ok(())
     }
 
     /// Build the app for a view about to run it, once.
@@ -127,19 +190,25 @@ impl Program {
 
     /// Its source moved: build it again if a view has asked for it.
     pub fn changed(&mut self, cx: &mut Context<Self>) {
-        if self.wanted {
+        if self.wanted && matches!(self.origin, Origin::Source(_)) {
             self.rebuild(cx);
         }
     }
 
-    /// Build now. A build under way is dropped for this one.
+    /// Build a crate now, or read an installed app's `.wasm`. A build under
+    /// way is dropped for this one.
     pub fn rebuild(&mut self, cx: &mut Context<Self>) {
         self.build = Build::Running;
-        let source = self.source.clone();
+        let origin = self.origin.clone();
         self._building = Some(cx.spawn(async move |this, cx| {
             let built = cx
                 .background_executor()
-                .spawn(async move { Program::compile(&source) })
+                .spawn(async move {
+                    match origin {
+                        Origin::Source(source) => Program::compile(&source),
+                        Origin::Installed { app, .. } => Program::load(&app),
+                    }
+                })
                 .await;
             let _ = this.update(cx, |this, cx| {
                 match built {
@@ -159,10 +228,10 @@ impl Program {
 }
 
 impl HeldApp {
-    pub fn new(source: Source, number: Option<u64>, cx: &mut App) -> Self {
+    pub fn new(origin: Origin, number: Option<u64>, cx: &mut App) -> Self {
         Self {
-            name: source.name.clone(),
-            program: cx.new(|_| Program::new(source, number)),
+            name: origin.name().to_owned(),
+            program: cx.new(|_| Program::new(origin, number)),
         }
     }
 
@@ -172,6 +241,26 @@ impl HeldApp {
 }
 
 impl Program {
+    /// An installed app's pinned `.wasm` and its manifest, checked against
+    /// the digest it is pinned to.
+    pub fn load(app: &Installed) -> Result<(Vec<u8>, Manifest)> {
+        use sha2::{Digest as _, Sha256};
+        let path = app.wasm()?;
+        let wasm = std::fs::read(&path)
+            .with_context(|| format!("{} is not installed on this machine", app.reference))?;
+        let found = format!("sha256:{:x}", Sha256::digest(&wasm));
+        anyhow::ensure!(
+            found == app.digest,
+            "{} is not the {} it was pinned to",
+            path.display(),
+            app.digest
+        );
+        let manifest = Manifest::read(&wasm)
+            .map_err(anyhow::Error::msg)?
+            .context("The installed app has no manifest")?;
+        Ok((wasm, manifest))
+    }
+
     /// Build `source` with cargo, keep the `.wasm` where [`Source::built`] says,
     /// and answer with it and its manifest. Blocks until cargo is done.
     pub fn compile(source: &Source) -> Result<(Vec<u8>, Manifest)> {

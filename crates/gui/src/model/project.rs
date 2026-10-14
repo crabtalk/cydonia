@@ -7,7 +7,7 @@
 use crate::{
     data::{Data, Page, Table},
     model::{
-        apps::HeldApp,
+        apps::{HeldApp, Origin},
         article::{self, Article},
         session::ChatSession,
         store::{self, Store},
@@ -179,13 +179,27 @@ impl Project {
             .map(|held| (held.name.clone(), held))
             .collect();
         let store = self.store();
-        self.apps = artifact::app::Source::list(&self.path)
+        let origins = artifact::app::Source::list(&self.path)
             .into_iter()
-            .map(|source| match held.remove(&source.name) {
-                Some(kept) => kept,
+            .map(Origin::Source)
+            .chain(
+                artifact::app::Installed::list(&self.path)
+                    .into_iter()
+                    .map(|app| Origin::Installed {
+                        project: self.path.clone(),
+                        app,
+                    }),
+            );
+        self.apps = origins
+            .map(|origin| match held.remove(origin.name()) {
+                Some(kept) => {
+                    kept.program
+                        .update(cx, |program, cx| program.adopt(origin, cx));
+                    kept
+                }
                 None => {
-                    let number = store.number(Kind::App, &source.name).ok();
-                    HeldApp::new(source, number, cx)
+                    let number = store.number(Kind::App, origin.name()).ok();
+                    HeldApp::new(origin, number, cx)
                 }
             })
             .collect();

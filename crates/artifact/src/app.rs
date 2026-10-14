@@ -1,17 +1,27 @@
-//! A project's apps: each directory under `apps/` holding a `Cargo.toml` is a
-//! crate built against `cydonia-guest`, named by its directory. What building
-//! one gives is kept under `.cydonia/build/`.
+//! A project's apps. Each directory under `apps/` holding a `Cargo.toml` is a
+//! crate built against `cydonia-guest`, named by its directory; what building
+//! one gives is kept under `.cydonia/build/`. An app installed from a registry
+//! is applied to a project by its record under `.cydonia/apps/<id>/`, and its
+//! `.wasm` is kept once for every project, under the data directory's `app/`.
 
-use crate::project::{Watching, fs};
+use crate::project::{
+    Watching,
+    fs::{self, component},
+};
+use anyhow::{Context as _, Result, bail};
 use guest::manifest::Manifest;
 use notify::{RecursiveMode, Watcher as _};
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-/// The directory a project's apps are in.
+/// The directory a project's apps are in, and under `.cydonia/` the one its
+/// installed apps are applied in.
 pub const DIR: &str = "apps";
 /// Under `.cydonia/`: the built apps, and the target directory they are
 /// built in.
 const BUILD: &str = "build";
+/// An installed app's record, in its directory under `.cydonia/apps/`.
+const RECORD: &str = "app.toml";
 
 /// One app's source, by the project it is in and its directory's name.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -118,4 +128,88 @@ pub fn watch(project: &Path, changed: impl Fn(&str) + Send + Sync + 'static) -> 
             .ok()
             .map(|()| Watching::new(false, watcher)),
     }
+}
+
+/// An app installed from a registry and applied to a project: where it was
+/// pulled from, and the digest its `.wasm` is pinned to.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Installed {
+    /// Its manifest's id, which names its directories.
+    pub id: String,
+    /// The repository it was pulled from, without a tag:
+    /// `ghcr.io/crabtalk/cydonia/yc`. What the project lists it by.
+    pub reference: String,
+    /// The tag it was pulled by.
+    pub tag: String,
+    /// The `.wasm`'s digest, `sha256:<hex>`.
+    pub digest: String,
+    /// The digest the person has let run in this project, after its
+    /// permission prompt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed: Option<String>,
+}
+
+impl Installed {
+    /// The installed apps applied to `project`, by reference.
+    pub fn list(project: &Path) -> Vec<Self> {
+        let Ok(dirs) = std::fs::read_dir(applied_dir(project)) else {
+            return Vec::new();
+        };
+        let mut apps: Vec<Self> = dirs
+            .flatten()
+            .filter_map(|dir| std::fs::read_to_string(dir.path().join(RECORD)).ok())
+            .filter_map(|text| toml::from_str(&text).ok())
+            .collect();
+        apps.sort_by(|a: &Self, b| a.reference.cmp(&b.reference));
+        apps
+    }
+
+    /// Apply it to `project`, or write what changed about it there. An app
+    /// with another reference already applied under the same id is refused.
+    pub fn save(&self, project: &Path) -> Result<()> {
+        let path = applied_dir(project).join(component(&self.id)?).join(RECORD);
+        if let Ok(text) = std::fs::read_to_string(&path)
+            && let Ok(held) = toml::from_str::<Self>(&text)
+            && held.reference != self.reference
+        {
+            bail!(
+                "{} is already applied here from {}",
+                self.id,
+                held.reference
+            );
+        }
+        crate::fs::save(&path, toml::to_string(self)?)?;
+        Ok(())
+    }
+
+    /// Whether the person has let this digest run.
+    pub fn allowed(&self) -> bool {
+        self.allowed.as_deref() == Some(self.digest.as_str())
+    }
+
+    /// Where its pinned `.wasm` is kept.
+    pub fn wasm(&self) -> Result<PathBuf> {
+        Self::wasm_at(&self.id, &self.digest)
+    }
+
+    /// Where the `.wasm` of app `id` with `digest` is kept.
+    pub fn wasm_at(id: &str, digest: &str) -> Result<PathBuf> {
+        let hex = digest
+            .strip_prefix("sha256:")
+            .filter(|hex| hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit()))
+            .with_context(|| format!("{digest} is not a sha256 digest"))?;
+        Ok(crate::backup::data_dir()?
+            .join("app")
+            .join(component(id)?)
+            .join(format!("{hex}.wasm")))
+    }
+
+    /// Its manifest, read from its kept `.wasm`.
+    pub fn manifest(&self) -> Option<Manifest> {
+        Manifest::read(&std::fs::read(self.wasm().ok()?).ok()?).ok()?
+    }
+}
+
+fn applied_dir(project: &Path) -> PathBuf {
+    fs::Project::new(project).cydonia().join(DIR)
 }

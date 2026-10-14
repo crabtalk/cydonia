@@ -93,3 +93,16 @@ fn a_url_reaches_only_the_hosts_named() {
         assert!(!manifest.reaches(url), "{url}");
     }
 }
+
+#[test]
+fn an_app_built_for_a_newer_contract_is_refused_naming_it() {
+    let mut manifest: Manifest =
+        serde_json::from_slice(&DECLARED.bytes::<{ DECLARED.size() }>()).unwrap();
+    assert!(manifest.supported().is_ok());
+    manifest.contract = CONTRACT + 1;
+    let refused = manifest.supported().unwrap_err();
+    assert!(
+        refused.contains(&format!("contract {}", CONTRACT + 1)),
+        "{refused}"
+    );
+}
