@@ -38,7 +38,7 @@ use bezel::{
         input::{FieldEvent, TextField},
         menu::Item as MenuItem,
         popover, table, tabs,
-        widgets::{ButtonStyle, Buttons, Controls},
+        widgets::{ButtonStyle, Buttons, Content, Controls},
     },
 };
 use std::{cell::Cell, collections::HashSet, ops::Range, path::PathBuf, rc::Rc};
@@ -374,6 +374,8 @@ struct Listing {
     archived: bool,
     /// `None` where the tab shows none.
     labels: Option<Vec<String>>,
+    /// An app Cydonia builds from source on this machine.
+    local: bool,
 }
 
 impl Cydonia {
@@ -472,6 +474,7 @@ impl Library {
                         .filter(|_| library.tab.fields().contains(&Field::Created)),
                     archived: facts.archived,
                     labels: library.tab.labelled().then_some(facts.labels),
+                    local: facts.local,
                 });
             }
         }
@@ -1329,6 +1332,7 @@ impl Library {
                         })
                         .child(listing.title.clone()),
                 )
+                .children(listing.local.then(|| theme.badge("Local")))
                 .into_any_element()
         };
         let cells = tab

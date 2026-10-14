@@ -242,12 +242,10 @@ impl Cydonia {
             ));
         }
 
-        if let Some(program) = entry.program(self.workspace.read(cx)).filter(|program| {
-            matches!(
-                program.read(cx).origin,
-                crate::model::apps::Origin::Source(_)
-            )
-        }) {
+        if let Some(program) = entry
+            .program(self.workspace.read(cx))
+            .filter(|program| program.read(cx).local())
+        {
             shown.push(menu::row::<Cydonia>(
                 Item::action("Build again").with_icon(icons::arrows::RefreshCw),
                 move |_, _, cx| program.update(cx, |program, cx| program.rebuild(cx)),

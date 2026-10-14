@@ -90,8 +90,9 @@ impl Watch {
         Self { _pump: pump }
     }
 
-    /// Watch a project's `apps/`, and tell the workspace which apps moved
-    /// once it goes quiet.
+    /// Watch a project's apps, and tell the workspace which moved once they
+    /// go quiet. Armed again when what is listed may have moved, so a folder
+    /// loaded since is watched.
     pub fn apps(root: PathBuf, cx: &mut Context<Workspace>) -> Self {
         let pump = cx.spawn(async move |workspace, cx| {
             loop {
@@ -124,7 +125,7 @@ impl Watch {
                     if !held {
                         return;
                     }
-                    if !watching.settled {
+                    if !watching.settled || names.iter().any(String::is_empty) {
                         break;
                     }
                 }

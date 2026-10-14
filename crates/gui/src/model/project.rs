@@ -41,6 +41,8 @@ pub struct Facts {
     pub labels: Vec<String>,
     /// The agent a session runs on; `None` for every other kind.
     pub agent: Option<String>,
+    /// An app Cydonia builds from source on this machine.
+    pub local: bool,
 }
 
 /// A board a project holds: its id, which never changes, and the board, which
@@ -134,7 +136,8 @@ impl Project {
         })
     }
 
-    pub fn new(path: PathBuf, cx: &mut App) -> Self {
+    /// `developer` is [`Self::reload_apps`]'s.
+    pub fn new(path: PathBuf, developer: bool, cx: &mut App) -> Self {
         let mut this = Self {
             boards: store::open(&path)
                 .boards()
@@ -161,13 +164,14 @@ impl Project {
             apps_watch: None,
         };
         this.reload_tables();
-        this.reload_apps(cx);
+        this.reload_apps(developer, cx);
         this
     }
 
-    /// Re-list the apps in `apps/`, keeping the program of every app still
-    /// there. Answers whether the list changed.
-    pub fn reload_apps(&mut self, cx: &mut App) -> bool {
+    /// Re-list the project's apps, keeping the program of every app still
+    /// there. Without `developer`, only installed apps are listed. Answers
+    /// whether the list changed.
+    pub fn reload_apps(&mut self, developer: bool, cx: &mut App) -> bool {
         let open = self
             .app
             .and_then(|ix| self.apps.get(ix))
@@ -179,26 +183,17 @@ impl Project {
             .map(|held| (held.name.clone(), held))
             .collect();
         let store = self.store();
-        let origins = artifact::app::Source::list(&self.path)
+        self.apps = Origin::list(&self.path)
             .into_iter()
-            .map(Origin::Source)
-            .chain(
-                artifact::app::Installed::list(&self.path)
-                    .into_iter()
-                    .map(|app| Origin::Installed {
-                        project: self.path.clone(),
-                        app,
-                    }),
-            );
-        self.apps = origins
-            .map(|origin| match held.remove(origin.name()) {
+            .filter(|origin| developer || origin.local().is_none())
+            .map(|origin| match held.remove(origin.name().as_ref()) {
                 Some(kept) => {
                     kept.program
                         .update(cx, |program, cx| program.adopt(origin, cx));
                     kept
                 }
                 None => {
-                    let number = store.number(Kind::App, origin.name()).ok();
+                    let number = store.number(Kind::App, &origin.name()).ok();
                     HeldApp::new(origin, number, cx)
                 }
             })
@@ -233,15 +228,16 @@ impl Project {
     /// place on a board, a column's place in a table. Everything else is drawn off the model each frame and
     /// nobody keeps a handle on it, so a re-read that only changed those has
     /// nothing to announce — and announcing it would drop the edit somebody has
-    /// open over the echo of their own save.
-    pub fn reload(&mut self, cx: &mut Context<Workspace>) -> bool {
+    /// open over the echo of their own save. `developer` is
+    /// [`Self::reload_apps`]'s.
+    pub fn reload(&mut self, developer: bool, cx: &mut Context<Workspace>) -> bool {
         // The store can appear long after the project was opened, and an agent
         // making one is exactly the case this watch is here for.
         if self.data.is_none() {
             self.data = Data::attach(&self.path);
         }
         self.reload_articles(cx);
-        self.reload_apps(cx);
+        self.reload_apps(developer, cx);
         let boards = self.reload_boards(cx);
         let before = self.shape();
         self.reload_tables();
@@ -475,6 +471,7 @@ impl Project {
                     archived: chat.closed,
                     labels: chat.labels.clone(),
                     agent: Some(chat.entry.name.clone()),
+                    local: false,
                 }
             }
             Kind::Board => {
@@ -488,6 +485,7 @@ impl Project {
                     archived: board.archived,
                     labels: board.labels.clone(),
                     agent: None,
+                    local: false,
                 }
             }
             Kind::Article => {
@@ -501,6 +499,7 @@ impl Project {
                     archived: article.archived,
                     labels: article.labels.clone(),
                     agent: None,
+                    local: false,
                 }
             }
             Kind::Table => {
@@ -514,6 +513,7 @@ impl Project {
                     archived: table.archived,
                     labels: Vec::new(),
                     agent: None,
+                    local: false,
                 }
             }
             Kind::App => {
@@ -528,6 +528,7 @@ impl Project {
                     archived: false,
                     labels: Vec::new(),
                     agent: None,
+                    local: program.local(),
                 }
             }
         }

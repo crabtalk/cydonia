@@ -29,9 +29,9 @@ use crate::{
         table,
         window::menubar,
         window::root::{
-            self, CloseProject, GoBack, GoForward, InstallApp, NewArticle, NewBoard, NewSession,
-            NewSessionNext, NewTable, NextEntry, OpenFiles, OpenProject, OpenReview, OpenSettings,
-            PrevEntry, ToggleChanges, ToggleSidebar, ToggleTerminal,
+            self, CloseProject, GoBack, GoForward, InstallApp, LoadApp, NewArticle, NewBoard,
+            NewSession, NewSessionNext, NewTable, NextEntry, OpenFiles, OpenProject, OpenReview,
+            OpenSettings, PrevEntry, ToggleChanges, ToggleSidebar, ToggleTerminal,
         },
     },
 };
@@ -70,6 +70,7 @@ pub enum Command {
     NewArticle,
     NewTable,
     InstallApp,
+    LoadApp,
     OpenProject,
     CloseProject,
     ToggleSidebar,
@@ -112,7 +113,7 @@ impl Menu {
 }
 
 impl Command {
-    pub const ALL: [Self; 24] = [
+    pub const ALL: [Self; 25] = [
         Self::OpenSettings,
         Self::NewSession,
         Self::NewSessionNext,
@@ -120,6 +121,7 @@ impl Command {
         Self::NewArticle,
         Self::NewTable,
         Self::InstallApp,
+        Self::LoadApp,
         Self::OpenProject,
         Self::CloseProject,
         Self::ToggleSidebar,
@@ -149,6 +151,7 @@ impl Command {
             Self::NewArticle => "new_article",
             Self::NewTable => "new_table",
             Self::InstallApp => "install_app",
+            Self::LoadApp => "load_app",
             Self::OpenProject => "open_project",
             Self::CloseProject => "close_project",
             Self::ToggleSidebar => "toggle_sidebar",
@@ -179,6 +182,7 @@ impl Command {
             Self::NewArticle => "New Article",
             Self::NewTable => "New Table",
             Self::InstallApp => "Install App…",
+            Self::LoadApp => "Load App from Folder…",
             Self::OpenProject => "Open Project…",
             Self::CloseProject => "Close Project",
             Self::ToggleSidebar => "Toggle Sidebar",
@@ -208,6 +212,7 @@ impl Command {
             | Self::NewArticle
             | Self::NewTable
             | Self::InstallApp
+            | Self::LoadApp
             | Self::OpenProject
             | Self::CloseProject => Menu::File,
             Self::ToggleTerminal
@@ -228,7 +233,7 @@ impl Command {
         }
     }
 
-    /// The chord it ships with, where it ships with one. The six that do not
+    /// The chord it ships with, where it ships with one. The ones that do not
     /// are reachable from the menu and were never worth a default between
     /// them: ⌘N is the session, and three more `New` chords would spend the
     /// letters a person may want for their own.
@@ -244,6 +249,7 @@ impl Command {
             | Self::NewArticle
             | Self::NewTable
             | Self::InstallApp
+            | Self::LoadApp
             | Self::CloseProject => return None,
             // Nothing: ⌃⇥ and ⇧⌃⇥ are what step between entries, and they are
             // bound where nothing can name them — see [`root::bindings`]. A
@@ -283,6 +289,7 @@ impl Command {
             Self::NewArticle => KeyBinding::new(chord, NewArticle, context),
             Self::NewTable => KeyBinding::new(chord, NewTable, context),
             Self::InstallApp => KeyBinding::new(chord, InstallApp, context),
+            Self::LoadApp => KeyBinding::new(chord, LoadApp, context),
             Self::OpenProject => KeyBinding::new(chord, OpenProject, context),
             Self::CloseProject => KeyBinding::new(chord, CloseProject, context),
             Self::ToggleSidebar => KeyBinding::new(chord, ToggleSidebar, context),

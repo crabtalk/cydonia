@@ -322,15 +322,15 @@ fn an_insert_naming_a_missing_column_writes_nothing() {
     assert_eq!(data.list().unwrap()[0].rows, 0);
 }
 
-/// Put an app named `hello` in `project`'s `apps/`, its crate root `lib`.
-fn write_app(project: &std::path::Path, lib: &str) {
-    let dir = project.join("apps/hello");
+/// Put a crate named `hello` in `dir`, its crate root `lib`.
+fn write_crate(dir: &std::path::Path, lib: &str) {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     let guest = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../guest");
     std::fs::write(
         dir.join("Cargo.toml"),
         format!(
             "[package]\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n\
+             [package.metadata.cydonia]\nname = \"Hello there\"\ncalls = [\"tables\"]\n\n\
              [lib]\ncrate-type = [\"cdylib\"]\n\n\
              [dependencies]\ncydonia-guest = {{ path = {:?} }}\n\n[workspace]\n",
             guest.canonicalize().unwrap()
@@ -356,28 +356,31 @@ impl App for Hello {
     }
 }
 
-cydonia_guest::app!(Hello, name = "Hello there", calls = [tables]);
+cydonia_guest::app!(Hello);
 "#;
 
 #[test]
 fn an_app_in_apps_is_built_and_listed_by_its_manifest() {
-    use artifact::{app::Source, entry, kind::Kind};
+    use artifact::{
+        app::{Origin, Source},
+        entry,
+        kind::Kind,
+    };
     use cydonia_gui::model::apps::Program;
 
     let scratch = Scratch::new("build");
     std::fs::create_dir_all(scratch.0.join("apps/not-a-crate")).unwrap();
-    write_app(&scratch.0, HELLO);
+    write_crate(&scratch.0.join("apps/hello"), HELLO);
     let apps = Source::list(&scratch.0);
     assert_eq!(apps, [Source::new(&scratch.0, "hello")]);
-    assert_eq!(apps[0].title(), "hello");
+    let krate = apps[0].krate();
+    let declared = krate.manifest().unwrap();
+    assert_eq!(declared.name, "Hello there");
+    assert!(declared.calls("tables"));
+    assert_eq!(Origin::Source(apps[0].clone()).title(), "Hello there");
 
-    let (wasm, manifest) = Program::compile(&apps[0]).unwrap();
-    assert_eq!(
-        (manifest.id.as_str(), manifest.name.as_str()),
-        ("hello", "Hello there")
-    );
-    assert!(manifest.calls("tables"));
-    assert_eq!(apps[0].title(), "Hello there");
+    let (wasm, manifest) = Program::compile(&krate).unwrap();
+    assert_eq!(manifest, declared);
     let (mut app, _) = Runtime::start(&wasm).unwrap();
     assert!(shows(&app.view().unwrap(), "Hello"));
 
@@ -388,16 +391,64 @@ fn an_app_in_apps_is_built_and_listed_by_its_manifest() {
         ("hello", "Hello there")
     );
 
-    write_app(
-        &scratch.0,
+    write_crate(
+        &scratch.0.join("apps/hello"),
         &HELLO.replace(
             "Hello;\n\nimpl",
             "Hello;\n\nfn broken() -> u32 { \"no\" }\n\nimpl",
         ),
     );
-    let error = format!("{:#}", Program::compile(&apps[0]).unwrap_err());
+    let error = format!("{:#}", Program::compile(&krate).unwrap_err());
     assert!(error.contains("mismatched types"), "{error}");
-    assert_eq!(apps[0].title(), "Hello there");
+    assert_eq!(krate.manifest().unwrap().name, "Hello there");
+}
+
+#[test]
+fn a_crate_loaded_from_a_folder_is_recorded_by_its_path_and_built() {
+    use artifact::{
+        app::{Installed, Loaded, Origin},
+        entry,
+        kind::Kind,
+    };
+    use cydonia_gui::model::apps::Program;
+
+    let scratch = Scratch::new("loaded");
+    let (project, folder) = (scratch.0.join("project"), scratch.0.join("elsewhere/hello"));
+    std::fs::create_dir_all(&project).unwrap();
+    write_crate(&folder, HELLO);
+
+    let loaded = Loaded::read(&folder).unwrap();
+    assert_eq!(loaded.id, "hello");
+    assert_eq!(loaded.path, folder.canonicalize().unwrap());
+    loaded.save(&project).unwrap();
+    let origin = Origin::Loaded {
+        project: project.clone(),
+        app: loaded.clone(),
+    };
+    assert_eq!(Origin::list(&project), std::slice::from_ref(&origin));
+    assert!(Installed::list(&project).is_empty());
+    assert!(origin.allowed());
+    assert_eq!(origin.title(), "Hello there");
+
+    let installed = Installed {
+        id: "hello".into(),
+        reference: "ghcr.io/someone/hello".into(),
+        tag: "1".into(),
+        digest: format!("sha256:{}", "0".repeat(64)),
+        allowed: None,
+    };
+    let refused = format!("{:#}", installed.save(&project).unwrap_err());
+    assert!(refused.contains("already applied"), "{refused}");
+
+    let krate = origin.local().unwrap();
+    assert_eq!(krate.dir, loaded.path);
+    let (wasm, _) = Program::compile(&krate).unwrap();
+    assert_eq!(std::fs::read(&krate.built).unwrap(), wasm);
+    assert!(krate.built.starts_with(project.join(".cydonia/build")));
+
+    let listed = entry::list(&project).unwrap();
+    let found = listed.iter().find(|entry| entry.kind == Kind::App).unwrap();
+    assert_eq!(found.id, loaded.name());
 }
 
 /// Answer one request on a local port with `response`, and hand back the URL

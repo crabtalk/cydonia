@@ -27,7 +27,7 @@ fn arranged_session_measures_its_own_composer(cx: &mut gpui::TestAppContext) {
         let member = root.update(cx, |root, cx| {
             let member = root.workspace.update(cx, |workspace, cx| {
                 let cwd = std::path::PathBuf::from("/nonexistent/cydonia-pane-footer");
-                let mut project = Project::new(cwd.clone(), cx);
+                let mut project = Project::new(cwd.clone(), false, cx);
                 for id in [1, 2] {
                     let record = serde_json::from_value(serde_json::json!({
                         "id":id.to_string(), "agent":"test", "title":"", "name":null, "updated":1, "items":[]

@@ -114,6 +114,7 @@ actions!(
         NewArticle,
         NewTable,
         InstallApp,
+        LoadApp,
         OpenProject,
         CloseProject,
         OpenSettings,

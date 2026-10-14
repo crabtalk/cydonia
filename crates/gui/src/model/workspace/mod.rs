@@ -172,7 +172,7 @@ impl Workspace {
             .into_iter()
             .map(|path| {
                 let expanded = !state.collapsed.contains(&path);
-                let mut project = Project::new(path, cx);
+                let mut project = Project::new(path, settings.features.developer, cx);
                 project.expanded = expanded;
                 project
             })
@@ -570,14 +570,21 @@ impl Workspace {
     /// A failed write leaves both halves alone, so the switch stays where it
     /// was rather than claiming a gate the file does not carry.
     ///
-    /// Nothing is reloaded either way. What a project holds is read when it
-    /// opens and the gate is applied at the accessors below, so switching one
-    /// on shows what was already there rather than needing a rescan.
+    /// What a project holds is read when it opens and the gate is applied at
+    /// the accessors below, so switching one on shows what was already there
+    /// rather than needing a rescan. Developer mode is the exception: it
+    /// re-lists every project's apps.
     pub fn set_feature(&mut self, feature: Feature, on: bool, cx: &mut Context<Self>) {
         if settings::set_feature(feature, on).is_err() {
             return;
         }
         feature.set(&mut self.settings.features, on);
+        if feature == Feature::Developer {
+            for project in &mut self.projects {
+                project.reload_apps(on, cx);
+            }
+            self.prune_spaces(cx);
+        }
         // `sessions` is half of what decides whether the door is open: the
         // only caller is an agent, and that switch is whether any run.
         self.refresh_door();

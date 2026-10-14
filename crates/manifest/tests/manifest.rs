@@ -1,17 +1,24 @@
-//! The manifest an app declares, as JSON and as a custom section.
+//! The manifest an app declares, in its `Cargo.toml` and as a custom section.
 
-use cydonia_guest::{
-    CONTRACT,
-    manifest::{Declared, Manifest, SECTION},
-};
+use cydonia_manifest::{CONTRACT, Declared, Manifest, SECTION};
 
-const DECLARED: Declared<'static> = Declared {
-    id: "yc",
-    name: "Y \"Combinator\"\n",
-    version: "0.2.0",
-    calls: &["tables"],
-    hosts: &["yc-oss.github.io", "www.ycombinator.com"],
-};
+const CARGO: &str = r#"
+[package]
+name = "yc"
+version = "0.2.0"
+
+[package.metadata.other]
+anything = true
+
+[package.metadata.cydonia]
+name = "Y \"Combinator\"\n"
+calls = ["tables"]
+hosts = ["yc-oss.github.io", "www.ycombinator.com"]
+"#;
+
+fn yc() -> Manifest {
+    Manifest::from_cargo(CARGO).unwrap()
+}
 
 /// A wasm module holding one custom section `name` with `body`.
 fn module(name: &str, body: &[u8]) -> Vec<u8> {
@@ -37,9 +44,8 @@ fn module(name: &str, body: &[u8]) -> Vec<u8> {
 }
 
 #[test]
-fn a_declared_manifest_is_written_as_json_at_compile_time() {
-    const BYTES: [u8; DECLARED.size()] = DECLARED.bytes::<{ DECLARED.size() }>();
-    let manifest: Manifest = serde_json::from_slice(&BYTES).unwrap();
+fn a_manifest_is_declared_in_cargo_toml() {
+    let manifest = yc();
     assert_eq!(
         manifest,
         Manifest {
@@ -55,9 +61,25 @@ fn a_declared_manifest_is_written_as_json_at_compile_time() {
 }
 
 #[test]
+fn a_crate_without_the_table_is_named_by_its_crate() {
+    let manifest =
+        Manifest::from_cargo("[package]\nname = \"bare\"\nversion.workspace = true\n").unwrap();
+    assert_eq!(
+        (manifest.name.as_str(), manifest.version.as_str()),
+        ("bare", "")
+    );
+    assert!(manifest.calls.is_empty() && manifest.hosts.is_empty());
+}
+
+#[test]
+fn a_key_the_table_does_not_know_is_refused() {
+    let typo = "[package]\nname = \"yc\"\n[package.metadata.cydonia]\nhost = [\"a.com\"]\n";
+    assert!(Declared::from_cargo(typo).unwrap_err().contains("host"));
+}
+
+#[test]
 fn a_manifest_is_read_out_of_its_custom_section() {
-    let body = DECLARED.bytes::<{ DECLARED.size() }>();
-    let wasm = module(SECTION, &body);
+    let wasm = module(SECTION, &serde_json::to_vec(&yc()).unwrap());
     let manifest = Manifest::read(&wasm).unwrap().unwrap();
     assert_eq!(manifest.id, "yc");
     assert_eq!(Manifest::read(&module("other", b"{}")).unwrap(), None);
@@ -96,8 +118,7 @@ fn a_url_reaches_only_the_hosts_named() {
 
 #[test]
 fn an_app_built_for_a_newer_contract_is_refused_naming_it() {
-    let mut manifest: Manifest =
-        serde_json::from_slice(&DECLARED.bytes::<{ DECLARED.size() }>()).unwrap();
+    let mut manifest = yc();
     assert!(manifest.supported().is_ok());
     manifest.contract = CONTRACT + 1;
     let refused = manifest.supported().unwrap_err();

@@ -1,5 +1,5 @@
-//! HTTP from an app, to the hosts its manifest names — `hosts = [...]` in
-//! [`crate::app!`]. A request to any other host is refused without being
+//! HTTP from an app, to the hosts its manifest names — `hosts = [...]` under
+//! `[package.metadata.cydonia]` in its `Cargo.toml`. A request to any other host is refused without being
 //! made. Each answers later, as the message `msg` makes of its result.
 //!
 //! ```ignore

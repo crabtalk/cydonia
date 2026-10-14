@@ -13,14 +13,17 @@ use crate::{
         },
         workspace::Workspace,
     },
-    view::{kit::link::Links, window::root::Cydonia},
+    view::{
+        kit::link::Links,
+        window::root::{Cydonia, LoadApp},
+    },
 };
-use artifact::{kind::Kind, space::Member};
+use artifact::{app::Loaded, kind::Kind, space::Member};
 use bezel::{
     gpui::{
         self, AnyElement, Context, ElementId, Entity, EntityInputHandler as _, ImageSource,
-        IntoElement, ObjectFit, SharedString, Subscription, Task, UniformListScrollHandle, Window,
-        div, img, prelude::*, px,
+        IntoElement, ObjectFit, PathPromptOptions, PromptLevel, SharedString, Subscription, Task,
+        UniformListScrollHandle, Window, div, img, prelude::*, px,
     },
     theme::{TextStyle, Theme, Typeset},
     ui::{
@@ -38,6 +41,7 @@ use markdown::Links as _;
 use std::{
     collections::{HashMap, HashSet},
     ops::Range,
+    path::Path,
     rc::Rc,
     sync::Arc,
 };
@@ -62,6 +66,90 @@ impl Cydonia {
             .update(cx, |workspace, cx| workspace.open_app(project, ix, cx));
         self.leaf().update(cx, |pane, _| pane.kind = Kind::App);
         cx.notify();
+    }
+
+    /// List the app just applied to the project at `project` under `name`, and
+    /// open it.
+    pub(crate) fn open_applied(
+        &mut self,
+        project: &Path,
+        name: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.workspace
+            .update(cx, |workspace, cx| workspace.app_applied(project, cx));
+        let workspace = self.workspace.read(cx);
+        let at = workspace
+            .project_at(project)
+            .and_then(|ix| Some((ix, workspace.projects[ix].app_ix(name)?)));
+        if let Some((project, ix)) = at {
+            self.open_app(project, ix, window, cx);
+        }
+    }
+
+    /// Load the crate in a folder the person picks into the project in front,
+    /// and open it.
+    pub(crate) fn load_app_action(
+        &mut self,
+        _: &LoadApp,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if cfg!(not(feature = "desktop")) {
+            self.desktop_only("Loading an app", window, cx);
+            return;
+        }
+        let Some(project) = self
+            .workspace
+            .read(cx)
+            .active_project()
+            .map(|open| open.path.clone())
+        else {
+            return;
+        };
+        self.commit(cx);
+        self.close_menu(cx);
+        let picked = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Load".into()),
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(paths))) = picked.await else {
+                return;
+            };
+            let Some(dir) = paths.into_iter().next() else {
+                return;
+            };
+            let into = project.clone();
+            let loaded = cx
+                .background_executor()
+                .spawn(async move {
+                    let app = Loaded::read(&dir)?;
+                    app.save(&into)?;
+                    anyhow::Ok(app)
+                })
+                .await;
+            let refused = this.update_in(cx, |this, window, cx| match loaded {
+                Ok(app) => {
+                    this.open_applied(&project, &app.name(), window, cx);
+                    None
+                }
+                Err(error) => Some(window.prompt(
+                    PromptLevel::Critical,
+                    "The app could not be loaded",
+                    Some(&format!("{error:#}")),
+                    &["OK"],
+                    cx,
+                )),
+            });
+            if let Ok(Some(answer)) = refused {
+                let _ = answer.await;
+            }
+        })
+        .detach();
     }
 }
 
@@ -313,18 +401,7 @@ impl AppView {
         let Origin::Installed { app, .. } = &held.origin else {
             return div().into_any_element();
         };
-        let mut reaches = Vec::new();
-        if let Some(manifest) = &held.manifest {
-            if manifest.calls(calls::TABLES) {
-                reaches.push("It reads and writes this project's tables.".to_owned());
-            }
-            if !manifest.hosts.is_empty() {
-                reaches.push(format!("It fetches from {}.", manifest.hosts.join(", ")));
-            }
-        }
-        if reaches.is_empty() {
-            reaches.push("It reaches nothing outside its own view.".to_owned());
-        }
+        let reaches = held.manifest.reach();
         let line = |text: String, tone: gpui::Hsla| {
             div()
                 .text_style(TextStyle::Callout)
@@ -367,8 +444,13 @@ impl AppView {
     }
 
     /// What stands in the app's place while it is not running: a headline,
-    /// and what cargo or the app said.
-    fn notice(headline: SharedString, detail: SharedString, theme: &Theme) -> AnyElement {
+    /// what the app reaches, and what cargo or the app said.
+    fn notice(
+        headline: SharedString,
+        reach: Vec<String>,
+        detail: SharedString,
+        theme: &Theme,
+    ) -> AnyElement {
         div()
             .id("app-notice")
             .flex_1()
@@ -384,6 +466,12 @@ impl AppView {
                     .text_color(theme.text)
                     .child(headline),
             )
+            .children(reach.into_iter().map(|line| {
+                div()
+                    .text_style(TextStyle::Callout)
+                    .text_color(theme.text)
+                    .child(line)
+            }))
             .child(
                 div()
                     .text_style(TextStyle::Callout)
@@ -758,14 +846,27 @@ impl Render for AppView {
             .as_ref()
             .map(|program| program.read(cx).build.clone());
         let notice = match (&build, &self.state) {
-            (None, _) => Some(("The app is gone".into(), SharedString::default())),
-            (Some(Build::Failed(error)), _) => {
-                Some(("The app did not build".into(), error.clone().into()))
-            }
+            (None, _) => Some((
+                "The app is gone".into(),
+                Vec::new(),
+                SharedString::default(),
+            )),
+            (Some(Build::Failed(error)), _) => Some((
+                "The app did not build".into(),
+                Vec::new(),
+                error.clone().into(),
+            )),
             (Some(Build::Running), State::Idle) => {
-                Some(("Building…".into(), SharedString::default()))
+                let reach = self
+                    .program
+                    .as_ref()
+                    .map(|program| program.read(cx).manifest.reach())
+                    .unwrap_or_default();
+                Some(("Building…".into(), reach, SharedString::default()))
             }
-            (_, State::Failed(error)) => Some(("The app stopped".into(), error.clone())),
+            (_, State::Failed(error)) => {
+                Some(("The app stopped".into(), Vec::new(), error.clone()))
+            }
             _ => None,
         };
         let asking = self
@@ -774,7 +875,7 @@ impl Render for AppView {
             .filter(|program| !program.read(cx).origin.allowed())
             .cloned();
         let body = match (notice, &self.state) {
-            (Some((headline, detail)), _) => Self::notice(headline, detail, &theme),
+            (Some((headline, reach, detail)), _) => Self::notice(headline, reach, detail, &theme),
             (None, _) if let Some(program) = asking => self.ask(&program, &theme, cx),
             (None, State::Running { tree, .. }) => {
                 let tree = tree.clone();
@@ -792,6 +893,29 @@ impl Render for AppView {
             .bg(theme.bg)
             .text_color(theme.text)
             .child(body)
+    }
+}
+
+/// What an app's manifest says it reaches, a sentence each.
+trait Reach {
+    fn reach(&self) -> Vec<String>;
+}
+
+impl Reach for Option<Manifest> {
+    fn reach(&self) -> Vec<String> {
+        let mut reach = Vec::new();
+        if let Some(manifest) = self {
+            if manifest.calls(calls::TABLES) {
+                reach.push("It reads and writes this project's tables.".to_owned());
+            }
+            if !manifest.hosts.is_empty() {
+                reach.push(format!("It fetches from {}.", manifest.hosts.join(", ")));
+            }
+        }
+        if reach.is_empty() {
+            reach.push("It reaches nothing outside its own view.".to_owned());
+        }
+        reach
     }
 }
 

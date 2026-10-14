@@ -30,9 +30,9 @@ use crate::{
         article::{ToggleOutline, TogglePlainText},
         keymap,
         window::root::{
-            CloseProject, Cydonia, InstallApp, NewArticle, NewBoard, NewSession, NewSessionNext,
-            NewSessionWith, NewTable, NextEntry, OpenProject, OpenSettings, PrevEntry,
-            ToggleChanges, ToggleSidebar, ToggleTerminal,
+            CloseProject, Cydonia, InstallApp, LoadApp, NewArticle, NewBoard, NewSession,
+            NewSessionNext, NewSessionWith, NewTable, NextEntry, OpenProject, OpenSettings,
+            PrevEntry, ToggleChanges, ToggleSidebar, ToggleTerminal,
         },
     },
 };
@@ -263,6 +263,7 @@ fn file_menu() -> Vec<MenuItem> {
         MenuItem::action("New Article", NewArticle),
         MenuItem::action("New Table", NewTable),
         MenuItem::action("Install App…", InstallApp),
+        MenuItem::action("Load App from Folder…", LoadApp),
         MenuItem::separator(),
         MenuItem::action("Open Project…", OpenProject),
         MenuItem::action("Close Project", CloseProject),
@@ -318,6 +319,7 @@ impl Cydonia {
         let workspace = self.workspace.read(cx);
         let features = &workspace.settings.features;
         let (sessions, boards, tables) = (features.sessions, features.boards, features.tables);
+        let developer = features.developer;
         let (review, files) = (features.panel.review, features.panel.files);
         let project = workspace.active.is_some();
         // Nothing on screen is nothing to step from — the launch view is not
@@ -344,6 +346,9 @@ impl Cydonia {
                         root.on_action(cx.listener(Self::new_table_action))
                     })
                     .on_action(cx.listener(Self::install_app_action))
+                    .when(developer, |root| {
+                        root.on_action(cx.listener(Self::load_app_action))
+                    })
             })
             // The bottom panel is the window's, not a pane's: it stands under
             // whatever is showing, a space included. A project is what it

@@ -852,8 +852,8 @@ impl Browsing {
 /// The surfaces a project can hold, minus articles — the one thing the app is
 /// for, and so not something to be able to switch off.
 ///
-/// Sessions and boards are on to begin with. Tables are off until they are
-/// asked for.
+/// Sessions and boards are on to begin with. Tables and developer mode are off
+/// until they are asked for.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Features {
@@ -866,6 +866,9 @@ pub struct Features {
     /// A session under each article, asked about its passages. Nothing of it
     /// shows while [`Features::sessions`] is off.
     pub article_threads: bool,
+    /// Developer mode: a project's `apps/` crates and apps loaded from a
+    /// folder are listed, built and run. Off, only installed apps are.
+    pub developer: bool,
     /// `[features.panel]`: the right panel's tabs. A table, so it follows
     /// every bare key above.
     pub panel: PanelTabs,
@@ -885,6 +888,7 @@ impl Default for Features {
             boards: true,
             tables: false,
             article_threads: true,
+            developer: false,
             panel: PanelTabs::default(),
         }
     }
@@ -918,6 +922,7 @@ pub enum Feature {
     Boards,
     Tables,
     ArticleThreads,
+    Developer,
     Review,
     Files,
     Browser,
@@ -926,11 +931,12 @@ pub enum Feature {
 impl Feature {
     /// The order the Features section lists them in. Sessions first: it is the
     /// one that decides whether anything runs on this machine.
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 5] = [
         Self::Sessions,
         Self::ArticleThreads,
         Self::Boards,
         Self::Tables,
+        Self::Developer,
     ];
 
     /// The right panel's tabs, listed as a group of their own.
@@ -944,6 +950,7 @@ impl Feature {
             Self::Boards => "boards",
             Self::Tables => "tables",
             Self::ArticleThreads => "article_threads",
+            Self::Developer => "developer",
             Self::Review => "review",
             Self::Files => "files",
             Self::Browser => "browser",
@@ -965,6 +972,7 @@ impl Feature {
             Self::Boards => features.boards,
             Self::Tables => features.tables,
             Self::ArticleThreads => features.article_threads,
+            Self::Developer => features.developer,
             Self::Review => features.panel.review,
             Self::Files => features.panel.files,
             Self::Browser => features.panel.browser,
@@ -977,6 +985,7 @@ impl Feature {
             Self::Boards => features.boards = on,
             Self::Tables => features.tables = on,
             Self::ArticleThreads => features.article_threads = on,
+            Self::Developer => features.developer = on,
             Self::Review => features.panel.review = on,
             Self::Files => features.panel.files = on,
             Self::Browser => features.panel.browser = on,

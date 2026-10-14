@@ -70,7 +70,8 @@ impl Workspace {
             self.select_project(ix, cx);
             return;
         }
-        self.projects.push(Project::new(path, cx));
+        self.projects
+            .push(Project::new(path, self.settings.features.developer, cx));
         let ix = self.projects.len() - 1;
         self.restore_sessions(ix, cx);
         self.watch_project(ix, cx);
@@ -353,13 +354,23 @@ impl Workspace {
         cx.notify();
     }
 
+    /// An app was applied to the project at `path`: watch its apps again, so
+    /// a folder loaded is among them, and re-list them.
+    pub fn app_applied(&mut self, path: &Path, cx: &mut Context<Self>) {
+        let Some(ix) = self.projects.iter().position(|open| open.path == path) else {
+            return;
+        };
+        self.projects[ix].apps_watch = Some(Watch::apps(path.to_path_buf(), cx));
+        self.apps_changed(path, &[], cx);
+    }
+
     /// The apps named moved in the project at `path`: re-list them, and build
     /// again each of the named ones a view runs.
     pub fn apps_changed(&mut self, path: &Path, names: &[String], cx: &mut Context<Self>) {
         let Some(ix) = self.projects.iter().position(|open| open.path == path) else {
             return;
         };
-        if self.projects[ix].reload_apps(cx) {
+        if self.projects[ix].reload_apps(self.settings.features.developer, cx) {
             self.prune_spaces(cx);
         }
         for held in &self.projects[ix].apps {
@@ -378,7 +389,7 @@ impl Workspace {
         let Some(ix) = self.projects.iter().position(|open| open.path == path) else {
             return;
         };
-        if self.projects[ix].reload(cx) {
+        if self.projects[ix].reload(self.settings.features.developer, cx) {
             cx.emit(Reloaded);
         }
         self.prune_archived(cx);
@@ -398,7 +409,7 @@ impl Workspace {
     pub fn reload_projects(&mut self, cx: &mut Context<Self>) {
         let mut moved = false;
         for ix in 0..self.projects.len() {
-            moved |= self.projects[ix].reload(cx);
+            moved |= self.projects[ix].reload(self.settings.features.developer, cx);
         }
         if moved {
             cx.emit(Reloaded);

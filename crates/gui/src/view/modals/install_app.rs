@@ -2,10 +2,7 @@
 //! by. The app is applied to the project in front, and opened once it lands.
 
 use crate::{
-    model::{
-        apps::{Http, oci::Reference},
-        workspace::Workspace,
-    },
+    model::apps::{Http, oci::Reference},
     view::{
         kit::{
             dialog::{answers, dialog},
@@ -46,7 +43,6 @@ pub(crate) struct InstallApp {
     error: Option<SharedString>,
     /// The pull under way.
     installing: Option<Task<()>>,
-    workspace: Entity<Workspace>,
     root: WeakEntity<Cydonia>,
 }
 
@@ -67,21 +63,13 @@ impl Cydonia {
         };
         self.commit(cx);
         self.close_menu(cx);
-        let workspace = self.workspace.clone();
         let root = cx.entity().downgrade();
-        self.toggle_modal(window, cx, |_, cx| {
-            InstallApp::new(project, workspace, root, cx)
-        });
+        self.toggle_modal(window, cx, |_, cx| InstallApp::new(project, root, cx));
     }
 }
 
 impl InstallApp {
-    fn new(
-        project: PathBuf,
-        workspace: Entity<Workspace>,
-        root: WeakEntity<Cydonia>,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    fn new(project: PathBuf, root: WeakEntity<Cydonia>, cx: &mut Context<Self>) -> Self {
         Self {
             project,
             reference: form::field(
@@ -92,7 +80,6 @@ impl InstallApp {
             ),
             error: None,
             installing: None,
-            workspace,
             root,
         }
     }
@@ -134,18 +121,9 @@ impl InstallApp {
     /// List the installed app in its project, open it and close the dialog.
     fn landed(&mut self, reference: &str, window: &mut Window, cx: &mut Context<Self>) {
         let project = self.project.clone();
-        self.workspace.update(cx, |workspace, cx| {
-            workspace.apps_changed(&project, &[], cx)
+        let _ = self.root.update(cx, |root, cx| {
+            root.open_applied(&project, reference, window, cx)
         });
-        let workspace = self.workspace.read(cx);
-        let at = workspace
-            .project_at(&project)
-            .and_then(|ix| Some((ix, workspace.projects[ix].app_ix(reference)?)));
-        if let Some((project, ix)) = at {
-            let _ = self
-                .root
-                .update(cx, |root, cx| root.open_app(project, ix, window, cx));
-        }
         cx.emit(DismissEvent);
     }
 }

@@ -494,8 +494,9 @@ impl Sidebar {
             &theme,
         );
         let pill = self.shape(entry, cx).pill();
+        let local = facts.local.then(|| theme.badge("Local"));
         let frame = match preview {
-            None => frame.child(mark).child(label).child(button),
+            None => frame.child(mark).child(label).children(local).child(button),
             // The lines under the name run the row's whole width, from under
             // the mark: indented under the name they would be a column too
             // narrow to say anything.
@@ -515,6 +516,7 @@ impl Sidebar {
                         .gap(px(ROW_GAP))
                         .child(mark)
                         .child(label)
+                        .children(local)
                         .child(button),
                 )
                 .child(

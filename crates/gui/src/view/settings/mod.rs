@@ -50,9 +50,9 @@ mod apps;
 mod backups;
 #[cfg(not(target_os = "linux"))]
 mod browser;
-mod developer;
 mod features;
 mod general;
+mod internal;
 mod mcp;
 mod performance;
 mod shortcuts;
@@ -105,10 +105,10 @@ impl Section {
         Self::Mcp,
         Self::Performance,
         Self::Backups,
-        Self::Developer,
+        Self::Internal,
     ];
 
-    /// Whether this build lists it in the sidebar. Developer holds switches for
+    /// Whether this build lists it in the sidebar. Internal holds switches for
     /// looking at what has not happened yet, which is not something to hand
     /// somebody who installed the app — so it is absent from a release build
     /// rather than empty in one, and every build anyone installs is a release
@@ -123,7 +123,7 @@ impl Section {
     fn listed(self, features: &crate::model::settings::Features) -> bool {
         use crate::model::settings::Feature;
         match self {
-            Self::Developer => cfg!(debug_assertions) || cfg!(feature = "developer"),
+            Self::Internal => cfg!(debug_assertions) || cfg!(feature = "developer"),
             Self::Backups => artifact::backup::any(),
             Self::Statistics => cfg!(feature = "desktop"),
             Self::Browser => {
@@ -142,7 +142,7 @@ impl Section {
             Self::General | Self::Appearance | Self::Shortcuts | Self::Statistics => None,
             Self::Documents | Self::Features | Self::Browser => Some("Workspace"),
             Self::Agents | Self::Mcp => Some("Agents"),
-            Self::Performance | Self::Backups | Self::Developer => Some("Advanced"),
+            Self::Performance | Self::Backups | Self::Internal => Some("Advanced"),
         }
     }
 
@@ -159,7 +159,7 @@ impl Section {
             Self::Browser => "Browser",
             Self::Performance => "Performance",
             Self::Backups => "Backups",
-            Self::Developer => "Developer",
+            Self::Internal => "Internal",
         }
     }
 
@@ -176,7 +176,7 @@ impl Section {
                 Some("The tools cydonia offers the agents it runs, over a port on this machine.")
             }
             Self::Browser => Some("The browser tabs in the right panel."),
-            Self::Developer => Some("Switches for looking at what has not happened yet."),
+            Self::Internal => Some("Switches for looking at what has not happened yet."),
             Self::Backups => {
                 Some("Files a migration replaced, kept from the release they belong to.")
             }
@@ -203,7 +203,7 @@ impl Section {
             Self::Browser => icons::navigation::Globe,
             Self::Performance => icons::devices::Cpu,
             Self::Backups => icons::files::Archive,
-            Self::Developer => icons::development::Wrench,
+            Self::Internal => icons::development::Wrench,
         }
     }
 }
@@ -713,7 +713,7 @@ impl SettingsWindow {
             | Section::Mcp
             | Section::Browser
             | Section::Performance
-            | Section::Developer => {}
+            | Section::Internal => {}
         }
         cx.notify();
     }
@@ -883,7 +883,7 @@ impl Render for SettingsWindow {
                                 Section::Browser => div().into_any_element(),
                                 Section::Performance => self.performance_body(cx),
                                 Section::Backups => self.backups_body(cx),
-                                Section::Developer => self.developer_body(cx),
+                                Section::Internal => self.internal_body(cx),
                             }),
                     )
                     .map(|pane| match owns_scroll {

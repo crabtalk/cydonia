@@ -2,8 +2,9 @@
 //!
 //! An app is a Rust crate built for `wasm32-unknown-unknown` as a `cdylib`.
 //! It implements [`App`] and names its type in [`app!`], which writes the
-//! exports Cydonia calls. Cydonia holds one instance of the app per open view:
-//! the app's state lives in its own memory between calls.
+//! exports Cydonia calls and the [`manifest`] its `Cargo.toml` declares under
+//! `[package.metadata.cydonia]`. Cydonia holds one instance of the app per
+//! open view: the app's state lives in its own memory between calls.
 //!
 //! ```ignore
 //! use cydonia_guest::{App, node::*};
@@ -27,17 +28,15 @@
 
 pub mod fetch;
 pub mod host;
-pub mod manifest;
 pub mod node;
 pub mod tables;
 pub mod wire;
 
+pub use ::manifest::{self, CONTRACT};
+pub use guest_macros::app;
+
 use node::{Handle, Handlers, Node};
 use std::ops::Range;
-
-/// The version of the node and event vocabulary this crate writes. Nodes and
-/// fields are only ever added to it.
-pub const CONTRACT: u32 = 1;
 
 /// The names of what an app exports and imports, as Cydonia looks them up.
 pub mod abi {
@@ -155,39 +154,11 @@ impl<A: App> Runtime<A> {
     }
 }
 
-/// Export `$app` to Cydonia, with its [`manifest::Manifest`]. Once, in the
-/// app's crate root.
-///
-/// ```ignore
-/// cydonia_guest::app!(Yc, name = "Y Combinator", calls = [tables], hosts = ["yc-oss.github.io"]);
-/// ```
-///
-/// `name` defaults to the crate's name; `calls` names the groups in
-/// [`manifest::calls`] the app makes, and `hosts` the hosts it fetches from.
+/// The exports [`app!`] writes for `$app`.
+#[doc(hidden)]
 #[macro_export]
-macro_rules! app {
-    (
-        $app:ty
-        $(, name = $name:literal)?
-        $(, calls = [$($call:ident),* $(,)?])?
-        $(, hosts = [$($host:literal),* $(,)?])?
-        $(,)?
-    ) => {
-        #[cfg(target_arch = "wasm32")]
-        const _: () = {
-            const DECLARED: $crate::manifest::Declared<'static> = $crate::manifest::Declared {
-                id: ::std::env!("CARGO_PKG_NAME"),
-                name: $crate::__first!($($name)? ; ::std::env!("CARGO_PKG_NAME")),
-                version: ::std::env!("CARGO_PKG_VERSION"),
-                calls: &[$($(::std::stringify!($call)),*)?],
-                hosts: &[$($($host),*)?],
-            };
-            const SIZE: usize = DECLARED.size();
-            #[unsafe(link_section = "cydonia.manifest")]
-            #[used]
-            static MANIFEST: [u8; SIZE] = DECLARED.bytes::<SIZE>();
-        };
-
+macro_rules! __exports {
+    ($app:ty) => {
         // A native build of the app's crate exports nothing; this keeps the
         // app in use there.
         #[cfg(not(target_arch = "wasm32"))]
@@ -231,16 +202,5 @@ macro_rules! app {
                 with(|runtime| runtime.rows(start, end))
             }
         };
-    };
-}
-
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __first {
-    ($given:expr ; $default:expr) => {
-        $given
-    };
-    (; $default:expr) => {
-        $default
     };
 }

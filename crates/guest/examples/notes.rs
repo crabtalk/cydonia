@@ -106,4 +106,4 @@ impl App for Notes {
     }
 }
 
-cydonia_guest::app!(Notes, calls = [tables]);
+cydonia_guest::app!(Notes);

@@ -487,7 +487,13 @@ impl Project {
             Kind::Board => self.board_dir(component(id).ok()?),
             Kind::Session => self.session_file(component(id).ok()?),
             Kind::Table => return None,
-            Kind::App => crate::app::Source::new(&self.root, component(id).ok()?).dir(),
+            Kind::App => {
+                crate::app::Origin::list(&self.root)
+                    .into_iter()
+                    .find(|app| app.name() == id)?
+                    .local()?
+                    .dir
+            }
         };
         path.exists().then_some(path)
     }

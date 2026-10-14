@@ -6,6 +6,11 @@ edition = "2024"
 license = "MIT"
 publish = false
 
+[package.metadata.cydonia]
+name = "Y Combinator"
+calls = ["tables"]
+hosts = ["yc-oss.github.io", "www.ycombinator.com", "bookface-images.s3.amazonaws.com"]
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 

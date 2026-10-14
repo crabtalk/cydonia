@@ -4,7 +4,7 @@ name: release
 # from that same commit as a release on the tag, with the version's
 # changelog.json entry as its notes, and makes it the latest release. The
 # nightly pre-release stays as it is, and the app is not rebuilt. Then
-# `cydonia-guest` is published to crates.io.
+# `cydonia-guest` and the crates it depends on are published to crates.io.
 on:
   push:
     tags: ["v*"]
@@ -44,14 +44,15 @@ jobs:
           gh release create "$TAG" dist/* --title "$TAG" --notes-file notes.md \
             --verify-tag --latest
 
-  # `cydonia-guest` at the workspace version, once the release is out. Takes
-  # the `CARGO_REGISTRY_TOKEN` secret.
+  # `cydonia-guest`, `cydonia-guest-macros` and `cydonia-manifest` at the
+  # workspace version, once the release is out. Takes the
+  # `CARGO_REGISTRY_TOKEN` secret.
   guest:
     needs: promote
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo publish -p cydonia-guest --locked
+      - run: cargo publish -p cydonia-manifest -p cydonia-guest-macros -p cydonia-guest --locked
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

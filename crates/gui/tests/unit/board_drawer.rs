@@ -83,7 +83,7 @@ fn open(
             cx.new(|cx| Cydonia::new(Settings::default(), state::State::default(), window, cx));
         root.update(cx, |root, cx| {
             root.workspace.update(cx, |workspace, cx| {
-                let mut project = Project::new(scratch.0.clone(), cx);
+                let mut project = Project::new(scratch.0.clone(), false, cx);
                 project.board = Some(0);
                 workspace.projects.push(project);
                 workspace.active = Some(0);

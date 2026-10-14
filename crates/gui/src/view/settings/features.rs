@@ -55,6 +55,12 @@ fn copy(
             "Structured records in the project's store.",
             Some("Preview"),
         ),
+        Feature::Developer => (
+            icons::development::Code,
+            "Developer mode",
+            "Lets Cydonia build and run apps from source on this machine.",
+            None,
+        ),
         Feature::Review => (
             icons::development::GitCompare,
             "Review",

@@ -584,13 +584,4 @@ fn ok(response: &Response) -> Result<String, String> {
     }
 }
 
-cydonia_guest::app!(
-    Yc,
-    name = "Y Combinator",
-    calls = [tables],
-    hosts = [
-        "yc-oss.github.io",
-        "www.ycombinator.com",
-        "bookface-images.s3.amazonaws.com"
-    ]
-);
+cydonia_guest::app!(Yc);
