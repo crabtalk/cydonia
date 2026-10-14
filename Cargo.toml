@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/cydonia", "crates/gui", "crates/artifact", "crates/mcp", "crates/prompts"]
+members = ["crates/cydonia", "crates/gui", "crates/artifact", "crates/guest", "crates/mcp", "crates/prompts"]
 resolver = "3"
 
 [workspace.package]
@@ -23,6 +23,7 @@ chrono = "0.4"
 dirs = "6"
 editor = { version = "0.2.14", package = "bezel-editor" }
 futures = "0.3"
+guest = { version = "0.2.0", path = "crates/guest", package = "cydonia-guest" }
 gui = { version = "0.2.0", path = "crates/gui", package = "cydonia-gui", default-features = false }
 global-hotkey = "0.8"
 image = "0.25"

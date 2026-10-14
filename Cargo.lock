@@ -2275,6 +2275,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cydonia-guest"
+version = "0.2.0"
+dependencies = [
+ "base64 0.22.1",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "cydonia-gui"
 version = "0.2.0"
 dependencies = [
@@ -2293,6 +2302,7 @@ dependencies = [
  "cacp-agents",
  "chrono",
  "cydonia-artifact",
+ "cydonia-guest",
  "cydonia-mcp",
  "cydonia-prompts",
  "dirs 6.0.0",

@@ -1,0 +1,634 @@
+//! An app's view: one running instance of a mini-app and the nodes it draws,
+//! painted with bezel's widgets in the theme's tokens.
+//!
+//! Cydonia holds what the app's nodes carry between draws: an input's text,
+//! caret, selection and composition, a select's open menu, scroll, focus and
+//! hover. The app hears a committed change as an event.
+
+use crate::{
+    model::apps::{Command, Event, Node, Runner as _, Runtime},
+    view::kit::link::Links,
+};
+use bezel::{
+    gpui::{
+        self, AnyElement, Context, ElementId, Entity, EntityInputHandler as _, ImageSource,
+        IntoElement, ObjectFit, SharedString, Subscription, Task, UniformListScrollHandle, Window,
+        div, img, prelude::*, px,
+    },
+    theme::{TextStyle, Theme, Typeset},
+    ui::{
+        combobox::{Combobox, ComboboxEvent},
+        input::{FieldEvent, Shape, TextField},
+        list::virtual_list,
+        widgets::{ButtonStyle, Buttons},
+    },
+};
+use guest::wire::{self, Align, Axis, Choice, Handler, Justify, Source, Space, Surface, Tone};
+use markdown::Links as _;
+use std::{
+    collections::{HashMap, HashSet},
+    ops::Range,
+    rc::Rc,
+    sync::Arc,
+};
+
+/// The corner of a layout drawn on a surface.
+const RADIUS: f32 = 8.;
+
+pub struct AppView {
+    state: State,
+    lists: HashMap<String, Listed>,
+    inputs: HashMap<String, Field>,
+    /// Text the app set for an input not drawn yet.
+    pending: HashMap<String, String>,
+    selects: HashMap<String, Picker>,
+    /// The inputs and selects drawn since the last render.
+    drawn: HashSet<String>,
+}
+
+enum State {
+    Starting {
+        _task: Task<()>,
+    },
+    Running {
+        runtime: Box<Runtime>,
+        tree: Rc<Node>,
+    },
+    Failed(SharedString),
+}
+
+/// A virtualized list's scroll, and the rows on screen as the app last drew
+/// them.
+#[derive(Default)]
+struct Listed {
+    scroll: UniformListScrollHandle,
+    rows: Option<(Range<usize>, Rc<Vec<Node>>)>,
+}
+
+struct Field {
+    field: Entity<TextField>,
+    handler: Option<Handler>,
+    placeholder: String,
+    /// Text Cydonia put in the field for the app, whose change the app does
+    /// not hear.
+    echo: Option<String>,
+    _events: Subscription,
+}
+
+struct Picker {
+    combobox: Entity<Combobox>,
+    options: Vec<Choice>,
+    handler: Option<Handler>,
+    _events: Subscription,
+}
+
+impl AppView {
+    /// Start the app `wasm` off the main thread, and draw it once it is up.
+    pub fn new(wasm: Arc<[u8]>, cx: &mut Context<Self>) -> Self {
+        let starting = cx.spawn(async move |this, cx| {
+            let started = cx
+                .background_executor()
+                .spawn(async move { Runtime::start(&wasm) })
+                .await;
+            let _ = this.update(cx, |this, cx| match started {
+                Ok((runtime, commands)) => {
+                    this.state = State::Running {
+                        runtime: Box::new(runtime),
+                        tree: Rc::new(Node::Layout(wire::Layout::default())),
+                    };
+                    this.apply(commands, cx);
+                    this.refresh(cx);
+                }
+                Err(error) => this.fail(error, cx),
+            });
+        });
+        Self {
+            state: State::Starting { _task: starting },
+            lists: HashMap::new(),
+            inputs: HashMap::new(),
+            pending: HashMap::new(),
+            selects: HashMap::new(),
+            drawn: HashSet::new(),
+        }
+    }
+
+    /// Why the app stopped, once it has.
+    pub fn failure(&self) -> Option<&SharedString> {
+        match &self.state {
+            State::Failed(error) => Some(error),
+            _ => None,
+        }
+    }
+
+    /// Deliver `event`, and draw what the app draws after it.
+    pub fn dispatch(&mut self, event: Event, cx: &mut Context<Self>) {
+        let State::Running { runtime, .. } = &mut self.state else {
+            return;
+        };
+        match runtime.update(&event) {
+            Ok(commands) => {
+                self.apply(commands, cx);
+                self.refresh(cx);
+            }
+            Err(error) => self.fail(error, cx),
+        }
+    }
+
+    /// Ask the app what it draws now. The rows of its lists are asked again
+    /// as they are drawn.
+    fn refresh(&mut self, cx: &mut Context<Self>) {
+        let State::Running { runtime, tree } = &mut self.state else {
+            return;
+        };
+        match runtime.view() {
+            Ok(node) => {
+                *tree = Rc::new(node);
+                for listed in self.lists.values_mut() {
+                    listed.rows = None;
+                }
+                cx.notify();
+            }
+            Err(error) => self.fail(error, cx),
+        }
+    }
+
+    fn apply(&mut self, commands: Vec<Command>, cx: &mut Context<Self>) {
+        for command in commands {
+            match command {
+                Command::SetInput { key, value } => match self.inputs.get_mut(&key) {
+                    Some(held) => {
+                        held.echo = Some(value.clone());
+                        held.field
+                            .update(cx, |field, cx| field.set_content(value, cx));
+                    }
+                    None => {
+                        self.pending.insert(key, value);
+                    }
+                },
+            }
+        }
+    }
+
+    fn fail(&mut self, error: anyhow::Error, cx: &mut Context<Self>) {
+        self.state = State::Failed(format!("{error:#}").into());
+        self.lists.clear();
+        cx.notify();
+    }
+
+    /// A node's identity among its siblings: its key, or its place.
+    fn id(key: Option<&str>, ix: usize) -> ElementId {
+        match key {
+            Some(key) => ElementId::Name(SharedString::from(key.to_owned())),
+            None => ElementId::NamedInteger("node".into(), ix as u64),
+        }
+    }
+
+    fn draw(
+        &mut self,
+        node: &Node,
+        ix: usize,
+        theme: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        match node {
+            Node::Layout(layout) => self.layout(layout, ix, false, theme, window, cx),
+            Node::Text(text) => div()
+                .text_style(text.style.value(theme))
+                .text_color(text.tone.value(theme))
+                .when_some(text.lines, |el, lines| el.line_clamp(lines as usize))
+                .child(text.content.clone())
+                .into_any_element(),
+            Node::Button(button) => {
+                let style = match button.style {
+                    wire::ButtonStyle::Ghost => ButtonStyle::Ghost,
+                    wire::ButtonStyle::Prominent => ButtonStyle::Prominent,
+                    wire::ButtonStyle::Destructive => ButtonStyle::Destructive,
+                };
+                let drawn = theme
+                    .button(button.label.clone(), style, None)
+                    .id(Self::id(button.key.as_deref(), ix));
+                match button.on_click {
+                    Some(handler) => drawn
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.dispatch(Event::Click { handler }, cx)
+                        }))
+                        .into_any_element(),
+                    None => drawn.opacity(0.5).into_any_element(),
+                }
+            }
+            Node::Input(input) => self.input(input, window, cx),
+            Node::Select(select) => self.select(select, window, cx),
+            Node::Link(link) => {
+                let url = link.url.clone();
+                div()
+                    .id(Self::id(link.key.as_deref(), ix))
+                    .cursor_pointer()
+                    .text_style(link.style.value(theme))
+                    .text_color(theme.accent)
+                    .hover(|el| el.underline())
+                    .child(link.label.clone())
+                    .on_click(move |_, window, cx| {
+                        Links::open(markdown::Link::new(&url, None), window, cx)
+                    })
+                    .into_any_element()
+            }
+            Node::Image(image) => {
+                let frame = div().flex_none().w(px(image.width)).h(px(image.height));
+                let Some(source) = image.source.paint() else {
+                    return frame.into_any_element();
+                };
+                frame
+                    .child(
+                        img(source)
+                            .size_full()
+                            .object_fit(ObjectFit::Cover)
+                            .when(image.round, |el| el.rounded_full()),
+                    )
+                    .into_any_element()
+            }
+            Node::List(list) => self.list(list, theme, cx),
+        }
+    }
+
+    /// A layout and its children. The root fills the view.
+    fn layout(
+        &mut self,
+        layout: &wire::Layout,
+        ix: usize,
+        root: bool,
+        theme: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let children: Vec<AnyElement> = layout
+            .children
+            .iter()
+            .enumerate()
+            .map(|(ix, child)| self.draw(child, ix, theme, window, cx))
+            .collect();
+        let el = div()
+            .flex()
+            .min_w_0()
+            .min_h_0()
+            .map(|el| match layout.axis {
+                Axis::Column => el.flex_col(),
+                Axis::Row => el.flex_row(),
+            })
+            .gap(px(layout.gap.value(theme)))
+            .p(px(layout.padding.value(theme)))
+            .map(|el| match layout.align {
+                Align::Stretch => el,
+                Align::Start => el.items_start(),
+                Align::Center => el.items_center(),
+                Align::End => el.items_end(),
+            })
+            .map(|el| match layout.justify {
+                Justify::Start => el.justify_start(),
+                Justify::Center => el.justify_center(),
+                Justify::End => el.justify_end(),
+                Justify::Between => el.justify_between(),
+            })
+            .when(layout.grow || root, |el| el.flex_1())
+            .when_some(layout.width, |el, width| el.flex_none().w(px(width)))
+            .when_some(layout.height, |el, height| el.h(px(height)))
+            .when_some(layout.surface, |el, surface| {
+                el.bg(match surface {
+                    Surface::Card => theme.surface_card,
+                    Surface::Raised => theme.surface_raised,
+                    Surface::Sunken => theme.surface,
+                })
+                .border_1()
+                .border_color(theme.border)
+                .rounded(px(RADIUS))
+                .overflow_hidden()
+            })
+            .children(children);
+        match layout.scroll {
+            false => el.into_any_element(),
+            true => el
+                .id(Self::id(layout.key.as_deref(), ix))
+                .map(|el| match layout.axis {
+                    Axis::Column => el.overflow_y_scroll(),
+                    Axis::Row => el.overflow_x_scroll(),
+                })
+                .into_any_element(),
+        }
+    }
+
+    fn input(
+        &mut self,
+        input: &wire::Input,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        self.drawn.insert(input.key.clone());
+        if !self.inputs.contains_key(&input.key) {
+            let field = cx.new(|cx| TextField::new(cx).with_shape(Shape::Line));
+            let echo = self.pending.remove(&input.key);
+            if let Some(text) = echo.clone() {
+                field.update(cx, |field, cx| field.set_content(text, cx));
+            }
+            let key = input.key.clone();
+            let events = cx.subscribe_in(
+                &field,
+                window,
+                move |this, field, event: &FieldEvent, window, cx| {
+                    let FieldEvent::Changed(_) = event else {
+                        return;
+                    };
+                    let composing = field.update(cx, |field, cx| {
+                        field.marked_text_range(window, cx).is_some()
+                    });
+                    if composing {
+                        return;
+                    }
+                    let text = field.read(cx).content().to_string();
+                    let Some(held) = this.inputs.get_mut(&key) else {
+                        return;
+                    };
+                    if held.echo.take().is_some_and(|echo| echo == text) {
+                        return;
+                    }
+                    if let Some(handler) = held.handler {
+                        this.dispatch(Event::Input { handler, text }, cx);
+                    }
+                },
+            );
+            self.inputs.insert(
+                input.key.clone(),
+                Field {
+                    field,
+                    handler: None,
+                    placeholder: String::new(),
+                    echo,
+                    _events: events,
+                },
+            );
+        }
+        let held = self
+            .inputs
+            .get_mut(&input.key)
+            .expect("the input was just held");
+        held.handler = input.on_input;
+        if held.placeholder != input.placeholder {
+            held.placeholder = input.placeholder.clone();
+            let placeholder = SharedString::from(input.placeholder.clone());
+            held.field
+                .update(cx, |field, cx| field.set_placeholder(placeholder, cx));
+        }
+        div().w_full().child(held.field.clone()).into_any_element()
+    }
+
+    fn select(
+        &mut self,
+        select: &wire::Select,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        self.drawn.insert(select.key.clone());
+        let chosen = select
+            .selected
+            .as_ref()
+            .and_then(|value| select.options.iter().position(|o| &o.value == value));
+        let current = self.selects.get(&select.key).is_some_and(|held| {
+            held.options == select.options && held.combobox.read(cx).selection() == chosen
+        });
+        if !current {
+            let labels = select
+                .options
+                .iter()
+                .map(|option| SharedString::from(option.label.clone()))
+                .collect();
+            let placeholder = select.placeholder.clone();
+            let combobox = cx.new(|cx| {
+                let combobox = Combobox::new(labels, placeholder, cx);
+                match chosen {
+                    Some(ix) => combobox.with_selection(ix),
+                    None => combobox,
+                }
+            });
+            let key = select.key.clone();
+            let events = cx.subscribe_in(
+                &combobox,
+                window,
+                move |this, _, event: &ComboboxEvent, _, cx| {
+                    let ComboboxEvent::Selected(ix) = event;
+                    let Some(held) = this.selects.get(&key) else {
+                        return;
+                    };
+                    let (Some(handler), Some(option)) = (held.handler, held.options.get(*ix))
+                    else {
+                        return;
+                    };
+                    let value = option.value.clone();
+                    this.dispatch(Event::Select { handler, value }, cx);
+                },
+            );
+            self.selects.insert(
+                select.key.clone(),
+                Picker {
+                    combobox,
+                    options: select.options.clone(),
+                    handler: None,
+                    _events: events,
+                },
+            );
+        }
+        let held = self
+            .selects
+            .get_mut(&select.key)
+            .expect("the select was just held");
+        held.handler = select.on_select;
+        held.combobox.clone().into_any_element()
+    }
+
+    fn list(&mut self, list: &wire::List, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        let scroll = self
+            .lists
+            .entry(list.key.clone())
+            .or_default()
+            .scroll
+            .clone();
+        let key = list.key.clone();
+        let theme = theme.clone();
+        div()
+            .flex_1()
+            .min_h_0()
+            .size_full()
+            .child(virtual_list(
+                SharedString::from(format!("list-{}", list.key)),
+                list.count as usize,
+                px(list.row_height),
+                &scroll,
+                cx.processor(move |this, range: Range<usize>, window, cx| {
+                    this.rows(&key, range, &theme, window, cx)
+                }),
+            ))
+            .into_any_element()
+    }
+
+    /// The rows `range` of the list `key`, asked of the app when they are not
+    /// the ones it drew last.
+    fn rows(
+        &mut self,
+        key: &str,
+        range: Range<usize>,
+        theme: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let held = self
+            .lists
+            .get(key)
+            .and_then(|listed| listed.rows.as_ref())
+            .filter(|(drawn, _)| *drawn == range)
+            .map(|(_, rows)| rows.clone());
+        let rows = match held {
+            Some(rows) => rows,
+            None => {
+                let State::Running { runtime, .. } = &mut self.state else {
+                    return Vec::new();
+                };
+                match runtime.rows(key, range.start as u32..range.end as u32) {
+                    Ok(rows) => {
+                        let rows = Rc::new(rows);
+                        self.lists.entry(key.to_owned()).or_default().rows =
+                            Some((range.clone(), rows.clone()));
+                        rows
+                    }
+                    Err(error) => {
+                        self.fail(error, cx);
+                        return Vec::new();
+                    }
+                }
+            }
+        };
+        rows.iter()
+            .enumerate()
+            .map(|(ix, row)| {
+                div()
+                    .id(("row", range.start + ix))
+                    .size_full()
+                    .flex()
+                    .flex_col()
+                    .child(self.draw(row, ix, theme, window, cx))
+                    .into_any_element()
+            })
+            .collect()
+    }
+}
+
+impl Render for AppView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let drawn = std::mem::take(&mut self.drawn);
+        self.inputs.retain(|key, _| drawn.contains(key));
+        self.selects.retain(|key, _| drawn.contains(key));
+        let theme = Theme::of(cx).clone();
+        let body = match &self.state {
+            State::Starting { .. } => div().into_any_element(),
+            State::Running { tree, .. } => {
+                let tree = tree.clone();
+                match &*tree {
+                    Node::Layout(layout) => self.layout(layout, 0, true, &theme, window, cx),
+                    node => self.draw(node, 0, &theme, window, cx),
+                }
+            }
+            State::Failed(error) => div()
+                .flex_1()
+                .flex()
+                .flex_col()
+                .gap(px(Space::Small.value(&theme)))
+                .p(px(Space::Large.value(&theme)))
+                .child(
+                    div()
+                        .text_style(TextStyle::Headline)
+                        .text_color(theme.text)
+                        .child("The app stopped"),
+                )
+                .child(
+                    div()
+                        .text_style(TextStyle::Callout)
+                        .text_color(theme.text_muted)
+                        .child(error.clone()),
+                )
+                .into_any_element(),
+        };
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .bg(theme.bg)
+            .text_color(theme.text)
+            .child(body)
+    }
+}
+
+/// A wire token as the theme paints it.
+trait Token {
+    type Value;
+
+    fn value(self, theme: &Theme) -> Self::Value;
+}
+
+impl Token for Space {
+    type Value = f32;
+
+    fn value(self, _: &Theme) -> f32 {
+        match self {
+            Space::None => 0.,
+            Space::Small => 4.,
+            Space::Medium => 8.,
+            Space::Large => 16.,
+        }
+    }
+}
+
+impl Token for wire::TextStyle {
+    type Value = TextStyle;
+
+    fn value(self, _: &Theme) -> TextStyle {
+        match self {
+            wire::TextStyle::Title => TextStyle::Title,
+            wire::TextStyle::Headline => TextStyle::Headline,
+            wire::TextStyle::Body => TextStyle::Body,
+            wire::TextStyle::Callout => TextStyle::Callout,
+            wire::TextStyle::Caption => TextStyle::Caption,
+        }
+    }
+}
+
+impl Token for Tone {
+    type Value = gpui::Hsla;
+
+    fn value(self, theme: &Theme) -> gpui::Hsla {
+        match self {
+            Tone::Default => theme.text,
+            Tone::Muted => theme.text_muted,
+            Tone::Faint => theme.text_faint,
+            Tone::Accent => theme.accent,
+            Tone::Danger => theme.danger,
+        }
+    }
+}
+
+trait Paint {
+    /// What an image node paints: a web URL fetched, or bytes of a format gpui
+    /// decodes. Anything else paints nothing.
+    fn paint(&self) -> Option<ImageSource>;
+}
+
+impl Paint for Source {
+    fn paint(&self) -> Option<ImageSource> {
+        match self {
+            Source::Url(url) => {
+                let web = url.starts_with("https://") || url.starts_with("http://");
+                web.then(|| SharedString::from(url.clone()).into())
+            }
+            Source::Bytes { mime, data } => {
+                let format = gpui::ImageFormat::from_mime_type(mime)?;
+                Some(Arc::new(gpui::Image::from_bytes(format, data.clone())).into())
+            }
+        }
+    }
+}

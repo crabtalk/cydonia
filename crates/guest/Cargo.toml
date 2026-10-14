@@ -1,0 +1,23 @@
+[package]
+name = "cydonia-guest"
+description = "Write a Cydonia app: the nodes it draws, the messages it hears and the calls it makes to Cydonia"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["cydonia", "wasm", "ui"]
+categories = ["gui", "wasm"]
+
+[lib]
+name = "cydonia_guest"
+
+[dependencies]
+base64.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[[example]]
+name = "counter"
+crate-type = ["cdylib"]
