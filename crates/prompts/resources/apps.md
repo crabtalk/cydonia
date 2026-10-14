@@ -117,7 +117,8 @@ Built with the functions in `cydonia_guest::node`, each turned into a
   parent, and Cydonia asks the app for the rows on screen through
   `App::rows(&self, list, range)`, by the list's key. Rows are asked again after
   every `update`.
-- `image` from a URL is fetched by Cydonia over `http` or `https`.
+- `image` from a URL is fetched by Cydonia, and only from a host the manifest
+  names in `hosts`; any other draws as an empty box of its size.
 
 ## Inputs
 
@@ -151,6 +152,28 @@ tables::delete("notes", "text", "old", Msg::Deleted);              // Result<(),
 - `delete` takes away the rows whose column holds the value.
 - Column types: `Text`, `Number`, `Date` (unix seconds), `Check` (0 or 1).
 
+## Fetch
+
+The app reaches the hosts its manifest names in `hosts`, over `http` or
+`https`, and no others: a request to another host is answered with an error and
+never made.
+
+```rust
+use cydonia_guest::{fetch, wire::Request};
+
+fetch::get("https://yc-oss.github.io/api/meta.json", Msg::Meta);   // Result<Response, String>
+fetch::send(Request { method: "POST".into(), url, headers, body: Some(bytes) }, Msg::Sent);
+```
+
+- A response of any status is `Ok`; `Err` is a refused host, a failed
+  connection or a timeout (30 seconds).
+- Redirects are not followed. A 3xx comes back with its `location` header,
+  and following it is another request, held to the same hosts.
+- `Response` has `status`, `headers` (names in lowercase), `body` bytes,
+  `header(name)` and `text()`. A body is read up to 32 MiB.
+- Requests run at the same time as one another; the app decides how many it
+  makes at once.
+
 ## Not there
 
-No filesystem, no clock, no network beyond what is listed here.
+No filesystem, no clock, no network beyond the hosts the manifest names.

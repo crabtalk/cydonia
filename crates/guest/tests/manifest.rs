@@ -63,3 +63,33 @@ fn a_manifest_is_read_out_of_its_custom_section() {
     assert_eq!(Manifest::read(&module("other", b"{}")).unwrap(), None);
     assert!(Manifest::read(b"not wasm").is_err());
 }
+
+#[test]
+fn a_url_reaches_only_the_hosts_named() {
+    let manifest = Manifest {
+        id: "yc".into(),
+        name: "YC".into(),
+        version: "0.1.0".into(),
+        contract: CONTRACT,
+        calls: Vec::new(),
+        hosts: vec!["yc-oss.github.io".into(), "www.ycombinator.com".into()],
+    };
+    for url in [
+        "https://yc-oss.github.io/api/meta.json",
+        "http://WWW.ycombinator.com",
+        "https://www.ycombinator.com:443/companies?q=a#x",
+    ] {
+        assert!(manifest.reaches(url), "{url}");
+    }
+    for url in [
+        "https://ycombinator.com/",
+        "https://yc-oss.github.io.evil.com/",
+        "https://evil.com/yc-oss.github.io",
+        "https://yc-oss.github.io@evil.com/",
+        "ftp://yc-oss.github.io/",
+        "file:///etc/passwd",
+        "yc-oss.github.io",
+    ] {
+        assert!(!manifest.reaches(url), "{url}");
+    }
+}

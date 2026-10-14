@@ -56,6 +56,28 @@ impl Manifest {
         Ok(None)
     }
 
+    /// Whether `url` is an `http` or `https` URL on one of the hosts the app
+    /// names. A URL carrying a user or a password is not.
+    pub fn reaches(&self, url: &str) -> bool {
+        let Some(rest) = url
+            .strip_prefix("https://")
+            .or_else(|| url.strip_prefix("http://"))
+        else {
+            return false;
+        };
+        let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+        if authority.contains('@') {
+            return false;
+        }
+        let host = match authority.rsplit_once(':') {
+            Some((host, port)) if port.bytes().all(|b| b.is_ascii_digit()) => host,
+            _ => authority,
+        };
+        self.hosts
+            .iter()
+            .any(|named| named.eq_ignore_ascii_case(host))
+    }
+
     /// Whether the app declared the group of calls `group`.
     pub fn calls(&self, group: &str) -> bool {
         self.calls.iter().any(|call| call == group)

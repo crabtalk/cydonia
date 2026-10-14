@@ -9,7 +9,7 @@ use std::{ops::Range, process, sync::Arc};
 
 pub use guest::{
     manifest::Manifest,
-    wire::{Answer, Call, CallId, Event, Node},
+    wire::{Answer, Call, CallId, Event, Node, Request, Response},
 };
 
 /// The target apps are built for.
@@ -21,6 +21,14 @@ pub type Runtime = wasmtime::Wasmtime;
 #[cfg(not(feature = "desktop"))]
 pub type Runtime = none::Absent;
 
+/// What this build makes an app's HTTP requests with.
+#[cfg(feature = "desktop")]
+pub type Http = http::Ureq;
+#[cfg(not(feature = "desktop"))]
+pub type Http = none::Offline;
+
+#[cfg(feature = "desktop")]
+mod http;
 #[cfg(feature = "desktop")]
 mod wasmtime;
 
@@ -35,6 +43,11 @@ pub enum Command {
     SetInput { key: String, value: String },
     /// Do `call`, and deliver its answer as an [`Event::Answer`] numbered `id`.
     Call { id: CallId, call: Call },
+}
+
+/// HTTP for apps. Blocks until the response is read.
+pub trait Fetcher {
+    fn fetch(request: &Request) -> Result<Response>;
 }
 
 /// One running instance of an app. A call that fails leaves the instance

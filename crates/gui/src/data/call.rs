@@ -1,7 +1,7 @@
 //! An app's calls on the store, in the shapes `cydonia-guest` reads.
 
 use super::{ColType, Column, Data, Table};
-use anyhow::Result;
+use anyhow::{Result, bail};
 use guest::wire::{self, Answer, Call};
 
 impl Data {
@@ -40,6 +40,7 @@ impl Data {
                 let _ = self.touch(&table);
                 Answer::Done
             }
+            Call::Fetch(request) => bail!("{} is a fetch, not a call on tables", request.url),
         })
     }
 }

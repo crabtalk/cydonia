@@ -25,6 +25,7 @@
 //! cydonia_guest::app!(Counter);
 //! ```
 
+pub mod fetch;
 pub mod host;
 pub mod manifest;
 pub mod node;

@@ -281,13 +281,16 @@ pub enum Call {
         column: String,
         value: serde_json::Value,
     },
+    /// An HTTP request to a host the manifest names. Answers
+    /// [`Answer::Response`], whatever its status.
+    Fetch(Request),
 }
 
 impl Call {
     /// Whether the call changes what the project holds.
     pub fn writes(&self) -> bool {
         match self {
-            Call::Tables | Call::Query { .. } => false,
+            Call::Tables | Call::Query { .. } | Call::Fetch(_) => false,
             Call::CreateTable { .. } | Call::Insert { .. } | Call::Delete { .. } => true,
         }
     }
@@ -301,7 +304,48 @@ pub enum Answer {
     Rows(Rows),
     Ids(Vec<i64>),
     Done,
+    Response(Response),
     Error(String),
+}
+
+/// An HTTP request. Redirects are not followed: a 3xx comes back as it is,
+/// with its `location` among the headers.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Request {
+    pub method: String,
+    pub url: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub headers: Vec<(String, String)>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "base64_option"
+    )]
+    pub body: Option<Vec<u8>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Response {
+    pub status: u16,
+    /// Names in lowercase, in the order the server sent them.
+    pub headers: Vec<(String, String)>,
+    #[serde(with = "base64")]
+    pub body: Vec<u8>,
+}
+
+impl Response {
+    /// The first header named `name`, which is matched without case.
+    pub fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(held, _)| held.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.as_str())
+    }
+
+    /// The body as text, with what is not UTF-8 replaced.
+    pub fn text(&self) -> String {
+        String::from_utf8_lossy(&self.body).into_owned()
+    }
 }
 
 /// One of the project's tables. `key` is what SQL names it by; `name` is what
@@ -343,6 +387,29 @@ pub struct Rows {
 
 fn is_default<T: Default + PartialEq>(value: &T) -> bool {
     *value == T::default()
+}
+
+mod base64_option {
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    use serde::{Deserialize, Deserializer, Serializer, de::Error as _};
+
+    pub fn serialize<S: Serializer>(
+        bytes: &Option<Vec<u8>>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        match bytes {
+            Some(bytes) => serializer.serialize_some(&STANDARD.encode(bytes)),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<Vec<u8>>, D::Error> {
+        Option::<String>::deserialize(deserializer)?
+            .map(|text| STANDARD.decode(text).map_err(D::Error::custom))
+            .transpose()
+    }
 }
 
 mod base64 {

@@ -384,3 +384,63 @@ fn an_app_in_apps_is_built_and_listed_by_its_manifest() {
     assert!(error.contains("mismatched types"), "{error}");
     assert_eq!(apps[0].title(), "Hello there");
 }
+
+/// Answer one request on a local port with `response`, and hand back the URL
+/// and what the request said.
+fn serve_once(response: &'static str) -> (String, std::thread::JoinHandle<String>) {
+    use std::io::{Read as _, Write as _};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!(
+        "http://127.0.0.1:{}/path",
+        listener.local_addr().unwrap().port()
+    );
+    let served = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = vec![0; 4096];
+        let read = stream.read(&mut request).unwrap();
+        stream.write_all(response.as_bytes()).unwrap();
+        String::from_utf8_lossy(&request[..read]).into_owned()
+    });
+    (url, served)
+}
+
+#[test]
+fn a_fetch_answers_with_status_headers_and_body() {
+    use cydonia_gui::model::apps::{Fetcher as _, Http};
+    let (url, served) =
+        serve_once("HTTP/1.1 201 Created\r\nX-Kind: test\r\nContent-Length: 5\r\n\r\nhello");
+    let response = Http::fetch(&wire::Request {
+        method: "POST".into(),
+        url,
+        headers: vec![("x-from".into(), "app".into())],
+        body: Some(b"ping".to_vec()),
+    })
+    .unwrap();
+    assert_eq!(response.status, 201);
+    assert_eq!(response.header("X-KIND"), Some("test"));
+    assert_eq!(response.text(), "hello");
+    let request = served.join().unwrap();
+    assert!(request.starts_with("POST /path"), "{request}");
+    assert!(request.contains("x-from: app"), "{request}");
+}
+
+#[test]
+fn a_redirect_comes_back_unfollowed() {
+    use cydonia_gui::model::apps::{Fetcher as _, Http};
+    let (url, served) = serve_once(
+        "HTTP/1.1 302 Found\r\nLocation: https://elsewhere.example/\r\nContent-Length: 0\r\n\r\n",
+    );
+    let response = Http::fetch(&wire::Request {
+        method: "GET".into(),
+        url,
+        headers: Vec::new(),
+        body: None,
+    })
+    .unwrap();
+    assert_eq!(response.status, 302);
+    assert_eq!(
+        response.header("location"),
+        Some("https://elsewhere.example/")
+    );
+    served.join().unwrap();
+}

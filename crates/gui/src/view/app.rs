@@ -7,7 +7,10 @@
 
 use crate::{
     model::{
-        apps::{Answer, Build, Command, Event, Node, Program, Runner as _, Runtime},
+        apps::{
+            Answer, Build, Call, CallId, Command, Event, Fetcher as _, Http, Manifest, Node,
+            Program, Runner as _, Runtime,
+        },
         workspace::Workspace,
     },
     view::{kit::link::Links, window::root::Cydonia},
@@ -70,6 +73,9 @@ pub struct AppView {
     program: Option<Entity<Program>>,
     /// The build the instance was started from.
     running: Option<Arc<[u8]>>,
+    /// How many instances this view has started. An answer goes only to the
+    /// instance whose call it answers.
+    started: u64,
     state: State,
     lists: HashMap<String, Listed>,
     inputs: HashMap<String, Field>,
@@ -134,6 +140,7 @@ impl AppView {
             workspace,
             program,
             running: None,
+            started: 0,
             state: State::Idle,
             lists: HashMap::new(),
             inputs: HashMap::new(),
@@ -164,6 +171,7 @@ impl AppView {
             return;
         }
         self.running = Some(wasm.clone());
+        self.started += 1;
         self.lists.clear();
         self.inputs.clear();
         self.selects.clear();
@@ -234,33 +242,58 @@ impl AppView {
                         self.pending.insert(key, value);
                     }
                 },
-                Command::Call { id, call } => {
-                    let declared = self.program.as_ref().is_some_and(|program| {
-                        program
-                            .read(cx)
-                            .manifest
-                            .as_ref()
-                            .is_some_and(|manifest| manifest.calls(calls::TABLES))
-                    });
-                    let project = self.app.project.clone();
-                    let answer = match declared {
-                        true => self
-                            .workspace
-                            .update(cx, |workspace, cx| workspace.table_call(&project, call, cx)),
-                        false => Answer::Error(format!(
-                            "The app's manifest does not declare `{}` among its calls",
-                            calls::TABLES
-                        )),
-                    };
-                    cx.spawn(async move |this, cx| {
-                        let _ = this.update(cx, |this, cx| {
-                            this.dispatch(Event::Answer { call: id, answer }, cx)
-                        });
-                    })
-                    .detach();
-                }
+                Command::Call { id, call } => self.call(id, call, cx),
             }
         }
+    }
+
+    /// Do one of the app's calls, and deliver its answer to the instance that
+    /// made it once it is in.
+    fn call(&mut self, id: CallId, call: Call, cx: &mut Context<Self>) {
+        let manifest = self
+            .program
+            .as_ref()
+            .and_then(|program| program.read(cx).manifest.clone());
+        let started = self.started;
+        let answered: Task<Answer> = match call {
+            Call::Fetch(request) => {
+                let reaches = manifest.is_some_and(|manifest| manifest.reaches(&request.url));
+                match reaches {
+                    true => cx.background_executor().spawn(async move {
+                        Http::fetch(&request).map_or_else(
+                            |error| Answer::Error(format!("{error:#}")),
+                            Answer::Response,
+                        )
+                    }),
+                    false => Task::ready(Answer::Error(format!(
+                        "{} is not on a host the app's manifest names",
+                        request.url
+                    ))),
+                }
+            }
+            call => {
+                let declared = manifest.is_some_and(|manifest| manifest.calls(calls::TABLES));
+                let project = self.app.project.clone();
+                Task::ready(match declared {
+                    true => self
+                        .workspace
+                        .update(cx, |workspace, cx| workspace.table_call(&project, call, cx)),
+                    false => Answer::Error(format!(
+                        "The app's manifest does not declare `{}` among its calls",
+                        calls::TABLES
+                    )),
+                })
+            }
+        };
+        cx.spawn(async move |this, cx| {
+            let answer = answered.await;
+            let _ = this.update(cx, |this, cx| {
+                if this.started == started {
+                    this.dispatch(Event::Answer { call: id, answer }, cx)
+                }
+            });
+        })
+        .detach();
     }
 
     fn fail(&mut self, error: anyhow::Error, cx: &mut Context<Self>) {
@@ -357,7 +390,11 @@ impl AppView {
             }
             Node::Image(image) => {
                 let frame = div().flex_none().w(px(image.width)).h(px(image.height));
-                let Some(source) = image.source.paint() else {
+                let manifest = self
+                    .program
+                    .as_ref()
+                    .and_then(|program| program.read(cx).manifest.as_ref());
+                let Some(source) = image.source.paint(manifest) else {
                     return frame.into_any_element();
                 };
                 frame
@@ -732,18 +769,17 @@ impl Token for Tone {
 }
 
 trait Paint {
-    /// What an image node paints: a web URL fetched, or bytes of a format gpui
-    /// decodes. Anything else paints nothing.
-    fn paint(&self) -> Option<ImageSource>;
+    /// What an image node paints: a URL on a host `manifest` names, fetched,
+    /// or bytes of a format gpui decodes. Anything else paints nothing.
+    fn paint(&self, manifest: Option<&Manifest>) -> Option<ImageSource>;
 }
 
 impl Paint for Source {
-    fn paint(&self) -> Option<ImageSource> {
+    fn paint(&self, manifest: Option<&Manifest>) -> Option<ImageSource> {
         match self {
-            Source::Url(url) => {
-                let web = url.starts_with("https://") || url.starts_with("http://");
-                web.then(|| SharedString::from(url.clone()).into())
-            }
+            Source::Url(url) => manifest
+                .is_some_and(|manifest| manifest.reaches(url))
+                .then(|| SharedString::from(url.clone()).into()),
             Source::Bytes { mime, data } => {
                 let format = gpui::ImageFormat::from_mime_type(mime)?;
                 Some(Arc::new(gpui::Image::from_bytes(format, data.clone())).into())

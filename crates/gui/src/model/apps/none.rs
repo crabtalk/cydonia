@@ -1,7 +1,7 @@
 //! No app runtime. [`Absent`] has no values: [`Runner::start`] refuses every
-//! app, so nothing else here can be called.
+//! app, so nothing else here can be called. [`Offline`] makes no request.
 
-use super::{Command, Event, Node, Runner};
+use super::{Command, Event, Fetcher, Node, Request, Response, Runner};
 use anyhow::{Result, bail};
 use std::ops::Range;
 
@@ -22,5 +22,13 @@ impl Runner for Absent {
 
     fn rows(&mut self, _: &str, _: Range<u32>) -> Result<Vec<Node>> {
         match *self {}
+    }
+}
+
+pub struct Offline;
+
+impl Fetcher for Offline {
+    fn fetch(request: &Request) -> Result<Response> {
+        bail!("{} is not reachable from this build", request.url)
     }
 }
