@@ -3,7 +3,8 @@ name: release
 # Pushing `v<version>` publishes the files of the `nightly` pre-release built
 # from that same commit as a release on the tag, with the version's
 # changelog.json entry as its notes, and makes it the latest release. The
-# nightly pre-release stays as it is. Nothing is rebuilt.
+# nightly pre-release stays as it is, and the app is not rebuilt. Then
+# `cydonia-guest` is published to crates.io.
 on:
   push:
     tags: ["v*"]
@@ -42,3 +43,15 @@ jobs:
           gh release download nightly --dir dist
           gh release create "$TAG" dist/* --title "$TAG" --notes-file notes.md \
             --verify-tag --latest
+
+  # `cydonia-guest` at the workspace version, once the release is out. Takes
+  # the `CARGO_REGISTRY_TOKEN` secret.
+  guest:
+    needs: promote
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo publish -p cydonia-guest --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
