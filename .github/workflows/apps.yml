@@ -1,0 +1,52 @@
+name: apps
+
+# Every merge to `main` that touches an app pushes it to ghcr as one OCI layer
+# holding its `.wasm`, tagged with the app's version. A version already in the
+# registry is left as it is: a changed app goes up under a new version.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/**"
+      - "crates/guest/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish:
+    name: publish (${{ matrix.app }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [yc]
+    env:
+      IMAGE: ghcr.io/${{ github.repository }}/${{ matrix.app }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: oras-project/setup-oras@v1
+      - name: build
+        run: cargo build --locked --release --target wasm32-unknown-unknown --manifest-path apps/${{ matrix.app }}/Cargo.toml
+      - name: push
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version=$(sed -n '/^\[package\]/,/^\[/ s/^version = "\(.*\)"/\1/p' apps/${{ matrix.app }}/Cargo.toml | head -1)
+          echo "$GHCR_TOKEN" | oras login ghcr.io --username "${{ github.actor }}" --password-stdin
+          if oras manifest fetch "$IMAGE:$version" > /dev/null 2>&1; then
+            echo "$IMAGE:$version is already published"
+            exit 0
+          fi
+          cd apps/${{ matrix.app }}/target/wasm32-unknown-unknown/release
+          oras push "$IMAGE:$version" \
+            --artifact-type application/vnd.cydonia.app \
+            "${{ matrix.app }}.wasm:application/wasm"
