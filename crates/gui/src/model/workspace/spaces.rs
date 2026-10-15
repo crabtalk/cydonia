@@ -325,6 +325,16 @@ impl Workspace {
             .unwrap_or_default()
     }
 
+    /// The tab the pane holding this entry shows — see [`Space::front_of`].
+    pub fn front_of(&self, entry: &Member) -> Option<Member> {
+        self.active_space()?.front_of(entry)
+    }
+
+    /// Bring a tab to the front of its pane in the open space.
+    pub fn set_front(&mut self, tab: &Member, cx: &mut Context<Self>) {
+        self.edit_space(cx, |space| space.set_front(tab));
+    }
+
     /// The pane across the seam on this side of the one given, if there is one
     /// — what says whether a move that way is on offer at all.
     pub fn neighbour_pane(&self, entry: &Member, side: Side) -> Option<Member> {
@@ -798,7 +808,7 @@ impl Workspace {
         };
         let showing: Vec<_> = space
             .tree
-            .panes()
+            .fronts()
             .iter()
             .filter_map(|member| self.showing_of(member, cx))
             .collect();

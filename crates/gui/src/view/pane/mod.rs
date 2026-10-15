@@ -86,10 +86,10 @@ pub(crate) struct Pane {
     root: WeakEntity<Cydonia>,
     /// The tab of each entry of the strip, in the strip's order.
     pub(crate) tabs: Vec<Entity<Tab>>,
-    /// The tab in front, while it is still in the strip; the first otherwise.
-    /// Runtime only: where the panes are is the space's, and which tab you
-    /// happen to be looking at is not.
-    front: Option<Member>,
+    /// The tabs brought to the front since the pane was made, most recent
+    /// last — what [`Self::front_after`] reads. Runtime only; the tab in
+    /// front is the space's.
+    fronts: Vec<Member>,
     strip: tabs::Reorder<Dragged>,
     menu: ContextMenu<Self, BarMenu>,
     /// Whether the pointer is over the bar: its `+` and `···` take room there
@@ -111,7 +111,7 @@ impl Pane {
             workspace,
             root,
             tabs: Vec::new(),
-            front: None,
+            fronts: Vec::new(),
             strip: tabs::Reorder::new(Painter::of(cx)),
             menu: ContextMenu::default(),
             hovered: false,
@@ -126,17 +126,42 @@ impl Pane {
 
     /// The entry in front.
     pub(crate) fn front(&self, cx: &App) -> Member {
-        let stack = self.stack(cx);
-        self.front
-            .clone()
-            .filter(|front| stack.contains(front))
-            .or_else(|| stack.first().cloned())
+        self.workspace
+            .read(cx)
+            .front_of(&self.name)
             .unwrap_or_else(|| self.name.clone())
     }
 
     pub(crate) fn set_front(&mut self, front: Member, cx: &mut Context<Self>) {
-        self.front = Some(front);
+        let stack = self.stack(cx);
+        self.fronts
+            .retain(|seen| *seen != front && stack.contains(seen));
+        self.fronts.push(front.clone());
+        self.workspace
+            .update(cx, |workspace, cx| workspace.set_front(&front, cx));
         cx.notify();
+    }
+
+    /// The tab in front once `gone` leaves the strip: the one in front now
+    /// where that is not `gone`; else the one in front before it, or else its
+    /// neighbour — to its left, to its right for the first. `None` where
+    /// `gone` is the strip's last tab, or not in it.
+    pub(crate) fn front_after(&self, gone: &Member, cx: &App) -> Option<Member> {
+        let stack = self.stack(cx);
+        let at = stack.iter().position(|tab| tab == gone)?;
+        let front = self.front(cx);
+        if front != *gone {
+            return Some(front);
+        }
+        self.fronts
+            .iter()
+            .rev()
+            .find(|tab| *tab != gone && stack.contains(tab))
+            .or_else(|| match at {
+                0 => stack.get(1),
+                at => stack.get(at - 1),
+            })
+            .cloned()
     }
 
     /// The tab in front.

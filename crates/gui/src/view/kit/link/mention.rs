@@ -339,13 +339,26 @@ impl<'a> Query<'a> {
     }
 
     /// The cards the query names: by handle, best first, then the cards whose
-    /// text holds it. Nothing for a query with a kind or label prefix.
+    /// text holds it. A bare number, with no `#`, names the active project's
+    /// cards of that handle on every board. Nothing for a query with a kind or
+    /// label prefix.
     pub(crate) fn rank_cards(&self, cards: &[Carded]) -> (Vec<usize>, Vec<usize>) {
         let query = self.rest.trim();
         if self.kind.is_some() || self.label.is_some() || query.is_empty() {
             return (Vec::new(), Vec::new());
         }
         let mut named: Vec<(bool, u64, usize)> = Vec::new();
+        if let Some(reference::Partial {
+            project: None,
+            target: Prefix::Number(handle),
+        }) = reference::partial(query)
+            && !query.contains('#')
+        {
+            named.extend(cards.iter().enumerate().filter_map(|(ix, carded)| {
+                let number = carded.card.handle?;
+                (carded.active && number.to_string() == handle).then_some((false, number, ix))
+            }));
+        }
         if let Some(reference::Partial {
             project,
             target: Prefix::Card { key, handle },

@@ -2,7 +2,6 @@
   {
     "version": "0.2.0",
     "date": "2026-10-12",
-    "nightly": true,
     "summary": "Article threads: ask about a passage and the answer stays with the article. Cards sent to a session you pick, cards that wait on other cards, and a description on each board for the agents working it. Agents' notes in an article's margin, @ links to board cards, an extended sidebar, and a window that redraws only what changed.",
     "new": [
       "Ask about a passage of an article: select it and press Ask or Explain on the formatting bar, and the answer comes in the article's own session under the page. Article threads can be switched off in Settings › Features",

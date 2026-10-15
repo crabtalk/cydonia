@@ -525,9 +525,8 @@ pub struct Cydonia {
     /// groups along their own board.
     pub(crate) board_sort: drag::Domain<board::BoardRegion, board::BoardItem>,
     /// The tabs that have been brought to the front, most recent last, across
-    /// every pane. Read when a tab closes, to land on the one that was in
-    /// front before it rather than on a neighbour in the strip — see
-    /// [`Cydonia::close_pane`]. Runtime only, for the same reason `fronts` is.
+    /// every pane. Read when a pane's last tab closes with the focus on it —
+    /// see [`Cydonia::close_pane`]. Runtime only, as [`Pane`]'s own are.
     pub(crate) tab_history: Vec<Member>,
     /// The library, while it stands over the panes — see
     /// [`crate::view::library`].
