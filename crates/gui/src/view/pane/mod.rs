@@ -99,6 +99,11 @@ pub(crate) struct Pane {
 }
 
 impl Pane {
+    /// Whether one of this pane's tabs holds the window's focus.
+    pub(crate) fn focused(&self, cx: &App) -> bool {
+        self.tabs.iter().any(|tab| tab.read(cx).focused)
+    }
+
     pub(crate) fn new(
         name: Member,
         workspace: Entity<Workspace>,
@@ -386,11 +391,7 @@ impl Pane {
         let lead = match (first, sidebar_open) {
             _ if left => 0.,
             (true, true) => root::HEADER_INSET,
-            (true, false) => root::toolbar_inset(
-                root::content_edge(self.workspace.read(cx).settings.appearance.floating),
-                window,
-                cx,
-            ),
+            (true, false) => root::toolbar_inset(window, cx),
             (false, _) => TAB_INSET,
         };
         let owner = cx.entity().downgrade();

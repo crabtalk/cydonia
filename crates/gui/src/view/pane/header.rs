@@ -17,7 +17,7 @@ use crate::view::{
 };
 use artifact::{kind::Kind, space::Member};
 use bezel::{
-    gpui::{AnyElement, App, Context, FontWeight, SharedString, Window, div, prelude::*, px},
+    gpui::{AnyElement, App, Context, Div, FontWeight, SharedString, Window, div, prelude::*, px},
     motion::Painter,
     theme::{TextStyle, Theme, Typeset},
     ui::{context_menu::Place, icons, titlebar::CaptionSide, tooltip::Tooltip},
@@ -132,6 +132,59 @@ impl Cydonia {
         (shown == *at).then_some(at)
     }
 
+    /// A space's band in the floating layout: the window's own corners over
+    /// the panes' cards, which carry a bar each. What the panes at the
+    /// window's top corners hold in the flat layout — the lights' clearance,
+    /// the fold while the sidebar is shut, the right panel's button while the
+    /// panel is down, the caption buttons — is here.
+    pub(crate) fn space_band(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let right = chrome::has(CaptionSide::Right, window, cx);
+        self.window_band(right, window, cx)
+            .child(chrome::grip("space-band-grip", &self.drag, window))
+            .children(
+                self.changes
+                    .is_none()
+                    .then(|| changes_toggle("Show right panel", Painter::of(cx), Theme::of(cx))),
+            )
+            .children(
+                right
+                    .then(|| chrome::caption(CaptionSide::Right, window, cx))
+                    .flatten(),
+            )
+            .into_any_element()
+    }
+
+    /// The leading half of a band across the window's top: past the lights or
+    /// the left caption buttons, and the fold while the sidebar is shut.
+    /// `right` is whether the caller ends it with the right caption buttons.
+    fn window_band(&self, right: bool, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        // The window's top left is the sidebar's while it is open.
+        let left = !self.sidebar_open && chrome::has(CaptionSide::Left, window, cx);
+        // The lights belong to the window, not a pane, so their clearance is
+        // taken here and nowhere a pane can see it.
+        let inset = match self.sidebar_open {
+            true => root::HEADER_INSET,
+            false => root::toolbar_inset(window, cx),
+        };
+        root::band()
+            .absolute()
+            .top_0()
+            .left_0()
+            .right_0()
+            .gap(px(8.))
+            // Past the lights, which are the window's and are drawn over
+            // whatever is at its top left.
+            .pl(px(if left { 0. } else { inset }))
+            .when(right, |band| band.pr_0())
+            .children(
+                left.then(|| chrome::caption(CaptionSide::Left, window, cx))
+                    .flatten(),
+            )
+            // The fold belongs to whichever column runs along the window's
+            // left edge, so with the sidebar gone it is this one's.
+            .children((!self.sidebar_open).then(|| self.fold_controls(cx)))
+    }
+
     /// The band, drawn over the pane rather than above it — the composer sits
     /// on the other edge the same way.
     pub(crate) fn pane_header(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -144,21 +197,12 @@ impl Cydonia {
             }),
             false => self.showing(cx).and_then(|pane| self.toolbar(pane, cx)),
         };
-        // The lights belong to the window, not a pane, so their clearance is
-        // taken here and nowhere a pane can see it.
-        let inset = match self.sidebar_open {
-            true => root::HEADER_INSET,
-            false => root::toolbar_inset(
-                root::content_edge(self.workspace.read(cx).settings.appearance.floating),
-                window,
-                cx,
-            ),
-        };
-        // The window's corners, when this band is the one at them: the
-        // sidebar holds the left one while it is open, and the right panel
-        // the right one.
-        let left = !self.sidebar_open && chrome::has(CaptionSide::Left, window, cx);
-        let right = self.changes.is_none() && chrome::has(CaptionSide::Right, window, cx);
+        // The window's top right, when this band is the one at it: the right
+        // panel holds it while it is up. Floating, the band is the chrome across the window's top whatever
+        // the panel does.
+        let floating = self.workspace.read(cx).settings.appearance.floating;
+        let right =
+            (floating || self.changes.is_none()) && chrome::has(CaptionSide::Right, window, cx);
         let bare = toolbar.is_none();
         // The open article's comments, beside its `···`.
         let comments = match self.library.is_some() {
@@ -189,24 +233,7 @@ impl Cydonia {
                 .find(|line| !line.trim().is_empty())?;
             Some(line.trim().to_owned().into())
         });
-        root::band()
-            .absolute()
-            .top_0()
-            .left_0()
-            .right_0()
-            .gap(px(8.))
-            // Past the lights, which are the window's and are drawn over
-            // whatever is at its top left.
-            .pl(px(if left { 0. } else { inset }))
-            .when(right, |band| band.pr_0())
-            .children(
-                left.then(|| chrome::caption(CaptionSide::Left, window, cx))
-                    .flatten(),
-            )
-            // Above the pane, which runs under it.
-            // The fold belongs to whichever column runs along the window's
-            // left edge, so with the sidebar gone it is this one's.
-            .children((!self.sidebar_open).then(|| self.fold_controls(cx)))
+        self.window_band(right, window, cx)
             .children(toolbar.map(|toolbar| {
                 match renaming {
                     true => div().flex_1().min_w_0().child(self.name_field(cx)),

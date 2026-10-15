@@ -678,11 +678,17 @@ impl Cydonia {
             // that means every pane's own scroll box, not this one div.
             //
             // A space takes none of it: its panes carry a bar each, and the
-            // one at the top left keeps clear of the lights itself.
-            .when(!arranged, |el| el.pt(px(root::HEADER_HEIGHT)))
+            // one at the top left keeps clear of the lights itself. Floating,
+            // the band is on the chrome over the card and takes none either.
+            .when(!arranged && !floating, |el| el.pt(px(root::HEADER_HEIGHT)))
             .child(body);
 
-        let main = div()
+        // A space's panes are cards of their own; anything else is one.
+        let main = match arranged {
+            true => div(),
+            false => bezel::ui::window::content(floating, cx),
+        };
+        let main = main
             .flex_1()
             .min_h_0()
             .min_w_0()
@@ -693,7 +699,7 @@ impl Cydonia {
             // After the content, so it draws over it. A space has no band of
             // its own: one title over several panes would name whichever is in
             // front and say nothing about the rest.
-            .children((!arranged).then(|| self.pane_header(window, cx)));
+            .children((!arranged && !floating).then(|| self.pane_header(window, cx)));
         // The library's drawer, under the band like the pane's body. A pane
         // draws its own.
         let drawer = match library {
@@ -708,7 +714,10 @@ impl Cydonia {
                 main.child(
                     div()
                         .absolute()
-                        .top(px(root::HEADER_HEIGHT))
+                        .top(px(match floating {
+                            true => 0.,
+                            false => root::HEADER_HEIGHT,
+                        }))
                         .bottom_0()
                         .left_0()
                         .right_0()
@@ -740,7 +749,7 @@ impl Cydonia {
             self.terminal_height,
             f32::from(window.viewport_size().height),
         );
-        div()
+        let panels = div()
             .id("session-panels")
             .relative()
             .flex_1()
@@ -750,8 +759,9 @@ impl Cydonia {
             .flex_col()
             .on_drag_move(
                 cx.listener(|this, event: &DragMoveEvent<TerminalResize>, _, cx| {
+                    let gap = root::card_gap(this.workspace.read(cx).settings.appearance.floating);
                     this.terminal_height = Some(panel_height(
-                        Some(f32::from(event.bounds.bottom() - event.event.position.y)),
+                        Some(f32::from(event.bounds.bottom() - event.event.position.y) - gap),
                         f32::from(event.bounds.size.height),
                     ));
                     this.save_panel_layout_settled(cx);
@@ -769,7 +779,11 @@ impl Cydonia {
                     .on_drag_move(cx.listener(
                         |this, event: &DragMoveEvent<ChangesResize>, _, cx| {
                             let available = f32::from(event.bounds.size.width);
-                            let dragged = f32::from(event.bounds.right() - event.event.position.x);
+                            let gap = root::card_gap(
+                                this.workspace.read(cx).settings.appearance.floating,
+                            );
+                            let dragged =
+                                f32::from(event.bounds.right() - event.event.position.x) - gap;
                             if available > 0. {
                                 this.changes_share = Some(
                                     panel_width(Some(dragged / available), available) / available,
@@ -786,7 +800,7 @@ impl Cydonia {
                         false => self.lone_pane(main.into_any_element(), cx),
                     })
                     .children(changes.clone().filter(|_| beside).map(|panel| {
-                        div()
+                        bezel::ui::window::content(floating, cx)
                             .relative()
                             .w(px(width))
                             .min_w_0()
@@ -799,7 +813,7 @@ impl Cydonia {
                     // widened again — and the panel is laid on the content's
                     // own fill, so nothing reads through.
                     .children(changes.clone().filter(|_| !beside).map(|panel| {
-                        div()
+                        bezel::ui::window::content(floating, cx)
                             .absolute()
                             .inset_0()
                             .bg(bezel::ui::window::content_fill(floating, &theme))
@@ -808,30 +822,73 @@ impl Cydonia {
                     // No split to drag when there is nothing beside anything.
                     .when(changes.is_some() && beside, |row| {
                         row.child(
-                            crate::view::component::divider::divider(&theme, Axis::Horizontal)
-                                .id("changes-split")
-                                .absolute()
-                                .top_0()
-                                .right(px(width - crate::view::component::divider::HIT / 2.))
-                                .on_drag(ChangesResize, |_, _, _, cx| cx.new(|_| Empty)),
+                            crate::view::component::divider::seam(
+                                &theme,
+                                Axis::Horizontal,
+                                floating,
+                            )
+                            .id("changes-split")
+                            .absolute()
+                            .top_0()
+                            .right(px(width + root::card_gap(floating)
+                                - crate::view::component::divider::HIT / 2.))
+                            .on_drag(ChangesResize, |_, _, _, cx| cx.new(|_| Empty)),
                         )
                     }),
             )
-            .children(
-                terminal
-                    .clone()
-                    .map(|terminal| div().h(px(height)).flex_none().child(terminal)),
-            )
+            .children(terminal.clone().map(|terminal| {
+                bezel::ui::window::content(floating, cx)
+                    .h(px(height))
+                    .flex_none()
+                    .child(terminal)
+            }))
             .when(terminal.is_some(), |column| {
                 column.child(
-                    crate::view::component::divider::divider(&theme, Axis::Vertical)
+                    crate::view::component::divider::seam(&theme, Axis::Vertical, floating)
                         .id("terminal-split")
                         .absolute()
                         .left_0()
-                        .bottom(px(height - crate::view::component::divider::HIT / 2.))
+                        .bottom(px(height + root::card_gap(floating)
+                            - crate::view::component::divider::HIT / 2.))
                         .on_drag(TerminalResize, |_, _, _, cx| cx.new(|_| Empty)),
                 )
-            })
+            });
+        if !floating {
+            return panels.into_any_element();
+        }
+        // Floating, the band is a strip of the chrome over every card, so the
+        // cards start in one place whether the sidebar is open or not, and the
+        // lights stand on the chrome. The cards leave the column half the
+        // inset to pad itself by.
+        let band = match arranged {
+            true => self.space_band(window, cx),
+            false => self.pane_header(window, cx),
+        };
+        div()
+            .flex_1()
+            .min_w_0()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .relative()
+                    .flex_none()
+                    .h(px(root::HEADER_HEIGHT))
+                    .child(band),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .px(px(Theme::CONTENT_INSET / 2.))
+                    .pb(px(Theme::CONTENT_INSET / 2.))
+                    .child(panels),
+            )
+            .into_any_element()
     }
 }
 

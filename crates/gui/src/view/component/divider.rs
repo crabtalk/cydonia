@@ -24,6 +24,15 @@ pub fn gap(axis: Axis) -> Div {
     }
 }
 
+/// The seam between two regions: a [`divider`] where they meet, or a bare
+/// [`gap`] where they float as cards with chrome between them.
+pub fn seam(theme: &Theme, axis: Axis, floating: bool) -> Div {
+    match floating {
+        true => gap(axis),
+        false => divider(theme, axis),
+    }
+}
+
 pub fn divider(theme: &Theme, axis: Axis) -> Div {
     let line = div().bg(theme.border);
     match axis {
