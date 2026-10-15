@@ -36,21 +36,29 @@ impl Lights {
     }
 }
 
-/// Measure `window`'s lights, record them for every band to read, and centre
-/// the lights down the header. Call once the window exists.
-pub fn fit(window: &mut Window, cx: &mut App) {
-    let lights = measure(window).unwrap_or(MACOS_26);
-    cx.set_global(lights);
+/// Measure `window`'s lights, record them for every band to read, and
+/// [`place`] them. Call once the window exists.
+pub fn fit(window: &mut Window, top: f32, cx: &mut App) {
+    cx.set_global(measure(window).unwrap_or(MACOS_26));
+    place(window, top, cx);
+}
+
+/// Centre the lights down a header whose top edge is `top` below the
+/// window's.
+pub fn place(window: &mut Window, top: f32, cx: &App) {
     // gpui has the setter on macOS only.
     #[cfg(target_os = "macos")]
     {
         use crate::view::window::root::HEADER_HEIGHT;
         use bezel::gpui::{point, px};
+        let lights = Lights::of(cx);
         window.set_traffic_light_position(point(
             px(TRAFFIC_LIGHT_INSET),
-            px((HEADER_HEIGHT - lights.height) / 2.),
+            px(top + (HEADER_HEIGHT - lights.height) / 2.),
         ));
     }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (window, top, cx);
 }
 
 #[cfg(target_os = "macos")]

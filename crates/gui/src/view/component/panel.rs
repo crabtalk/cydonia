@@ -748,7 +748,6 @@ impl Render for Panel {
             .size_full()
             .flex()
             .flex_col()
-            .bg(theme.window_bg())
             .key_context("SessionPanel")
             .track_focus(&self.focus)
             .on_mouse_down(

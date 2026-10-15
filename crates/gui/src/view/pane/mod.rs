@@ -386,7 +386,11 @@ impl Pane {
         let lead = match (first, sidebar_open) {
             _ if left => 0.,
             (true, true) => root::HEADER_INSET,
-            (true, false) => root::toolbar_inset(window, cx),
+            (true, false) => root::toolbar_inset(
+                root::content_edge(self.workspace.read(cx).settings.appearance.floating),
+                window,
+                cx,
+            ),
             (false, _) => TAB_INSET,
         };
         let owner = cx.entity().downgrade();

@@ -1135,7 +1135,6 @@ impl Render for TerminalPanel {
             .on_action(cx.listener(|this, _: &super::panel::PrevTab, window, cx| {
                 this.cycle(-1, window, cx);
             }))
-            .bg(theme.window_bg())
             .child(
                 div()
                     .h(px(40.))

@@ -21,8 +21,15 @@ pub const CONTENT_TEXT_SIZE: (f32, f32) = (8., 40.);
 pub const MONO_TEXT_SIZE: f32 = 13.;
 
 /// The range [`Appearance::vibrancy`] is held to: how opaque the tint over
-/// the frosted window may be.
+/// the translucent window may be.
 pub const VIBRANCY: (f32, f32) = (0.5, 0.95);
+
+/// The range [`Appearance::content_opacity`] is held to: bezel's material
+/// scale, thinnest to thickest.
+pub const CONTENT_OPACITY: (f32, f32) = (
+    bezel::theme::Material::UltraThin.opacity(),
+    bezel::theme::Material::UltraThick.opacity(),
+);
 
 /// The range [`Appearance::blur`] is held to, in native filter pixels.
 pub const BLUR: (f32, f32) = (0., 120.);
@@ -188,10 +195,10 @@ pub struct Appearance {
     /// appearance [`Self::theme`] paints in a family.
     pub hue: f32,
     pub chroma: f32,
-    /// How opaque the tint over the frosted window is — bezel's
+    /// How opaque the tint over the translucent window is — bezel's
     /// `Brand::vibrancy_alpha`. Clamped to [`VIBRANCY`] on the way in.
     pub vibrancy: f32,
-    /// How far the desktop behind the frosted window is blurred — bezel's
+    /// How far the desktop behind the translucent window is blurred — bezel's
     /// `Brand::window_blur`. Clamped to [`BLUR`] on the way in.
     pub blur: f32,
     /// How wide a page with nothing of its own to say is set. A page that
@@ -213,6 +220,12 @@ pub struct Appearance {
     /// Sidebar entries are three lines: the name, a preview, and the labels
     /// with how long ago the entry was touched.
     pub extended_sidebar: bool,
+    /// What is open is drawn on a card over the window's chrome, rather than
+    /// flush with it — bezel's `window::content`.
+    pub floating: bool,
+    /// How much of the chrome that card covers — bezel's
+    /// `Brand::content_opacity`. Clamped to [`CONTENT_OPACITY`] on the way in.
+    pub content_opacity: f32,
     /// The settings window's section sidebar is as wide as its widest row
     /// rather than a fixed width.
     pub settings_sidebar_fits: bool,
@@ -535,6 +548,8 @@ impl Default for Appearance {
             board_view: artifact::board::View::List,
             indent_project_rows: true,
             extended_sidebar: false,
+            floating: true,
+            content_opacity: bezel::theme::Theme::CONTENT_OPACITY,
             settings_sidebar_fits: false,
             traffic_lights: false,
             scrollbars: Scrollbars::default(),
@@ -569,6 +584,12 @@ impl Appearance {
         self.vibrancy = match self.vibrancy.is_finite() {
             true => self.vibrancy.clamp(VIBRANCY.0, VIBRANCY.1),
             false => Self::default().vibrancy,
+        };
+        self.content_opacity = match self.content_opacity.is_finite() {
+            true => self
+                .content_opacity
+                .clamp(CONTENT_OPACITY.0, CONTENT_OPACITY.1),
+            false => Self::default().content_opacity,
         };
         self.blur = match self.blur.is_finite() {
             true => self.blur.clamp(BLUR.0, BLUR.1),
@@ -1431,6 +1452,8 @@ fn write_appearance(doc: &mut toml_edit::DocumentMut, appearance: &Appearance) -
     held["board_view"] = toml_edit::value(appearance.board_view.key());
     held["indent_project_rows"] = toml_edit::value(appearance.indent_project_rows);
     held["extended_sidebar"] = toml_edit::value(appearance.extended_sidebar);
+    held["floating"] = toml_edit::value(appearance.floating);
+    held["content_opacity"] = toml_edit::value(f64::from(appearance.content_opacity));
     held["traffic_lights"] = toml_edit::value(appearance.traffic_lights);
     held["settings_sidebar_fits"] = toml_edit::value(appearance.settings_sidebar_fits);
     held["scrollbars"] = toml_edit::value(appearance.scrollbars.key());

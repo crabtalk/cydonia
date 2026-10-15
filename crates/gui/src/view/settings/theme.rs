@@ -44,6 +44,15 @@ const MODES: [AppearanceMode; 3] = [
 /// Swatches a row of the colour popover holds.
 const SWATCH_COLUMNS: usize = 6;
 
+/// A layout tile's window, and the parts of it drawn to scale.
+const LAYOUT_WIDTH: f32 = 112.;
+const LAYOUT_HEIGHT: f32 = 72.;
+const LAYOUT_SIDEBAR: f32 = 30.;
+const LAYOUT_INSET: f32 = 3.;
+
+/// The window layouts the picker offers, in its order: flat, then floating.
+const LAYOUTS: [(bool, &str); 2] = [(false, "Flat"), (true, "Floating")];
+
 impl SettingsWindow {
     /// The whole page: the mode it paints in, then the colours it mixes and the
     /// size it reads at.
@@ -62,6 +71,7 @@ impl SettingsWindow {
                     .child(self.theme_family_row(Appearance::Light, cx))
                     .child(self.theme_family_row(Appearance::Dark, cx)),
             )
+            .child(self.window_group(cx))
             .child(self.colors_group(cx))
             .child(self.typography_group(cx))
             .child(self.families_group(cx))
@@ -250,6 +260,65 @@ impl SettingsWindow {
                     .flex_none(),
             )
             .into_any_element()
+    }
+
+    fn window_group(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let floating = self.workspace.read(cx).settings.appearance.floating;
+        let tiles = LAYOUTS.map(|(on, name)| (layout_picture(&theme, on), name.into()));
+        let picker = theme.picture_picker(
+            "window-layout",
+            tiles,
+            usize::from(floating),
+            cx.listener(|this, ix: &usize, _, cx| {
+                let floating = LAYOUTS[*ix].0;
+                this.workspace.update(cx, |workspace, cx| {
+                    workspace.set_floating(floating, cx);
+                });
+            }),
+        );
+        group(&theme, "Window")
+            .child(
+                theme
+                    .group_box()
+                    .child(
+                        theme
+                            .card_row(true)
+                            .child(labelled(
+                                &theme,
+                                "Layout",
+                                "Flush with the window, or on a card over it.",
+                                false,
+                            ))
+                            .child(picker),
+                    )
+                    .children(self.content_opacity_row(cx)),
+            )
+            .into_any_element()
+    }
+
+    /// How much of the window shows through the floating card. Shown with
+    /// [`Self::vibrancy_row`], and only while the content floats.
+    fn content_opacity_row(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        use crate::model::settings::CONTENT_OPACITY;
+        let look = &self.workspace.read(cx).settings.appearance;
+        if !(look.floating && Theme::of(cx).vibrancy) {
+            return None;
+        }
+        let (min, max) = CONTENT_OPACITY;
+        let opacity = look.content_opacity;
+        // Right is more see-through, as the window's own transparency runs.
+        Some(self.tint_row(
+            false,
+            "content-opacity",
+            "Card transparency",
+            "How much of the window shows through the card.",
+            (max - opacity) / (max - min),
+            move |workspace, fraction, cx| {
+                workspace.set_content_opacity(max - fraction * (max - min), cx);
+            },
+            cx,
+        ))
     }
 
     fn sidebar_group(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -1123,8 +1192,8 @@ impl SettingsWindow {
         )
     }
 
-    /// How much the frost shows through. Nothing where the window is not
-    /// frosted — opaque, or an appearance the palette does not frost.
+    /// How much of the desktop shows through. Nothing where the window is not
+    /// translucent — opaque, or an appearance the palette keeps opaque.
     fn vibrancy_row(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         use crate::model::settings::VIBRANCY;
         if !Theme::of(cx).vibrancy {
@@ -1219,6 +1288,59 @@ impl SettingsWindow {
             )
             .into_any_element()
     }
+}
+
+/// A window in miniature, laid out flat or floating, in the colours the window
+/// paints.
+fn layout_picture(theme: &Theme, floating: bool) -> AnyElement {
+    let content = bezel::ui::window::content_fill(floating, theme);
+    let bar = |width: f32| {
+        div()
+            .h(px(3.))
+            .w(px(width))
+            .rounded_full()
+            .bg(theme.text_faint)
+    };
+    let sidebar = div()
+        .flex_none()
+        .w(px(LAYOUT_SIDEBAR))
+        .h_full()
+        .flex()
+        .flex_col()
+        .gap(px(4.))
+        .p(px(6.))
+        .when(!floating, |sidebar| {
+            sidebar
+                .bg(theme.sidebar_bg())
+                .border_r_1()
+                .border_color(theme.border)
+        })
+        .children([14., 18., 12.].map(bar));
+    let body = div()
+        .flex_1()
+        .flex()
+        .flex_col()
+        .gap(px(4.))
+        .p(px(8.))
+        .bg(content)
+        .children([40., 56., 32.].map(bar));
+    let body = match floating {
+        true => body
+            .m(px(LAYOUT_INSET))
+            .rounded(px(LAYOUT_INSET))
+            .border_1()
+            .border_color(theme.border),
+        false => body,
+    };
+    div()
+        .w(px(LAYOUT_WIDTH))
+        .h(px(LAYOUT_HEIGHT))
+        .flex()
+        .flex_row()
+        .when(floating, |window| window.bg(theme.sidebar_bg()))
+        .child(sidebar)
+        .child(body)
+        .into_any_element()
 }
 
 /// A theme family's face in the picker: "Aa" in its accent on its background,

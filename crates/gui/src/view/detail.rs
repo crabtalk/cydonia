@@ -628,6 +628,7 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
+        let floating = self.workspace.read(cx).settings.appearance.floating;
         // The library stands in for every pane, and is framed as a lone one:
         // the band over it, the drawer a card opens in, and no composer.
         let library = self.library.is_some();
@@ -686,7 +687,6 @@ impl Cydonia {
             .min_h_0()
             .min_w_0()
             .relative()
-            .bg(theme.window_bg())
             .flex()
             .flex_col()
             .child(content)
@@ -796,14 +796,15 @@ impl Cydonia {
                     // Over the chat rather than beside it. The chat stays in
                     // the tree behind it, so what it was scrolled to and what
                     // was typed into it are still there when the window is
-                    // widened again — and the panel paints its own background,
-                    // so nothing reads through.
-                    .children(
-                        changes
-                            .clone()
-                            .filter(|_| !beside)
-                            .map(|panel| div().absolute().inset_0().child(panel)),
-                    )
+                    // widened again — and the panel is laid on the content's
+                    // own fill, so nothing reads through.
+                    .children(changes.clone().filter(|_| !beside).map(|panel| {
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .bg(bezel::ui::window::content_fill(floating, &theme))
+                            .child(panel)
+                    }))
                     // No split to drag when there is nothing beside anything.
                     .when(changes.is_some() && beside, |row| {
                         row.child(

@@ -7,7 +7,8 @@ use bezel::{
 
 pub const HIT: f32 = 9.;
 
-pub fn divider(theme: &Theme, axis: Axis) -> Div {
+/// The resize target alone, with no line: a seam the layout already shows.
+pub fn gap(axis: Axis) -> Div {
     // Occluding: the target overlaps the panes on either side, and a press
     // that reached them too would start a text selection under the drag.
     let handle = div()
@@ -17,17 +18,24 @@ pub fn divider(theme: &Theme, axis: Axis) -> Div {
         .flex()
         .items_center()
         .justify_center();
+    match axis {
+        Axis::Horizontal => handle.w(px(HIT)).h_full().cursor_col_resize(),
+        Axis::Vertical => handle.h(px(HIT)).w_full().cursor_row_resize(),
+    }
+}
+
+pub fn divider(theme: &Theme, axis: Axis) -> Div {
     let line = div().bg(theme.border);
     match axis {
-        Axis::Horizontal => handle.w(px(HIT)).h_full().cursor_col_resize().child(
-            line.w(px(1.)).h_full().group_hover("pane-divider", |line| {
+        Axis::Horizontal => {
+            gap(axis).child(line.w(px(1.)).h_full().group_hover("pane-divider", |line| {
                 line.w(px(2.)).bg(theme.text_muted.opacity(0.45))
-            }),
-        ),
-        Axis::Vertical => handle.h(px(HIT)).w_full().cursor_row_resize().child(
-            line.h(px(1.)).w_full().group_hover("pane-divider", |line| {
+            }))
+        }
+        Axis::Vertical => {
+            gap(axis).child(line.h(px(1.)).w_full().group_hover("pane-divider", |line| {
                 line.h(px(2.)).bg(theme.text_muted.opacity(0.45))
-            }),
-        ),
+            }))
+        }
     }
 }

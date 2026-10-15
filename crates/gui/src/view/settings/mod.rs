@@ -331,7 +331,7 @@ pub fn open(
             // onto every window on each appearance switch, which is what keeps
             // the main window's frost alive and would frost this one with it.
             appearance::keep_background(window, cx);
-            crate::view::window::lights::fit(window, cx);
+            crate::view::window::lights::fit(window, 0., cx);
             cx.new(|cx| SettingsWindow::new(workspace, section, cx))
         },
     )

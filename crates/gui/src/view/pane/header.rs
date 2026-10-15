@@ -148,7 +148,11 @@ impl Cydonia {
         // taken here and nowhere a pane can see it.
         let inset = match self.sidebar_open {
             true => root::HEADER_INSET,
-            false => root::toolbar_inset(window, cx),
+            false => root::toolbar_inset(
+                root::content_edge(self.workspace.read(cx).settings.appearance.floating),
+                window,
+                cx,
+            ),
         };
         // The window's corners, when this band is the one at them: the
         // sidebar holds the left one while it is open, and the right panel

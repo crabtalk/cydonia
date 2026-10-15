@@ -448,7 +448,7 @@ impl Tab {
                 .h(gpui::relative(
                     drawer.size.fraction(drawer.pane_bounds.get().size.height),
                 ))
-                .bg(theme.surface_raised)
+                .bg(theme.surface_card)
                 .child(bezel::ui::cover::cover())
                 .rounded_t(px(if expanded {
                     0.

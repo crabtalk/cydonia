@@ -38,7 +38,7 @@ use artifact::space::Member;
 use bezel::{
     gpui::{
         self, AnyElement, App, Axis, Bounds, Context, Div, DragMoveEvent, Empty, Entity,
-        FocusHandle, Focusable, Hsla, KeyBinding, PathPromptOptions, Pixels, Point, Render,
+        FocusHandle, Focusable, KeyBinding, PathPromptOptions, Pixels, Point, Render,
         TitlebarOptions, Window, WindowBounds, WindowHandle, WindowOptions, actions, div, point,
         prelude::*, px, size,
     },
@@ -178,12 +178,13 @@ pub(crate) fn composer_width() -> f32 {
     COMPOSER_COLUMN - 2. * COMPOSER_MARGIN
 }
 
-/// The sidebar's fill: bezel's frost tint, or opaque the chrome tone — the
-/// light palette's `surface` is the grey the content plane's white sits inside.
-pub(crate) fn sidebar_bg(theme: &Theme) -> Hsla {
-    match theme.vibrancy {
-        true => theme.vibrancy_tint(),
-        false => theme.surface,
+/// How far the inside of the floating content card stands from the window's
+/// top and left edges: its inset and its border, or nothing. The bands start
+/// this far down.
+pub(crate) fn content_edge(floating: bool) -> f32 {
+    match floating {
+        true => Theme::CONTENT_INSET + 1.,
+        false => 0.,
     }
 }
 
@@ -211,13 +212,14 @@ pub(crate) fn band() -> Div {
         .pr(px(BUTTON_EDGE))
 }
 
-/// Where the toolbar's own controls start at the window's left edge: the
-/// button whose glyph stands [`LIGHTS_GAP`] past the green light, or in full
-/// screen, where there are no lights, in line with the sidebar rows' icons.
-pub(crate) fn toolbar_inset(window: &Window, cx: &App) -> f32 {
+/// Where the toolbar's own controls start in a band whose left edge is `left`
+/// in from the window's: the button whose glyph stands [`LIGHTS_GAP`] past the
+/// green light, or in full screen, where there are no lights, in line with the
+/// sidebar rows' icons.
+pub(crate) fn toolbar_inset(left: f32, window: &Window, cx: &App) -> f32 {
     match (window.is_fullscreen(), cfg!(target_os = "macos")) {
         (true, _) => 2. * SIDEBAR_GUTTER - BUTTON_SLACK,
-        (false, true) => Lights::of(cx).end() + LIGHTS_GAP - BUTTON_SLACK,
+        (false, true) => Lights::of(cx).end() + LIGHTS_GAP - BUTTON_SLACK - left,
         (false, false) => HEADER_INSET,
     }
 }
@@ -353,7 +355,7 @@ pub fn open(settings: Settings, state: State, cx: &mut App) -> Result<WindowHand
         },
         |window, cx| {
             appearance::observe_window(window, cx).detach();
-            lights::fit(window, cx);
+            lights::fit(window, content_edge(settings.appearance.floating), cx);
             cx.new(|cx| {
                 let mut root = Cydonia::new(settings, state, window, cx);
                 root.restore_panel_layout();
@@ -444,6 +446,8 @@ pub struct Cydonia {
     pub(crate) focused: usize,
     pub(crate) sidebar_open: bool,
     pub(crate) sidebar_width: f32,
+    /// The [`content_edge`] the traffic lights were last placed under.
+    lights_top: f32,
     /// The window's bottom panel: its shell, and whether it is up.
     ///
     /// One to a window, like the sidebar and the right panel — every pane and
@@ -565,6 +569,11 @@ impl Cydonia {
     /// What the model saying something changed asks of the window: the applied
     /// search read again, and the composers pointed at what they are on.
     fn model_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let top = content_edge(self.workspace.read(cx).settings.appearance.floating);
+        if top != self.lights_top {
+            self.lights_top = top;
+            lights::place(window, top, cx);
+        }
         self.watch_sessions(window, cx);
         self.search.update(cx, crate::view::search::Search::refresh);
         let previous = self.leaf().read(cx).composer.read(cx).session();
@@ -601,18 +610,22 @@ impl Cydonia {
     /// lights, the fold with back and forward, the grip — over the sidebar.
     fn sidebar_column(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::of(cx).clone();
+        let floating = self.workspace.read(cx).settings.appearance.floating;
         div()
             .flex_none()
             .w(px(self.sidebar_width))
             .h_full()
-            .bg(sidebar_bg(&theme))
+            .pt(px(content_edge(floating)))
+            // Floating, the root paints the chrome under the sidebar and the
+            // card alike.
+            .when(!floating, |column| column.bg(theme.sidebar_bg()))
             .flex()
             .flex_col()
             // The fold just past the lights, where the pane header puts it
             // with the sidebar folded: it keeps its place across the toggle.
             .child(
                 band()
-                    .pl(px(toolbar_inset(window, cx)))
+                    .pl(px(toolbar_inset(0., window, cx)))
                     .when(
                         chrome::has(bezel::ui::titlebar::CaptionSide::Left, window, cx),
                         |band| band.pl_0(),
@@ -996,6 +1009,7 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let lights_top = content_edge(settings.appearance.floating);
         let name_field = cx.new(NameField::new);
         cx.subscribe(&name_field, |this, _, event: &NameEvent, cx| match event {
             NameEvent::Named(name) => this.commit_name(name.clone(), cx),
@@ -1047,6 +1061,7 @@ impl Cydonia {
             focused: 0,
             sidebar_open: true,
             sidebar_width: SIDEBAR_WIDTH,
+            lights_top,
             #[cfg(feature = "desktop")]
             terminal: None,
             changes_open: false,
@@ -1581,12 +1596,14 @@ impl Render for Cydonia {
         self.publish_shown(cx);
         self.hold_drawn_tables(cx);
         let theme = Theme::of(cx).clone();
+        let floating = self.workspace.read(cx).settings.appearance.floating;
         let root = div()
             .key_context("Cydonia")
             .size_full()
             .relative()
             .flex()
             .flex_row()
+            .when(floating, |root| root.bg(theme.sidebar_bg()))
             .font_family(theme.font_sans.clone())
             .text_color(theme.text)
             .text_style(TextStyle::Body)
@@ -1639,7 +1656,12 @@ impl Render for Cydonia {
             .map(|root| self.commands(root, cx))
             .on_drag_move(
                 cx.listener(|this, event: &DragMoveEvent<SplitDrag>, _, cx| {
-                    this.sidebar_width = f32::from(event.event.position.x)
+                    // The seam stands mid-gap when the content floats.
+                    let middle = match this.workspace.read(cx).settings.appearance.floating {
+                        true => Theme::CONTENT_INSET / 2.,
+                        false => 0.,
+                    };
+                    this.sidebar_width = (f32::from(event.event.position.x) - middle)
                         .clamp(SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX);
                     cx.notify();
                 }),
@@ -1651,18 +1673,29 @@ impl Render for Cydonia {
             .when(self.sidebar_open, |root| {
                 root.child(self.sidebar_column(window, cx))
             })
-            .child(self.detail(window, cx))
+            .child(
+                bezel::ui::window::content(floating, cx)
+                    .flex_1()
+                    .min_w_0()
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .child(self.detail(window, cx)),
+            )
             // Rides on the seam between the sidebar and the detail column
             // rather than sitting in flow, so neither gives up a column.
+            // Floating, the seam is the chrome between them.
             .when(self.sidebar_open, |root| {
+                use crate::view::component::divider::{HIT, divider, gap};
+                let (seam, middle) = match floating {
+                    true => (gap(Axis::Horizontal), Theme::CONTENT_INSET / 2.),
+                    false => (divider(&theme, Axis::Horizontal), 0.),
+                };
                 root.child(
-                    crate::view::component::divider::divider(&theme, Axis::Horizontal)
-                        .id("sidebar-split")
+                    seam.id("sidebar-split")
                         .absolute()
                         .top_0()
-                        .left(px(
-                            self.sidebar_width - crate::view::component::divider::HIT / 2.
-                        ))
+                        .left(px(self.sidebar_width + middle - HIT / 2.))
                         .on_drag(SplitDrag, |_, _, _, cx| cx.new(|_| Empty)),
                 )
             })
