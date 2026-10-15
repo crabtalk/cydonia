@@ -16,7 +16,7 @@ impl Workspace {
     /// the rest of the board.
     pub fn save_page_draft(
         &mut self,
-        member: &artifact::space::Member,
+        member: &artifact::space::Entry,
         page: &board::Page,
         base: &str,
         text: &str,

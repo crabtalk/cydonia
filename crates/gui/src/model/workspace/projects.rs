@@ -70,8 +70,7 @@ impl Workspace {
             self.select_project(ix, cx);
             return;
         }
-        self.projects
-            .push(Project::new(path, self.settings.features.developer, cx));
+        self.projects.push(Project::new(path, cx));
         let ix = self.projects.len() - 1;
         self.restore_sessions(ix, cx);
         self.watch_project(ix, cx);
@@ -222,7 +221,7 @@ impl Workspace {
                 project.table = at;
                 project.reload_page();
             }
-            Kind::App => project.app = at,
+            Kind::App => {}
         }
         // Landing back in a session is being in front of it — see
         // [`Self::wake_session`]. Landing in an article or a board is not, and
@@ -331,54 +330,10 @@ impl Workspace {
         let Some(path) = self.projects.get(ix).map(|open| open.path.clone()) else {
             return;
         };
-        let watch = Watch::open(path.clone(), cx);
-        let apps = Watch::apps(path, cx);
+        let watch = Watch::open(path, cx);
         if let Some(project) = self.projects.get_mut(ix) {
             project.watch = Some(watch);
-            project.apps_watch = Some(apps);
         }
-    }
-
-    /// Open the app listed at `ix` in `project`, bringing the project forward
-    /// with it.
-    pub fn open_app(&mut self, project: usize, ix: usize, cx: &mut Context<Self>) {
-        let Some(open) = self.projects.get_mut(project) else {
-            return;
-        };
-        let Some(name) = open.apps.get(ix).map(|held| held.name.clone()) else {
-            return;
-        };
-        open.app = Some(ix);
-        self.active = Some(project);
-        self.remember(project, Kind::App, name, cx);
-        cx.notify();
-    }
-
-    /// An app was applied to the project at `path`: watch its apps again, so
-    /// a folder loaded is among them, and re-list them.
-    pub fn app_applied(&mut self, path: &Path, cx: &mut Context<Self>) {
-        let Some(ix) = self.projects.iter().position(|open| open.path == path) else {
-            return;
-        };
-        self.projects[ix].apps_watch = Some(Watch::apps(path.to_path_buf(), cx));
-        self.apps_changed(path, &[], cx);
-    }
-
-    /// The apps named moved in the project at `path`: re-list them, and build
-    /// again each of the named ones a view runs.
-    pub fn apps_changed(&mut self, path: &Path, names: &[String], cx: &mut Context<Self>) {
-        let Some(ix) = self.projects.iter().position(|open| open.path == path) else {
-            return;
-        };
-        if self.projects[ix].reload_apps(self.settings.features.developer, cx) {
-            self.prune_spaces(cx);
-        }
-        for held in &self.projects[ix].apps {
-            if names.contains(&held.name) {
-                held.program.update(cx, |program, cx| program.changed(cx));
-            }
-        }
-        cx.notify();
     }
 
     /// Re-read one project off disk and reconcile it. Addressed by path rather
@@ -389,7 +344,7 @@ impl Workspace {
         let Some(ix) = self.projects.iter().position(|open| open.path == path) else {
             return;
         };
-        if self.projects[ix].reload(self.settings.features.developer, cx) {
+        if self.projects[ix].reload(cx) {
             cx.emit(Reloaded);
         }
         self.prune_archived(cx);
@@ -409,7 +364,7 @@ impl Workspace {
     pub fn reload_projects(&mut self, cx: &mut Context<Self>) {
         let mut moved = false;
         for ix in 0..self.projects.len() {
-            moved |= self.projects[ix].reload(self.settings.features.developer, cx);
+            moved |= self.projects[ix].reload(cx);
         }
         if moved {
             cx.emit(Reloaded);

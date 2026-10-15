@@ -1,19 +1,19 @@
 //! No database. [`Data`] has no values: [`Data::attach`] finds none, so a
 //! project's `Option<Data>` is always empty and nothing here can be called.
 
-use super::{ColType, Column, Edit, Page, Rows, Table};
+use super::{ColType, Column, Edit, Home, Page, Rows, Table};
 use anyhow::{Result, bail};
-use std::path::Path;
 
 pub enum Data {}
 
 impl Data {
-    pub fn open(project: &Path) -> Result<Self> {
-        bail!("{} has no database in this build", project.display())
+    pub fn open(home: &Home) -> Result<Self> {
+        let _ = home;
+        bail!("There are no tables in this build")
     }
 
-    pub fn attach(project: &Path) -> Option<Self> {
-        let _ = project;
+    pub fn attach(home: &Home) -> Option<Self> {
+        let _ = home;
         None
     }
 

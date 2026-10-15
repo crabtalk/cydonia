@@ -739,7 +739,7 @@ impl Cydonia {
                 .iter()
                 .enumerate()
                 .filter_map(|(ix, leaf)| {
-                    let entry = leaf.read(cx).entry.as_ref()?;
+                    let entry = leaf.read(cx).entry.as_ref()?.entry()?;
                     Some(mcp::rail::Shown {
                         project: entry.project.clone(),
                         kind: kind(entry.kind)?,
@@ -898,6 +898,14 @@ impl Cydonia {
         let moved = self.focused != at;
         self.focused = at;
         self.sync_focus(cx);
+        // An app's fields take the caret when they are pressed.
+        if let Member::App { .. } = entry {
+            self.leaf().update(cx, |pane, _| pane.kind = Kind::App);
+            let here = self.leaf().read(cx).focus.clone();
+            window.focus(&here, cx);
+            cx.notify();
+            return;
+        }
         let Some((project, showing)) = self.workspace.read(cx).showing_of(entry, cx) else {
             // A member whose project is shut draws an empty pane, which takes
             // no caret — so the focus comes back to the window rather than
@@ -957,8 +965,6 @@ impl Cydonia {
                 .map(|view| view.read(cx))
                 .filter(|view| view.cell.is_some())
                 .map(|view| view.cell_field.read(cx).focus_handle(cx)),
-            // An app's fields take the caret when they are pressed.
-            Showing::App(_) => None,
         };
         // The pane's own handle, not the window's: the root's is tracked on a
         // sibling of the panes, so landing there puts the focus outside the
@@ -1270,9 +1276,7 @@ impl Cydonia {
             Kind::Table => open
                 .table
                 .and_then(|ix| Some(Showing::Table(open.tables.get(ix)?.key.clone()))),
-            Kind::App => open
-                .app
-                .and_then(|ix| Some(Showing::App(open.apps.get(ix)?.name.clone()))),
+            Kind::App => None,
         }
         .map(|showing| Row::Entry {
             project: open.path.clone(),
@@ -1530,8 +1534,9 @@ impl Cydonia {
             Kind::Article => workspace.active_article().is_some(),
             Kind::Table => workspace.active_table().is_some(),
             Kind::App => workspace
-                .active_project()
-                .is_some_and(|open| open.app.is_some()),
+                .app
+                .as_deref()
+                .is_some_and(|id| workspace.program(id, cx).is_some()),
         }
     }
 

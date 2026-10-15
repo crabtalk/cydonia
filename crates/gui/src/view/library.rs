@@ -110,7 +110,7 @@ impl Tab {
         }
     }
 
-    /// The columns, in order. Name, Ref and Project are every tab's.
+    /// The columns, in order. Name, Ref and Project are every entry tab's.
     fn fields(self) -> &'static [Field] {
         use Field::*;
         match self {
@@ -120,7 +120,7 @@ impl Tab {
             Self::Boards => &[Check, Name, Ref, Project, Edited, Status, Actions],
             Self::Tables => &[Check, Name, Ref, Project, Created, Edited, Status, Actions],
             Self::Sessions => &[Check, Name, Ref, Project, Agent, Edited, Status, Actions],
-            Self::Apps => &[Name, Ref, Project, Actions],
+            Self::Apps => &[Name, Actions],
         }
     }
 
@@ -430,6 +430,27 @@ impl Library {
         let library = self;
         let workspace = self.workspace.read(cx);
         let features = &workspace.settings.features;
+        if library.tab == Tab::Apps {
+            return workspace
+                .listed_apps(cx)
+                .map(|held| {
+                    let program = held.program.read(cx);
+                    Listing {
+                        row: Row::App(held.id.clone()),
+                        title: program.label().into(),
+                        reference: None,
+                        number: None,
+                        project: SharedString::default(),
+                        agent: None,
+                        touched: 0,
+                        created: None,
+                        archived: false,
+                        labels: None,
+                        local: program.local(),
+                    }
+                })
+                .collect();
+        }
         let mut out = Vec::new();
         for open in &workspace.projects {
             if library
@@ -474,7 +495,7 @@ impl Library {
                         .filter(|_| library.tab.fields().contains(&Field::Created)),
                     archived: facts.archived,
                     labels: library.tab.labelled().then_some(facts.labels),
-                    local: facts.local,
+                    local: false,
                 });
             }
         }

@@ -143,7 +143,7 @@ fn a_space_can_span_projects(cx: &mut gpui::TestAppContext) {
         workspace.new_board(1, "There".into(), "TWO", cx).ok();
         let here = workspace.board_member(0, 0).expect("a member");
         let there = workspace.board_member(1, 0).expect("a member");
-        assert_ne!(here.project, there.project, "two repositories");
+        assert_ne!(here.project(), there.project(), "two repositories");
 
         workspace.arrange(&here, &there, Side::Right, cx);
         let space = workspace.active_space().expect("open");
@@ -158,7 +158,7 @@ fn a_space_can_span_projects(cx: &mut gpui::TestAppContext) {
     let projects: Vec<_> = read
         .entries()
         .into_iter()
-        .map(|member| member.project)
+        .map(|member| member.project().map(std::path::Path::to_path_buf))
         .collect();
     assert_ne!(projects[0], projects[1], "written as two projects' entries");
 }
@@ -171,7 +171,7 @@ fn a_member_in_a_shut_project_resolves_to_nothing(cx: &mut gpui::TestAppContext)
     let (workspace, a, _) = two_boards(&scratch, cx);
 
     workspace.update(cx, |workspace, cx| {
-        let elsewhere = Member::new(scratch.project("two"), Kind::Board, a.id.clone());
+        let elsewhere = Member::new(scratch.project("two"), Kind::Board, a.id());
         assert!(workspace.showing_of(&elsewhere, cx).is_none());
         // The same id in a project that *is* open still resolves.
         assert!(workspace.showing_of(&a, cx).is_some());
@@ -1142,16 +1142,52 @@ fn archiving_an_entry_takes_it_out_of_its_space(cx: &mut gpui::TestAppContext) {
         workspace.arrange(&a, &b, Side::Right, cx);
         workspace.arrange(&b, &c, Side::Below, cx);
 
-        workspace.archive_board(&b.id, true, cx);
+        workspace.archive_board(b.id(), true, cx);
         let space = workspace.active_space().expect("still open");
         assert!(!space.contains(&b), "the pane went with the entry");
         assert_eq!(space.leaves(), 2);
 
-        workspace.archive_board(&c.id, true, cx);
+        workspace.archive_board(c.id(), true, cx);
         assert!(
             workspace.spaces.is_empty(),
             "one pane left is no arrangement"
         );
         assert_eq!(workspace.space_holding(&a), None);
+    });
+}
+
+/// An app is held by the workspace, not by a project: developer mode off
+/// stops listing a loaded one, and its place in a space stays.
+#[gpui::test]
+fn a_loaded_app_keeps_its_place_with_developer_mode_off(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("app");
+    // SAFETY: as for the config directory above.
+    unsafe { std::env::set_var("XDG_DATA_HOME", scratch.0.join("data")) };
+    artifact::app::Loaded {
+        id: "hello".into(),
+        path: scratch.project("hello"),
+    }
+    .save()
+    .unwrap();
+    cx.update(|cx| bezel::theme::Theme::install(bezel::theme::Appearance::Light, cx));
+    let settings = Settings {
+        developer_mode: true,
+        ..Settings::default()
+    };
+    let workspace = cx.new(|cx| Workspace::new(settings, state::State::default(), cx));
+    workspace.update(cx, |workspace, cx| {
+        workspace.open_project(scratch.project("one"), cx);
+        workspace.new_board(0, "First".into(), "ONE", cx).ok();
+        let board = workspace.board_member(0, 0).expect("a member");
+        let app = Member::app("hello");
+        assert_eq!(workspace.listed_apps(cx).count(), 1);
+        assert_eq!(workspace.arrange(&board, &app, Side::Right, cx), Some(0));
+
+        workspace.set_developer_mode(false, cx);
+        workspace.reload_apps(cx);
+        workspace.prune_spaces(cx);
+        assert_eq!(workspace.listed_apps(cx).count(), 0);
+        assert!(workspace.program("hello", cx).is_none());
+        assert!(workspace.active_space().expect("open").contains(&app));
     });
 }

@@ -34,6 +34,7 @@ markdown = { version = "0.2.14", package = "bezel-markdown", features = ["mermai
 mcp = { version = "0.2.0", path = "crates/mcp", package = "cydonia-mcp", default-features = false }
 notify = "8"
 portable-pty = "0.9"
+process-wrap = { version = "10", default-features = false, features = ["std", "process-group", "job-object"] }
 pulldown-cmark = { version = "0.13", default-features = false }
 regex = "1"
 rusqlite = { version = "0.40", features = ["bundled"] }

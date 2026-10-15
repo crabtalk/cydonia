@@ -1,6 +1,7 @@
 //! The question asked before a delete. Raised from the pane header's `···` and
 //! from a card's, so it lives beside neither.
 
+use crate::view::kit::text::ShownPath as _;
 use crate::{
     model::workspace::Showing,
     view::{
@@ -396,14 +397,18 @@ impl Cydonia {
                     ),
                 )
             }
-            // Not offered: an app is deleted with its crate.
-            Row::Entry {
-                showing: Showing::App(_),
-                ..
+            Row::App(id) => (
+                workspace
+                    .program(id, cx)
+                    .and_then(|program| program.read(cx).origin.dir().ok())
+                    .map(|dir| dir.shown()),
+                format!(
+                    "Its builds and its own tables go with it; a loaded crate's folder stays. {UNDONE}"
+                ),
+            ),
+            Row::Group(Group::Project(_)) | Row::Archive(_) | Row::Heading(_) => {
+                (None, UNDONE.to_owned())
             }
-            | Row::Group(Group::Project(_))
-            | Row::Archive(_)
-            | Row::Heading(_) => (None, UNDONE.to_owned()),
         }
     }
 }

@@ -2,7 +2,7 @@
 //! `wasm32-unknown-unknown` and driven through `Runner`.
 
 use cydonia_gui::{
-    data::Data,
+    data::{Data, Home},
     model::apps::{Answer, Call, Command, Event, Node, Runner as _, Runtime},
 };
 use guest::wire;
@@ -250,9 +250,9 @@ fn settle(app: &mut Runtime, data: &mut Data, commands: Vec<Command>) {
 }
 
 #[test]
-fn an_app_makes_writes_and_reads_a_project_table() {
+fn an_app_makes_writes_and_reads_a_table_of_its_own() {
     let scratch = Scratch::new("notes");
-    let mut data = Data::open(&scratch.0).unwrap();
+    let mut data = Data::open(&Home::App(scratch.0.join("app"))).unwrap();
     let (mut app, commands) = Runtime::start(&example("notes")).unwrap();
     assert!(matches!(
         commands.as_slice(),
@@ -268,7 +268,8 @@ fn an_app_makes_writes_and_reads_a_project_table() {
         (tables[0].key.as_str(), tables[0].name.as_str()),
         ("notes", "Notes")
     );
-    assert!(tables[0].number.is_some());
+    assert_eq!(tables[0].number, None);
+    assert!(scratch.0.join("app/data.db").is_file());
 
     for _ in 0..2 {
         let add = button(&app.view().unwrap(), "Add");
@@ -289,7 +290,7 @@ fn an_app_makes_writes_and_reads_a_project_table() {
 #[test]
 fn an_app_finds_the_table_it_made_on_its_next_run() {
     let scratch = Scratch::new("rerun");
-    let mut data = Data::open(&scratch.0).unwrap();
+    let mut data = Data::open(&Home::App(scratch.0.join("app"))).unwrap();
     for _ in 0..2 {
         let (mut app, commands) = Runtime::start(&example("notes")).unwrap();
         settle(&mut app, &mut data, commands);
@@ -300,7 +301,7 @@ fn an_app_finds_the_table_it_made_on_its_next_run() {
 #[test]
 fn an_insert_naming_a_missing_column_writes_nothing() {
     let scratch = Scratch::new("insert");
-    let mut data = Data::open(&scratch.0).unwrap();
+    let mut data = Data::open(&Home::App(scratch.0.join("app"))).unwrap();
     data.call(Call::CreateTable {
         name: "Notes".into(),
         columns: vec![wire::Column {
@@ -360,75 +361,34 @@ cydonia_guest::app!(Hello);
 "#;
 
 #[test]
-fn an_app_in_apps_is_built_and_listed_by_its_manifest() {
-    use artifact::{
-        app::{Origin, Source},
-        entry,
-        kind::Kind,
-    };
-    use cydonia_gui::model::apps::Program;
-
-    let scratch = Scratch::new("build");
-    std::fs::create_dir_all(scratch.0.join("apps/not-a-crate")).unwrap();
-    write_crate(&scratch.0.join("apps/hello"), HELLO);
-    let apps = Source::list(&scratch.0);
-    assert_eq!(apps, [Source::new(&scratch.0, "hello")]);
-    let krate = apps[0].krate();
-    let declared = krate.manifest().unwrap();
-    assert_eq!(declared.name, "Hello there");
-    assert!(declared.calls("tables"));
-    assert_eq!(Origin::Source(apps[0].clone()).title(), "Hello there");
-
-    let (wasm, manifest) = Program::compile(&krate).unwrap();
-    assert_eq!(manifest, declared);
-    let (mut app, _) = Runtime::start(&wasm).unwrap();
-    assert!(shows(&app.view().unwrap(), "Hello"));
-
-    let listed = entry::list(&scratch.0).unwrap();
-    let found = listed.iter().find(|entry| entry.kind == Kind::App).unwrap();
-    assert_eq!(
-        (found.id.as_str(), found.title.as_str()),
-        ("hello", "Hello there")
-    );
-
-    write_crate(
-        &scratch.0.join("apps/hello"),
-        &HELLO.replace(
-            "Hello;\n\nimpl",
-            "Hello;\n\nfn broken() -> u32 { \"no\" }\n\nimpl",
-        ),
-    );
-    let error = format!("{:#}", Program::compile(&krate).unwrap_err());
-    assert!(error.contains("mismatched types"), "{error}");
-    assert_eq!(krate.manifest().unwrap().name, "Hello there");
-}
-
-#[test]
-fn a_crate_loaded_from_a_folder_is_recorded_by_its_path_and_built() {
+fn a_crate_loaded_from_a_folder_is_recorded_built_and_listed_by_its_manifest() {
     use artifact::{
         app::{Installed, Loaded, Origin},
         entry,
-        kind::Kind,
     };
-    use cydonia_gui::model::apps::Program;
+    use cydonia_gui::model::apps::cargo::Cargo;
 
     let scratch = Scratch::new("loaded");
+    // SAFETY: nextest runs each test in a process of its own.
+    unsafe { std::env::set_var("XDG_DATA_HOME", scratch.0.join("data")) };
     let (project, folder) = (scratch.0.join("project"), scratch.0.join("elsewhere/hello"));
-    std::fs::create_dir_all(&project).unwrap();
+    write_crate(&project.join("apps/hello"), HELLO);
     write_crate(&folder, HELLO);
+    assert!(Origin::list().is_empty(), "a project's apps/ is not read");
 
     let loaded = Loaded::read(&folder).unwrap();
     assert_eq!(loaded.id, "hello");
     assert_eq!(loaded.path, folder.canonicalize().unwrap());
-    loaded.save(&project).unwrap();
-    let origin = Origin::Loaded {
-        project: project.clone(),
-        app: loaded.clone(),
-    };
-    assert_eq!(Origin::list(&project), std::slice::from_ref(&origin));
-    assert!(Installed::list(&project).is_empty());
-    assert!(origin.allowed());
+    let krate = loaded.krate().unwrap();
+    let declared = krate.manifest().unwrap();
+    assert_eq!(declared.name, "Hello there");
+    assert!(declared.calls("tables"));
+    loaded.save().unwrap();
+    let origin = Origin::Loaded(loaded.clone());
+    assert_eq!(Origin::list(), std::slice::from_ref(&origin));
+    assert!(origin.local() && origin.allowed());
     assert_eq!(origin.title(), "Hello there");
+    loaded.save().unwrap();
 
     let installed = Installed {
         id: "hello".into(),
@@ -437,18 +397,52 @@ fn a_crate_loaded_from_a_folder_is_recorded_by_its_path_and_built() {
         digest: format!("sha256:{}", "0".repeat(64)),
         allowed: None,
     };
-    let refused = format!("{:#}", installed.save(&project).unwrap_err());
-    assert!(refused.contains("already applied"), "{refused}");
+    let refused = format!("{:#}", installed.save().unwrap_err());
+    assert!(refused.contains("already here"), "{refused}");
 
-    let krate = origin.local().unwrap();
-    assert_eq!(krate.dir, loaded.path);
-    let (wasm, _) = Program::compile(&krate).unwrap();
+    let (wasm, manifest) = Cargo::start(&krate).unwrap().finish().unwrap();
+    assert_eq!(manifest, declared);
     assert_eq!(std::fs::read(&krate.built).unwrap(), wasm);
-    assert!(krate.built.starts_with(project.join(".cydonia/build")));
+    assert!(krate.built.starts_with(scratch.0.join("data")));
+    let (mut app, _) = Runtime::start(&wasm).unwrap();
+    assert!(shows(&app.view().unwrap(), "Hello"));
+    assert!(entry::list(&project).unwrap().is_empty());
 
-    let listed = entry::list(&project).unwrap();
-    let found = listed.iter().find(|entry| entry.kind == Kind::App).unwrap();
-    assert_eq!(found.id, loaded.name());
+    write_crate(
+        &folder,
+        &HELLO.replace(
+            "Hello;\n\nimpl",
+            "Hello;\n\nfn broken() -> u32 { \"no\" }\n\nimpl",
+        ),
+    );
+    let error = format!("{:#}", Cargo::start(&krate).unwrap().finish().unwrap_err());
+    assert!(error.contains("mismatched types"), "{error}");
+    assert_eq!(krate.manifest().unwrap().name, "Hello there");
+
+    origin.remove().unwrap();
+    assert!(Origin::list().is_empty());
+    assert!(!krate.built.exists());
+    assert!(
+        folder.join("Cargo.toml").is_file(),
+        "the crate's folder stays"
+    );
+}
+
+#[test]
+fn a_crate_not_built_against_the_guest_is_not_loaded() {
+    use artifact::app::Loaded;
+
+    let scratch = Scratch::new("not-an-app");
+    std::fs::write(
+        scratch.0.join("Cargo.toml"),
+        "[package]\nname = \"web\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    let refused = format!("{:#}", Loaded::read(&scratch.0).unwrap_err());
+    assert!(
+        refused.contains("does not depend on cydonia-guest"),
+        "{refused}"
+    );
 }
 
 /// Answer one request on a local port with `response`, and hand back the URL
@@ -571,7 +565,7 @@ fn labels(nodes: &[Node]) -> Vec<String> {
 #[test]
 fn yc_refreshes_a_batch_into_its_tables_and_lists_it() {
     let scratch = Scratch::new("yc");
-    let mut data = Data::open(&scratch.0).unwrap();
+    let mut data = Data::open(&Home::App(scratch.0.join("app"))).unwrap();
     let (mut app, commands) = Runtime::start(&yc()).unwrap();
     settle_with(&mut app, &mut data, commands, &yc_fetch);
     let keys: Vec<String> = data
@@ -631,4 +625,67 @@ fn yc_refreshes_a_batch_into_its_tables_and_lists_it() {
         .query("SELECT (SELECT count(*) FROM companies), (SELECT count(*) FROM founders)")
         .unwrap();
     assert_eq!(counts.rows, [[serde_json::json!(2), serde_json::json!(1)]]);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_stopped_build_kills_cargo_and_what_it_started() {
+    use artifact::app::Crate;
+    use cydonia_gui::model::apps::cargo::Cargo;
+    use std::time::{Duration, Instant};
+
+    let scratch = Scratch::new("stopped");
+    let dir = scratch.0.join("slow");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("Cargo.toml"),
+        "[package]\nname = \"slow\"\nversion = \"0.1.0\"\nedition = \"2024\"\nbuild = \"build.rs\"\n\n\
+         [lib]\ncrate-type = [\"cdylib\"]\n\n[workspace]\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("src/lib.rs"), "").unwrap();
+    let pid = scratch.0.join("pid");
+    std::fs::write(
+        dir.join("build.rs"),
+        format!(
+            "fn main() {{ std::fs::write({pid:?}, std::process::id().to_string()).unwrap(); \
+             std::thread::sleep(std::time::Duration::from_secs(600)); }}"
+        ),
+    )
+    .unwrap();
+    let krate = Crate {
+        dir,
+        target: scratch.0.join("target"),
+        built: scratch.0.join("slow.wasm"),
+    };
+
+    let cargo = Cargo::start(&krate).unwrap();
+    let stop = cargo.stop();
+    let finished = std::thread::spawn(move || cargo.finish());
+    let since = Instant::now();
+    while !pid.exists() {
+        assert!(
+            since.elapsed() < Duration::from_secs(120),
+            "the build script ran"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let script = std::fs::read_to_string(&pid).unwrap();
+    drop(stop);
+    assert!(finished.join().unwrap().is_err());
+    let alive = |pid: &str| {
+        Process::new("kill")
+            .args(["-0", pid])
+            .status()
+            .unwrap()
+            .success()
+    };
+    let since = Instant::now();
+    while alive(&script) {
+        assert!(
+            since.elapsed() < Duration::from_secs(5),
+            "the build script is killed"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }

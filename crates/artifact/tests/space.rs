@@ -828,7 +828,7 @@ kind = "article"
 id = "/work/site/.cydonia/articles/1789958219063/content.md"
 "#;
     let member: Member = toml::from_str(written).unwrap();
-    assert_eq!(member.id, "1789958219063");
+    assert_eq!(member.id(), "1789958219063");
 
     let board: Member = toml::from_str(
         r#"
@@ -838,5 +838,15 @@ id = "a/b"
 "#,
     )
     .unwrap();
-    assert_eq!(board.id, "a/b");
+    assert_eq!(board.id(), "a/b");
+}
+
+#[test]
+fn an_app_member_is_written_by_its_id_alone() {
+    let app = Member::app("yc");
+    let written = toml::to_string(&app).unwrap();
+    assert_eq!(written.trim(), r#"app = "yc""#);
+    let read: Member = toml::from_str(&written).unwrap();
+    assert_eq!(read, app);
+    assert_eq!((read.project(), read.id()), (None, "yc"));
 }

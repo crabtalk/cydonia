@@ -7,7 +7,10 @@ use crate::model::update::{self, Status, Updater};
 use crate::view::settings::labelled;
 use crate::{
     assets,
-    view::settings::{SettingsWindow, Switch, group},
+    view::{
+        settings::{SettingsWindow, Switch, group},
+        window::menubar,
+    },
 };
 use bezel::{
     gpui::{AnyElement, Context, div, img, prelude::*, px},
@@ -43,6 +46,9 @@ const HOMEPAGE: &str = env!("CARGO_PKG_HOMEPAGE");
 /// it: nothing is posted while the window is in front.
 const NOTIFY_BLURB: &str =
     "Tell the system when an agent finishes, while cydonia is in the background.";
+
+/// What the developer mode switch says it does.
+const DEVELOPER_BLURB: &str = "Lets Cydonia build and run apps from source on this machine.";
 
 /// The mark over the rows. An About panel's measure — big enough to be the
 /// picture of the app, small enough that the two lines under it are still what
@@ -89,6 +95,7 @@ impl SettingsWindow {
             )
             .children(self.updates(cx))
             .children(self.notifications(cx))
+            .child(self.developer(cx))
             .child(
                 div().flex().justify_center().child(
                     div()
@@ -134,6 +141,24 @@ impl SettingsWindow {
                 )
                 .into_any_element(),
         )
+    }
+
+    fn developer(&self, cx: &Context<Self>) -> AnyElement {
+        let on = self.workspace.read(cx).settings.developer_mode;
+        let theme = Theme::of(cx).clone();
+        group(&theme, "Developer")
+            .child(theme.group_box().child(self.switch_row(
+                Switch::new("developer-mode", "Developer mode", DEVELOPER_BLURB, on).first(true),
+                cx,
+                move |this, cx| {
+                    this.workspace
+                        .update(cx, |workspace, cx| workspace.set_developer_mode(!on, cx));
+                    // File lists "Load App from Folder…" only in developer
+                    // mode, and AppKit holds the tree it was handed.
+                    menubar::refresh(cx);
+                },
+            )))
+            .into_any_element()
     }
 
     /// Releases: whether the app looks for one itself, and where the looking has

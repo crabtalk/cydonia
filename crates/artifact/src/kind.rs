@@ -1,8 +1,9 @@
-//! The five things a project holds.
+//! The things Cydonia opens: the four a project holds, and apps.
 
 use serde::{Deserialize, Serialize};
 
-/// A session, board, article, table or app. Serialized as its [`Kind::key`].
+/// A session, board, article or table of a project, or an app, which belongs
+/// to no project and is never numbered. Serialized as its [`Kind::key`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Kind {

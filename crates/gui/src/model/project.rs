@@ -5,9 +5,8 @@
 //! is spawned with as its `cwd`, and what [`crate::model::state`] persists.
 
 use crate::{
-    data::{Data, Page, Table},
+    data::{Data, Home, Page, Table},
     model::{
-        apps::{HeldApp, Origin},
         article::{self, Article},
         session::ChatSession,
         store::{self, Store},
@@ -28,8 +27,7 @@ use std::{
 /// table's own, so a window that does not reach the end says so.
 const PAGE: i64 = 200;
 
-/// What every entry has, whatever its kind. `touched` is in milliseconds, and
-/// 0 for an app.
+/// What every entry has, whatever its kind. `touched` is in milliseconds.
 pub struct Facts {
     pub showing: Showing,
     pub label: String,
@@ -37,12 +35,10 @@ pub struct Facts {
     pub touched: u128,
     pub created: Option<u128>,
     pub archived: bool,
-    /// Empty for a table and an app, which carry none.
+    /// Empty for a table, which carries none.
     pub labels: Vec<String>,
     /// The agent a session runs on; `None` for every other kind.
     pub agent: Option<String>,
-    /// An app Cydonia builds from source on this machine.
-    pub local: bool,
 }
 
 /// A board a project holds: its id, which never changes, and the board, which
@@ -116,12 +112,6 @@ pub struct Project {
     /// The watch on this project's `.cydonia/`, once it is up. Held here so
     /// closing the project drops it, which is what takes the watch down.
     pub watch: Option<Watch>,
-    /// The apps in its `apps/`, by name.
-    pub apps: Vec<HeldApp>,
-    /// Which app the app pane shows.
-    pub app: Option<usize>,
-    /// The watch on its `apps/`, held as [`Self::watch`] is.
-    pub apps_watch: Option<Watch>,
 }
 
 impl Project {
@@ -132,12 +122,11 @@ impl Project {
             Kind::Board => Showing::Board(self.boards.get(self.board?)?.id.clone()),
             Kind::Article => Showing::Article(self.articles.get(self.article?)?.id.clone()),
             Kind::Table => Showing::Table(self.tables.get(self.table?)?.key.clone()),
-            Kind::App => Showing::App(self.apps.get(self.app?)?.name.clone()),
+            Kind::App => return None,
         })
     }
 
-    /// `developer` is [`Self::reload_apps`]'s.
-    pub fn new(path: PathBuf, developer: bool, cx: &mut App) -> Self {
+    pub fn new(path: PathBuf, cx: &mut App) -> Self {
         let mut this = Self {
             boards: store::open(&path)
                 .boards()
@@ -145,7 +134,7 @@ impl Project {
                 .map(|board| HeldBoard::new(board, cx))
                 .collect(),
             articles: article::list(&path),
-            data: Data::attach(&path),
+            data: Data::attach(&Home::Project(path.clone())),
             path,
             sessions: Vec::new(),
             active: None,
@@ -159,52 +148,9 @@ impl Project {
             archive_open: false,
             label: None,
             watch: None,
-            apps: Vec::new(),
-            app: None,
-            apps_watch: None,
         };
         this.reload_tables();
-        this.reload_apps(developer, cx);
         this
-    }
-
-    /// Re-list the project's apps, keeping the program of every app still
-    /// there. Without `developer`, only installed apps are listed. Answers
-    /// whether the list changed.
-    pub fn reload_apps(&mut self, developer: bool, cx: &mut App) -> bool {
-        let open = self
-            .app
-            .and_then(|ix| self.apps.get(ix))
-            .map(|held| held.name.clone());
-        let before: Vec<String> = self.apps.iter().map(|held| held.name.clone()).collect();
-        let mut held: HashMap<String, HeldApp> = self
-            .apps
-            .drain(..)
-            .map(|held| (held.name.clone(), held))
-            .collect();
-        let store = self.store();
-        self.apps = Origin::list(&self.path)
-            .into_iter()
-            .filter(|origin| developer || origin.local().is_none())
-            .map(|origin| match held.remove(origin.name().as_ref()) {
-                Some(kept) => {
-                    kept.program
-                        .update(cx, |program, cx| program.adopt(origin, cx));
-                    kept
-                }
-                None => {
-                    let number = store.number(Kind::App, &origin.name()).ok();
-                    HeldApp::new(origin, number, cx)
-                }
-            })
-            .collect();
-        self.app = open.and_then(|name| self.app_ix(&name));
-        before
-            != self
-                .apps
-                .iter()
-                .map(|held| held.name.clone())
-                .collect::<Vec<_>>()
     }
 
     /// The board whose key is `key`, matched as a handle matches it.
@@ -228,16 +174,14 @@ impl Project {
     /// place on a board, a column's place in a table. Everything else is drawn off the model each frame and
     /// nobody keeps a handle on it, so a re-read that only changed those has
     /// nothing to announce — and announcing it would drop the edit somebody has
-    /// open over the echo of their own save. `developer` is
-    /// [`Self::reload_apps`]'s.
-    pub fn reload(&mut self, developer: bool, cx: &mut Context<Workspace>) -> bool {
+    /// open over the echo of their own save.
+    pub fn reload(&mut self, cx: &mut Context<Workspace>) -> bool {
         // The store can appear long after the project was opened, and an agent
         // making one is exactly the case this watch is here for.
         if self.data.is_none() {
-            self.data = Data::attach(&self.path);
+            self.data = Data::attach(&Home::Project(self.path.clone()));
         }
         self.reload_articles(cx);
-        self.reload_apps(developer, cx);
         let boards = self.reload_boards(cx);
         let before = self.shape();
         self.reload_tables();
@@ -436,7 +380,7 @@ impl Project {
             Kind::Board => Showing::Board(self.boards[self.board_ix(id)?].id.clone()),
             Kind::Article => Showing::Article(self.articles[self.article_ix(id)?].id.clone()),
             Kind::Table => Showing::Table(self.tables[self.table_ix(id)?].key.clone()),
-            Kind::App => Showing::App(self.apps[self.app_ix(id)?].name.clone()),
+            Kind::App => return None,
         })
     }
 
@@ -452,7 +396,7 @@ impl Project {
             Kind::Board => self.boards.len(),
             Kind::Article => self.articles.len(),
             Kind::Table => self.tables.len(),
-            Kind::App => self.apps.len(),
+            Kind::App => 0,
         };
         (0..len).map(move |ix| self.facts_at(kind, ix, cx))
     }
@@ -471,7 +415,6 @@ impl Project {
                     archived: chat.closed,
                     labels: chat.labels.clone(),
                     agent: Some(chat.entry.name.clone()),
-                    local: false,
                 }
             }
             Kind::Board => {
@@ -485,7 +428,6 @@ impl Project {
                     archived: board.archived,
                     labels: board.labels.clone(),
                     agent: None,
-                    local: false,
                 }
             }
             Kind::Article => {
@@ -499,7 +441,6 @@ impl Project {
                     archived: article.archived,
                     labels: article.labels.clone(),
                     agent: None,
-                    local: false,
                 }
             }
             Kind::Table => {
@@ -513,24 +454,9 @@ impl Project {
                     archived: table.archived,
                     labels: Vec::new(),
                     agent: None,
-                    local: false,
                 }
             }
-            Kind::App => {
-                let held = &self.apps[ix];
-                let program = held.read(cx);
-                Facts {
-                    showing: Showing::App(held.name.clone()),
-                    label: program.label(),
-                    number: program.number,
-                    touched: 0,
-                    created: None,
-                    archived: false,
-                    labels: Vec::new(),
-                    agent: None,
-                    local: program.local(),
-                }
-            }
+            Kind::App => unreachable!("an app is no project's entry"),
         }
     }
 
@@ -553,12 +479,7 @@ impl Project {
             }
             Kind::Article => self.articles[ix].preview().to_owned(),
             Kind::Table => String::new(),
-            Kind::App => self.apps[ix]
-                .read(cx)
-                .manifest
-                .as_ref()
-                .map(|manifest| format!("{} {}", manifest.id, manifest.version))
-                .unwrap_or_default(),
+            Kind::App => unreachable!("an app is no project's entry"),
         }
     }
 
@@ -568,13 +489,7 @@ impl Project {
             Showing::Board(id) => self.board_ix(id),
             Showing::Article(id) => self.article_ix(id),
             Showing::Table(key) => self.table_ix(key),
-            Showing::App(name) => self.app_ix(name),
         }
-    }
-
-    /// Where the app named `name` is listed.
-    pub fn app_ix(&self, name: &str) -> Option<usize> {
-        self.apps.iter().position(|held| held.name == name)
     }
 
     /// Where the board with `id` is listed.

@@ -73,6 +73,7 @@ impl Sidebar {
                 None => Empty.into_any_element(),
             },
             Row::Entry { .. } => self.entry_row(row, lifted, window, cx),
+            Row::App(id) => self.app_row(row, id, lifted, cx),
             Row::Heading(heading) => self.heading_row(*heading, cx),
         };
         let entry = !matches!(
@@ -463,11 +464,6 @@ impl Sidebar {
                 "table-row",
                 glyph(icons::files::Table2.into()),
             ),
-            Showing::App(_) => (
-                SharedString::from(key_of(entry)).into(),
-                "app-row",
-                glyph(crate::view::kit::icon::kind_icon(artifact::kind::Kind::App)),
-            ),
         };
         // An article is named at the head of its own page and a board by its
         // identity panel, so neither row is ever a field.
@@ -494,9 +490,8 @@ impl Sidebar {
             &theme,
         );
         let pill = self.shape(entry, cx).pill();
-        let local = facts.local.then(|| theme.badge("Local"));
         let frame = match preview {
-            None => frame.child(mark).child(label).children(local).child(button),
+            None => frame.child(mark).child(label).child(button),
             // The lines under the name run the row's whole width, from under
             // the mark: indented under the name they would be a column too
             // narrow to say anything.
@@ -516,7 +511,6 @@ impl Sidebar {
                         .gap(px(ROW_GAP))
                         .child(mark)
                         .child(label)
-                        .children(local)
                         .child(button),
                 )
                 .child(
@@ -563,6 +557,43 @@ impl Sidebar {
                 });
             }))
             .into_any_element()
+    }
+
+    /// One app: its mark, its name, and whether it is built on this machine.
+    /// A press opens it.
+    fn app_row(&self, entry: &Row, id: &str, lifted: bool, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let workspace = self.workspace.read(cx);
+        let Some(program) = workspace.program(id, cx) else {
+            return Empty.into_any_element();
+        };
+        let program = program.read(cx);
+        let light = self.lit.light(entry, workspace, cx);
+        let tint = light.tint(false, &theme);
+        let open = entry.clone();
+        row(
+            SharedString::from(key_of(entry)),
+            "app-row",
+            light.selected(),
+            lifted,
+            self.list(cx).indent_of(entry),
+            &theme,
+        )
+        .child(
+            icons::icon(crate::view::kit::icon::kind_icon(artifact::kind::Kind::App))
+                .size(px(14.))
+                .flex_none()
+                .text_color(tint),
+        )
+        .child(row_label(program.label(), tint))
+        .children(program.local().then(|| theme.badge("Local")))
+        .on_click(cx.listener(move |this, _, window, cx| {
+            let open = open.clone();
+            this.defer_window(window, cx, move |root, window, cx| {
+                root.open_row(&open, window, cx)
+            });
+        }))
+        .into_any_element()
     }
 
     /// The button at the end of a row: archive, or — for a pinned row — the

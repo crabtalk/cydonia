@@ -642,8 +642,19 @@ impl<T: Clone + PartialEq> Node<T> {
     }
 }
 
-/// One entry a pane is on: which project it is in, and which of that project's
-/// things it is.
+/// What a pane is on: one entry of a project, or an app.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Member {
+    Entry(Entry),
+    /// An app, by its id. It belongs to no project.
+    App {
+        app: String,
+    },
+}
+
+/// One entry of a project: which project it is in, and which of that
+/// project's things it is.
 ///
 /// The project by its path, because a space spans them — it is kept beside
 /// the app's own config rather than inside any one project, and absolute paths
@@ -655,13 +666,13 @@ impl<T: Clone + PartialEq> Node<T> {
 /// to say which it means without reading either project's database.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(from = "Written")]
-pub struct Member {
+pub struct Entry {
     pub project: std::path::PathBuf,
     pub kind: Kind,
     pub id: String,
 }
 
-/// A [`Member`] as a file holds it, before its id is read — see
+/// An [`Entry`] as a file holds it, before its id is read — see
 /// [`crate::article::stored_id`].
 #[derive(Deserialize)]
 struct Written {
@@ -670,20 +681,72 @@ struct Written {
     id: String,
 }
 
-impl From<Written> for Member {
+impl From<Written> for Entry {
     fn from(written: Written) -> Self {
         let id = crate::article::stored_id(written.kind, written.id);
-        Self::new(written.project, written.kind, id)
+        Self {
+            project: written.project,
+            kind: written.kind,
+            id,
+        }
     }
 }
 
 impl Member {
+    /// An entry of the project at `project`.
     pub fn new(project: impl Into<std::path::PathBuf>, kind: Kind, id: impl Into<String>) -> Self {
-        Self {
+        Self::Entry(Entry {
             project: project.into(),
             kind,
             id: id.into(),
+        })
+    }
+
+    /// The app `id`.
+    pub fn app(id: impl Into<String>) -> Self {
+        Self::App { app: id.into() }
+    }
+
+    /// The entry it names. `None` for an app.
+    pub fn entry(&self) -> Option<&Entry> {
+        match self {
+            Self::Entry(entry) => Some(entry),
+            Self::App { .. } => None,
         }
+    }
+
+    /// The same, owned.
+    pub fn into_entry(self) -> Option<Entry> {
+        match self {
+            Self::Entry(entry) => Some(entry),
+            Self::App { .. } => None,
+        }
+    }
+
+    /// The project an entry is in. `None` for an app.
+    pub fn project(&self) -> Option<&std::path::Path> {
+        self.entry().map(|entry| entry.project.as_path())
+    }
+
+    pub fn kind(&self) -> Kind {
+        match self {
+            Self::Entry(entry) => entry.kind,
+            Self::App { .. } => Kind::App,
+        }
+    }
+
+    /// An entry's id in its project, or an app's id.
+    pub fn id(&self) -> &str {
+        match self {
+            Self::Entry(entry) => &entry.id,
+            Self::App { app } => app,
+        }
+    }
+}
+
+impl From<Entry> for Member {
+    fn from(entry: Entry) -> Self {
+        Self::Entry(entry)
     }
 }
 

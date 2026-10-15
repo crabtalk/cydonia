@@ -254,16 +254,20 @@ impl Tab {
                 Some(view) => view.into_any_element(),
                 None => div().flex_1().into_any_element(),
             },
-            Showing::App(_) => match self.app_shown(cx) {
-                Some(view) => div()
-                    .flex_1()
-                    .min_h_0()
-                    .flex()
-                    .flex_col()
-                    .child(view)
-                    .into_any_element(),
-                None => div().flex_1().into_any_element(),
-            },
+        }
+    }
+
+    /// An app the pane shows, drawn.
+    fn app_body(&self, cx: &App) -> AnyElement {
+        match self.app_shown(cx) {
+            Some(view) => div()
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .child(view)
+                .into_any_element(),
+            None => div().flex_1().into_any_element(),
         }
     }
 
@@ -303,7 +307,12 @@ impl Render for Tab {
         self.watch_sessions(cx);
         let theme = Theme::of(cx).clone();
         let showing = self.showing(cx);
+        let app = match &self.entry {
+            Some(member) => member.kind() == Kind::App,
+            None => self.kind == Kind::App,
+        };
         let body = match &showing {
+            _ if app => self.app_body(cx),
             // The entry has gone since the space named it. The pane says so
             // rather than standing empty: a blank pane reads as a bug, and the
             // space is about to drop the member anyway — see

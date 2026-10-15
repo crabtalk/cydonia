@@ -12,7 +12,7 @@ use crate::{
     },
 };
 use artifact::kind::Kind;
-use artifact::space::Member;
+use artifact::space::{Entry, Member};
 use bezel::ui::scroll as scrollbars;
 use bezel::{
     gpui::{
@@ -224,7 +224,7 @@ impl Cydonia {
 /// them and the column menus it opens.
 pub(crate) struct TableView {
     /// The table, as the space names it.
-    pub(crate) table: Member,
+    pub(crate) table: Entry,
     workspace: Entity<Workspace>,
     root: WeakEntity<Cydonia>,
     /// What the field is attached to, and the field itself.
@@ -236,7 +236,7 @@ pub(crate) struct TableView {
 
 impl TableView {
     pub(crate) fn new(
-        table: Member,
+        table: Entry,
         workspace: Entity<Workspace>,
         root: WeakEntity<Cydonia>,
         cx: &mut Context<Self>,
@@ -255,7 +255,7 @@ impl TableView {
     fn key(&self, cx: &App) -> Option<String> {
         self.workspace
             .read(cx)
-            .table_of(Some(&self.table), cx)
+            .table_of(Some(&self.table.clone().into()), cx)
             .map(|table| table.key.clone())
     }
 
@@ -291,7 +291,7 @@ impl TableView {
             Cell::Name => self
                 .workspace
                 .read(cx)
-                .table_of(Some(&self.table), cx)
+                .table_of(Some(&self.table.clone().into()), cx)
                 .map(|table| table.name.clone())
                 .unwrap_or_default(),
         };

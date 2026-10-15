@@ -1,12 +1,12 @@
-//! The project's database behind [`Data`], in SQLite.
+//! The database behind [`Data`], in SQLite.
 
-use super::FILE;
+use super::{FILE, Home};
 use anyhow::{Result, anyhow, bail};
 use artifact::kind::Kind;
 use artifact::project::fs;
 use rusqlite::{Connection, OpenFlags, Row as SqlRow, types::ValueRef};
 use serde_json::Value;
-use std::{collections::HashSet, path::Path, time::Duration};
+use std::{collections::HashSet, path::PathBuf, time::Duration};
 
 #[path = "ddl.rs"]
 mod ddl;
@@ -31,7 +31,7 @@ const DDL: &str = "CREATE TABLE IF NOT EXISTS _tables (
 )";
 
 pub struct Data {
-    project: std::path::PathBuf,
+    home: Home,
     writer: Connection,
     /// Opened `SQLITE_OPEN_READ_ONLY`, and that is the point: a `SELECT` an
     /// agent wrote runs on a connection that cannot write, whatever the
@@ -41,27 +41,36 @@ pub struct Data {
 }
 
 impl Data {
-    /// Open the project's store: the writer, and a read-only handle beside it.
+    /// Open the store at `home`: the writer, and a read-only handle beside
+    /// it.
     ///
     /// Order is load-bearing. The reader cannot create the file, and on a WAL
     /// database it needs the shared-memory sidecar an open writer has already
     /// made — so opening it first fails on a store nobody has written yet.
-    pub fn open(project: &Path) -> Result<Self> {
-        let path = fs::Project::new(project).init()?.join(FILE);
+    pub fn open(home: &Home) -> Result<Self> {
+        let path = match home {
+            Home::Project(project) => fs::Project::new(project).init()?.join(FILE),
+            Home::App(dir) => {
+                std::fs::create_dir_all(dir)?;
+                dir.join(FILE)
+            }
+        };
 
         let writer = Connection::open(&path)?;
         writer.busy_timeout(BUSY)?;
         writer.execute_batch("PRAGMA journal_mode = WAL")?;
         writer.execute_batch(DDL)?;
         // Table key changes and their numeric references commit together.
-        artifact::entry::Registry::open(project)?;
-        writer.execute(
-            "ATTACH DATABASE ?1 AS entry_registry",
-            [fs::Project::new(project)
-                .state()?
-                .to_string_lossy()
-                .as_ref()],
-        )?;
+        if let Home::Project(project) = home {
+            artifact::entry::Registry::open(project)?;
+            writer.execute(
+                "ATTACH DATABASE ?1 AS entry_registry",
+                [fs::Project::new(project)
+                    .state()?
+                    .to_string_lossy()
+                    .as_ref()],
+            )?;
+        }
         // A `_tables` written before a column existed. SQLite has no ADD COLUMN
         // IF NOT EXISTS, and the file is the only record of which shape this
         // one is.
@@ -81,7 +90,7 @@ impl Data {
         )?;
         reader.busy_timeout(BUSY)?;
         Ok(Self {
-            project: project.to_owned(),
+            home: home.clone(),
             writer,
             reader,
         })
@@ -89,10 +98,22 @@ impl Data {
 
     /// The store as it already is, or nothing. Browsing a project must not
     /// write a database into it — [`Data::open`] is what creates one.
-    pub fn attach(project: &Path) -> Option<Self> {
-        match fs::Project::new(project).cydonia().join(FILE).exists() {
-            true => Self::open(project).ok(),
+    pub fn attach(home: &Home) -> Option<Self> {
+        let path = match home {
+            Home::Project(project) => fs::Project::new(project).cydonia().join(FILE),
+            Home::App(dir) => dir.join(FILE),
+        };
+        match path.exists() {
+            true => Self::open(home).ok(),
             false => None,
+        }
+    }
+
+    /// The project its tables are entries of. `None` for an app's own store.
+    fn project(&self) -> Option<&PathBuf> {
+        match &self.home {
+            Home::Project(project) => Some(project),
+            Home::App(_) => None,
         }
     }
 
@@ -153,7 +174,9 @@ impl Data {
             )
         });
         Ok(Table {
-            number: artifact::entry::number(&self.project, Kind::Table, key).ok(),
+            number: self
+                .project()
+                .and_then(|project| artifact::entry::number(project, Kind::Table, key).ok()),
             columns: columns_of(&self.reader, key)?,
             rows: self.reader.query_row(
                 &format!("SELECT count(*) FROM {}", quote(key)),
@@ -249,6 +272,7 @@ impl Data {
                 if self.exists(&next)? {
                     bail!("{next} is taken");
                 }
+                let numbered = self.project().is_some();
                 let tx = self.writer.transaction()?;
                 tx.execute_batch(&format!(
                     "ALTER TABLE {} RENAME TO {}",
@@ -259,10 +283,13 @@ impl Data {
                     "UPDATE _tables SET key = ?2 WHERE key = ?1",
                     [&current, &next],
                 )?;
-                tx.execute(
-                    "UPDATE entry_registry.entries SET id = ?2 WHERE kind = 'table' AND id = ?1",
-                    [&current, &next],
-                )?;
+                if numbered {
+                    tx.execute(
+                        "UPDATE entry_registry.entries SET id = ?2 \
+                         WHERE kind = 'table' AND id = ?1",
+                        [&current, &next],
+                    )?;
+                }
                 tx.commit()?;
                 current = next;
             }
@@ -284,13 +311,16 @@ impl Data {
     /// table in, the person decides whether it goes on existing.
     pub fn remove(&mut self, table: &str) -> Result<()> {
         let key = self.resolve(table)?;
+        let numbered = self.project().is_some();
         let tx = self.writer.transaction()?;
         tx.execute_batch(&format!("DROP TABLE {}", quote(&key)))?;
         tx.execute("DELETE FROM _tables WHERE key = ?1", [&key])?;
-        tx.execute(
-            "UPDATE entry_registry.entries SET id = NULL WHERE kind = 'table' AND id = ?1",
-            [&key],
-        )?;
+        if numbered {
+            tx.execute(
+                "UPDATE entry_registry.entries SET id = NULL WHERE kind = 'table' AND id = ?1",
+                [&key],
+            )?;
+        }
         tx.commit()?;
         Ok(())
     }
@@ -301,16 +331,17 @@ impl Data {
     fn resolve(&self, ident: &str) -> Result<String> {
         let ident = ident.trim();
         let resolved;
-        let ident = if let Some(artifact::reference::Reference {
-            project: None,
-            target:
-                artifact::reference::Target::Entry {
-                    number,
-                    within: None,
-                },
-        }) = artifact::reference::parse(ident)
+        let ident = if let Some(project) = self.project()
+            && let Some(artifact::reference::Reference {
+                project: None,
+                target:
+                    artifact::reference::Target::Entry {
+                        number,
+                        within: None,
+                    },
+            }) = artifact::reference::parse(ident)
         {
-            resolved = artifact::entry::Registry::open(&self.project)?
+            resolved = artifact::entry::Registry::open(project)?
                 .resolve(Kind::Table, number)?
                 .ok_or_else(|| anyhow!("no table {ident}"))?;
             resolved.as_str()

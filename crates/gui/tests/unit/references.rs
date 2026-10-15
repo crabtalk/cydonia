@@ -61,7 +61,7 @@ fn a_handle_names_its_card_on_the_keyed_board(cx: &mut gpui::TestAppContext) {
         let second = board.add_card(&column, "Second".into()).unwrap().clone();
         store.save_board(&mut board).unwrap();
         let handle = second.handle.unwrap();
-        let project = Project::new(dir.clone(), false, cx);
+        let project = Project::new(dir.clone(), cx);
 
         let found = card(&project, "dev", handle, "dev-2", cx).ok().unwrap();
         let Some(Part::Card(named)) = found.part else {
@@ -86,12 +86,12 @@ fn a_number_names_a_table(cx: &mut gpui::TestAppContext) {
             name: "Name".to_owned(),
             kind: ColType::Text,
         };
-        let key = Data::open(&dir)
+        let key = Data::open(&crate::data::Home::Project(dir.clone()))
             .unwrap()
             .create("Prices", None, &[column], None)
             .unwrap()
             .key;
-        let project = Project::new(dir.clone(), false, cx);
+        let project = Project::new(dir.clone(), cx);
         let number = project.tables[0].number.unwrap();
 
         let (kind, showing, title) = entry(&project, number, cx).unwrap();

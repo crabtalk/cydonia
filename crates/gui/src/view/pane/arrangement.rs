@@ -414,10 +414,7 @@ impl Cydonia {
         match item {
             Dragged::Row(row) => row.label(self.workspace.read(cx), cx),
             Dragged::Tab(member) => self
-                .workspace
-                .read(cx)
-                .showing_of(member, cx)
-                .and_then(|(project, showing)| self.toolbar_of(project, showing, cx))
+                .member_toolbar(member, cx)
                 .map(|toolbar| toolbar.title)
                 .unwrap_or_default(),
         }
@@ -821,16 +818,19 @@ impl Cydonia {
     }
 }
 
-/// A member as something that can be an element id: which project, and which
-/// of its things. Two projects can hold the same id, so the path is part of
-/// it.
+/// A member as something that can be an element id: an entry by which
+/// project and which of its things — two projects can hold the same id, so
+/// the path is part of it — or an app by its id.
 pub(crate) fn key_of(member: &Member) -> SharedString {
-    SharedString::from(format!(
-        "{}::{:?}::{}",
-        member.project.display(),
-        member.kind,
-        member.id
-    ))
+    SharedString::from(match member {
+        Member::Entry(entry) => format!(
+            "{}::{:?}::{}",
+            entry.project.display(),
+            entry.kind,
+            entry.id
+        ),
+        Member::App { app } => format!("app::{app}"),
+    })
 }
 
 /// A seam's place in the window, as something that can be an element id.

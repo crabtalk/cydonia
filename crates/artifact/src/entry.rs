@@ -1,13 +1,9 @@
 //! Stable, project-wide numbers alongside each entry's storage identity.
 
-#[cfg(feature = "sqlite")]
-use crate::app::Origin;
 use crate::kind::Kind;
 use crate::project::Project;
 #[cfg(feature = "sqlite")]
 use crate::project::fs;
-#[cfg(feature = "sqlite")]
-use anyhow::Context as _;
 use anyhow::Result;
 #[cfg(feature = "sqlite")]
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
@@ -212,18 +208,6 @@ pub fn list(project: &Path) -> Result<Vec<Entry>> {
             });
         }
     }
-    for app in Origin::list(project) {
-        let id = app.name().into_owned();
-        entries.push(Entry {
-            number: store.number(Kind::App, &id)?,
-            kind: Kind::App,
-            title: app.title(),
-            id,
-            archived: false,
-            labels: Vec::new(),
-            article: None,
-        });
-    }
     entries.sort_by_key(|entry| entry.number);
     Ok(entries)
 }
@@ -279,30 +263,6 @@ pub fn read(project: &Path, entry: &Entry) -> Result<serde_json::Value> {
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             serde_json::json!({"key": entry.id, "columns": columns, "rows": rows, "total": total, "limit": 200})
-        }
-        Kind::App => {
-            let app = Origin::list(project)
-                .into_iter()
-                .find(|app| app.name() == entry.id.as_str())
-                .with_context(|| format!("no app {}", entry.id))?;
-            let manifest = app.manifest();
-            match app {
-                Origin::Installed { app, .. } => serde_json::json!({
-                    "reference": app.reference,
-                    "tag": app.tag,
-                    "digest": app.digest,
-                    "manifest": manifest,
-                }),
-                Origin::Source(source) => serde_json::json!({
-                    "name": source.name,
-                    "source": source.dir(),
-                    "manifest": manifest,
-                }),
-                Origin::Loaded { app, .. } => serde_json::json!({
-                    "source": app.path,
-                    "manifest": manifest,
-                }),
-            }
         }
         _ => anyhow::bail!("unknown entry kind {}", entry.kind),
     })

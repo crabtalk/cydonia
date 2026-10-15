@@ -21,9 +21,10 @@ impl Workspace {
     /// session that has had no turn has no name to write.
     pub fn entry_of(&self, project: usize, showing: Showing, cx: &App) -> Option<state::Entry> {
         let member = self.member_of(project, showing, cx)?;
+        let member = member.entry()?;
         Some(state::Entry {
             kind: member.kind,
-            id: member.id,
+            id: member.id.clone(),
         })
     }
 

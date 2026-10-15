@@ -1,6 +1,6 @@
 [package]
 name = "yc"
-description = "The Y Combinator directory: companies from yc-oss and their founders, in project tables"
+description = "The Y Combinator directory: companies from yc-oss and their founders, in tables of its own"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"

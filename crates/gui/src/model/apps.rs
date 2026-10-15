@@ -1,12 +1,14 @@
-//! Mini-apps: crates built against `cydonia-guest`, in a project's `apps/` or
-//! loaded from a folder, and apps installed from a registry, each a
-//! [`Program`], and each open view holding one running instance of it through
-//! [`Runner`].
+//! Mini-apps: crates built against `cydonia-guest` and loaded from a folder,
+//! and apps installed from a registry, each a [`Program`], and each open view
+//! holding one running instance of it through [`Runner`]. An app belongs to no
+//! project.
 
-use anyhow::{Context as _, Result, bail};
-use artifact::app::{Crate, Installed};
+use crate::data::{Data, Home};
+use anyhow::{Context as _, Result};
+use artifact::app::{Home as _, Installed};
 use bezel::gpui::{App, AppContext as _, Context, Entity, Task};
-use std::{ops::Range, process, sync::Arc};
+use cargo::{Cargo, Stop};
+use std::{ops::Range, sync::Arc};
 
 pub use artifact::app::Origin;
 pub use guest::{
@@ -29,6 +31,7 @@ pub type Http = http::Ureq;
 #[cfg(not(feature = "desktop"))]
 pub type Http = none::Offline;
 
+pub mod cargo;
 pub mod oci;
 
 #[cfg(feature = "desktop")]
@@ -70,11 +73,10 @@ pub trait Runner: Sized + Send + 'static {
     fn rows(&mut self, list: &str, range: Range<u32>) -> Result<Vec<Node>>;
 }
 
-/// An app a project holds: what the project lists it by, which never changes,
-/// and the program, which every view drawing any of it observes.
+/// An app the workspace holds: its id, which never changes, and the program,
+/// which every view drawing any of it observes.
 pub struct HeldApp {
-    /// [`Origin::name`].
-    pub name: String,
+    pub id: String,
     pub program: Entity<Program>,
 }
 
@@ -82,7 +84,6 @@ pub struct HeldApp {
 /// installed app's pinned `.wasm`.
 pub struct Program {
     pub origin: Origin,
-    pub number: Option<u64>,
     /// The last good build's manifest, or before a crate's first build, what
     /// its `Cargo.toml` declares.
     pub manifest: Option<Manifest>,
@@ -92,7 +93,21 @@ pub struct Program {
     /// Whether a view has asked for the app since it was listed. A change to
     /// its source rebuilds only an app that was.
     wanted: bool,
-    _building: Option<Task<()>>,
+    building: Option<Building>,
+    /// The app's own tables, opened at its first call on them.
+    data: Option<Data>,
+}
+
+/// A build under way. Dropping it stops it.
+struct Building {
+    _task: Task<()>,
+    _stop: Option<Stop>,
+}
+
+/// What a build is: cargo on a crate, or reading an installed app's `.wasm`.
+enum Work {
+    Cargo(Cargo),
+    Load(Installed),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -103,30 +118,35 @@ pub enum Build {
 }
 
 impl Program {
-    pub fn new(origin: Origin, number: Option<u64>) -> Self {
+    /// The build under way stops when Cydonia quits.
+    pub fn new(origin: Origin, cx: &mut Context<Self>) -> Self {
+        cx.on_app_quit(|this: &mut Self, _| {
+            this.stop();
+            async {}
+        })
+        .detach();
         Self {
             manifest: origin.manifest(),
             origin,
-            number,
             wasm: None,
             build: Build::Idle,
             wanted: false,
-            _building: None,
+            building: None,
+            data: None,
         }
     }
 
-    /// What the app is listed as: its manifest's name, or before a build has
-    /// given it one, what the project lists it by.
+    /// What the app is listed as: its manifest's name, or its id.
     pub fn label(&self) -> String {
         self.manifest
             .as_ref()
             .map(|manifest| manifest.name.clone())
-            .unwrap_or_else(|| self.origin.name().into_owned())
+            .unwrap_or_else(|| self.origin.id().to_owned())
     }
 
     /// Whether Cydonia builds it from a crate on this machine.
     pub fn local(&self) -> bool {
-        self.origin.local().is_some()
+        self.origin.local()
     }
 
     /// Take a re-read of where the app comes from: an installed app pulled
@@ -142,15 +162,20 @@ impl Program {
         cx.notify();
     }
 
-    /// Let an installed app's pinned digest run in its project.
+    /// Let an installed app's pinned digest run.
     pub fn allow(&mut self, cx: &mut Context<Self>) -> Result<()> {
-        let Origin::Installed { project, app } = &mut self.origin else {
+        let Origin::Installed(app) = &mut self.origin else {
             return Ok(());
         };
         app.allowed = Some(app.digest.clone());
-        app.save(project)?;
+        app.save()?;
         cx.notify();
         Ok(())
+    }
+
+    /// Stop the build under way, if one is.
+    pub fn stop(&mut self) {
+        self.building = None;
     }
 
     /// Build the app for a view about to run it, once.
@@ -169,20 +194,23 @@ impl Program {
     }
 
     /// Build a crate now, or read an installed app's `.wasm`. A build under
-    /// way is dropped for this one.
+    /// way is stopped for this one.
     pub fn rebuild(&mut self, cx: &mut Context<Self>) {
+        self.building = None;
+        let work = match Work::start(&self.origin) {
+            Ok(work) => work,
+            Err(error) => {
+                self.build = Build::Failed(format!("{error:#}"));
+                cx.notify();
+                return;
+            }
+        };
         self.build = Build::Running;
-        let origin = self.origin.clone();
-        self._building = Some(cx.spawn(async move |this, cx| {
+        let stop = work.stop();
+        let task = cx.spawn(async move |this, cx| {
             let built = cx
                 .background_executor()
-                .spawn(async move {
-                    match origin {
-                        Origin::Source(source) => Program::compile(&source.krate()),
-                        Origin::Loaded { project, app } => Program::compile(&app.krate(&project)),
-                        Origin::Installed { app, .. } => Program::load(&app),
-                    }
-                })
+                .spawn(async move { work.run() })
                 .await;
             let _ = this.update(cx, |this, cx| {
                 match built {
@@ -193,19 +221,66 @@ impl Program {
                     }
                     Err(error) => this.build = Build::Failed(format!("{error:#}")),
                 }
-                this._building = None;
+                this.building = None;
                 cx.notify();
             });
-        }));
+        });
+        self.building = Some(Building {
+            _task: task,
+            _stop: stop,
+        });
         cx.notify();
     }
 }
 
+impl Program {
+    /// Answer the app's call on its own tables.
+    pub fn table_call(&mut self, call: Call) -> Answer {
+        self.answer_table_call(call)
+            .unwrap_or_else(|error| Answer::Error(format!("{error:#}")))
+    }
+
+    fn answer_table_call(&mut self, call: Call) -> Result<Answer> {
+        let data = match &mut self.data {
+            Some(data) => data,
+            None => {
+                let manifest = self.manifest.as_ref().context("The app has no manifest")?;
+                let home = Home::App(manifest.home()?);
+                self.data.insert(Data::open(&home)?)
+            }
+        };
+        data.call(call)
+    }
+}
+
+impl Work {
+    fn start(origin: &Origin) -> Result<Self> {
+        match origin {
+            Origin::Loaded(app) => Cargo::start(&app.krate()?).map(Self::Cargo),
+            Origin::Installed(app) => Ok(Self::Load(app.clone())),
+        }
+    }
+
+    fn stop(&self) -> Option<Stop> {
+        match self {
+            Self::Cargo(cargo) => Some(cargo.stop()),
+            Self::Load(_) => None,
+        }
+    }
+
+    fn run(self) -> Result<(Vec<u8>, Manifest)> {
+        match self {
+            Self::Cargo(cargo) => cargo.finish(),
+            Self::Load(app) => Program::load(&app),
+        }
+    }
+}
+
 impl HeldApp {
-    pub fn new(origin: Origin, number: Option<u64>, cx: &mut App) -> Self {
+    pub fn new(origin: Origin, cx: &mut App) -> Self {
         Self {
-            name: origin.name().into_owned(),
-            program: cx.new(|_| Program::new(origin, number)),
+            id: origin.id().to_owned(),
+            program: cx.new(|cx| Program::new(origin, cx)),
         }
     }
 
@@ -232,55 +307,6 @@ impl Program {
         let manifest = Manifest::read(&wasm)
             .map_err(anyhow::Error::msg)?
             .context("The installed app has no manifest")?;
-        Ok((wasm, manifest))
-    }
-
-    /// Build `krate` with cargo, keep the `.wasm` where [`Crate::built`] says,
-    /// and answer with it and its manifest. Blocks until cargo is done.
-    pub fn compile(krate: &Crate) -> Result<(Vec<u8>, Manifest)> {
-        let output = process::Command::new("cargo")
-            .args(["build", "--release", "--quiet", "--message-format=json"])
-            .args(["--target", TARGET])
-            .arg("--manifest-path")
-            .arg(krate.manifest_path())
-            .arg("--target-dir")
-            .arg(&krate.target)
-            .output();
-        let output = match output {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                bail!("Building an app takes cargo, and there is no cargo on this machine's PATH")
-            }
-            output => output.context("cargo did not start")?,
-        };
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let messages = stdout
-            .lines()
-            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok());
-        if !output.status.success() {
-            let rendered: Vec<String> = messages
-                .filter(|message| message["reason"] == "compiler-message")
-                .filter_map(|message| Some(message["message"]["rendered"].as_str()?.to_owned()))
-                .collect();
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!("{}{}", rendered.join(""), stderr.trim());
-        }
-        let built = messages
-            .filter(|message| message["reason"] == "compiler-artifact")
-            .flat_map(|message| {
-                message["filenames"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|name| name.as_str().map(str::to_owned))
-                    .collect::<Vec<_>>()
-            })
-            .rfind(|name| name.ends_with(".wasm"))
-            .context("cargo built no .wasm: the crate needs `crate-type = [\"cdylib\"]`")?;
-        let wasm = std::fs::read(&built)?;
-        let manifest = Manifest::read(&wasm).map_err(anyhow::Error::msg)?.context(
-            "The app has no manifest: `cydonia_guest::app!` writes it, in the crate root",
-        )?;
-        artifact::fs::save(&krate.built, &wasm)?;
         Ok((wasm, manifest))
     }
 }

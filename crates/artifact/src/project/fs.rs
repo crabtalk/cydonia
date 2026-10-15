@@ -479,21 +479,15 @@ impl Project {
     }
 
     /// Where an entry is on disk: an article's directory, a board's or a
-    /// session's file, an app's crate. `None` for one that is not there, and
-    /// for a table, whose rows are in the project's database.
+    /// session's file. `None` for one that is not there, and for a table,
+    /// whose rows are in the project's database.
     pub fn place(&self, kind: Kind, id: &str) -> Option<PathBuf> {
         let path = match kind {
             Kind::Article => self.article_file(id).ok()?.parent()?.to_path_buf(),
             Kind::Board => self.board_dir(component(id).ok()?),
             Kind::Session => self.session_file(component(id).ok()?),
             Kind::Table => return None,
-            Kind::App => {
-                crate::app::Origin::list(&self.root)
-                    .into_iter()
-                    .find(|app| app.name() == id)?
-                    .local()?
-                    .dir
-            }
+            Kind::App => return None,
         };
         path.exists().then_some(path)
     }

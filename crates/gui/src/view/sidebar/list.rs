@@ -137,22 +137,16 @@ impl<'a> List<'a> {
         entries
     }
 
-    /// Every open project's apps, by name, for the Apps heading.
+    /// The apps listed, by name, for the Apps heading.
     fn apps(&self) -> Vec<Row> {
         let mut apps: Vec<(String, Row)> = self
             .workspace
-            .projects
-            .iter()
-            .flat_map(|open| {
-                open.every(Kind::App, self.cx).map(|facts| {
-                    (
-                        facts.label.to_lowercase(),
-                        Row::Entry {
-                            project: open.path.clone(),
-                            showing: facts.showing,
-                        },
-                    )
-                })
+            .listed_apps(self.cx)
+            .map(|held| {
+                (
+                    held.program.read(self.cx).label().to_lowercase(),
+                    Row::App(held.id.clone()),
+                )
             })
             .collect();
         apps.sort_by(|a, b| a.0.cmp(&b.0));
@@ -275,11 +269,7 @@ impl<'a> List<'a> {
             // A space is not inside a project — it can hold panes from
             // several — so its row starts at the column's edge, where the
             // project headings are.
-            Row::Group(Group::Space(_)) | Row::Heading(_) => 0,
-            Row::Entry {
-                showing: crate::model::workspace::Showing::App(_),
-                ..
-            } => 0,
+            Row::Group(Group::Space(_)) | Row::Heading(_) | Row::App(_) => 0,
             _ => u8::from(self.workspace.indent_project_rows),
         }
     }
@@ -399,7 +389,7 @@ impl<'a> List<'a> {
                     Row::Archive(_) => "archive".into(),
                     Row::Group(Group::Project(_)) => "projects".into(),
                     Row::Group(Group::Space(_)) => "spaces".into(),
-                    Row::Entry { .. } if section == Heading::Apps => "apps".into(),
+                    Row::App(_) => "apps".into(),
                     Row::Entry { project, .. } => match group {
                         Some(Group::Space(id)) => format!("space-{id}").into(),
                         _ => format!(

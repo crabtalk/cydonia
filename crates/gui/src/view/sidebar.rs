@@ -148,6 +148,8 @@ pub(crate) enum Row {
     Archive(PathBuf),
     /// An entry of the project at `project`.
     Entry { project: PathBuf, showing: Showing },
+    /// An app, by its id.
+    App(String),
 }
 
 /// How a row is drawn, which is what its height follows.
@@ -182,6 +184,7 @@ impl Row {
     pub(crate) fn kind(&self) -> Option<Kind> {
         match self {
             Row::Entry { showing, .. } => Some(showing.kind()),
+            Row::App(_) => Some(Kind::App),
             _ => None,
         }
     }
@@ -191,7 +194,7 @@ impl Row {
     pub(crate) fn showing(&self) -> Option<&Showing> {
         match self {
             Row::Entry { showing, .. } => Some(showing),
-            Row::Group(_) | Row::Archive(_) | Row::Heading(_) => None,
+            Row::Group(_) | Row::Archive(_) | Row::Heading(_) | Row::App(_) => None,
         }
     }
 
@@ -207,20 +210,32 @@ impl Row {
 
     /// What a space would name this row, so it can be dragged into one.
     pub(crate) fn member(&self, workspace: &Workspace, cx: &App) -> Option<Member> {
-        let Row::Entry { project, showing } = self else {
-            return None;
-        };
-        workspace.member_of(workspace.project_at(project)?, showing.clone(), cx)
+        match self {
+            Row::Entry { project, showing } => {
+                workspace.member_of(workspace.project_at(project)?, showing.clone(), cx)
+            }
+            Row::App(id) => Some(Member::app(id.clone())),
+            Row::Group(_) | Row::Archive(_) | Row::Heading(_) => None,
+        }
     }
 
     /// The row for a member a space holds — the way back from what it names
-    /// to the line that stands for it. Nothing where its project is not open.
+    /// to the line that stands for it. Nothing where its project is not open,
+    /// or its app is not listed.
     pub(crate) fn of_member(member: &Member, workspace: &Workspace, cx: &App) -> Option<Self> {
-        let (_, showing) = workspace.showing_of(member, cx)?;
-        Some(Row::Entry {
-            project: member.project.clone(),
-            showing,
-        })
+        match member {
+            Member::Entry(entry) => {
+                let (_, showing) = workspace.showing_of(member, cx)?;
+                Some(Row::Entry {
+                    project: entry.project.clone(),
+                    showing,
+                })
+            }
+            Member::App { app } => {
+                workspace.program(app, cx)?;
+                Some(Row::App(app.clone()))
+            }
+        }
     }
 
     /// The member a row names once it lands in a pane. A session carried with
@@ -254,6 +269,7 @@ impl Row {
                     workspace.projects.get(workspace.project_at(path)?)?.name()
                 }
                 Row::Archive(_) | Row::Heading(_) => return None,
+                Row::App(id) => workspace.program(id, cx)?.read(cx).label(),
                 Row::Group(Group::Space(id)) => workspace
                     .spaces
                     .get(workspace.space_ix(id)?)?
@@ -299,12 +315,12 @@ impl Row {
     pub(crate) fn program(
         &self,
         workspace: &Workspace,
+        cx: &App,
     ) -> Option<Entity<crate::model::apps::Program>> {
-        let (project, ix) = self.located(workspace)?;
-        let Some(Showing::App(_)) = self.showing() else {
+        let Row::App(id) = self else {
             return None;
         };
-        Some(workspace.projects[project].apps.get(ix)?.program.clone())
+        workspace.program(id, cx).cloned()
     }
 
     /// Where an entry row is on disk, for a backend that is the disk.
@@ -316,7 +332,6 @@ impl Row {
             Showing::Board(id) => (Kind::Board, id.clone()),
             Showing::Session(id) => (Kind::Session, open.session(*id, cx)?.filed()?.to_owned()),
             Showing::Table(_) => return None,
-            Showing::App(name) => (Kind::App, name.clone()),
         };
         open.store().place(kind, &id)
     }
@@ -328,7 +343,7 @@ pub(crate) enum Heading {
     Projects,
     /// Drawn only while there is a space.
     Spaces,
-    /// Every open project's apps. Drawn only while there is one.
+    /// The apps listed. Drawn only while there is one.
     Apps,
 }
 
@@ -400,16 +415,20 @@ impl Lit {
     /// Whether the pane in front is on this entry. Never while the library
     /// stands over the panes.
     pub(crate) fn in_front(&self, entry: &Row, workspace: &Workspace) -> bool {
-        let Row::Entry { showing, .. } = entry else {
-            return false;
-        };
-        if self.library {
+        if self.library || workspace.active_space().is_some() {
             return false;
         }
+        let showing = match entry {
+            Row::Entry { showing, .. } => showing,
+            Row::App(id) => {
+                return self.showing == Some(Kind::App) && workspace.app.as_ref() == Some(id);
+            }
+            Row::Group(_) | Row::Archive(_) | Row::Heading(_) => return false,
+        };
         let Some((project, ix)) = entry.located(workspace) else {
             return false;
         };
-        if workspace.active != Some(project) || workspace.active_space().is_some() {
+        if workspace.active != Some(project) {
             return false;
         }
         let open = &workspace.projects[project];
@@ -419,7 +438,6 @@ impl Lit {
             Showing::Board(_) => pane == Some(Kind::Board) && open.board == Some(ix),
             Showing::Article(_) => pane == Some(Kind::Article) && open.article == Some(ix),
             Showing::Table(_) => pane == Some(Kind::Table) && open.table == Some(ix),
-            Showing::App(_) => pane == Some(Kind::App) && open.app == Some(ix),
         }
     }
 
@@ -472,7 +490,7 @@ fn project_of(row: &Row) -> Option<&Path> {
     match row {
         Row::Group(Group::Project(path)) | Row::Archive(path) => Some(path),
         Row::Entry { project, .. } => Some(project),
-        Row::Group(Group::Space(_)) | Row::Heading(_) => None,
+        Row::Group(Group::Space(_)) | Row::Heading(_) | Row::App(_) => None,
     }
 }
 
@@ -484,7 +502,7 @@ pub(crate) fn shown(row: &Row, features: &Features) -> bool {
         Some(Showing::Session(_)) => features.sessions,
         Some(Showing::Board(_)) => features.boards,
         Some(Showing::Table(_)) => features.tables,
-        Some(Showing::Article(_) | Showing::App(_)) | None => true,
+        Some(Showing::Article(_)) | None => true,
     }
 }
 
@@ -519,9 +537,10 @@ impl Renaming {
             } => Some(Self::Table(key.clone())),
             Row::Group(Group::Space(id)) => Some(Self::Space(id.clone())),
             Row::Entry {
-                showing: Showing::Article(_) | Showing::Board(_) | Showing::App(_),
+                showing: Showing::Article(_) | Showing::Board(_),
                 ..
             }
+            | Row::App(_)
             | Row::Group(Group::Project(_))
             | Row::Archive(_)
             | Row::Heading(_) => None,
@@ -667,9 +686,9 @@ pub(crate) fn key_of(entry: &Row) -> String {
                 Showing::Board(id) => format!("board-{project}-{id}"),
                 Showing::Article(id) => format!("article-{project}-{id}"),
                 Showing::Table(key) => format!("table-{project}-{key}"),
-                Showing::App(name) => format!("app-{project}-{name}"),
             }
         }
+        Row::App(id) => format!("app-{id}"),
     }
 }
 

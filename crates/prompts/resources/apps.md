@@ -1,22 +1,19 @@
 ---
 name: apps
-description: Write a Cydonia app — a Rust crate in the project's apps/ directory, built to wasm against cydonia-guest, its manifest in Cargo.toml, that draws its UI as nodes and keeps data in the project's tables. Use before creating or changing anything under apps/.
+description: Write a Cydonia app — a Rust crate built to wasm against cydonia-guest, its manifest in Cargo.toml, that draws its UI as nodes and keeps data in tables of its own. Use before creating or changing a Cydonia app.
 ---
 
 # Apps
 
-An app is a Rust crate in its own directory under the project's `apps/`:
-`apps/<name>/`. With developer mode on (Settings › Features), Cydonia lists
-every such directory holding a `Cargo.toml` under Apps in the sidebar and the
-library, numbered like any entry, and opens one in a tab. Opening it builds it;
-from then on, saving any file of the crate builds it again and reloads it into
-its open tabs. A build error, a trap or a panic shows in the app's tab. With
-developer mode off, Cydonia lists and builds none of them: only installed apps
-are listed.
+An app is a Rust crate that depends on `cydonia-guest`, anywhere on disk. It
+belongs to no project. File › Load App from Folder… (with developer mode on,
+in Settings › General) records it for this machine and lists it under Apps in
+the sidebar and the library; it has no `#N`. Opening it builds it; from then
+on, saving any file of the crate builds it again and reloads it into its open
+tabs. A build error, a trap or a panic shows in the app's tab. With developer
+mode off, loaded apps are not listed or built: only installed apps are.
 
-File › Load App from Folder… applies a crate anywhere on disk to the project in
-front the same way, recorded in `.cydonia/apps/<id>/app.toml` by its folder.
-It also needs developer mode.
+A crate in a project's directory is not listed until it is loaded.
 
 Cydonia builds with
 
@@ -142,9 +139,10 @@ sets the text with `cydonia_guest::host::set_input(key, value)`, which
 
 ## Tables
 
-With `calls = ["tables"]` in the manifest, the app reads and writes the project's
-tables: the same tables the table view and agents see. Each call answers later,
-as the message its last argument makes of the result:
+With `calls = ["tables"]` in the manifest, the app reads and writes tables of
+its own, kept for it on this machine. They are the same whichever project is in
+front, and no project lists them. Each call answers later, as the message its
+last argument makes of the result:
 
 ```rust
 use cydonia_guest::{tables, wire::ColType};

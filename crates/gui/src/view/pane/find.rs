@@ -166,7 +166,9 @@ impl Tab {
 
     /// What the pane shows, as its find reaches it.
     fn shown_kind(&self) -> Kind {
-        self.entry.as_ref().map_or(self.kind, |member| member.kind)
+        self.entry
+            .as_ref()
+            .map_or(self.kind, artifact::space::Member::kind)
     }
 
     /// How many hits the find finds in what the pane shows.

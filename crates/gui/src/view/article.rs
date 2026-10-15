@@ -24,7 +24,7 @@ use crate::{
     },
 };
 use artifact::kind::Kind;
-use artifact::space::Member;
+use artifact::space::{Entry, Member};
 use bezel::ui::scroll as scrollbars;
 use bezel::ui::surface::{self, Surfaced as _};
 use bezel::{
@@ -486,7 +486,7 @@ impl Cydonia {
             .update(cx, |workspace, cx| workspace.open_article(project, ix, cx));
         let pane = self.leaf().clone();
         pane.update(cx, |pane, _| pane.kind = Kind::Article);
-        let editor = member.and_then(|member| {
+        let editor = member.and_then(Member::into_entry).and_then(|member| {
             let view = pane.update(cx, |pane, cx| pane.article_view(member, cx));
             view.update(cx, |view, cx| view.ensure_editor(cx));
             view.read(cx).editor().cloned()
@@ -524,7 +524,7 @@ impl Cydonia {
     }
 
     /// Where the view of `article` in the pane showing it is scrolled to.
-    pub(crate) fn article_scroll(&self, article: &Member, cx: &App) -> Option<gpui::ScrollHandle> {
+    pub(crate) fn article_scroll(&self, article: &Entry, cx: &App) -> Option<gpui::ScrollHandle> {
         self.leaves
             .iter()
             .flat_map(|pane| pane.read(cx).articles.iter())
@@ -619,7 +619,11 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        let member = self.workspace.read(cx).article_member(project, at)?;
+        let member = self
+            .workspace
+            .read(cx)
+            .article_member(project, at)?
+            .into_entry()?;
         let (workspace, root) = (self.workspace.clone(), cx.entity().downgrade());
         let view = window.use_keyed_state(
             SharedString::from(format!("article-peek-{}", member.id)),
@@ -650,7 +654,7 @@ pub(crate) struct Reading {
 /// comments and the menus it opens.
 pub(crate) struct ArticleView {
     /// The article, as the space names it.
-    pub(crate) article: Member,
+    pub(crate) article: Entry,
     workspace: Entity<Workspace>,
     root: WeakEntity<Cydonia>,
     /// Set while the article holds a document — see [`Self::ensure_editor`].
@@ -686,7 +690,7 @@ pub(crate) struct ArticleView {
 
 impl ArticleView {
     pub(crate) fn new(
-        article: Member,
+        article: Entry,
         workspace: Entity<Workspace>,
         root: WeakEntity<Cydonia>,
         cx: &mut Context<Self>,

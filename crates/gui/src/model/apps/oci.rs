@@ -5,7 +5,6 @@ use super::{Fetcher, Manifest, Request, Response};
 use anyhow::{Context as _, Result, bail, ensure};
 use artifact::app::Installed;
 use sha2::{Digest as _, Sha256};
-use std::path::Path;
 
 /// The media types an image manifest is asked for in.
 const MANIFESTS: &str = "application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json";
@@ -116,8 +115,8 @@ impl Reference {
         })
     }
 
-    /// Pull the app, keep its `.wasm` and apply it to `project`.
-    pub fn install<F: Fetcher>(&self, project: &Path) -> Result<Installed> {
+    /// Pull the app, keep its `.wasm` and record it.
+    pub fn install<F: Fetcher>(&self) -> Result<Installed> {
         let pulled = self.pull::<F>()?;
         let path = Installed::wasm_at(&pulled.manifest.id, &pulled.digest)?;
         if !path.is_file() {
@@ -130,7 +129,7 @@ impl Reference {
             digest: pulled.digest,
             allowed: None,
         };
-        installed.save(project)?;
+        installed.save()?;
         Ok(installed)
     }
 }

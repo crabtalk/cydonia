@@ -273,9 +273,9 @@ pub type CallId = u32;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "call", rename_all = "snake_case")]
 pub enum Call {
-    /// The project's tables. Answers [`Answer::Tables`].
+    /// The app's tables. Answers [`Answer::Tables`].
     Tables,
-    /// A read-only SQL statement on the project's tables. Answers
+    /// A read-only SQL statement on the app's tables. Answers
     /// [`Answer::Rows`].
     Query { sql: String },
     /// A table named `name` with these columns. Answers [`Answer::Table`].
@@ -360,13 +360,13 @@ impl Response {
     }
 }
 
-/// One of the project's tables. `key` is what SQL names it by; `name` is what
-/// Cydonia shows.
+/// One of the app's tables. `key` is what SQL names it by; `name` is what the
+/// app gave it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Table {
     pub key: String,
     pub name: String,
-    /// Its entry number, `#N`.
+    /// `None`: an app's own tables are not numbered.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub number: Option<u64>,
     pub columns: Vec<Column>,

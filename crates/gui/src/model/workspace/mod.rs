@@ -51,6 +51,7 @@ const ICON_RETRIES: u32 = 6;
 // The rest of `impl Workspace`, split by what each part touches rather than
 // left as one 1500-line block. Every one of them continues this module's
 // scope — see the note at the head of each.
+mod apps;
 mod articles;
 mod boards;
 mod labels;
@@ -163,6 +164,12 @@ pub struct Workspace {
     folded_sections: std::collections::HashSet<String>,
     /// The palette's commands last run, most recent first.
     recent_commands: Vec<String>,
+    /// Every app on this machine, by id — see [`apps`].
+    pub apps: Vec<crate::model::apps::HeldApp>,
+    /// Which app the pane a window with no space open shows.
+    pub app: Option<String>,
+    /// The watch on the apps' records and loaded folders.
+    apps_watch: Option<crate::model::watch::Watch>,
 }
 
 impl Workspace {
@@ -172,7 +179,7 @@ impl Workspace {
             .into_iter()
             .map(|path| {
                 let expanded = !state.collapsed.contains(&path);
-                let mut project = Project::new(path, settings.features.developer, cx);
+                let mut project = Project::new(path, cx);
                 project.expanded = expanded;
                 project
             })
@@ -223,7 +230,11 @@ impl Workspace {
             space_order: state.space_order,
             folded_sections: state.folded_sections.iter().cloned().collect(),
             recent_commands: state.commands,
+            apps: Vec::new(),
+            app: None,
+            apps_watch: None,
         };
+        this.app_recorded(cx);
         // The arrangement the window closed on, before any entry is opened:
         // `open_last_entry` is a project's answer and a space spans them.
         this.space = state
@@ -570,21 +581,14 @@ impl Workspace {
     /// A failed write leaves both halves alone, so the switch stays where it
     /// was rather than claiming a gate the file does not carry.
     ///
-    /// What a project holds is read when it opens and the gate is applied at
-    /// the accessors below, so switching one on shows what was already there
-    /// rather than needing a rescan. Developer mode is the exception: it
-    /// re-lists every project's apps.
+    /// Nothing is reloaded either way. What a project holds is read when it
+    /// opens and the gate is applied at the accessors below, so switching one
+    /// on shows what was already there rather than needing a rescan.
     pub fn set_feature(&mut self, feature: Feature, on: bool, cx: &mut Context<Self>) {
         if settings::set_feature(feature, on).is_err() {
             return;
         }
         feature.set(&mut self.settings.features, on);
-        if feature == Feature::Developer {
-            for project in &mut self.projects {
-                project.reload_apps(on, cx);
-            }
-            self.prune_spaces(cx);
-        }
         // `sessions` is half of what decides whether the door is open: the
         // only caller is an agent, and that switch is whether any run.
         self.refresh_door();

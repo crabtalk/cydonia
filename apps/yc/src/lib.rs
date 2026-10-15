@@ -1,6 +1,6 @@
 //! The Y Combinator directory: companies from yc-oss, founders from each
-//! company's page on www.ycombinator.com, kept in the project's `companies`
-//! and `founders` tables and refreshed one batch at a time.
+//! company's page on www.ycombinator.com, kept in the app's `companies` and
+//! `founders` tables and refreshed one batch at a time.
 
 pub mod scrape;
 pub mod store;

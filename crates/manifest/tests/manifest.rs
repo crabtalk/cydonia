@@ -7,6 +7,9 @@ const CARGO: &str = r#"
 name = "yc"
 version = "0.2.0"
 
+[dependencies]
+cydonia-guest = "0.2"
+
 [package.metadata.other]
 anything = true
 
@@ -62,13 +65,26 @@ fn a_manifest_is_declared_in_cargo_toml() {
 
 #[test]
 fn a_crate_without_the_table_is_named_by_its_crate() {
-    let manifest =
-        Manifest::from_cargo("[package]\nname = \"bare\"\nversion.workspace = true\n").unwrap();
+    let manifest = Manifest::from_cargo(
+        "[package]\nname = \"bare\"\nversion.workspace = true\n\
+             [dependencies]\ncydonia-guest.workspace = true\n",
+    )
+    .unwrap();
     assert_eq!(
         (manifest.name.as_str(), manifest.version.as_str()),
         ("bare", "")
     );
     assert!(manifest.calls.is_empty() && manifest.hosts.is_empty());
+}
+
+#[test]
+fn a_crate_not_built_against_the_guest_is_not_an_app() {
+    let refused = Manifest::from_cargo("[package]\nname = \"web\"\n[dependencies]\ngpui = \"1\"\n");
+    assert!(
+        refused
+            .unwrap_err()
+            .contains("does not depend on cydonia-guest")
+    );
 }
 
 #[test]

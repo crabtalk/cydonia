@@ -1,5 +1,5 @@
 //! The question asked before an app is installed: the reference it is pulled
-//! by. The app is applied to the project in front, and opened once it lands.
+//! by. The app is opened once it lands.
 
 use crate::{
     model::apps::{Http, oci::Reference},
@@ -19,7 +19,6 @@ use bezel::{
     theme::Theme,
     ui::{input::TextField, popover},
 };
-use std::path::PathBuf;
 
 /// Claimed on the dialog's field, so `enter` installs.
 const INSTALL_CONTEXT: &str = "CydoniaInstallApp";
@@ -36,8 +35,6 @@ pub fn bindings() -> Vec<KeyBinding> {
 
 /// An app asked for and not yet installed, as a modal.
 pub(crate) struct InstallApp {
-    /// The project it is applied to.
-    project: PathBuf,
     reference: Entity<TextField>,
     /// What went wrong last time. The dialog stays open while there is one.
     error: Option<SharedString>,
@@ -53,25 +50,16 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(project) = self
-            .workspace
-            .read(cx)
-            .active_project()
-            .map(|open| open.path.clone())
-        else {
-            return;
-        };
         self.commit(cx);
         self.close_menu(cx);
         let root = cx.entity().downgrade();
-        self.toggle_modal(window, cx, |_, cx| InstallApp::new(project, root, cx));
+        self.toggle_modal(window, cx, |_, cx| InstallApp::new(root, cx));
     }
 }
 
 impl InstallApp {
-    fn new(project: PathBuf, root: WeakEntity<Cydonia>, cx: &mut Context<Self>) -> Self {
+    fn new(root: WeakEntity<Cydonia>, cx: &mut Context<Self>) -> Self {
         Self {
-            project,
             reference: form::field(
                 INSTALL_CONTEXT,
                 SharedString::default(),
@@ -97,17 +85,15 @@ impl InstallApp {
             }
         };
         self.error = None;
-        let project = self.project.clone();
         self.installing = Some(cx.spawn_in(window, async move |this, cx| {
-            let into = project.clone();
             let installed = cx
                 .background_executor()
-                .spawn(async move { reference.install::<Http>(&into) })
+                .spawn(async move { reference.install::<Http>() })
                 .await;
             let _ = this.update_in(cx, |this, window, cx| {
                 this.installing = None;
                 match installed {
-                    Ok(app) => this.landed(&app.reference, window, cx),
+                    Ok(app) => this.landed(&app.id, window, cx),
                     Err(why) => {
                         this.error = Some(format!("{why:#}").into());
                         cx.notify();
@@ -118,12 +104,11 @@ impl InstallApp {
         cx.notify();
     }
 
-    /// List the installed app in its project, open it and close the dialog.
-    fn landed(&mut self, reference: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let project = self.project.clone();
-        let _ = self.root.update(cx, |root, cx| {
-            root.open_applied(&project, reference, window, cx)
-        });
+    /// List the installed app, open it and close the dialog.
+    fn landed(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let _ = self
+            .root
+            .update(cx, |root, cx| root.open_recorded(id, window, cx));
         cx.emit(DismissEvent);
     }
 }

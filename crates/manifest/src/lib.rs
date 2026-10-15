@@ -148,11 +148,16 @@ impl Declared {
 mod cargo {
     use super::{Declared, Manifest};
     use serde::Deserialize;
-    use std::path::Path;
+    use std::{collections::BTreeMap, path::Path};
+
+    /// The dependency an app is built against.
+    const GUEST: &str = "cydonia-guest";
 
     #[derive(Deserialize)]
     struct File {
         package: Package,
+        #[serde(default)]
+        dependencies: BTreeMap<String, toml::Value>,
     }
 
     #[derive(Deserialize)]
@@ -171,25 +176,30 @@ mod cargo {
         cydonia: Declared,
     }
 
-    fn package(toml: &str) -> Result<Package, String> {
-        toml::from_str::<File>(toml)
-            .map(|file| file.package)
-            .map_err(|error| format!("an unreadable Cargo.toml: {error}"))
+    fn file(toml: &str) -> Result<File, String> {
+        toml::from_str::<File>(toml).map_err(|error| format!("an unreadable Cargo.toml: {error}"))
     }
 
     impl Declared {
         /// The `[package.metadata.cydonia]` table of the `Cargo.toml` `toml`,
         /// or an empty one where it has none.
         pub fn from_cargo(toml: &str) -> Result<Self, String> {
-            package(toml).map(|package| package.metadata.cydonia)
+            file(toml).map(|file| file.package.metadata.cydonia)
         }
     }
 
     impl Manifest {
         /// The manifest the crate whose `Cargo.toml` is `toml` declares. Its
-        /// version is empty where the crate inherits it from a workspace.
+        /// version is empty where the crate inherits it from a workspace. A
+        /// crate that does not depend on `cydonia-guest` is not an app.
         pub fn from_cargo(toml: &str) -> Result<Self, String> {
-            let package = package(toml)?;
+            let File {
+                package,
+                dependencies,
+            } = file(toml)?;
+            if !dependencies.contains_key(GUEST) {
+                return Err(format!("{} does not depend on {GUEST}", package.name));
+            }
             let version = package
                 .version
                 .as_ref()

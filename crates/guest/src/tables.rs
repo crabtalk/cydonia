@@ -1,5 +1,5 @@
-//! The project's tables: the same ones Cydonia's table view and its agents
-//! see. Each call answers later, as the message `msg` makes of its result.
+//! The app's own tables, kept for it on this machine whichever project is in
+//! front. Each call answers later, as the message `msg` makes of its result.
 //!
 //! ```ignore
 //! tables::query("SELECT name FROM companies", Msg::Loaded);

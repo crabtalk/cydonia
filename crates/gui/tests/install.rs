@@ -1,7 +1,7 @@
 //! Installing an app from an OCI registry: a registry on a local port that
 //! asks for a token and keeps its blobs elsewhere, as ghcr does.
 
-use artifact::app::Installed;
+use artifact::app::Origin;
 use cydonia_gui::model::apps::{Http, Program, oci::Reference};
 use guest::{CONTRACT, manifest::SECTION};
 use sha2::{Digest as _, Sha256};
@@ -144,20 +144,17 @@ fn a_reference_names_its_registry_repository_and_tag() {
 }
 
 #[test]
-fn an_app_is_pulled_through_a_token_and_a_redirect_and_applied() {
-    let scratch = Scratch::new("pull");
+fn an_app_is_pulled_through_a_token_and_a_redirect_and_recorded() {
+    let _scratch = Scratch::new("pull");
     let wasm = module(&manifest(CONTRACT));
     let (address, seen) = registry(wasm.clone(), digest(&wasm));
     let reference = Reference::parse(&format!("{address}/acme/yc:0.1.0")).unwrap();
-    let installed = reference.install::<Http>(&scratch.0).unwrap();
+    let installed = reference.install::<Http>().unwrap();
     assert_eq!(installed.id, "yc");
     assert_eq!(installed.digest, digest(&wasm));
     assert!(!installed.allowed());
     assert_eq!(std::fs::read(installed.wasm().unwrap()).unwrap(), wasm);
-    assert_eq!(
-        Installed::list(&scratch.0),
-        std::slice::from_ref(&installed)
-    );
+    assert_eq!(Origin::list(), [Origin::Installed(installed.clone())]);
     let (loaded, manifest) = Program::load(&installed).unwrap();
     assert_eq!((loaded, manifest.name.as_str()), (wasm, "Y Combinator"));
 
@@ -174,42 +171,42 @@ fn an_app_is_pulled_through_a_token_and_a_redirect_and_applied() {
 
 #[test]
 fn a_layer_that_is_not_its_digest_is_refused() {
-    let scratch = Scratch::new("digest");
+    let _scratch = Scratch::new("digest");
     let wasm = module(&manifest(CONTRACT));
     let (address, _) = registry(wasm, digest(b"something else"));
     let reference = Reference::parse(&format!("{address}/acme/yc:0.1.0")).unwrap();
-    let error = format!("{:#}", reference.install::<Http>(&scratch.0).unwrap_err());
+    let error = format!("{:#}", reference.install::<Http>().unwrap_err());
     assert!(error.contains("not the sha256:"), "{error}");
-    assert!(Installed::list(&scratch.0).is_empty());
+    assert!(Origin::list().is_empty());
 }
 
 #[test]
 fn an_app_built_for_a_newer_contract_is_refused_at_install() {
-    let scratch = Scratch::new("contract");
+    let _scratch = Scratch::new("contract");
     let wasm = module(&manifest(CONTRACT + 1));
     let (address, _) = registry(wasm.clone(), digest(&wasm));
     let reference = Reference::parse(&format!("{address}/acme/yc:0.1.0")).unwrap();
-    let error = format!("{:#}", reference.install::<Http>(&scratch.0).unwrap_err());
+    let error = format!("{:#}", reference.install::<Http>().unwrap_err());
     assert!(
         error.contains(&format!("needs view contract {}", CONTRACT + 1)),
         "{error}"
     );
-    assert!(Installed::list(&scratch.0).is_empty());
+    assert!(Origin::list().is_empty());
 }
 
 #[test]
 fn letting_an_app_run_is_kept_for_its_digest() {
-    let scratch = Scratch::new("allow");
+    let _scratch = Scratch::new("allow");
     let wasm = module(&manifest(CONTRACT));
     let (address, _) = registry(wasm.clone(), digest(&wasm));
     let reference = Reference::parse(&format!("{address}/acme/yc:0.1.0")).unwrap();
-    let mut installed = reference.install::<Http>(&scratch.0).unwrap();
+    let mut installed = reference.install::<Http>().unwrap();
     installed.allowed = Some(installed.digest.clone());
-    installed.save(&scratch.0).unwrap();
-    assert!(Installed::list(&scratch.0)[0].allowed());
+    installed.save().unwrap();
+    assert!(Origin::list()[0].allowed());
 
-    // Another reference cannot take the same id in the same project.
+    // Another reference cannot take the same id.
     let mut other = installed.clone();
     other.reference = "ghcr.io/someone/yc".into();
-    assert!(other.save(&scratch.0).is_err());
+    assert!(other.save().is_err());
 }

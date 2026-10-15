@@ -101,9 +101,9 @@ pub fn init(cx: &mut App) {
     // same door as ⌘Q rather than a smaller one — and the Dock opens it again.
     cx.on_action(|_: &CloseWindow, cx: &mut App| front(cx, |window| window.remove_window()));
 
-    // Both are handled in the workspace window as well. A global handler runs
-    // only once every element in the focused path has declined, so these are
-    // what answers when the window in front is the settings one.
+    // These are handled in the workspace window as well. A global handler
+    // runs only once every element in the focused path has declined, so these
+    // are what answers when the window in front is the settings one.
     cx.on_action(|_: &OpenProject, cx: &mut App| {
         workspace(cx, |this, window, cx| {
             this.open_project_action(&OpenProject, window, cx)
@@ -112,6 +112,16 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &OpenSettings, cx: &mut App| {
         workspace(cx, |this, window, cx| {
             this.open_settings_action(&OpenSettings, window, cx)
+        })
+    });
+    cx.on_action(|_: &InstallApp, cx: &mut App| {
+        workspace(cx, |this, window, cx| {
+            this.install_app_action(&InstallApp, window, cx)
+        })
+    });
+    cx.on_action(|_: &LoadApp, cx: &mut App| {
+        workspace(cx, |this, window, cx| {
+            this.load_app_action(&LoadApp, window, cx)
         })
     });
 
@@ -242,8 +252,8 @@ fn menus(cx: &App) -> Vec<Menu> {
 /// off `settings.toml` rather than the workspace, which at launch has no window
 /// yet to be read from.
 fn file_menu() -> Vec<MenuItem> {
-    let agents = settings::load()
-        .map(|settings| settings.agents)
+    let (agents, developer) = settings::load()
+        .map(|settings| (settings.agents, settings.developer_mode))
         .unwrap_or_default();
     let mut file = vec![MenuItem::action("New Session", NewSession)];
     if agents.len() > 1 {
@@ -263,7 +273,11 @@ fn file_menu() -> Vec<MenuItem> {
         MenuItem::action("New Article", NewArticle),
         MenuItem::action("New Table", NewTable),
         MenuItem::action("Install App…", InstallApp),
-        MenuItem::action("Load App from Folder…", LoadApp),
+    ]);
+    if developer {
+        file.push(MenuItem::action("Load App from Folder…", LoadApp));
+    }
+    file.extend([
         MenuItem::separator(),
         MenuItem::action("Open Project…", OpenProject),
         MenuItem::action("Close Project", CloseProject),
@@ -319,7 +333,7 @@ impl Cydonia {
         let workspace = self.workspace.read(cx);
         let features = &workspace.settings.features;
         let (sessions, boards, tables) = (features.sessions, features.boards, features.tables);
-        let developer = features.developer;
+        let developer = workspace.settings.developer_mode;
         let (review, files) = (features.panel.review, features.panel.files);
         let project = workspace.active.is_some();
         // Nothing on screen is nothing to step from — the launch view is not
@@ -331,6 +345,10 @@ impl Cydonia {
             .on_action(cx.listener(Self::toggle_search))
             .on_action(cx.listener(Self::open_project_action))
             .on_action(cx.listener(Self::open_settings_action))
+            .on_action(cx.listener(Self::install_app_action))
+            .when(developer, |root| {
+                root.on_action(cx.listener(Self::load_app_action))
+            })
             .when(project, |root| {
                 root.on_action(cx.listener(Self::close_project_action))
                     .on_action(cx.listener(Self::new_article_action))
@@ -344,10 +362,6 @@ impl Cydonia {
                     })
                     .when(tables, |root| {
                         root.on_action(cx.listener(Self::new_table_action))
-                    })
-                    .on_action(cx.listener(Self::install_app_action))
-                    .when(developer, |root| {
-                        root.on_action(cx.listener(Self::load_app_action))
                     })
             })
             // The bottom panel is the window's, not a pane's: it stands under

@@ -5,8 +5,7 @@
 //! `use super::*`: these methods work on the same struct and reach the same
 //! names as the rest of it.
 use super::*;
-use crate::model::apps::{Answer, Call};
-use anyhow::{Context as _, Result, bail};
+use crate::data::Home;
 use artifact::kind::Kind;
 
 impl Workspace {
@@ -32,7 +31,7 @@ impl Workspace {
         // The one place a store is created: making a table is the moment the
         // project has something to keep in one.
         if project.data.is_none() {
-            project.data = Data::open(&project.path).ok();
+            project.data = Data::open(&Home::Project(project.path.clone())).ok();
         }
         let mut name = UNTITLED.to_owned();
         for n in 2.. {
@@ -258,46 +257,5 @@ impl Workspace {
         }
         let project = self.active_project()?;
         project.tables.get(project.table?)
-    }
-
-    /// Answer an app's call on the tables of the project at `project`. A write
-    /// re-reads the project's tables and notifies.
-    pub fn table_call(&mut self, project: &Path, call: Call, cx: &mut Context<Self>) -> Answer {
-        self.answer_table_call(project, call, cx)
-            .unwrap_or_else(|error| Answer::Error(format!("{error:#}")))
-    }
-
-    fn answer_table_call(
-        &mut self,
-        project: &Path,
-        call: Call,
-        cx: &mut Context<Self>,
-    ) -> Result<Answer> {
-        if !self.settings.features.tables {
-            bail!("Tables are switched off in Settings › Features");
-        }
-        let open = self
-            .projects
-            .iter_mut()
-            .find(|open| open.path == project)
-            .context("The app's project is not open")?;
-        if open.data.is_none() {
-            match call {
-                Call::Tables => return Ok(Answer::Tables(Vec::new())),
-                Call::CreateTable { .. } => open.data = Some(Data::open(&open.path)?),
-                _ => bail!("The project has no tables"),
-            }
-        }
-        let writes = call.writes();
-        let answer = open
-            .data
-            .as_mut()
-            .context("The project's tables did not open")?
-            .call(call)?;
-        if writes {
-            open.reload_tables();
-            cx.notify();
-        }
-        Ok(answer)
     }
 }

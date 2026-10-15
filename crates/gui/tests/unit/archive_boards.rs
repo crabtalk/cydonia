@@ -12,7 +12,7 @@ fn archived_boards_keep_their_cards(cx: &mut gpui::TestAppContext) {
         board.add_card(&column, "Preserve this card".into());
         board.archived = true;
         store.save_board(&mut board).unwrap();
-        let project = Project::new(path.clone(), false, cx);
+        let project = Project::new(path.clone(), cx);
         assert_eq!(project.boards[0].board.read(cx).columns[0].cards.len(), 1);
         std::fs::remove_dir_all(path).unwrap();
     });

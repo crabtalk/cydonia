@@ -282,7 +282,10 @@ impl Cydonia {
     pub(crate) fn shell_cwd(&self, cx: &App) -> Option<PathBuf> {
         let workspace = self.workspace.read(cx);
         if let Some(space) = workspace.active_space() {
-            return space.panes().into_iter().next().map(|pane| pane.project);
+            return space
+                .panes()
+                .into_iter()
+                .find_map(|pane| pane.project().map(Path::to_path_buf));
         }
         if self.showing(cx) == Some(Kind::Session)
             && let Some(chat) = workspace.active_session(cx)
@@ -595,6 +598,12 @@ impl Cydonia {
     /// Whether the single pane has something of `kind` to show.
     fn lone_ready(&self, kind: Kind, cx: &App) -> bool {
         let workspace = self.workspace.read(cx);
+        if kind == Kind::App {
+            return workspace
+                .app
+                .as_deref()
+                .is_some_and(|id| workspace.program(id, cx).is_some());
+        }
         let Some(open) = workspace.active_project() else {
             return kind == Kind::Session;
         };
@@ -609,7 +618,7 @@ impl Cydonia {
                 .table
                 .and_then(|at| workspace.page_in(workspace.active?, at))
                 .is_some(),
-            Kind::App => open.app.is_some(),
+            Kind::App => unreachable!("answered above"),
         }
     }
 

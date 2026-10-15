@@ -197,10 +197,10 @@ impl Pane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
-        let toolbar = self.root.upgrade().and_then(|root| {
-            let (project, showing) = self.workspace.read(cx).showing_of(tab, cx)?;
-            root.read(cx).toolbar_of(project, showing, cx)
-        });
+        let toolbar = self
+            .root
+            .upgrade()
+            .and_then(|root| root.read(cx).member_toolbar(tab, cx));
         // A number is a project's own, and an arrangement can hold panes from
         // several — so the tab says which project the number is counted in.
         let project = self
@@ -208,7 +208,7 @@ impl Pane {
             .read(cx)
             .projects
             .iter()
-            .find(|open| open.path == tab.project)
+            .find(|open| Some(open.path.as_path()) == tab.project())
             .map(|open| open.name())
             .unwrap_or_default();
         // The pane in front *and* the tab in front of that pane: a background

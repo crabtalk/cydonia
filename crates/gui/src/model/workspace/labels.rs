@@ -23,7 +23,7 @@ impl Workspace {
             Showing::Board(id) => open
                 .board_ix(id)
                 .map(|ix| open.boards[ix].board.read(cx).labels.as_slice()),
-            Showing::Table(_) | Showing::App(_) => None,
+            Showing::Table(_) => None,
         }
     }
 
@@ -53,7 +53,7 @@ impl Workspace {
             Showing::Board(id) => {
                 self.with_board(id, cx, |board| board.labels = labels.clone());
             }
-            Showing::Table(_) | Showing::App(_) => return,
+            Showing::Table(_) => return,
         }
         cx.notify();
     }

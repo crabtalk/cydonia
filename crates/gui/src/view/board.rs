@@ -28,7 +28,7 @@ use crate::{
 use artifact::kind::Kind;
 use artifact::{
     board::{Card, Page, View},
-    space::Member,
+    space::{Entry, Member},
 };
 use bezel::agent::orbs::engine::Frame;
 use bezel::ui::scroll as scrollbars;
@@ -839,7 +839,7 @@ struct Reveal {
 /// opens.
 pub(crate) struct BoardView {
     /// The board, as the space names it.
-    pub(crate) board: Member,
+    pub(crate) board: Entry,
     /// The pane drawing it, as [`Leaf::entry`] names it.
     pane: Option<Member>,
     workspace: Entity<Workspace>,
@@ -1106,7 +1106,7 @@ impl Cydonia {
     }
 
     /// Where the view of `board` in the pane showing it is scrolled to.
-    pub(crate) fn board_scroll(&self, board: &Member, cx: &App) -> Option<Scroll> {
+    pub(crate) fn board_scroll(&self, board: &Entry, cx: &App) -> Option<Scroll> {
         self.board_views(cx)
             .into_iter()
             .find(|view| view.read(cx).board == *board)
@@ -1222,7 +1222,7 @@ impl Cydonia {
     pub(crate) fn open_page(
         &mut self,
         on: Option<&Member>,
-        board: Member,
+        board: Entry,
         page: Page,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1279,7 +1279,11 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let theme = Theme::of(cx).clone();
-        let member = self.workspace.read(cx).board_member(project, board_at)?;
+        let member = self
+            .workspace
+            .read(cx)
+            .board_member(project, board_at)?
+            .into_entry()?;
         let board = self.workspace.read(cx).board_in(project, board_at, cx)?;
         let lanes: Vec<(String, bool)> = board
             .columns
@@ -1394,7 +1398,7 @@ impl Cydonia {
 
 impl BoardView {
     pub(crate) fn new(
-        board: Member,
+        board: Entry,
         pane: Option<Member>,
         workspace: Entity<Workspace>,
         root: WeakEntity<Cydonia>,

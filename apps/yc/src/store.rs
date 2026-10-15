@@ -1,4 +1,4 @@
-//! The `companies` and `founders` project tables: their columns, and a
+//! The `companies` and `founders` tables: their columns, and a
 //! company or a founder as a row of them.
 
 use crate::scrape::{Company, Founder};

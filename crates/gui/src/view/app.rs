@@ -41,7 +41,6 @@ use markdown::Links as _;
 use std::{
     collections::{HashMap, HashSet},
     ops::Range,
-    path::Path,
     rc::Rc,
     sync::Arc,
 };
@@ -50,46 +49,26 @@ use std::{
 const RADIUS: f32 = 8.;
 
 impl Cydonia {
-    pub(crate) fn open_app(
-        &mut self,
-        project: usize,
-        ix: usize,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    /// Open the app `id`: the space holding it, or the pane in front.
+    pub(crate) fn open_app(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.commit(cx);
-        let member = self.workspace.read(cx).app_member(project, ix);
-        if self.enter_member(member, window, cx) {
+        if self.enter_member(Some(Member::app(id)), window, cx) {
             return;
         }
         self.workspace
-            .update(cx, |workspace, cx| workspace.open_app(project, ix, cx));
+            .update(cx, |workspace, cx| workspace.open_app(id, cx));
         self.leaf().update(cx, |pane, _| pane.kind = Kind::App);
         cx.notify();
     }
 
-    /// List the app just applied to the project at `project` under `name`, and
-    /// open it.
-    pub(crate) fn open_applied(
-        &mut self,
-        project: &Path,
-        name: &str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    /// List the app just recorded as `id`, and open it.
+    pub(crate) fn open_recorded(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.workspace
-            .update(cx, |workspace, cx| workspace.app_applied(project, cx));
-        let workspace = self.workspace.read(cx);
-        let at = workspace
-            .project_at(project)
-            .and_then(|ix| Some((ix, workspace.projects[ix].app_ix(name)?)));
-        if let Some((project, ix)) = at {
-            self.open_app(project, ix, window, cx);
-        }
+            .update(cx, |workspace, cx| workspace.app_recorded(cx));
+        self.open_app(id, window, cx);
     }
 
-    /// Load the crate in a folder the person picks into the project in front,
-    /// and open it.
+    /// Load the crate in a folder the person picks, and open it.
     pub(crate) fn load_app_action(
         &mut self,
         _: &LoadApp,
@@ -100,14 +79,9 @@ impl Cydonia {
             self.desktop_only("Loading an app", window, cx);
             return;
         }
-        let Some(project) = self
-            .workspace
-            .read(cx)
-            .active_project()
-            .map(|open| open.path.clone())
-        else {
+        if !self.workspace.read(cx).settings.developer_mode {
             return;
-        };
+        }
         self.commit(cx);
         self.close_menu(cx);
         let picked = cx.prompt_for_paths(PathPromptOptions {
@@ -123,18 +97,17 @@ impl Cydonia {
             let Some(dir) = paths.into_iter().next() else {
                 return;
             };
-            let into = project.clone();
             let loaded = cx
                 .background_executor()
                 .spawn(async move {
                     let app = Loaded::read(&dir)?;
-                    app.save(&into)?;
+                    app.save()?;
                     anyhow::Ok(app)
                 })
                 .await;
             let refused = this.update_in(cx, |this, window, cx| match loaded {
                 Ok(app) => {
-                    this.open_applied(&project, &app.name(), window, cx);
+                    this.open_recorded(&app.id, window, cx);
                     None
                 }
                 Err(error) => Some(window.prompt(
@@ -154,10 +127,9 @@ impl Cydonia {
 }
 
 pub struct AppView {
-    /// The app, as a space names it.
-    pub(crate) app: Member,
-    workspace: Entity<Workspace>,
-    /// Its program. `None` once the app is gone from the project.
+    /// The app's id.
+    pub(crate) app: String,
+    /// Its program. `None` once the app is gone, or not listed.
     program: Option<Entity<Program>>,
     /// The build the instance was started from.
     running: Option<Arc<[u8]>>,
@@ -215,8 +187,8 @@ struct Picker {
 
 impl AppView {
     /// A view of `app`, which asks for a build and runs each new one.
-    pub fn new(app: Member, workspace: Entity<Workspace>, cx: &mut Context<Self>) -> Self {
-        let program = workspace.read(cx).program_of(&app).cloned();
+    pub fn new(app: String, workspace: Entity<Workspace>, cx: &mut Context<Self>) -> Self {
+        let program = workspace.read(cx).program(&app, cx).cloned();
         let observing = program
             .as_ref()
             .map(|program| cx.observe(program, |this, _, cx| this.sync(cx)));
@@ -225,7 +197,6 @@ impl AppView {
         }
         let mut this = Self {
             app,
-            workspace,
             program,
             running: None,
             started: 0,
@@ -365,12 +336,12 @@ impl AppView {
             }
             call => {
                 let declared = manifest.is_some_and(|manifest| manifest.calls(calls::TABLES));
-                let project = self.app.project.clone();
-                Task::ready(match declared {
-                    true => self
-                        .workspace
-                        .update(cx, |workspace, cx| workspace.table_call(&project, call, cx)),
-                    false => Answer::Error(format!(
+                Task::ready(match (declared, &self.program) {
+                    (true, Some(program)) => {
+                        program.update(cx, |program, _| program.table_call(call))
+                    }
+                    (true, None) => Answer::Error("The app is gone".into()),
+                    (false, _) => Answer::Error(format!(
                         "The app's manifest does not declare `{}` among its calls",
                         calls::TABLES
                     )),
@@ -394,11 +365,11 @@ impl AppView {
         cx.notify();
     }
 
-    /// The question an installed app asks before it first runs a digest in a
-    /// project: what its manifest says it reaches.
+    /// The question an installed app asks before it first runs a digest:
+    /// what its manifest says it reaches.
     fn ask(&self, program: &Entity<Program>, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
         let held = program.read(cx);
-        let Origin::Installed { app, .. } = &held.origin else {
+        let Origin::Installed(app) = &held.origin else {
             return div().into_any_element();
         };
         let reaches = held.manifest.reach();
@@ -420,7 +391,7 @@ impl AppView {
                 div()
                     .text_style(TextStyle::Headline)
                     .text_color(theme.text)
-                    .child(format!("Run {} in this project?", held.label())),
+                    .child(format!("Run {}?", held.label())),
             )
             .children(reaches.into_iter().map(|text| line(text, theme.text)))
             .child(line(
@@ -906,7 +877,7 @@ impl Reach for Option<Manifest> {
         let mut reach = Vec::new();
         if let Some(manifest) = self {
             if manifest.calls(calls::TABLES) {
-                reach.push("It reads and writes this project's tables.".to_owned());
+                reach.push("It keeps tables of its own.".to_owned());
             }
             if !manifest.hosts.is_empty() {
                 reach.push(format!("It fetches from {}.", manifest.hosts.join(", ")));

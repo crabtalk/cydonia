@@ -31,6 +31,7 @@ lru.workspace = true
 markdown.workspace = true
 mcp.workspace = true
 portable-pty = { workspace = true, optional = true }
+process-wrap.workspace = true
 rusqlite = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true

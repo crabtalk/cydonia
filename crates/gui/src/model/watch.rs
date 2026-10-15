@@ -90,17 +90,17 @@ impl Watch {
         Self { _pump: pump }
     }
 
-    /// Watch a project's apps, and tell the workspace which moved once they
-    /// go quiet. Armed again when what is listed may have moved, so a folder
-    /// loaded since is watched.
-    pub fn apps(root: PathBuf, cx: &mut Context<Workspace>) -> Self {
+    /// Watch the apps' records and loaded folders, and tell the workspace
+    /// which apps moved once they go quiet. Armed again when a record moves,
+    /// so a folder loaded since is watched.
+    pub fn apps(cx: &mut Context<Workspace>) -> Self {
         let pump = cx.spawn(async move |workspace, cx| {
             loop {
                 let (tx, mut changes) = mpsc::unbounded::<String>();
-                let changed = move |name: &str| {
-                    let _ = tx.unbounded_send(name.to_owned());
+                let changed = move |id: &str| {
+                    let _ = tx.unbounded_send(id.to_owned());
                 };
-                let Some(watching) = artifact::app::watch(&root, changed) else {
+                let Some(_watching) = artifact::app::watch(changed) else {
                     return;
                 };
                 loop {
@@ -111,21 +111,19 @@ impl Watch {
                         .read_with(cx, |workspace, _| bounce(workspace.settings.watch_bounce))
                         .unwrap_or_else(|_| bounce(BOUNCE));
                     cx.background_executor().timer(settle).await;
-                    let mut names = vec![first];
-                    while let Ok(name) = changes.try_recv() {
-                        if !names.contains(&name) {
-                            names.push(name);
+                    let mut ids = vec![first];
+                    while let Ok(id) = changes.try_recv() {
+                        if !ids.contains(&id) {
+                            ids.push(id);
                         }
                     }
                     let held = workspace
-                        .update(cx, |workspace, cx| {
-                            workspace.apps_changed(&root, &names, cx)
-                        })
+                        .update(cx, |workspace, cx| workspace.apps_changed(&ids, cx))
                         .is_ok();
                     if !held {
                         return;
                     }
-                    if !watching.settled || names.iter().any(String::is_empty) {
+                    if ids.iter().any(String::is_empty) {
                         break;
                     }
                 }

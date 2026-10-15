@@ -75,7 +75,6 @@ impl Cydonia {
                     Showing::Board(_) => self.open_board(project, ix, window, cx),
                     Showing::Article(_) => self.open_article(project, ix, window, cx),
                     Showing::Table(_) => self.open_table(project, ix, window, cx),
-                    Showing::App(_) => self.open_app(project, ix, window, cx),
                     Showing::Session(_) => {}
                 }
             }
@@ -84,6 +83,7 @@ impl Cydonia {
                     self.open_space(ix, window, cx);
                 }
             }
+            Row::App(id) => self.open_app(id, window, cx),
             // A heading over a section, and nothing to open.
             Row::Heading(_) => {}
         }
@@ -132,13 +132,13 @@ impl Cydonia {
         // page and a board's name in the band opens its identity panel, so
         // neither is offered a second route here. Everywhere else the name is
         // display-only and this is the way.
-        // An app is its crate: its name is its manifest's, and it is not
-        // filed, pinned or deleted from here.
-        let app = matches!(entry.showing(), Some(Showing::App(_)));
-        let named = !matches!(
-            entry.showing(),
-            Some(Showing::Article(_) | Showing::Board(_) | Showing::App(_))
-        );
+        // An app's name is its manifest's, and it is not filed or pinned.
+        let app = matches!(entry, Row::App(_));
+        let named = !app
+            && !matches!(
+                entry.showing(),
+                Some(Showing::Article(_) | Showing::Board(_))
+            );
         // A page's measure and how it is being read: the open page's, since
         // [`Self::set_full_width`] and [`Self::plain_text`] are about the one
         // the window is showing. A row's menu names an entry that may not be
@@ -210,7 +210,12 @@ impl Cydonia {
                 .board_in(project, ix, cx)
                 .map(|board| (board.id.clone(), board.view, !board.description.is_empty()))
         {
-            if let Some(board) = self.workspace.read(cx).board_member(project, ix) {
+            if let Some(board) = self
+                .workspace
+                .read(cx)
+                .board_member(project, ix)
+                .and_then(artifact::space::Member::into_entry)
+            {
                 let on = match &host {
                     Host::Tab(tab) => Some(tab.clone()),
                     Host::Sidebar | Host::Library | Host::Header => None,
@@ -243,7 +248,7 @@ impl Cydonia {
         }
 
         if let Some(program) = entry
-            .program(self.workspace.read(cx))
+            .program(self.workspace.read(cx), cx)
             .filter(|program| program.read(cx).local())
         {
             shown.push(menu::row::<Cydonia>(
@@ -335,16 +340,13 @@ impl Cydonia {
         }
 
         // Alone, so it is never the row beside the one meant.
-        let mut delete = Vec::new();
-        if !app {
-            delete.push(menu::row::<Cydonia>(
-                Item::action("Delete").with_icon(icons::files::Trash),
-                {
-                    let entry = entry.clone();
-                    move |this, window, cx| this.ask_delete(&entry, window, cx)
-                },
-            ));
-        }
+        let delete = vec![menu::row::<Cydonia>(
+            Item::action("Delete").with_icon(icons::files::Trash),
+            {
+                let entry = entry.clone();
+                move |this, window, cx| this.ask_delete(&entry, window, cx)
+            },
+        )];
         // ── what the open page is, at the foot: read, never chosen ──
         let mut about: Vec<(Item, menu::Act)> = Vec::new();
         if matches!(entry.showing(), Some(Showing::Article(_)))
@@ -405,9 +407,12 @@ impl Cydonia {
                     Showing::Board(_) => workspace.delete_board(project, ix, cx),
                     Showing::Article(_) => workspace.delete_article(project, ix, cx),
                     Showing::Table(_) => workspace.delete_table(project, ix, cx),
-                    Showing::Session(_) | Showing::App(_) => {}
+                    Showing::Session(_) => {}
                 },
                 (Row::Group(Group::Space(id)), _) => workspace.delete_space_id(id, cx),
+                (Row::App(id), _) => {
+                    let _ = workspace.delete_app(id, cx);
+                }
                 (Row::Entry { .. }, None)
                 | (Row::Group(Group::Project(_)) | Row::Archive(_) | Row::Heading(_), _) => {}
             }
@@ -540,7 +545,6 @@ impl Cydonia {
                 }
             }
             Showing::Table(key) => workspace.archive_table(key, archived, cx),
-            Showing::App(_) => {}
         });
         if let Some(project) = landing {
             self.open_top_entry(project, window, cx);
