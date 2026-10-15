@@ -1,5 +1,32 @@
 [
   {
+    "version": "0.2.1",
+    "date": "2026-10-15",
+    "nightly": true,
+    "summary": "Apps: install one from a registry and it runs in its own view, reaching only its own tables and the hosts it names. The Y Combinator directory is the first. Links to files open the file, and text stays readable under a selection, a highlight or a block cursor.",
+    "new": [
+      "Install an app from File › Install App… with its reference, as in ghcr.io/crabtalk/cydonia/yc:0.1.0. Apps are listed in the sidebar's Apps group and the Library's Apps tab, belong to no project, and keep their own tables",
+      "See what an app reaches while it starts: tables of its own, and the hosts it fetches from, the only ones it can reach",
+      "The Y Combinator directory, the first app, at ghcr.io/crabtalk/cydonia/yc",
+      "Build and run an app from its source folder with File › Load App from Folder…, after turning on Developer mode in Settings › General. It is marked Local",
+      "Write apps in Rust with the cydonia-guest crate",
+      "Find the cards a card waits on by searching for them",
+      "Name a card in @ by its bare number, as in @12, to list the cards with that handle on every board of the project"
+    ],
+    "changed": [
+      "Keep a card that waits on another named on both cards, so a card knows what waits on it, across boards and projects",
+      "Tell agents which cards were waiting on a card they move, so they can clear what they finished",
+      "Show a highlight through a selection over it, and a find match or a margin note's mark the same way",
+      "Build on Bezel 0.2.15 from crates.io"
+    ],
+    "fixed": [
+      "Open a link to a file in its default application. A link to a folder still opens it in the file manager",
+      "Keep selected text, highlighted text and the character under a block cursor readable, in articles, code, fields and the terminal",
+      "Keep each pane's tab in front when a space opens",
+      "Leave a dragged lane's or group's rows out of the list while it is carried"
+    ]
+  },
+  {
     "version": "0.2.0",
     "date": "2026-10-12",
     "summary": "Article threads: ask about a passage and the answer stays with the article. Cards sent to a session you pick, cards that wait on other cards, and a description on each board for the agents working it. Agents' notes in an article's margin, @ links to board cards, an extended sidebar, and a window that redraws only what changed.",
