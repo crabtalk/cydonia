@@ -28,7 +28,7 @@ use markdown::Preview;
 use std::path::Path;
 
 /// Rows the menu lists at most.
-const SHOWN: usize = 20;
+pub(crate) const SHOWN: usize = 20;
 
 /// The mark every `cydonia://` chip paints. Inline chips paint only a glyph's
 /// SVG, in the text colour — a file icon paints nothing there.

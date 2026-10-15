@@ -40,6 +40,11 @@ pub struct Card {
     /// [`crate::reference`]. One that no longer resolves names nothing.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub blocked_by: Vec<String>,
+    /// The cards waiting on it, written as `blocked_by` is: each names this
+    /// card in its own `blocked_by`. Kept in step by
+    /// [`super::blocking`]'s edits.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blocks: Vec<String>,
     /// What the backend held for this card when it was read — see
     /// [`super::Board::version`]. `None` for a card not read from a backend.
     #[serde(skip)]
@@ -58,6 +63,7 @@ impl Card {
             busy: false,
             label: None,
             blocked_by: Vec::new(),
+            blocks: Vec::new(),
             version: None,
         }
     }

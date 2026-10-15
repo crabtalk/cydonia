@@ -13,6 +13,7 @@
 //! move is a remove and an insert. A flat list with an ordinal only earns its
 //! keep where several views group the same cards differently.
 
+pub mod blocking;
 pub mod card;
 pub mod column;
 pub mod key;
@@ -398,25 +399,6 @@ impl Board {
             }
             None => false,
         }
-    }
-
-    /// Give a card exactly `blockers`, references to the cards it waits on
-    /// as written in its project (see [`crate::reference`]), each once and
-    /// never its own handle. Says whether there was a card.
-    pub fn set_card_blockers(&mut self, id: &str, blockers: Vec<String>) -> bool {
-        let Some(own) = self.card(id).map(|card| self.handle_of(card)) else {
-            return false;
-        };
-        let mut kept: Vec<String> = Vec::new();
-        for blocker in blockers {
-            if Some(&blocker) != own.as_ref() && !kept.contains(&blocker) {
-                kept.push(blocker);
-            }
-        }
-        if let Some(card) = self.card_mut(id) {
-            card.blocked_by = kept;
-        }
-        true
     }
 
     /// The labels this board's cards carry, in name order.

@@ -1200,7 +1200,7 @@ impl Cydonia {
         self.commit(cx);
         let (board, card) = (board.to_owned(), card.to_owned());
         self.workspace.update(cx, |workspace, cx| {
-            workspace.write_board(&board, cx, |board| board.remove_card(&card));
+            workspace.remove_card(&board, &card, cx);
         });
         cx.notify();
     }
@@ -1865,24 +1865,25 @@ impl BoardView {
         let text = self.card_field.read(cx).content().trim().to_owned();
         self.card_field.update(cx, |field, cx| field.clear(cx));
         let id = self.board.id.clone();
-        self.workspace.update(cx, |workspace, cx| {
-            workspace.write_board(&id, cx, |board| match &at {
-                Editing::New(place, column) => {
-                    if !text.is_empty() {
-                        match place {
-                            Place::Top => board.prepend_card(column, text.clone()),
-                            Place::End => board.add_card(column, text.clone()),
-                        };
+        self.workspace.update(cx, |workspace, cx| match &at {
+            Editing::Card(card) if text.is_empty() => {
+                workspace.remove_card(&id, card, cx);
+            }
+            _ => {
+                workspace.write_board(&id, cx, |board| match &at {
+                    Editing::New(place, column) => {
+                        if !text.is_empty() {
+                            match place {
+                                Place::Top => board.prepend_card(column, text.clone()),
+                                Place::End => board.add_card(column, text.clone()),
+                            };
+                        }
                     }
-                }
-                Editing::Card(id) => {
-                    if text.is_empty() {
-                        board.remove_card(id);
-                    } else {
+                    Editing::Card(id) => {
                         board.rewrite_card(id, &text);
                     }
-                }
-            });
+                });
+            }
         });
         cx.notify();
     }

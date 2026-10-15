@@ -375,6 +375,7 @@ fn unnamed(name: &str, cards: usize) -> Column {
             busy: false,
             label: None,
             blocked_by: Vec::new(),
+            blocks: Vec::new(),
             version: None,
         })
         .collect();
@@ -495,28 +496,6 @@ fn a_card_holds_one_label_normalised() {
     assert!(board.set_card_label(&two, Some("   ")));
     assert_eq!(board.card(&two).unwrap().label, None, "blank is no label");
     assert!(!board.set_card_label("nowhere", Some("bug")));
-}
-
-#[test]
-fn a_card_waits_on_each_blocker_once_and_never_on_itself() {
-    let mut board = Board::new("1757000000000".into(), "Roadmap");
-    board.key = "ROAD".into();
-    let todo = board.add_column("Todo").id.clone();
-    let one = board.add_card(&todo, "one".into()).unwrap().id.clone();
-
-    assert!(
-        board.set_card_blockers(
-            &one,
-            ["ROAD-2", "ROAD-1", "ROAD-2", "foo#DEV-3"]
-                .map(String::from)
-                .to_vec()
-        )
-    );
-    assert_eq!(
-        board.card(&one).unwrap().blocked_by,
-        ["ROAD-2", "foo#DEV-3"]
-    );
-    assert!(!board.set_card_blockers("nowhere", Vec::new()));
 }
 
 /// A lane can be written beside another rather than only at the end, on

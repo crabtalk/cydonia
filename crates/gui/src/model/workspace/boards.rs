@@ -4,7 +4,11 @@
 //! `use super::*`: these methods work on the same struct and reach the same
 //! names as the rest of it.
 use super::*;
-use artifact::board::{self, key};
+use artifact::board::{
+    self,
+    blocking::{self, Counterpart, Edit, Place},
+    key,
+};
 use artifact::error::{Act, Error};
 use artifact::kind::Kind;
 use artifact::project::Project as _;
@@ -154,17 +158,28 @@ impl Workspace {
 
     /// Drop the board: the file goes with it.
     pub fn delete_board(&mut self, project: usize, ix: usize, cx: &mut Context<Self>) {
-        let Some(project) = self.projects.get_mut(project) else {
+        let Some(id) = self
+            .projects
+            .get(project)
+            .and_then(|open| open.boards.get(ix))
+            .map(|held| held.id.clone())
+        else {
             return;
         };
-        if ix >= project.boards.len() {
+        let edits: Vec<Edit> = self
+            .board_ends(&id, cx)
+            .into_iter()
+            .flat_map(|(place, _, others)| blocking::forget(&place, &others))
+            .collect();
+        let Some(open) = self.projects.get_mut(project) else {
             return;
-        }
-        let _ = project.store().remove_board(&project.boards.remove(ix).id);
-        project.board = project
+        };
+        let _ = open.store().remove_board(&open.boards.remove(ix).id);
+        open.board = open
             .board
             .filter(|open| *open != ix)
             .map(|open| if open > ix { open - 1 } else { open });
+        self.write_edits(&edits, cx);
         cx.notify();
     }
 
@@ -198,11 +213,26 @@ impl Workspace {
             .collect();
         let key = artifact::board::key::claim(key, &held, Some(id)).map_err(|e| e.to_string())?;
         let name = name.trim().to_owned();
+        // Found under the old key: every card naming one of this board's cards
+        // names it again under the new one.
+        let ends = self.board_ends(id, cx);
         self.with_board(id, cx, |board| {
             board.name = name.clone();
             board.key = key.clone();
         })
         .ok_or("The board could not be read.")?;
+        let edits: Vec<Edit> = ends
+            .iter()
+            .filter(|(from, ..)| from.key != key)
+            .flat_map(|(from, card, others)| {
+                let to = Place {
+                    key: key.clone(),
+                    ..from.clone()
+                };
+                blocking::moved(from, &to, id, card, others)
+            })
+            .collect();
+        self.write_edits(&edits, cx);
         self.prune_archived(cx);
         cx.notify();
         Ok(())
@@ -439,6 +469,7 @@ impl Workspace {
         }
         let mut source = self.board_copy(from, cx)?;
         let mut landing = self.board_copy(to, cx)?;
+        let ends = self.card_ends(&source.id, card, cx);
         let mut landed = artifact::board::carry_card(&mut source, &mut landing, card, column)?;
         // The landing is written first: refused there, nothing has moved, and
         // the carry is made again over both boards as their backends hold
@@ -474,12 +505,124 @@ impl Workspace {
                 });
             }
         }
+        if let Some((from, others)) = ends
+            && let Some(path) = self.projects.get(to.0).map(|open| open.path.clone())
+            && let Some(landing) = self
+                .projects
+                .get(to.0)
+                .and_then(|open| open.board(to.1, cx))
+            && let Some(handle) = landing.card(&landed.id).and_then(|card| card.handle)
+        {
+            let at = Place {
+                project: path,
+                key: landing.key.clone(),
+                handle,
+            };
+            let edits = blocking::moved(&from, &at, &landing.id.clone(), &landed.id, &others);
+            self.write_edits(&edits, cx);
+        }
         Some(landed.said)
     }
 
     /// A copy of the board at `(project, ix)`.
     fn board_copy(&self, (project, ix): (usize, usize), cx: &App) -> Option<Board> {
         self.projects.get(project)?.board(ix, cx).cloned()
+    }
+
+    /// Give card `card` of board `board` exactly `wanted` to wait on, each as
+    /// its project writes it, and name it back on each of them — see
+    /// [`blocking::set_blockers`]. Answers the first of `wanted` that names no
+    /// card.
+    pub fn set_card_blockers(
+        &mut self,
+        board: &str,
+        card: &str,
+        wanted: &[String],
+        cx: &mut App,
+    ) -> Result<(), String> {
+        let Some((place, held)) = self.held_card(board, card, cx, |place, card| {
+            (place, card.blocked_by.clone())
+        }) else {
+            return Ok(());
+        };
+        let edits = blocking::set_blockers(&self.shelf(cx), &place, board, card, &held, wanted)?;
+        self.write_edits(&edits, cx);
+        Ok(())
+    }
+
+    /// Take card `card` off board `board`, and off the lists of every card
+    /// naming it. Says whether it was there.
+    pub fn remove_card(&mut self, board: &str, card: &str, cx: &mut App) -> bool {
+        let edits = self
+            .card_ends(board, card, cx)
+            .map(|(place, others)| blocking::forget(&place, &others))
+            .unwrap_or_default();
+        let removed = self
+            .with_board(board, cx, |held| held.remove_card(card).is_some())
+            .unwrap_or(false);
+        if removed {
+            self.write_edits(&edits, cx);
+        }
+        removed
+    }
+
+    /// Where card `card` of board `board` is, and `read` of it.
+    fn held_card<T>(
+        &self,
+        board: &str,
+        card: &str,
+        cx: &App,
+        read: impl FnOnce(Place, &artifact::board::Card) -> T,
+    ) -> Option<T> {
+        let open = self
+            .projects
+            .iter()
+            .find(|open| open.boards.iter().any(|held| held.id == board))?;
+        let held = open.boards.iter().find(|held| held.id == board)?;
+        let board = held.board.read(cx);
+        let card = board.card(card)?;
+        Some(read(Place::of(&open.path, board, card)?, card))
+    }
+
+    /// Where card `card` of board `board` is, and the cards its lists name —
+    /// read before it moves or goes.
+    fn card_ends(&self, board: &str, card: &str, cx: &App) -> Option<(Place, Vec<Counterpart>)> {
+        let shelf = self.shelf(cx);
+        self.held_card(board, card, cx, |place, card| {
+            let others = blocking::counterparts(&shelf, &place.project, card);
+            (place, others)
+        })
+    }
+
+    /// [`Self::card_ends`] for every card of board `board`, with each card's
+    /// id.
+    fn board_ends(&self, board: &str, cx: &App) -> Vec<(Place, String, Vec<Counterpart>)> {
+        let Some(held) = self
+            .projects
+            .iter()
+            .flat_map(|open| &open.boards)
+            .find(|held| held.id == board)
+        else {
+            return Vec::new();
+        };
+        held.board
+            .read(cx)
+            .columns
+            .iter()
+            .flat_map(|column| &column.cards)
+            .filter_map(|card| {
+                let (place, others) = self.card_ends(board, &card.id, cx)?;
+                Some((place, card.id.clone(), others))
+            })
+            .collect()
+    }
+
+    /// Lay `edits` on the boards they land on, each through
+    /// [`Self::with_board`].
+    fn write_edits(&mut self, edits: &[Edit], cx: &mut App) {
+        for (path, id) in blocking::boards(edits) {
+            self.with_board(&id, cx, |board| blocking::apply(edits, &path, board));
+        }
     }
 
     /// Change one board, named by the board, and write it back.

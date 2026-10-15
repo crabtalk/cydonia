@@ -207,13 +207,16 @@ fn a_card_keeps_its_label_and_blockers_on_disk() {
     let store = scratch.store();
     let mut board = store.board(&id).unwrap();
     board.set_card_label(&one, Some("bug"));
-    board.set_card_blockers(&one, vec!["WORK-2".into(), "foo#DEV-3".into()]);
+    let card = board.card_mut(&one).unwrap();
+    card.blocked_by = vec!["WORK-2".into(), "foo#DEV-3".into()];
+    card.blocks = vec!["bar#OPS-1".into()];
     store.save_board(&mut board).unwrap();
 
     let now = store.board(&id).unwrap();
     let card = now.card(&one).unwrap();
     assert_eq!(card.label.as_deref(), Some("bug"));
     assert_eq!(card.blocked_by, ["WORK-2", "foo#DEV-3"]);
+    assert_eq!(card.blocks, ["bar#OPS-1"]);
 }
 
 /// `blocked` and `done` were statuses once. A card written with one reads as

@@ -3,6 +3,7 @@
 
 use super::BoardView;
 use crate::view::kit::{link::mention, text::CardTitle as _};
+use artifact::reference::{self, Target};
 use bezel::{
     gpui::{
         AnyElement, App, AppContext as _, Context, Entity, InteractiveElement as _, SharedString,
@@ -19,6 +20,8 @@ use bezel::{
 /// The open blocker picker, over one card.
 pub(crate) struct Picker {
     card: String,
+    /// What the picker's field holds — see [`MultiSelectEvent::Searched`].
+    query: SharedString,
     select: Entity<MultiSelect>,
     /// Each choice's name, with the card it names as the open card writes it.
     named: Vec<(SharedString, String)>,
@@ -126,12 +129,15 @@ impl BoardView {
             popover::close_popup(self, cx, |this: &mut Self| &mut this.blockers.0);
             return;
         }
-        let (choices, named) = self.blocker_choices(&card, cx);
+        let (choices, named) = self.blocker_choices(&card, "", cx);
         let theme = Theme::of(cx).clone();
         let select = cx.new(|cx| {
             MultiSelect::new(choices, cx)
                 .with_tint(move |_, _| theme.text_muted)
                 .with_width(px(280.), px(420.))
+                .with_plain_rows()
+                .with_search()
+                .with_placeholder("Search cards…")
         });
         select.update(cx, |select, cx| select.reset(window, cx));
         let events = cx.subscribe_in(
@@ -141,6 +147,7 @@ impl BoardView {
         );
         self.blockers.0.open(Picker {
             card,
+            query: SharedString::default(),
             select,
             named,
             _events: events,
@@ -148,9 +155,15 @@ impl BoardView {
         cx.notify();
     }
 
-    /// Every other card in the open projects, as the card `card` writes it,
-    /// on where it waits on that card.
-    fn blocker_choices(&self, card: &str, cx: &App) -> (Vec<Choice>, Vec<(SharedString, String)>) {
+    /// The cards `card` waits on, turned on, and the cards `query` finds by
+    /// the `@` list's ranking, at most [`mention::SHOWN`] of them — each as
+    /// the card `card` writes it.
+    fn blocker_choices(
+        &self,
+        card: &str,
+        query: &str,
+        cx: &App,
+    ) -> (Vec<Choice>, Vec<(SharedString, String)>) {
         let workspace = self.workspace.read(cx);
         let Some(board) = workspace.board_entity(&self.board.id) else {
             return (Vec::new(), Vec::new());
@@ -160,25 +173,59 @@ impl BoardView {
             .card(card)
             .map(|card| card.blocked_by.clone())
             .unwrap_or_default();
+        let mut choices = Vec::new();
+        let mut named = Vec::new();
+        for written in &held {
+            let Some(title) = workspace
+                .card_board(&self.board.project, written, cx)
+                .zip(reference::parse(written))
+                .and_then(|(board, reference)| match reference.target {
+                    Target::Card { handle, .. } => {
+                        Some(board.read(cx).card_at(handle)?.short_title())
+                    }
+                    _ => None,
+                })
+            else {
+                continue;
+            };
+            let name: SharedString = format!("{written} {title}").into();
+            choices.push(Choice {
+                name: name.clone(),
+                check: Check::On,
+                count: None,
+            });
+            named.push((name, written.clone()));
+        }
+        if query.trim().is_empty() {
+            return (choices, named);
+        }
         let home = workspace
             .project_at(&self.board.project)
             .and_then(|at| workspace.projects.get(at))
             .map(|project| project.path.as_path());
-        let mut choices = Vec::new();
-        let mut named = Vec::new();
-        for carded in mention::carded(workspace, cx) {
-            let own = Some(carded.path) == home;
-            if own && carded.card.id == card {
-                continue;
-            }
-            let written = carded.reference().relative(own).to_string();
-            let name: SharedString = format!("{written} {}", carded.card.short_title()).into();
+        let cards = mention::carded(workspace, cx);
+        let (by_handle, by_text) = mention::Query::parse(query).rank_cards(&cards);
+        let found = by_handle
+            .into_iter()
+            .chain(by_text)
+            .map(|ix| &cards[ix])
+            .filter_map(|carded| {
+                let own = Some(carded.path) == home;
+                if own && carded.card.id == card {
+                    return None;
+                }
+                let written = carded.reference().relative(own).to_string();
+                (!held.contains(&written)).then(|| {
+                    let name: SharedString =
+                        format!("{written} {}", carded.card.short_title()).into();
+                    (name, written)
+                })
+            })
+            .take(mention::SHOWN);
+        for (name, written) in found {
             choices.push(Choice {
                 name: name.clone(),
-                check: match held.contains(&written) {
-                    true => Check::On,
-                    false => Check::Off,
-                },
+                check: Check::Off,
                 count: None,
             });
             named.push((name, written));
@@ -191,40 +238,52 @@ impl BoardView {
             return;
         };
         let card = picker.card.clone();
-        let MultiSelectEvent::Toggled { name, on } = event else {
-            if *event == MultiSelectEvent::Dismissed {
-                popover::close_popup(self, cx, |this: &mut Self| &mut this.blockers.0);
-            }
-            return;
-        };
-        let Some(blocker) = picker
-            .named
-            .iter()
-            .find(|(held, _)| held == name)
-            .map(|(_, written)| written.clone())
-        else {
-            return;
-        };
-        let on = *on;
-        let board = self.board.id.clone();
-        self.workspace.update(cx, |workspace, cx| {
-            workspace.write_board(&board, cx, |board| {
-                let Some(held) = board.card(&card) else {
-                    return false;
-                };
-                let mut blockers: Vec<String> = held
-                    .blocked_by
+        match event {
+            MultiSelectEvent::Toggled { name, on } => {
+                let Some(blocker) = picker
+                    .named
                     .iter()
-                    .filter(|held| **held != blocker)
-                    .cloned()
-                    .collect();
-                if on {
-                    blockers.push(blocker.clone());
+                    .find(|(held, _)| held == name)
+                    .map(|(_, written)| written.clone())
+                else {
+                    return;
+                };
+                let on = *on;
+                let board = self.board.id.clone();
+                self.workspace.update(cx, |workspace, cx| {
+                    let Some(held) = workspace
+                        .board_entity(&board)
+                        .and_then(|held| held.read(cx).card(&card))
+                        .map(|held| held.blocked_by.clone())
+                    else {
+                        return;
+                    };
+                    let mut wanted: Vec<String> =
+                        held.into_iter().filter(|held| *held != blocker).collect();
+                    if on {
+                        wanted.push(blocker.clone());
+                    }
+                    let _ = workspace.set_card_blockers(&board, &card, &wanted, cx);
+                });
+            }
+            MultiSelectEvent::Searched(query) => {
+                if let Some(picker) = self.blockers.0.open_mut() {
+                    picker.query = query.clone();
                 }
-                board.set_card_blockers(&card, blockers)
-            });
-        });
-        let (choices, named) = self.blocker_choices(&card, cx);
+            }
+            MultiSelectEvent::Dismissed => {
+                popover::close_popup(self, cx, |this: &mut Self| &mut this.blockers.0);
+                return;
+            }
+            _ => return,
+        }
+        let query = self
+            .blockers
+            .0
+            .get()
+            .map(|picker| picker.query.clone())
+            .unwrap_or_default();
+        let (choices, named) = self.blocker_choices(&card, &query, cx);
         if let Some(picker) = self.blockers.0.open_mut() {
             picker.named = named;
             picker
