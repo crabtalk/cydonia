@@ -132,28 +132,6 @@ impl Cydonia {
         (shown == *at).then_some(at)
     }
 
-    /// A space's band in the floating layout: the window's own corners over
-    /// the panes' cards, which carry a bar each. What the panes at the
-    /// window's top corners hold in the flat layout — the lights' clearance,
-    /// the fold while the sidebar is shut, the right panel's button while the
-    /// panel is down, the caption buttons — is here.
-    pub(crate) fn space_band(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let right = chrome::has(CaptionSide::Right, window, cx);
-        self.window_band(right, window, cx)
-            .child(chrome::grip("space-band-grip", &self.drag, window))
-            .children(
-                self.changes
-                    .is_none()
-                    .then(|| changes_toggle("Show right panel", Painter::of(cx), Theme::of(cx))),
-            )
-            .children(
-                right
-                    .then(|| chrome::caption(CaptionSide::Right, window, cx))
-                    .flatten(),
-            )
-            .into_any_element()
-    }
-
     /// The leading half of a band across the window's top: past the lights or
     /// the left caption buttons, and the fold while the sidebar is shut.
     /// `right` is whether the caller ends it with the right caption buttons.

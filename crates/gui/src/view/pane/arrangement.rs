@@ -188,9 +188,7 @@ impl Cydonia {
             .read(cx)
             .front_of(entry)
             .unwrap_or_else(|| entry.clone());
-        let pane = self.pane_named(entry, cx);
-        let focused = pane.as_ref().is_some_and(|pane| pane.read(cx).focused(cx));
-        let body = match pane {
+        let body = match self.pane_named(entry, cx) {
             Some(pane) => pane
                 .cached(StyleRefinement::default().flex().flex_col().size_full())
                 .into_any_element(),
@@ -200,21 +198,20 @@ impl Cydonia {
         let body = self
             .dock
             .pane(front, px(crate::view::window::root::HEADER_HEIGHT), body);
-        // Each pane is a card of its own, and the focused one's edge is the
-        // stronger.
+        // Flat, the panes are one plane on the window's fill. Floating, each
+        // pane draws its own card under its bar.
         let floating = self.workspace.read(cx).settings.appearance.floating;
-        let strong = Theme::of(cx).border_strong;
-        // A flex item rather than full size: the card's margin is what
-        // leaves the gap, and a full-size card overflows its slot by it.
-        bezel::ui::window::content(floating, cx)
-            .flex_1()
-            .min_w_0()
-            .min_h_0()
-            .flex()
-            .flex_col()
-            .when(floating && focused, |card| card.border_color(strong))
-            .child(body)
-            .into_any_element()
+        match floating {
+            true => div(),
+            false => bezel::ui::window::content(false, cx),
+        }
+        .flex_1()
+        .min_w_0()
+        .min_h_0()
+        .flex()
+        .flex_col()
+        .child(body)
+        .into_any_element()
     }
 
     /// The pane of the open space named `name`.
@@ -232,11 +229,8 @@ impl Cydonia {
             self.panes.clear();
             return;
         };
-        // Floating, no pane is at the window's top corners: the space's band
-        // is, on the chrome over them.
-        let floating = self.workspace.read(cx).settings.appearance.floating;
-        let first = space.entries().first().cloned().filter(|_| !floating);
-        let last = match self.changes.is_none() && !floating {
+        let first = space.entries().first().cloned();
+        let last = match self.changes.is_none() {
             true => space.zoomed().or_else(|| top_right(&space.tree)),
             false => None,
         };

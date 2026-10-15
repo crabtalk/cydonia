@@ -856,27 +856,26 @@ impl Cydonia {
         if !floating {
             return panels.into_any_element();
         }
-        // Floating, the band is a strip of the chrome over every card, so the
-        // cards start in one place whether the sidebar is open or not, and the
-        // lights stand on the chrome. The cards leave the column half the
+        // Floating, the band is a strip of the chrome over the card, so the
+        // card starts in one place whether the sidebar is open or not, and the
+        // lights stand on the chrome. A space's panes draw their bars on the
+        // chrome over their own cards. The cards leave the column half the
         // inset to pad itself by.
-        let band = match arranged {
-            true => self.space_band(window, cx),
-            false => self.pane_header(window, cx),
-        };
         div()
             .flex_1()
             .min_w_0()
             .min_h_0()
             .flex()
             .flex_col()
-            .child(
-                div()
-                    .relative()
-                    .flex_none()
-                    .h(px(root::HEADER_HEIGHT))
-                    .child(band),
-            )
+            .when(!arranged, |column| {
+                column.child(
+                    div()
+                        .relative()
+                        .flex_none()
+                        .h(px(root::HEADER_HEIGHT))
+                        .child(self.pane_header(window, cx)),
+                )
+            })
             .child(
                 div()
                     .flex_1()

@@ -391,7 +391,12 @@ impl Pane {
         let lead = match (first, sidebar_open) {
             _ if left => 0.,
             (true, true) => root::HEADER_INSET,
-            (true, false) => root::toolbar_inset(window, cx),
+            // Floating, the column pads itself by half the gap between cards
+            // and the bar keeps the other half, so it starts a gap in.
+            (true, false) => {
+                root::toolbar_inset(window, cx)
+                    - root::card_gap(self.workspace.read(cx).settings.appearance.floating)
+            }
             (false, _) => TAB_INSET,
         };
         let owner = cx.entity().downgrade();
@@ -568,6 +573,9 @@ impl Render for Pane {
             None => div().flex_1().into_any_element(),
         };
         let root = self.root.clone();
+        let floating = self.workspace.read(cx).settings.appearance.floating;
+        // The focused pane's card has the stronger edge.
+        let strong = theme.border_strong;
         div()
             .id(SharedString::from(format!("pane-{key}")))
             // With the context but without this, a pane claims chords that
@@ -587,9 +595,9 @@ impl Render for Pane {
             .flex_col()
             .relative()
             .overflow_hidden()
-            // No fill: the panes sit on the detail column's one surface, and a
-            // wash per pane would draw the arrangement as a row of cards
-            // rather than one plane divided. The focus is said on the tab.
+            // No fill: flat, the panes sit on the detail column's one surface,
+            // and floating, the bar is on the chrome and the card fills
+            // itself.
             //
             // Pressing anywhere in a pane is how the focus moves to it, the
             // same way a click into the sidebar selects a row.
@@ -609,15 +617,28 @@ impl Render for Pane {
                         .ok();
                 }
             })
-            .child(self.bar(&theme, window, cx))
             .child(
+                // Floating, the bar is on the chrome over its card, and runs as
+                // wide as the card does.
                 div()
-                    .relative()
-                    .flex_1()
-                    .min_h_0()
-                    .flex()
-                    .flex_col()
-                    .child(body),
+                    .flex_none()
+                    .when(floating, |bar| bar.mx(px(Theme::CONTENT_INSET / 2.)))
+                    .child(self.bar(&theme, window, cx)),
+            )
+            .child(
+                // A flex item rather than full size: the card's margin is what
+                // leaves the gap, and a full-size card overflows by it.
+                match floating {
+                    true => bezel::ui::window::content(true, cx)
+                        .when(self.focused(cx), |card| card.border_color(strong)),
+                    false => div(),
+                }
+                .relative()
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .child(body),
             )
     }
 }
