@@ -10,7 +10,6 @@ use bezel::{
         ExternalPaths, FocusHandle, Focusable, KeyBinding, Render, Subscription, Task, Window, div,
         prelude::*, px,
     },
-    motion,
     theme::{TextStyle, Theme, Typeset},
     ui::{
         AppExt as _,
@@ -1032,7 +1031,7 @@ impl TerminalPanel {
             next_cwd: Box::new(next_cwd),
             tabs: Vec::new(),
             strip: tabs::Strip::new(),
-            reorder: tabs::Reorder::new(motion::Painter::of(cx)),
+            reorder: tabs::Reorder::new(),
             next_id: 1,
         };
         panel.add(window, cx);

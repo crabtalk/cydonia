@@ -1077,7 +1077,7 @@ impl Cydonia {
                     crate::view::sidebar::ghost(label.into(), Theme::of(cx))
                 }
             }),
-            board_sort: drag::Domain::with_ghost(Painter::of(cx), {
+            board_sort: drag::Domain::with_ghost({
                 let this = cx.entity().downgrade();
                 move |item, window, cx| board::ghost(&this, item, window, cx)
             }),

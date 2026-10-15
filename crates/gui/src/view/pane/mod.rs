@@ -112,7 +112,7 @@ impl Pane {
             root,
             tabs: Vec::new(),
             fronts: Vec::new(),
-            strip: tabs::Reorder::new(Painter::of(cx)),
+            strip: tabs::Reorder::new(),
             menu: ContextMenu::default(),
             hovered: false,
             seat: Seat::default(),

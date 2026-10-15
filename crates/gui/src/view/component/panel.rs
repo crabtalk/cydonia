@@ -151,7 +151,7 @@ impl Panel {
             cwd,
             focus: cx.focus_handle(),
             strip: tabs::Strip::new(),
-            reorder: tabs::Reorder::new(Painter::of(cx)),
+            reorder: tabs::Reorder::new(),
             contents: HashMap::new(),
             next_id: 0,
             menu: ContextMenu::default(),
