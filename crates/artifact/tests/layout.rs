@@ -52,13 +52,13 @@ fn edits_to_different_cards_do_not_clash() {
     let store = scratch.store();
     let mut first = store.board(&id).unwrap();
     let mut second = store.board(&id).unwrap();
-    first.set_card_label(&one, Some("bug"));
+    first.card_mut(&one).unwrap().session = Some("s1".into());
     store.save_board(&mut first).unwrap();
     second.set_card_busy(&two, true);
     store.save_board(&mut second).unwrap();
 
     let now = store.board(&id).unwrap();
-    assert_eq!(now.card(&one).unwrap().label.as_deref(), Some("bug"));
+    assert_eq!(now.card(&one).unwrap().session.as_deref(), Some("s1"));
     assert!(now.card(&two).unwrap().busy);
 }
 
@@ -69,7 +69,7 @@ fn edits_to_the_same_card_are_stale() {
     let store = scratch.store();
     let mut first = store.board(&id).unwrap();
     let mut second = store.board(&id).unwrap();
-    first.set_card_label(&one, Some("bug"));
+    first.card_mut(&one).unwrap().session = Some("s1".into());
     store.save_board(&mut first).unwrap();
     second.set_card_busy(&one, true);
     assert!(matches!(
@@ -88,11 +88,11 @@ fn a_card_edit_survives_a_reorder_elsewhere_but_not_its_removal() {
     let column = mover.columns[0].id.clone();
     mover.move_card_before(&two, &column, Some(&one));
     store.save_board(&mut mover).unwrap();
-    editor.set_card_label(&one, Some("bug"));
+    editor.card_mut(&one).unwrap().session = Some("s1".into());
     store.save_board(&mut editor).unwrap();
     let now = store.board(&id).unwrap();
     assert_eq!(now.columns[0].cards[0].id, two);
-    assert_eq!(now.card(&one).unwrap().label.as_deref(), Some("bug"));
+    assert_eq!(now.card(&one).unwrap().session.as_deref(), Some("s1"));
 
     let mut remover = store.board(&id).unwrap();
     let mut late = store.board(&id).unwrap();
@@ -201,12 +201,12 @@ fn a_card_keeps_properties_cydonia_does_not_know() {
 }
 
 #[test]
-fn a_card_keeps_its_label_and_blockers_on_disk() {
+fn a_card_keeps_its_session_and_blockers_on_disk() {
     let scratch = Scratch::new("layout-tags");
     let (id, one, _) = board_with_two(&scratch);
     let store = scratch.store();
     let mut board = store.board(&id).unwrap();
-    board.set_card_label(&one, Some("bug"));
+    board.card_mut(&one).unwrap().session = Some("s1".into());
     let card = board.card_mut(&one).unwrap();
     card.blocked_by = vec!["WORK-2".into(), "foo#DEV-3".into()];
     card.blocks = vec!["bar#OPS-1".into()];
@@ -214,7 +214,7 @@ fn a_card_keeps_its_label_and_blockers_on_disk() {
 
     let now = store.board(&id).unwrap();
     let card = now.card(&one).unwrap();
-    assert_eq!(card.label.as_deref(), Some("bug"));
+    assert_eq!(card.session.as_deref(), Some("s1"));
     assert_eq!(card.blocked_by, ["WORK-2", "foo#DEV-3"]);
     assert_eq!(card.blocks, ["bar#OPS-1"]);
 }
@@ -232,7 +232,7 @@ fn a_status_other_than_busy_reads_as_none_and_is_dropped() {
 
     let mut board = store.board(&id).unwrap();
     assert!(!board.card(&one).unwrap().busy);
-    board.set_card_label(&one, Some("bug"));
+    board.card_mut(&one).unwrap().session = Some("s1".into());
     store.save_board(&mut board).unwrap();
     assert!(!fs::read_to_string(&properties).unwrap().contains("status"));
 }

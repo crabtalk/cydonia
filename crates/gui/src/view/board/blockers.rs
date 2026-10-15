@@ -155,9 +155,10 @@ impl BoardView {
         cx.notify();
     }
 
-    /// The cards `card` waits on, turned on, and the cards `query` finds by
-    /// the `@` list's ranking, at most [`mention::SHOWN`] of them — each as
-    /// the card `card` writes it.
+    /// The cards `card` waits on, turned on, then at most [`mention::SHOWN`]
+    /// others: the cards `query` finds by the `@` list's ranking, or with no
+    /// query this board's cards in board order — each as the card `card`
+    /// writes it.
     fn blocker_choices(
         &self,
         card: &str,
@@ -196,18 +197,22 @@ impl BoardView {
             });
             named.push((name, written.clone()));
         }
-        if query.trim().is_empty() {
-            return (choices, named);
-        }
         let home = workspace
             .project_at(&self.board.project)
             .and_then(|at| workspace.projects.get(at))
             .map(|project| project.path.as_path());
         let cards = mention::carded(workspace, cx);
-        let (by_handle, by_text) = mention::Query::parse(query).rank_cards(&cards);
-        let found = by_handle
+        let ranked: Vec<usize> = match query.trim().is_empty() {
+            true => (0..cards.len())
+                .filter(|&ix| Some(cards[ix].path) == home && cards[ix].board.id == self.board.id)
+                .collect(),
+            false => {
+                let (by_handle, by_text) = mention::Query::parse(query).rank_cards(&cards);
+                by_handle.into_iter().chain(by_text).collect()
+            }
+        };
+        let found = ranked
             .into_iter()
-            .chain(by_text)
             .map(|ix| &cards[ix])
             .filter_map(|carded| {
                 let own = Some(carded.path) == home;

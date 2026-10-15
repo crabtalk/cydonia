@@ -13,7 +13,6 @@ use crate::{
     view::{
         component::transcript,
         kit::{
-            labels::{LabelHost, Labels, Target as LabelTarget},
             rename::{NameEvent, NameField},
             text::CardTitle,
             watch::Watch,
@@ -45,10 +44,9 @@ use bezel::{
         icons,
         input::{self, Shape, TextField},
         menu::Item,
-        multi_select,
         scroll::{self, Axes, FollowState, Scroller},
         tooltip::Tooltip,
-        widgets::{Buttons, Content as _},
+        widgets::Buttons,
     },
 };
 use editor::{Editor, EditorEvent};
@@ -188,11 +186,10 @@ pub fn field(cx: &mut App) -> Entity<TextField> {
     })
 }
 
-/// What a card says about itself beside its handle: its label, and that it
-/// waits on other cards.
+/// What a card says about itself beside its handle: that it waits on other
+/// cards.
 #[derive(Clone, Default)]
 struct Tags {
-    label: Option<String>,
     blocked: bool,
 }
 
@@ -201,19 +198,15 @@ impl Tags {
     /// it waits on is still there.
     fn of(card: &Card, home: &Path, workspace: &Workspace, cx: &App) -> Self {
         Self {
-            label: card.label.clone(),
             blocked: workspace.blocking_boards(home, card, cx).next().is_some(),
         }
     }
 
     fn chips(&self, theme: &Theme) -> Vec<AnyElement> {
-        let label = self.label.as_ref().map(|label| {
-            theme
-                .chip(label.clone(), multi_select::tint(theme, label))
-                .into_any_element()
-        });
-        let blocked = self.blocked.then(|| blocked_chip(theme));
-        label.into_iter().chain(blocked).collect()
+        self.blocked
+            .then(|| blocked_chip(theme))
+            .into_iter()
+            .collect()
     }
 }
 
@@ -863,8 +856,6 @@ pub(crate) struct BoardView {
     /// The pane's drawer as of the last render.
     shown: PaneState,
     watch: Watch,
-    /// The open card's label picker.
-    labels: Labels,
     /// The open card's blocker picker.
     blockers: blockers::Blockers,
     _name: gpui::Subscription,
@@ -1434,7 +1425,6 @@ impl BoardView {
             find: Find::default(),
             shown: PaneState::default(),
             watch: Watch::default(),
-            labels: Labels::default(),
             blockers: blockers::Blockers::default(),
             _name: name,
         }
@@ -1671,9 +1661,6 @@ impl BoardView {
                 .unwrap_or_else(|| "Missing card".into()),
             Page::Description => "Description".into(),
         };
-        let tags = card
-            .map(|card| Tags::of(card, &self.board.project, self.workspace.read(cx), cx))
-            .unwrap_or_default();
         let draft = self.draft();
         let error = draft.and_then(|draft| draft.error.clone()).or_else(|| {
             text.is_none().then(|| {
@@ -1737,21 +1724,6 @@ impl BoardView {
                     .child(handle)
                     .into_any_element(),
             )
-            .chain(card.map(|card| {
-                let target = LabelTarget::Card {
-                    board: self.board.id.clone(),
-                    card: card.id.clone(),
-                };
-                let trigger = div()
-                    .id("card-label")
-                    .group("card-label")
-                    .flex()
-                    .flex_row()
-                    .items_center();
-                let labels: Vec<String> = tags.label.iter().cloned().collect();
-                self.label_chips(trigger, target, &labels, "card-label", cx)
-                    .into_any_element()
-            }))
             .chain(working.map(|at| card_orb(at, self.root.clone(), sessions, cx)))
             .collect(),
             actions: (error.is_some() && editor.is_some())
@@ -3703,7 +3675,7 @@ impl BoardView {
                             .child(handle)
                     }))
                     .child(div().flex_1())
-                    .children((tags.label.is_some() || tags.blocked).then(|| {
+                    .children(tags.blocked.then(|| {
                         div()
                             .flex_none()
                             .flex()
@@ -3767,24 +3739,6 @@ impl BoardView {
             )
             .on_mouse_down_out(cx.listener(|this, _, _, cx| this.commit_edit(cx)))
             .into_any_element()
-    }
-}
-
-impl LabelHost for BoardView {
-    fn labels(&self) -> &Labels {
-        &self.labels
-    }
-
-    fn labels_mut(&mut self) -> &mut Labels {
-        &mut self.labels
-    }
-
-    fn label_workspace(&self) -> &Entity<Workspace> {
-        &self.workspace
-    }
-
-    fn label_root(&self) -> &WeakEntity<Cydonia> {
-        &self.root
     }
 }
 

@@ -108,10 +108,6 @@ const BUSY: Arg = Arg {
     name: "busy",
     about: "true while working on them, false to take the tag off.",
 };
-const LABEL: Arg = Arg {
-    name: "label",
-    about: "The card's one label, replacing any it had, or none to take it off. A board's card labels are its own, apart from the entries' labels.",
-};
 const BLOCKERS: Arg = Arg {
     name: "blocked_by",
     about: "The cards it waits on, each its handle (ROAD-12), foo#ROAD-12 for a card in the open project foo, or its id. Replaces the list; an empty list clears it.",
@@ -167,7 +163,7 @@ const KEY_NOW: Arg = Arg {
     about: "A new key for card handles, such as ROAD. Every handle on the board is read off it, so ROAD-12 becomes BACK-12. Left out, the key does not change.",
 };
 
-pub static TOOLS: [Tool; 21] = [
+pub static TOOLS: [Tool; 20] = [
     Tool {
         name: "board_add",
         description: "Create a board with a name and unique key. Returns its id, project number, key, and columns. Use board_add_column to add columns.",
@@ -243,7 +239,7 @@ pub static TOOLS: [Tool; 21] = [
     },
     Tool {
         name: "board_read_card",
-        description: "Read one card or several by handle: each one's whole text, its column, its label, whether it is busy, the cards it waits on, the cards waiting on it and the session that last held it, after the description of the board it is on.",
+        description: "Read one card or several by handle: each one's whole text, its column, whether it is busy, the cards it waits on, the cards waiting on it and the session that last held it, after the description of the board it is on.",
         schema: |bound| {
             let mut schema = fields(bound, &[PROJECT, CARDS]);
             many(&mut schema, CARDS);
@@ -318,18 +314,6 @@ pub static TOOLS: [Tool; 21] = [
         writes: true,
         deletes: false,
         call: set_card_busy,
-    },
-    Tool {
-        name: "board_set_card_label",
-        description: "Give one card or several a label, or take it off. A card has at most one.",
-        schema: |bound| {
-            let mut schema = fields(bound, &[PROJECT, CARDS, LABEL]);
-            many(&mut schema, CARDS);
-            schema
-        },
-        writes: true,
-        deletes: false,
-        call: set_card_label,
     },
     Tool {
         name: "board_set_card_blockers",
@@ -418,9 +402,6 @@ pub static TOOLS: [Tool; 21] = [
         call: remove_column,
     },
 ];
-
-/// What a caller says to take a label off.
-const NONE: &str = "none";
 
 // ── the tools ────────────────────────────────────────────────────
 
@@ -799,9 +780,6 @@ pub(crate) fn cards(project: &fs::Project, needles: &[&str]) -> Outcome {
         let column = board.column_of(&id).expect("located in a column");
         let handle = named(&board, &id);
         let mut head = format!("{handle} · {}", column.name);
-        if let Some(label) = &card.label {
-            head.push_str(&format!(" · {label}"));
-        }
         if card.busy {
             head.push_str(" · busy");
         }
@@ -826,7 +804,6 @@ pub(crate) fn cards(project: &fs::Project, needles: &[&str]) -> Outcome {
             "column": { "id": column.id, "name": column.name },
             "text": card.text,
             "busy": card.busy,
-            "label": card.label,
             "blocked_by": blockers,
             "blocks": waiting,
             "session": card.session,
@@ -923,41 +900,6 @@ fn set_card_busy(args: Args<'_>) -> Outcome {
         false => format!("{named} {are} no longer busy"),
     })
     .with(json!({ "cards": tagged })))
-}
-
-/// One card or a run of them, the way [`set_card_busy`] takes them.
-fn set_card_label(args: Args<'_>) -> Outcome {
-    let project = &store(&args)?;
-    let word = args.text(LABEL)?.trim();
-    let label = match word.eq_ignore_ascii_case(NONE) {
-        true => None,
-        false => Some(
-            artifact::label::normalize(word)
-                .ok_or_else(|| Trouble::Refused(format!("a label needs a name — or say {NONE}")))?,
-        ),
-    };
-    let found: Vec<(Board, String)> = args
-        .list(CARDS)?
-        .into_iter()
-        .map(|needle| locate(project, needle))
-        .collect::<Result<_, _>>()?;
-    let mut labelled: Vec<Value> = Vec::new();
-    let mut handles: Vec<String> = Vec::new();
-    for (mut board, ids) in by_board(found) {
-        for id in ids {
-            let handle = named(&board, &id);
-            board.set_card_label(&id, label.as_deref());
-            labelled.push(json!({ "id": id, "handle": handle, "label": label }));
-            handles.push(handle);
-        }
-        project.save_board(&mut board).map_err(unwritten)?;
-    }
-    let named = handles.join(", ");
-    Ok(Answer::said(match &label {
-        Some(label) => format!("{named} labelled {label}"),
-        None => format!("{named} unlabelled"),
-    })
-    .with(json!({ "cards": labelled })))
 }
 
 /// Every blocker is located before anything is written, so a name that misses
@@ -1595,9 +1537,6 @@ fn outline(board: &Board, lanes: &[Lane<'_>], here: &Path) -> String {
         for card in lane.cards {
             let handle = board.handle_of(card).unwrap_or_else(|| card.id.clone());
             out.push_str(&format!("\n  {handle:<width$}  {}", line(&card.text)));
-            if let Some(label) = &card.label {
-                out.push_str(&format!("  #{label}"));
-            }
             if card.busy {
                 out.push_str("  [busy]");
             }
@@ -1664,7 +1603,6 @@ fn shape(board: &Board, lanes: &[Lane<'_>], here: &Path) -> Value {
                         "title": line(&card.text),
                         "session": card.session,
                         "busy": card.busy,
-                        "label": card.label,
                         "blocked_by": named_cards(&disk, here, &card.blocked_by),
                     }))
                     .collect::<Vec<_>>(),

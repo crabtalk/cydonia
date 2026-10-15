@@ -41,7 +41,7 @@ A client added by hand reaches every project the app has open, and names one per
 | --- | --- |
 | Projects | `project_open`, `project_close`, `project_entries`, `project_read_entry`, `project_label_entry` |
 | Articles | `article_list`, `article_read`, `article_add`, `article_edit`, `article_rewrite`, `article_rename`, `article_move`, `article_comment`, `article_set_cover`, `article_archive`, `article_remove` |
-| Boards | `board_list`, `board_search`, `board_search_cards`, `board_read`, `board_add`, `board_rename`, `board_archive`, `board_remove`, `board_add_column`, `board_rename_column`, `board_move_column`, `board_remove_column`, `board_add_card`, `board_rewrite_card`, `board_move_card`, `board_remove_card`, `board_set_card_busy`, `board_set_card_label`, `board_set_card_blockers` |
+| Boards | `board_list`, `board_search`, `board_search_cards`, `board_read`, `board_add`, `board_rename`, `board_archive`, `board_remove`, `board_add_column`, `board_rename_column`, `board_move_column`, `board_remove_column`, `board_add_card`, `board_rewrite_card`, `board_move_card`, `board_remove_card`, `board_set_card_busy`, `board_set_card_blockers` |
 | Sessions | `session_send`, `session_read`, `session_search`, `session_rename` |
 | Workspace | `workspace_focus` |
 | Browser | `browser_tabs`, `browser_open`, `browser_read`, `browser_scroll`, `browser_console`, `browser_click`, `browser_type` |
@@ -57,7 +57,7 @@ Keys are unique within a project, not across projects. `board_search` takes a ke
 
 `board_list`, `board_search` and `board_search_cards` leave archived boards out. Their `archived` argument says `include` to let them in beside the rest, or `only` for them alone; what an archived board lets through is marked `— archived`. Every other board tool reaches an archived board or its cards by name, key, handle or id, and so does a [reference](../working/references.md).
 
-Nine tools take a list where they take one thing, so a turn that touches several is one call: `project_close` takes several paths, `article_move` several articles, and `board_add_card`, `board_add_column`, `board_remove_card`, `board_remove_column`, `board_move_card`, `board_set_card_busy` and `board_set_card_label` several cards or columns. Everything else about the call stays singular — one destination, one column, one board. They are all or nothing: every name is resolved before anything is written, so a list with a typo in it changes nothing.
+Eight tools take a list where they take one thing, so a turn that touches several is one call: `project_close` takes several paths, `article_move` several articles, and `board_add_card`, `board_add_column`, `board_remove_card`, `board_remove_column`, `board_move_card` and `board_set_card_busy` several cards or columns. Everything else about the call stays singular — one destination, one column, one board. They are all or nothing: every name is resolved before anything is written, so a list with a typo in it changes nothing.
 
 `article_read` and `project_read_entry` take part of an article as well as the whole: `#12:5-7` answers lines 5 to 7, `#12#setup` the section under the heading whose anchor is `setup`, each with the lines it is — see [References](../working/references.md#lines-and-headings). The other article tools take a whole article and refuse a part.
 

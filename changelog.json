@@ -10,7 +10,11 @@
       "Give each pane in a space its own floating card, with its bars on the chrome above it",
       "See what is new the first time a release opens, and again from the cydonia menu or Settings › General"
     ],
+    "changed": [
+      "Remove labels from board cards, with the label picker in a card's drawer and the board_set_card_label tool. A label already written in a card's properties.toml is left in the file"
+    ],
     "fixed": [
+      "List the board's cards in a card's blocker picker before anything is typed",
       "Return to the pane a space was last focused on when switching to it",
       "Keep a space's focused and zoomed pane when its first tab closes",
       "Settle a dropped list row into place on a board"

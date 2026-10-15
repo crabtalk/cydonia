@@ -373,7 +373,6 @@ fn unnamed(name: &str, cards: usize) -> Column {
             text: format!("card {n}"),
             session: None,
             busy: false,
-            label: None,
             blocked_by: Vec::new(),
             blocks: Vec::new(),
             version: None,
@@ -472,30 +471,6 @@ fn a_card_is_tagged_busy_and_untagged_again() {
     assert!(!board.card(&card).unwrap().busy);
 
     assert!(!board.set_card_busy("nowhere", true));
-}
-
-#[test]
-fn a_card_holds_one_label_normalised() {
-    let mut board = Board::new("1757000000000".into(), "Roadmap");
-    let todo = board.add_column("Todo").id.clone();
-    let one = board.add_card(&todo, "one".into()).unwrap().id.clone();
-    let two = board.add_card(&todo, "two".into()).unwrap().id.clone();
-
-    assert!(board.set_card_label(&one, Some("  Big Bug ")));
-    assert_eq!(board.card(&one).unwrap().label.as_deref(), Some("big-bug"));
-    assert!(board.set_card_label(&one, Some("chore")));
-    assert_eq!(board.card(&one).unwrap().label.as_deref(), Some("chore"));
-    board.set_card_label(&two, Some("bug"));
-    assert_eq!(
-        board.card_labels().into_iter().collect::<Vec<_>>(),
-        ["bug", "chore"]
-    );
-
-    assert!(board.set_card_label(&one, None));
-    assert_eq!(board.card(&one).unwrap().label, None);
-    assert!(board.set_card_label(&two, Some("   ")));
-    assert_eq!(board.card(&two).unwrap().label, None, "blank is no label");
-    assert!(!board.set_card_label("nowhere", Some("bug")));
 }
 
 /// A lane can be written beside another rather than only at the end, on
