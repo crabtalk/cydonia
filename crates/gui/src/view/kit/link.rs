@@ -81,10 +81,10 @@ fn embed(url: &str) -> BlockKind {
 pub(crate) struct Links;
 
 impl markdown::Links for Links {
-    /// A web link in the system browser, a file in the file manager, and a
-    /// missing file nowhere. With shift held, a web link opens in a panel
-    /// browser tab and a file in a panel file tab, where the window can take
-    /// one.
+    /// A web link in the system browser, a file in its default application,
+    /// a directory in the file manager, and a missing file nowhere. With
+    /// shift held, a web link opens in a panel browser tab and a file in a
+    /// panel file tab, where the window can take one.
     fn open(link: Link<'_>, window: &mut Window, cx: &mut App) {
         let Some(Some(root)) = window.root::<Cydonia>() else {
             cx.open_url(link.url);
@@ -105,7 +105,7 @@ impl markdown::Links for Links {
                     root.open_file_in_panel(path.clone(), line, window, cx)
                 });
             if !opened {
-                root.update(cx, |root, cx| root.reveal_path(path, window, cx));
+                root.update(cx, |root, cx| root.launch_path(path, window, cx));
             }
             return;
         }
@@ -438,6 +438,7 @@ impl Cydonia {
             Kind::Article => "Article",
             Kind::Board => "Board",
             Kind::Table => "Table",
+            Kind::App => "App",
         };
         let columns = match &named.row {
             Row::Entry {

@@ -15,7 +15,7 @@ use super::*;
 use crate::model::spaces::{Shelf, Store as _};
 use artifact::{
     kind::Kind,
-    space::{Member, Side, Space},
+    space::{Entry, Member, Side, Space},
 };
 
 /// What a pane shows, resolved from the member a space names: an entry of
@@ -160,7 +160,7 @@ impl Workspace {
         let wanted: Vec<PathBuf> = space
             .entries()
             .into_iter()
-            .map(|member| member.project)
+            .filter_map(|member| member.project().map(Path::to_path_buf))
             .filter(|path| !self.projects.iter().any(|open| open.path == *path))
             .filter(|path| path.is_dir())
             .collect();
@@ -325,6 +325,16 @@ impl Workspace {
             .unwrap_or_default()
     }
 
+    /// The tab the pane holding this entry shows — see [`Space::front_of`].
+    pub fn front_of(&self, entry: &Member) -> Option<Member> {
+        self.active_space()?.front_of(entry)
+    }
+
+    /// Bring a tab to the front of its pane in the open space.
+    pub fn set_front(&mut self, tab: &Member, cx: &mut Context<Self>) {
+        self.edit_space(cx, |space| space.set_front(tab));
+    }
+
     /// The pane across the seam on this side of the one given, if there is one
     /// — what says whether a move that way is on offer at all.
     pub fn neighbour_pane(&self, entry: &Member, side: Side) -> Option<Member> {
@@ -440,28 +450,30 @@ impl Workspace {
         let Some(open) = self
             .projects
             .iter()
-            .find(|open| open.path == member.project)
+            .find(|open| Some(open.path.as_path()) == member.project())
         else {
             return false;
         };
-        match member.kind {
+        let id = member.id();
+        match member.kind() {
             Kind::Session => open
                 .sessions
                 .iter()
                 .map(|held| held.chat.read(cx))
-                .any(|chat| chat.closed && chat.record.as_deref() == Some(member.id.as_str())),
+                .any(|chat| chat.closed && chat.record.as_deref() == Some(id)),
             Kind::Board => open
                 .boards
                 .iter()
-                .any(|held| held.id == member.id && held.board.read(cx).archived),
+                .any(|held| held.id == id && held.board.read(cx).archived),
             Kind::Article => open
                 .articles
                 .iter()
-                .any(|article| article.archived && article.id == member.id),
+                .any(|article| article.archived && article.id == id),
             Kind::Table => open
                 .tables
                 .iter()
-                .any(|table| table.archived && table.key == member.id),
+                .any(|table| table.archived && table.key == id),
+            Kind::App => false,
         }
     }
 
@@ -540,12 +552,18 @@ impl Workspace {
                 live.push(Member::new(path.clone(), Kind::Table, table.key.clone()));
             }
         }
+        live.extend(self.apps.iter().map(|held| Member::app(held.id.clone())));
         let open: Vec<PathBuf> = self.projects.iter().map(|open| open.path.clone()).collect();
         for space in &mut self.spaces {
             let gone: Vec<Member> = space
                 .entries()
                 .into_iter()
-                .filter(|member| open.contains(&member.project) && !live.contains(member))
+                .filter(|member| {
+                    member
+                        .project()
+                        .is_none_or(|project| open.iter().any(|at| at == project))
+                        && !live.contains(member)
+                })
                 .collect();
             if !gone.is_empty() && space.prune(&gone) {
                 Shelf::save(space);
@@ -561,9 +579,9 @@ impl Workspace {
         let at = self
             .projects
             .iter()
-            .position(|open| open.path == member.project)?;
+            .position(|open| Some(open.path.as_path()) == member.project())?;
         let open = self.projects.get(at)?;
-        let showing = open.stored(member.kind, &member.id, cx)?;
+        let showing = open.stored(member.kind(), member.id(), cx)?;
         Some((at, showing))
     }
 
@@ -574,7 +592,7 @@ impl Workspace {
     /// and one that has had no turn is not there to be named.
     pub fn member_of(&self, project: usize, showing: Showing, cx: &App) -> Option<Member> {
         let Showing::Session(id) = showing else {
-            return self.filed_member(project, showing);
+            return self.filed_member(project, showing).map(Member::from);
         };
         let open = self.projects.get(project)?;
         let record = open.session(id, cx)?.filed()?.to_owned();
@@ -583,43 +601,58 @@ impl Workspace {
 
     /// [`Self::member_of`] for a board, an article or a table, whose id is
     /// its file. Nothing for a session.
-    fn filed_member(&self, project: usize, showing: Showing) -> Option<Member> {
+    fn filed_member(&self, project: usize, showing: Showing) -> Option<Entry> {
         let open = self.projects.get(project)?;
-        let path = open.path.clone();
-        Some(match showing {
+        let project = open.path.clone();
+        let (kind, id) = match showing {
             Showing::Session(_) => return None,
             Showing::Board(id) => {
                 open.board_ix(&id)?;
-                Member::new(path, Kind::Board, id)
+                (Kind::Board, id)
             }
-            Showing::Article(id) => Member::new(
-                path,
+            Showing::Article(id) => (
                 Kind::Article,
                 open.articles[open.article_ix(&id)?].id.clone(),
             ),
             Showing::Table(key) => {
                 open.table_ix(&key)?;
-                Member::new(path, Kind::Table, key)
+                (Kind::Table, key)
             }
-        })
+        };
+        Some(Entry { project, kind, id })
     }
 
     /// The member naming the board listed at `ix` in `project`.
     pub fn board_member(&self, project: usize, ix: usize) -> Option<Member> {
         let id = self.projects.get(project)?.boards.get(ix)?.id.clone();
         self.filed_member(project, Showing::Board(id))
+            .map(Member::from)
     }
 
     /// The member naming the article listed at `ix` in `project`.
     pub fn article_member(&self, project: usize, ix: usize) -> Option<Member> {
         let id = self.projects.get(project)?.articles.get(ix)?.id.clone();
         self.filed_member(project, Showing::Article(id))
+            .map(Member::from)
     }
 
     /// The member naming the table listed at `ix` in `project`.
     pub fn table_member(&self, project: usize, ix: usize) -> Option<Member> {
         let key = self.projects.get(project)?.tables.get(ix)?.key.clone();
         self.filed_member(project, Showing::Table(key))
+            .map(Member::from)
+    }
+
+    /// The program of the app a pane's member names, where it is listed.
+    pub fn program_of(
+        &self,
+        member: &Member,
+        cx: &App,
+    ) -> Option<&bezel::gpui::Entity<crate::model::apps::Program>> {
+        match member {
+            Member::App { app } => self.program(app, cx),
+            Member::Entry { .. } => None,
+        }
     }
 
     /// The board a pane is on, by its place in its project. Named apart from
@@ -775,7 +808,7 @@ impl Workspace {
         };
         let showing: Vec<_> = space
             .tree
-            .panes()
+            .fronts()
             .iter()
             .filter_map(|member| self.showing_of(member, cx))
             .collect();

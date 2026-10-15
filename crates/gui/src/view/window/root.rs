@@ -113,6 +113,8 @@ actions!(
         NewBoard,
         NewArticle,
         NewTable,
+        InstallApp,
+        LoadApp,
         OpenProject,
         CloseProject,
         OpenSettings,
@@ -523,9 +525,8 @@ pub struct Cydonia {
     /// groups along their own board.
     pub(crate) board_sort: drag::Domain<board::BoardRegion, board::BoardItem>,
     /// The tabs that have been brought to the front, most recent last, across
-    /// every pane. Read when a tab closes, to land on the one that was in
-    /// front before it rather than on a neighbour in the strip — see
-    /// [`Cydonia::close_pane`]. Runtime only, for the same reason `fronts` is.
+    /// every pane. Read when a pane's last tab closes with the focus on it —
+    /// see [`Cydonia::close_pane`]. Runtime only, as [`Pane`]'s own are.
     pub(crate) tab_history: Vec<Member>,
     /// The library, while it stands over the panes — see
     /// [`crate::view::library`].
@@ -737,7 +738,7 @@ impl Cydonia {
                 .iter()
                 .enumerate()
                 .filter_map(|(ix, leaf)| {
-                    let entry = leaf.read(cx).entry.as_ref()?;
+                    let entry = leaf.read(cx).entry.as_ref()?.entry()?;
                     Some(mcp::rail::Shown {
                         project: entry.project.clone(),
                         kind: kind(entry.kind)?,
@@ -896,6 +897,14 @@ impl Cydonia {
         let moved = self.focused != at;
         self.focused = at;
         self.sync_focus(cx);
+        // An app's fields take the caret when they are pressed.
+        if let Member::App { .. } = entry {
+            self.leaf().update(cx, |pane, _| pane.kind = Kind::App);
+            let here = self.leaf().read(cx).focus.clone();
+            window.focus(&here, cx);
+            cx.notify();
+            return;
+        }
         let Some((project, showing)) = self.workspace.read(cx).showing_of(entry, cx) else {
             // A member whose project is shut draws an empty pane, which takes
             // no caret — so the focus comes back to the window rather than
@@ -1266,6 +1275,7 @@ impl Cydonia {
             Kind::Table => open
                 .table
                 .and_then(|ix| Some(Showing::Table(open.tables.get(ix)?.key.clone()))),
+            Kind::App => None,
         }
         .map(|showing| Row::Entry {
             project: open.path.clone(),
@@ -1502,9 +1512,7 @@ impl Cydonia {
         if self.has_pane(self.leaf().read(cx).kind, cx) {
             return Some(self.leaf().read(cx).kind);
         }
-        [Kind::Session, Kind::Board, Kind::Article, Kind::Table]
-            .into_iter()
-            .find(|&pane| self.has_pane(pane, cx))
+        Kind::ALL.into_iter().find(|&pane| self.has_pane(pane, cx))
     }
 
     /// Whether the active project has anything open in `pane` — what makes it
@@ -1524,6 +1532,10 @@ impl Cydonia {
             Kind::Board => workspace.active_board(cx).is_some(),
             Kind::Article => workspace.active_article().is_some(),
             Kind::Table => workspace.active_table().is_some(),
+            Kind::App => workspace
+                .app
+                .as_deref()
+                .is_some_and(|id| workspace.program(id, cx).is_some()),
         }
     }
 

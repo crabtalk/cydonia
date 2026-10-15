@@ -138,10 +138,10 @@ impl Cydonia {
                     Position::Transcript(self.session_scroll(&member, cx)?.read(cx).state.top())
                 }
                 Showing::Article(_) => {
-                    Position::Article(self.article_scroll(&member, cx)?.offset())
+                    Position::Article(self.article_scroll(member.entry()?, cx)?.offset())
                 }
                 Showing::Board(_) => {
-                    let scroll = self.board_scroll(&member, cx)?;
+                    let scroll = self.board_scroll(member.entry()?, cx)?;
                     Position::Board {
                         across: scroll.across.offset(),
                         down: scroll.down.offset(),
@@ -172,12 +172,18 @@ impl Cydonia {
                 }
             }
             (Showing::Article(_), Position::Article(offset)) => {
-                if let Some(scroll) = self.article_scroll(member, cx) {
+                if let Some(scroll) = member
+                    .entry()
+                    .and_then(|entry| self.article_scroll(entry, cx))
+                {
                     scroll.set_offset(*offset);
                 }
             }
             (Showing::Board(_), Position::Board { across, down }) => {
-                if let Some(scroll) = self.board_scroll(member, cx) {
+                if let Some(scroll) = member
+                    .entry()
+                    .and_then(|entry| self.board_scroll(entry, cx))
+                {
                     scroll.across.set_offset(*across);
                     scroll.down.set_offset(*down);
                 }

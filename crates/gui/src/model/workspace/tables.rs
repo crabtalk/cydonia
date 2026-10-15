@@ -5,6 +5,7 @@
 //! `use super::*`: these methods work on the same struct and reach the same
 //! names as the rest of it.
 use super::*;
+use crate::data::Home;
 use artifact::kind::Kind;
 
 impl Workspace {
@@ -30,7 +31,7 @@ impl Workspace {
         // The one place a store is created: making a table is the moment the
         // project has something to keep in one.
         if project.data.is_none() {
-            project.data = Data::open(&project.path).ok();
+            project.data = Data::open(&Home::Project(project.path.clone())).ok();
         }
         let mut name = UNTITLED.to_owned();
         for n in 2.. {

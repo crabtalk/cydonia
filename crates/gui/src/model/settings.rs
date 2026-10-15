@@ -81,6 +81,10 @@ pub struct Settings {
     /// Bare, beside the switches above.
     #[serde(default = "drawer_composer")]
     pub drawer_composer: bool,
+    /// Developer mode: apps loaded from a folder are listed, built and run.
+    /// Off, only installed apps are. Bare, beside the switches above.
+    #[serde(default)]
+    pub developer_mode: bool,
     /// How the interface is painted. The first table, so the bare keys above
     /// keep belonging to the document rather than to it.
     #[serde(default)]
@@ -1066,6 +1070,7 @@ impl Default for Settings {
             download_web_images: download_web_images(),
             paste_images_in_source: paste_images_in_source(),
             drawer_composer: drawer_composer(),
+            developer_mode: false,
             appearance: Appearance::default(),
             shortcuts: Shortcuts::default(),
             article_session: ArticleSession::default(),
@@ -1526,6 +1531,14 @@ pub fn set_watch_bounce(ms: u64) -> Result<()> {
 pub fn set_auto_update(on: bool) -> Result<()> {
     Here::edit(|doc| {
         doc["auto_update"] = toml_edit::value(on);
+        Ok(true)
+    })
+}
+
+/// Switch developer mode on or off in the file.
+pub fn set_developer_mode(on: bool) -> Result<()> {
+    Here::edit(|doc| {
+        doc["developer_mode"] = toml_edit::value(on);
         Ok(true)
     })
 }

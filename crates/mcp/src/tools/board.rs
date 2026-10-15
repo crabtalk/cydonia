@@ -24,13 +24,17 @@ use crate::{
 use artifact::error::{Act, Error};
 use artifact::{
     archive::Archived,
-    board::{Board, Card, Column},
+    board::{
+        Board, Card, Column,
+        blocking::{self, Counterpart, Edit, Found, Place, Shelf},
+    },
     project::{Project, fs},
     reference::{self, Reference, Target},
     search::{self, Block, Query, Searchable},
 };
 use serde_json::{Value, json};
 use std::{
+    cell::RefCell,
     collections::HashMap,
     path::{Path, PathBuf},
     sync::mpsc,
@@ -239,7 +243,7 @@ pub static TOOLS: [Tool; 21] = [
     },
     Tool {
         name: "board_read_card",
-        description: "Read one card or several by handle: each one's whole text, its column, its label, whether it is busy, the cards it waits on and the session that last held it, after the description of the board it is on.",
+        description: "Read one card or several by handle: each one's whole text, its column, its label, whether it is busy, the cards it waits on, the cards waiting on it and the session that last held it, after the description of the board it is on.",
         schema: |bound| {
             let mut schema = fields(bound, &[PROJECT, CARDS]);
             many(&mut schema, CARDS);
@@ -341,7 +345,7 @@ pub static TOOLS: [Tool; 21] = [
     },
     Tool {
         name: "board_move_card",
-        description: "Carry a card or several to the end of another column, another board, or a board in another project. Moving to another board gives each a new handle.",
+        description: "Carry a card or several to the end of another column, another board, or a board in another project. Moving to another board gives each a new handle. Answers the cards waiting on each one moved.",
         schema: |bound| {
             let mut schema = fields(bound, &[PROJECT, CARDS]);
             for arg in [COLUMN, TO_BOARD, TO_PROJECT] {
@@ -460,11 +464,39 @@ fn rename(args: Args<'_>) -> Outcome {
         let from = board.key.clone();
         (from, key.clone())
     });
+    // Found under the old key: every card naming one of this board's cards
+    // names it again under the new one.
+    let ends: Vec<(Place, String, Vec<Counterpart>)> = match rekeyed {
+        Some(_) => {
+            let disk = Disk::default();
+            board
+                .columns
+                .iter()
+                .flat_map(|column| &column.cards)
+                .filter_map(|card| {
+                    let (place, others) = ends(&disk, project.root(), &board, card)?;
+                    Some((place, card.id.clone(), others))
+                })
+                .collect()
+        }
+        None => Vec::new(),
+    };
     board.name = name.to_owned();
     if let Some(key) = key {
         board.key = key;
     }
     project.save_board(&mut board).map_err(unwritten)?;
+    let edits: Vec<Edit> = ends
+        .iter()
+        .flat_map(|(from, card, others)| {
+            let to = Place {
+                key: board.key.clone(),
+                ..from.clone()
+            };
+            blocking::moved(from, &to, &board.id, card, others)
+        })
+        .collect();
+    write_edits(&edits)?;
     let said = match rekeyed {
         Some((from, to)) => format!("{was} is now {name}, and {from}-1 is now {to}-1"),
         None => format!("{was} is now {name}"),
@@ -513,9 +545,24 @@ fn remove(args: Args<'_>) -> Outcome {
         found.push(board(project, needle)?);
     }
     let gone: Vec<String> = found.iter().map(spoken).collect();
+    let disk = Disk::default();
+    let edits: Vec<Edit> = found
+        .iter()
+        .flat_map(|board| {
+            let disk = &disk;
+            board
+                .columns
+                .iter()
+                .flat_map(|column| &column.cards)
+                .filter_map(move |card| ends(disk, project.root(), board, card))
+                .flat_map(|(place, others)| blocking::forget(&place, &others))
+                .collect::<Vec<_>>()
+        })
+        .collect();
     for board in &found {
         project.remove_board(&board.id).map_err(unwritten)?;
     }
+    write_edits(&edits)?;
     Ok(Answer::said(format!("{} deleted", gone.join(", "))))
 }
 
@@ -737,6 +784,7 @@ pub(crate) fn cards(project: &fs::Project, needles: &[&str]) -> Outcome {
     let mut said: Vec<String> = Vec::new();
     let mut data: Vec<Value> = Vec::new();
     let mut described: Vec<String> = Vec::new();
+    let disk = Disk::default();
     for needle in needles {
         let (board, id) = locate(project, needle)?;
         if !board.description.is_empty() && !described.contains(&board.id) {
@@ -757,9 +805,13 @@ pub(crate) fn cards(project: &fs::Project, needles: &[&str]) -> Outcome {
         if card.busy {
             head.push_str(" · busy");
         }
-        let blockers = blockers(project.root(), card);
+        let blockers = named_cards(&disk, project.root(), &card.blocked_by);
         if !blockers.is_empty() {
             head.push_str(&format!(" · blocked by {}", blockers.join(", ")));
+        }
+        let waiting = named_cards(&disk, project.root(), &card.blocks);
+        if !waiting.is_empty() {
+            head.push_str(&format!(" · blocks {}", waiting.join(", ")));
         }
         said.push(format!("{head}\n\n{}", card.text));
         data.push(json!({
@@ -776,6 +828,7 @@ pub(crate) fn cards(project: &fs::Project, needles: &[&str]) -> Outcome {
             "busy": card.busy,
             "label": card.label,
             "blocked_by": blockers,
+            "blocks": waiting,
             "session": card.session,
         }));
     }
@@ -912,7 +965,7 @@ fn set_card_label(args: Args<'_>) -> Outcome {
 fn set_card_blockers(args: Args<'_>) -> Outcome {
     let here = root(&args)?;
     let project = &fs::Project::new(here);
-    let (mut board, id) = locate(project, args.text(CARD)?)?;
+    let (board, id) = locate(project, args.text(CARD)?)?;
     let handle = named(&board, &id);
     let mut written: Vec<String> = Vec::new();
     for needle in args.any_list(BLOCKERS)? {
@@ -940,8 +993,20 @@ fn set_card_blockers(args: Args<'_>) -> Outcome {
             .to_string(),
         );
     }
-    board.set_card_blockers(&id, written.clone());
-    project.save_board(&mut board).map_err(unwritten)?;
+    let card = board.card(&id).expect("located on this board");
+    let waiter = Place::of(here, &board, card)
+        .ok_or_else(|| Trouble::Refused(format!("{handle} has no handle to be named by")))?;
+    let disk = Disk::default();
+    let edits = blocking::set_blockers(&disk, &waiter, &board.id, &id, &card.blocked_by, &written)
+        .map_err(|missing| Trouble::Refused(format!("{missing} names no card")))?;
+    write_edits(&edits)?;
+    let written: Vec<String> = edits
+        .iter()
+        .find_map(|edit| match &edit.change {
+            blocking::Change::Waits(list) if edit.card == id => Some(list.clone()),
+            _ => None,
+        })
+        .unwrap_or_default();
     Ok(Answer::said(match written.is_empty() {
         true => format!("{handle} waits on nothing"),
         false => format!("{handle} waits on {}", written.join(", ")),
@@ -970,6 +1035,21 @@ fn move_card(args: Args<'_>) -> Outcome {
         .map(|(board, id)| named(board, id))
         .collect::<Vec<_>>()
         .join(", ");
+    // Read before the move: a card carried to another board takes a new
+    // handle, and every card naming it is written again to the new one.
+    let disk = Disk::default();
+    let before: Vec<(String, String, Place, Vec<Counterpart>)> = found
+        .iter()
+        .filter_map(|(board, id)| {
+            let (place, others) = ends(&disk, here, board, board.card(id)?)?;
+            Some((id.clone(), named(board, id), place, others))
+        })
+        .collect();
+    let blocks: Vec<(String, Vec<String>)> = before
+        .iter()
+        .map(|(_, said, place, others)| (said.clone(), waiting(place, others)))
+        .filter(|(_, waiting)| !waiting.is_empty())
+        .collect();
     let landing = match args.maybe(TO_PROJECT) {
         Some(named) => on_the_rail(Path::new(named))?,
         None => here,
@@ -989,7 +1069,8 @@ fn move_card(args: Args<'_>) -> Outcome {
     };
     let sources = by_board(found);
     let Some(needle) = elsewhere else {
-        return within(project, sources, args.text(COLUMN)?, &spoken);
+        return within(project, sources, args.text(COLUMN)?, &spoken)
+            .map(|answer| blocking(answer, &blocks));
     };
     let destination = &fs::Project::new(landing);
     let mut to = self::board(destination, needle)?;
@@ -1001,7 +1082,8 @@ fn move_card(args: Args<'_>) -> Outcome {
         .iter()
         .all(|(board, _)| home.as_deref() == Some(&board.id))
     {
-        return within(project, sources, args.text(COLUMN)?, &spoken);
+        return within(project, sources, args.text(COLUMN)?, &spoken)
+            .map(|answer| blocking(answer, &blocks));
     }
     if to.columns.is_empty() {
         return Err(Trouble::Refused(format!(
@@ -1014,6 +1096,7 @@ fn move_card(args: Args<'_>) -> Outcome {
         None => None,
     };
     let mut carried: Vec<String> = Vec::new();
+    let mut landings: Vec<(String, artifact::board::Landed)> = Vec::new();
     let mut moved: Vec<Board> = Vec::new();
     for (mut board, ids) in sources {
         if home.as_deref() == Some(&board.id) {
@@ -1038,7 +1121,8 @@ fn move_card(args: Args<'_>) -> Outcome {
                 project
                     .carry_card_files(&board.id, id, destination, &to.id, &landed.id)
                     .map_err(unwritten)?;
-                carried.push(landed.said);
+                carried.push(landed.said.clone());
+                landings.push((id.clone(), landed));
             }
         }
         moved.push(board);
@@ -1048,15 +1132,71 @@ fn move_card(args: Args<'_>) -> Outcome {
         project.save_board(board).map_err(unwritten)?;
     }
     destination.save_board(&mut to).map_err(unwritten)?;
-    Ok(Answer::said(format!(
-        "{spoken} moved to {label} as {}",
-        carried.join(", ")
+    let mut edits: Vec<Edit> = Vec::new();
+    let mut blocks: Vec<(String, Vec<String>)> = Vec::new();
+    for (id, landed) in &landings {
+        let Some((_, _, from, others)) = before.iter().find(|(held, ..)| held == id) else {
+            continue;
+        };
+        let Some(handle) = to.card(&landed.id).and_then(|card| card.handle) else {
+            continue;
+        };
+        let at = Place {
+            project: landing.to_path_buf(),
+            key: to.key.clone(),
+            handle,
+        };
+        let named = waiting(&at, others);
+        if !named.is_empty() {
+            blocks.push((landed.said.clone(), named));
+        }
+        edits.extend(blocking::moved(from, &at, &to.id, &landed.id, others));
+    }
+    write_edits(&edits)?;
+    Ok(blocking(
+        Answer::said(format!(
+            "{spoken} moved to {label} as {}",
+            carried.join(", ")
+        ))
+        .with(json!({
+            "cards": carried,
+            "board": to.id,
+            "project": landing,
+        })),
+        &blocks,
     ))
-    .with(json!({
-        "cards": carried,
-        "board": to.id,
-        "project": landing,
-    })))
+}
+
+/// The cards waiting on the card at `place`, of `others` found at its
+/// references, as its project writes them.
+fn waiting(place: &Place, others: &[Counterpart]) -> Vec<String> {
+    others
+        .iter()
+        .filter(|other| !other.awaited)
+        .map(|other| other.place.written(&place.project))
+        .collect()
+}
+
+/// A move's answer, with what waits on each card moved: `handle` and the
+/// cards naming it in their blockers.
+fn blocking(mut answer: Answer, blocks: &[(String, Vec<String>)]) -> Answer {
+    if blocks.is_empty() {
+        return answer;
+    }
+    for (handle, waiting) in blocks {
+        answer
+            .text
+            .push_str(&format!("\n{handle} blocks {}", waiting.join(", ")));
+    }
+    let blocks: serde_json::Map<String, Value> = blocks
+        .iter()
+        .map(|(handle, waiting)| (handle.clone(), json!(waiting)))
+        .collect();
+    let mut data = answer.data.take().unwrap_or_else(|| json!({}));
+    if let Some(object) = data.as_object_mut() {
+        object.insert("blocks".to_owned(), Value::Object(blocks));
+    }
+    answer.with(data)
 }
 
 /// The same move, between the lanes of the boards the cards are already on —
@@ -1105,6 +1245,12 @@ fn remove_card(args: Args<'_>) -> Outcome {
         .into_iter()
         .map(|needle| locate(project, needle))
         .collect::<Result<_, _>>()?;
+    let disk = Disk::default();
+    let edits: Vec<Edit> = found
+        .iter()
+        .filter_map(|(board, id)| ends(&disk, project.root(), board, board.card(id)?))
+        .flat_map(|(place, others)| blocking::forget(&place, &others))
+        .collect();
     let boards = by_board(found);
     let mut gone: Vec<String> = Vec::new();
     for (mut board, ids) in boards {
@@ -1115,6 +1261,7 @@ fn remove_card(args: Args<'_>) -> Outcome {
         }
         project.save_board(&mut board).map_err(unwritten)?;
     }
+    write_edits(&edits)?;
     Ok(Answer::said(format!("removed {}", gone.join("; "))))
 }
 
@@ -1416,6 +1563,7 @@ impl<'a> Lane<'a> {
 
 /// One board, as a person would have written it down.
 fn outline(board: &Board, lanes: &[Lane<'_>], here: &Path) -> String {
+    let disk = Disk::default();
     let mut out = match board.key.is_empty() {
         true => board.label().to_owned(),
         false => format!("{} ({})", board.label(), board.key),
@@ -1453,7 +1601,7 @@ fn outline(board: &Board, lanes: &[Lane<'_>], here: &Path) -> String {
             if card.busy {
                 out.push_str("  [busy]");
             }
-            let blockers = blockers(here, card);
+            let blockers = named_cards(&disk, here, &card.blocked_by);
             if !blockers.is_empty() {
                 out.push_str(&format!("  (blocked by {})", blockers.join(", ")));
             }
@@ -1492,6 +1640,7 @@ fn listing(boards: &[Board]) -> String {
 
 /// The same board as fields, for a client that renders rather than reads.
 fn shape(board: &Board, lanes: &[Lane<'_>], here: &Path) -> Value {
+    let disk = Disk::default();
     json!({
         "id": board.id,
         "number": board.number,
@@ -1516,7 +1665,7 @@ fn shape(board: &Board, lanes: &[Lane<'_>], here: &Path) -> Value {
                         "session": card.session,
                         "busy": card.busy,
                         "label": card.label,
-                        "blocked_by": blockers(here, card),
+                        "blocked_by": named_cards(&disk, here, &card.blocked_by),
                     }))
                     .collect::<Vec<_>>(),
                 "more": lane.more,
@@ -1525,14 +1674,68 @@ fn shape(board: &Board, lanes: &[Lane<'_>], here: &Path) -> Value {
     })
 }
 
-/// What `card` waits on, as written, leaving out what names no card. `here`
-/// is the project its board is in.
-fn blockers(here: &Path, card: &Card) -> Vec<String> {
-    card.blocked_by
-        .iter()
-        .filter(|blocker| blocker_in(here, blocker).is_ok())
+/// Those of `list`, a card's references as the project at `here` writes
+/// them, that still name a card.
+fn named_cards(disk: &Disk, here: &Path, list: &[String]) -> Vec<String> {
+    list.iter()
+        .filter(|written| blocking::locate(disk, here, written).is_some())
         .cloned()
         .collect()
+}
+
+/// The open projects' boards as they are on disk, each project read once —
+/// what [`blocking`] finds the other end of a card's references through.
+#[derive(Default)]
+struct Disk(RefCell<Vec<(PathBuf, Vec<Board>)>>);
+
+impl Shelf for Disk {
+    fn project(&self, from: &Path, name: Option<&str>) -> Option<PathBuf> {
+        match name {
+            None => Some(from.to_path_buf()),
+            Some(name) => super::project_named(name).ok(),
+        }
+    }
+
+    fn card(&self, project: &Path, key: &str, handle: u64) -> Option<Found> {
+        let mut read = self.0.borrow_mut();
+        let at = match read.iter().position(|(path, _)| path == project) {
+            Some(at) => at,
+            None => {
+                read.push((project.to_path_buf(), fs::Project::new(project).boards()));
+                read.len() - 1
+            }
+        };
+        let board = read[at].1.iter().find(|board| board.keyed(key))?;
+        Some(Found {
+            board: board.id.clone(),
+            key: board.key.clone(),
+            card: board.card_at(handle)?.id.clone(),
+        })
+    }
+}
+
+/// Where `card` of `board`, a board of the project at `here`, is, and the
+/// cards its lists name — read before it moves or goes. `None` for a card
+/// nothing can name.
+fn ends(disk: &Disk, here: &Path, board: &Board, card: &Card) -> Option<(Place, Vec<Counterpart>)> {
+    let place = Place::of(here, board, card)?;
+    let others = blocking::counterparts(disk, here, card);
+    Some((place, others))
+}
+
+/// Lay `edits` on the boards they land on, each read as it is now and
+/// written once.
+fn write_edits(edits: &[Edit]) -> Result<(), Trouble> {
+    for (path, id) in blocking::boards(edits) {
+        let project = fs::Project::new(&path);
+        let Some(mut board) = project.board(&id) else {
+            continue;
+        };
+        if blocking::apply(edits, &path, &mut board) {
+            project.save_board(&mut board).map_err(unwritten)?;
+        }
+    }
+    Ok(())
 }
 
 /// The project, board and card `needle` names: a card reference as written in

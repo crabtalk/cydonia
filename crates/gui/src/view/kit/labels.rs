@@ -213,6 +213,7 @@ pub(crate) trait LabelHost: Sized + 'static {
                 popover::close_popup(self, cx, |this: &mut Self| &mut this.labels_mut().0);
                 return;
             }
+            MultiSelectEvent::Searched(_) => return,
         }
         let choices = self.label_choices(&target, cx);
         if let Some(picker) = self.labels().0.get() {

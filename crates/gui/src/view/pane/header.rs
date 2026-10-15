@@ -15,7 +15,7 @@ use crate::view::{
     window::entry::Host,
     window::root::{self, Cydonia},
 };
-use artifact::kind::Kind;
+use artifact::{kind::Kind, space::Member};
 use bezel::{
     gpui::{AnyElement, App, Context, FontWeight, SharedString, Window, div, prelude::*, px},
     motion::Painter,
@@ -59,9 +59,34 @@ impl Cydonia {
     /// than reading [`Cydonia::showing`], so a second panel is a second call.
     pub(crate) fn toolbar(&self, pane: Kind, cx: &App) -> Option<Toolbar> {
         let workspace = self.workspace.read(cx);
+        if pane == Kind::App {
+            return self.app_toolbar(workspace.app.as_deref()?, cx);
+        }
         let project = workspace.active?;
         let showing = workspace.projects.get(project)?.selected(pane)?;
         self.toolbar_of(project, showing, cx)
+    }
+
+    /// What the pane of a space on `member` puts in its bar.
+    pub(crate) fn member_toolbar(&self, member: &Member, cx: &App) -> Option<Toolbar> {
+        match member {
+            Member::App { app } => self.app_toolbar(app, cx),
+            Member::Entry(_) => {
+                let (project, showing) = self.workspace.read(cx).showing_of(member, cx)?;
+                self.toolbar_of(project, showing, cx)
+            }
+        }
+    }
+
+    /// What a pane showing the app `id` puts in its band: the app's name. An
+    /// app has no number and nothing to rename.
+    pub(crate) fn app_toolbar(&self, id: &str, cx: &App) -> Option<Toolbar> {
+        let program = self.workspace.read(cx).program(id, cx)?;
+        Some(Toolbar {
+            title: program.read(cx).label(),
+            number: None,
+            entry: None,
+        })
     }
 
     /// The same, for an entry named outright rather than read off the

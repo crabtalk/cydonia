@@ -145,11 +145,13 @@ fn an_arrival_takes_its_room_from_the_pane_it_landed_on() {
                 ratio: 0.8,
                 entry: 1,
                 tabs: Vec::new(),
+                front: None,
             },
             Node::Leaf {
                 ratio: 0.2,
                 entry: 2,
                 tabs: Vec::new(),
+                front: None,
             },
         ],
     };
@@ -453,6 +455,7 @@ fn shares_multiply_down_the_tree() {
                 ratio: 0.5,
                 entry: 1,
                 tabs: Vec::new(),
+                front: None,
             },
             Node::Split {
                 ratio: 0.5,
@@ -462,6 +465,7 @@ fn shares_multiply_down_the_tree() {
                         ratio: 0.5,
                         entry: 2,
                         tabs: Vec::new(),
+                        front: None,
                     },
                     Node::Split {
                         ratio: 0.5,
@@ -471,11 +475,13 @@ fn shares_multiply_down_the_tree() {
                                 ratio: 0.5,
                                 entry: 3,
                                 tabs: Vec::new(),
+                                front: None,
                             },
                             Node::Leaf {
                                 ratio: 0.5,
                                 entry: 4,
                                 tabs: Vec::new(),
+                                front: None,
                             },
                         ],
                     },
@@ -592,11 +598,13 @@ fn swapping_keeps_the_shape_and_the_sizes() {
                 ratio: 0.7,
                 entry: 1,
                 tabs: Vec::new(),
+                front: None,
             },
             Node::Leaf {
                 ratio: 0.3,
                 entry: 2,
                 tabs: Vec::new(),
+                front: None,
             },
         ],
     };
@@ -753,6 +761,44 @@ fn swapping_carries_whole_panes() {
     assert_eq!(tree.at_path(&[1]).expect("a pane").stack(), vec![2]);
 }
 
+/// The tab in front is the pane's: it rides along a swap and a split, and a
+/// tab that leaves hands the front back to the first.
+#[test]
+fn a_pane_keeps_the_tab_in_front() {
+    let mut tree = Node::split(Axis::Horizontal, vec![Node::leaf(1), Node::leaf(2)]);
+    tree.stack_onto(&1, &3);
+    tree.stack_onto(&1, &4);
+    assert_eq!(tree.fronts(), vec![1, 2]);
+
+    assert!(tree.set_front(&3));
+    assert!(!tree.set_front(&3));
+    assert_eq!(tree.fronts(), vec![3, 2]);
+
+    assert!(tree.swap(&1, &2));
+    assert_eq!(tree.fronts(), vec![2, 3]);
+
+    assert!(tree.insert(&4, &5, Side::Below));
+    assert_eq!(tree.fronts(), vec![2, 3, 5]);
+
+    tree.remove(&3);
+    assert_eq!(tree.fronts(), vec![2, 1, 5]);
+}
+
+/// A front written survives the file, and a leaf written without one reads
+/// back on its first tab.
+#[test]
+fn the_tab_in_front_is_written() {
+    let mut tree = Node::leaf(1u64);
+    tree.stack_onto(&1, &2);
+    tree.set_front(&2);
+    let written = toml::to_string(&tree).unwrap();
+    let read: Node<u64> = toml::from_str(&written).unwrap();
+    assert_eq!(read.fronts(), vec![2]);
+
+    let old: Node<u64> = toml::from_str("kind = \"leaf\"\nentry = 1\ntabs = [2]\n").unwrap();
+    assert_eq!(old.fronts(), vec![1]);
+}
+
 /// Two entries of one pane are one pane, so there is no seam between them to
 /// walk across and no way to swap them with each other.
 #[test]
@@ -828,7 +874,7 @@ kind = "article"
 id = "/work/site/.cydonia/articles/1789958219063/content.md"
 "#;
     let member: Member = toml::from_str(written).unwrap();
-    assert_eq!(member.id, "1789958219063");
+    assert_eq!(member.id(), "1789958219063");
 
     let board: Member = toml::from_str(
         r#"
@@ -838,5 +884,15 @@ id = "a/b"
 "#,
     )
     .unwrap();
-    assert_eq!(board.id, "a/b");
+    assert_eq!(board.id(), "a/b");
+}
+
+#[test]
+fn an_app_member_is_written_by_its_id_alone() {
+    let app = Member::app("yc");
+    let written = toml::to_string(&app).unwrap();
+    assert_eq!(written.trim(), r#"app = "yc""#);
+    let read: Member = toml::from_str(&written).unwrap();
+    assert_eq!(read, app);
+    assert_eq!((read.project(), read.id()), (None, "yc"));
 }

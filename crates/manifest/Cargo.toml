@@ -1,0 +1,23 @@
+[package]
+name = "cydonia-manifest"
+description = "What a Cydonia app says about itself: the manifest in its .wasm, and the table in its Cargo.toml"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["cydonia", "wasm"]
+categories = ["wasm"]
+
+[features]
+# Read `[package.metadata.cydonia]` out of a crate's `Cargo.toml`.
+cargo = ["dep:toml"]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+toml = { workspace = true, optional = true }
+
+[dev-dependencies]
+cydonia-manifest = { path = ".", features = ["cargo"] }

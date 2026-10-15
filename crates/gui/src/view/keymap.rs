@@ -29,9 +29,9 @@ use crate::{
         table,
         window::menubar,
         window::root::{
-            self, CloseProject, GoBack, GoForward, NewArticle, NewBoard, NewSession,
-            NewSessionNext, NewTable, NextEntry, OpenFiles, OpenProject, OpenReview, OpenSettings,
-            PrevEntry, ToggleChanges, ToggleSidebar, ToggleTerminal,
+            self, CloseProject, GoBack, GoForward, InstallApp, LoadApp, NewArticle, NewBoard,
+            NewSession, NewSessionNext, NewTable, NextEntry, OpenFiles, OpenProject, OpenReview,
+            OpenSettings, PrevEntry, ToggleChanges, ToggleSidebar, ToggleTerminal,
         },
     },
 };
@@ -69,6 +69,8 @@ pub enum Command {
     NewBoard,
     NewArticle,
     NewTable,
+    InstallApp,
+    LoadApp,
     OpenProject,
     CloseProject,
     ToggleSidebar,
@@ -111,13 +113,15 @@ impl Menu {
 }
 
 impl Command {
-    pub const ALL: [Self; 23] = [
+    pub const ALL: [Self; 25] = [
         Self::OpenSettings,
         Self::NewSession,
         Self::NewSessionNext,
         Self::NewBoard,
         Self::NewArticle,
         Self::NewTable,
+        Self::InstallApp,
+        Self::LoadApp,
         Self::OpenProject,
         Self::CloseProject,
         Self::ToggleSidebar,
@@ -146,6 +150,8 @@ impl Command {
             Self::NewBoard => "new_board",
             Self::NewArticle => "new_article",
             Self::NewTable => "new_table",
+            Self::InstallApp => "install_app",
+            Self::LoadApp => "load_app",
             Self::OpenProject => "open_project",
             Self::CloseProject => "close_project",
             Self::ToggleSidebar => "toggle_sidebar",
@@ -175,6 +181,8 @@ impl Command {
             Self::NewBoard => "New Board",
             Self::NewArticle => "New Article",
             Self::NewTable => "New Table",
+            Self::InstallApp => "Install App…",
+            Self::LoadApp => "Load App from Folder…",
             Self::OpenProject => "Open Project…",
             Self::CloseProject => "Close Project",
             Self::ToggleSidebar => "Toggle Sidebar",
@@ -203,6 +211,8 @@ impl Command {
             | Self::NewBoard
             | Self::NewArticle
             | Self::NewTable
+            | Self::InstallApp
+            | Self::LoadApp
             | Self::OpenProject
             | Self::CloseProject => Menu::File,
             Self::ToggleTerminal
@@ -223,7 +233,7 @@ impl Command {
         }
     }
 
-    /// The chord it ships with, where it ships with one. The six that do not
+    /// The chord it ships with, where it ships with one. The ones that do not
     /// are reachable from the menu and were never worth a default between
     /// them: ⌘N is the session, and three more `New` chords would spend the
     /// letters a person may want for their own.
@@ -235,7 +245,12 @@ impl Command {
             // ⌘N's other agent: the chord a second agent needs, since ⌘N
             // stays with whoever the project last talked to.
             Self::NewSessionNext => "alt-secondary-n",
-            Self::NewBoard | Self::NewArticle | Self::NewTable | Self::CloseProject => return None,
+            Self::NewBoard
+            | Self::NewArticle
+            | Self::NewTable
+            | Self::InstallApp
+            | Self::LoadApp
+            | Self::CloseProject => return None,
             // Nothing: ⌃⇥ and ⇧⌃⇥ are what step between entries, and they are
             // bound where nothing can name them — see [`root::bindings`]. A
             // second default would go in the menu as a key equivalent, and an
@@ -273,6 +288,8 @@ impl Command {
             Self::NewBoard => KeyBinding::new(chord, NewBoard, context),
             Self::NewArticle => KeyBinding::new(chord, NewArticle, context),
             Self::NewTable => KeyBinding::new(chord, NewTable, context),
+            Self::InstallApp => KeyBinding::new(chord, InstallApp, context),
+            Self::LoadApp => KeyBinding::new(chord, LoadApp, context),
             Self::OpenProject => KeyBinding::new(chord, OpenProject, context),
             Self::CloseProject => KeyBinding::new(chord, CloseProject, context),
             Self::ToggleSidebar => KeyBinding::new(chord, ToggleSidebar, context),
@@ -459,6 +476,7 @@ pub fn bind_all(shortcuts: &Shortcuts, cx: &mut App) {
     cx.bind_keys(super::modals::palette::bindings());
     cx.bind_keys(composer::bindings());
     cx.bind_keys(super::modals::new_board::bindings());
+    cx.bind_keys(super::modals::install_app::bindings());
     cx.bind_keys(super::kit::rename::bindings());
     cx.bind_keys(super::window::modal::bindings());
     cx.bind_keys(info::bindings());

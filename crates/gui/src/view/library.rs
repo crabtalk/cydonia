@@ -17,6 +17,7 @@ use crate::{
             labels::{LabelHost, Labels},
             menu::{self, Act},
             stamp,
+            watch::Watch,
         },
         modals::confirm::Doomed,
         sidebar::{self, Row},
@@ -37,7 +38,7 @@ use bezel::{
         input::{FieldEvent, TextField},
         menu::Item as MenuItem,
         popover, table, tabs,
-        widgets::{ButtonStyle, Buttons, Controls},
+        widgets::{ButtonStyle, Buttons, Content, Controls},
     },
 };
 use std::{cell::Cell, collections::HashSet, ops::Range, path::PathBuf, rc::Rc};
@@ -63,10 +64,17 @@ pub(crate) enum Tab {
     Boards,
     Tables,
     Sessions,
+    Apps,
 }
 
 impl Tab {
-    const ALL: [Self; 4] = [Self::Articles, Self::Boards, Self::Tables, Self::Sessions];
+    const ALL: [Self; 5] = [
+        Self::Articles,
+        Self::Boards,
+        Self::Tables,
+        Self::Sessions,
+        Self::Apps,
+    ];
 
     fn label(self) -> &'static str {
         match self {
@@ -74,6 +82,7 @@ impl Tab {
             Self::Boards => "Boards",
             Self::Tables => "Tables",
             Self::Sessions => "Sessions",
+            Self::Apps => "Apps",
         }
     }
 
@@ -83,6 +92,7 @@ impl Tab {
             Self::Boards => Kind::Board,
             Self::Tables => Kind::Table,
             Self::Sessions => Kind::Session,
+            Self::Apps => Kind::App,
         }
     }
 
@@ -93,14 +103,14 @@ impl Tab {
     /// Whether the kind this tab lists is switched on.
     fn shown(self, features: &Features) -> bool {
         match self {
-            Self::Articles => true,
+            Self::Articles | Self::Apps => true,
             Self::Boards => features.boards,
             Self::Tables => features.tables,
             Self::Sessions => features.sessions,
         }
     }
 
-    /// The columns, in order. The first three and Project are every tab's.
+    /// The columns, in order. Name, Ref and Project are every entry tab's.
     fn fields(self) -> &'static [Field] {
         use Field::*;
         match self {
@@ -110,6 +120,7 @@ impl Tab {
             Self::Boards => &[Check, Name, Ref, Project, Edited, Status, Actions],
             Self::Tables => &[Check, Name, Ref, Project, Created, Edited, Status, Actions],
             Self::Sessions => &[Check, Name, Ref, Project, Agent, Edited, Status, Actions],
+            Self::Apps => &[Name, Actions],
         }
     }
 
@@ -259,6 +270,8 @@ pub(crate) struct Library {
     /// two do not fit beside the search.
     bar: Rc<Cell<Pixels>>,
     strip: Rc<Cell<Pixels>>,
+    /// Every app's program, whose build names its listing.
+    apps: Watch,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -339,6 +352,7 @@ impl Library {
             scroll: UniformListScrollHandle::new(),
             bar: Rc::new(Cell::new(px(0.))),
             strip: Rc::new(Cell::new(px(0.))),
+            apps: Watch::default(),
             _subscriptions: subscriptions,
         }
     }
@@ -360,6 +374,8 @@ struct Listing {
     archived: bool,
     /// `None` where the tab shows none.
     labels: Option<Vec<String>>,
+    /// An app Cydonia builds from source on this machine.
+    local: bool,
 }
 
 impl Cydonia {
@@ -414,6 +430,27 @@ impl Library {
         let library = self;
         let workspace = self.workspace.read(cx);
         let features = &workspace.settings.features;
+        if library.tab == Tab::Apps {
+            return workspace
+                .listed_apps(cx)
+                .map(|held| {
+                    let program = held.program.read(cx);
+                    Listing {
+                        row: Row::App(held.id.clone()),
+                        title: program.label().into(),
+                        reference: None,
+                        number: None,
+                        project: SharedString::default(),
+                        agent: None,
+                        touched: 0,
+                        created: None,
+                        archived: false,
+                        labels: None,
+                        local: program.local(),
+                    }
+                })
+                .collect();
+        }
         let mut out = Vec::new();
         for open in &workspace.projects {
             if library
@@ -458,6 +495,7 @@ impl Library {
                         .filter(|_| library.tab.fields().contains(&Field::Created)),
                     archived: facts.archived,
                     labels: library.tab.labelled().then_some(facts.labels),
+                    local: false,
                 });
             }
         }
@@ -1315,6 +1353,7 @@ impl Library {
                         })
                         .child(listing.title.clone()),
                 )
+                .children(listing.local.then(|| theme.badge("Local")))
                 .into_any_element()
         };
         let cells = tab
@@ -1436,6 +1475,10 @@ impl LabelHost for Library {
 
 impl Render for Library {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let programs: Vec<_> = self.workspace.read(cx).programs().cloned().collect();
+        let mut apps = std::mem::take(&mut self.apps);
+        apps.set(&programs, cx);
+        self.apps = apps;
         self.library_view(window, cx)
     }
 }

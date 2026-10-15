@@ -17,6 +17,7 @@
 //! Nothing here reaches for gpui, and that is the rule the crate exists to
 //! hold: a shape a client reads must not carry anything about a window.
 
+pub mod app;
 pub mod archive;
 pub mod article;
 pub mod backup;

@@ -9,6 +9,7 @@ use super::{self as data, Data, Edit, Page, Row};
 use anyhow::{Result, bail};
 use artifact::table::Column;
 use rusqlite::params_from_iter;
+use serde_json::{Map, Value};
 
 impl Data {
     /// Read a window of rows.
@@ -122,6 +123,64 @@ impl Data {
         }
         tx.commit()?;
         Ok(ids)
+    }
+
+    /// Append rows, each by column name, in one transaction, answering with
+    /// their ids in order. A column the table does not have fails the lot.
+    pub fn insert(&mut self, table: &str, rows: &[Map<String, Value>]) -> Result<Vec<i64>> {
+        let key = self.resolve(table)?;
+        let columns = data::columns_of(&self.writer, &key)?;
+        for row in rows {
+            if let Some(name) = row
+                .keys()
+                .find(|name| !columns.iter().any(|col| &col.name == *name))
+            {
+                bail!("no column {name} on {key}");
+            }
+        }
+        let tx = self.writer.transaction()?;
+        let mut ids = Vec::with_capacity(rows.len());
+        for row in rows {
+            match row.is_empty() {
+                true => tx.execute(
+                    &format!("INSERT INTO {} DEFAULT VALUES", data::quote(&key)),
+                    [],
+                )?,
+                false => tx.execute(
+                    &format!(
+                        "INSERT INTO {} ({}) VALUES ({})",
+                        data::quote(&key),
+                        row.keys()
+                            .map(|name| data::quote(name))
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        vec!["?"; row.len()].join(", ")
+                    ),
+                    params_from_iter(row.values().map(data::bind)),
+                )?,
+            };
+            ids.push(tx.last_insert_rowid());
+        }
+        tx.commit()?;
+        Ok(ids)
+    }
+
+    /// Take away the rows whose `column` holds `value`.
+    pub fn delete_where(&mut self, table: &str, column: &str, value: &Value) -> Result<()> {
+        let key = self.resolve(table)?;
+        let columns = data::columns_of(&self.writer, &key)?;
+        let Some(col) = columns.iter().find(|col| col.name == column) else {
+            bail!("no column {column} on {key}");
+        };
+        self.writer.execute(
+            &format!(
+                "DELETE FROM {} WHERE {} IS ?1",
+                data::quote(&key),
+                data::quote(&col.name)
+            ),
+            [data::bind(value)],
+        )?;
+        Ok(())
     }
 
     pub fn delete_rows(&mut self, table: &str, rowids: &[i64]) -> Result<()> {

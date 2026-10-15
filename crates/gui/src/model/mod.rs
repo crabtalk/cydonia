@@ -2,6 +2,7 @@
 //! the boards and articles beside them, and the files all of that is restored
 //! from.
 
+pub mod apps;
 pub mod article;
 pub mod cover;
 pub mod disk;

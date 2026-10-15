@@ -166,7 +166,9 @@ impl Tab {
 
     /// What the pane shows, as its find reaches it.
     fn shown_kind(&self) -> Kind {
-        self.entry.as_ref().map_or(self.kind, |member| member.kind)
+        self.entry
+            .as_ref()
+            .map_or(self.kind, artifact::space::Member::kind)
     }
 
     /// How many hits the find finds in what the pane shows.
@@ -175,7 +177,7 @@ impl Tab {
             Kind::Article => Some(self.article_shown(cx)?.read(cx).hits(cx)),
             Kind::Board => Some(self.board_shown(cx)?.read(cx).hits(cx)),
             Kind::Session => Some(self.session_shown(cx)?.read(cx).hits(cx)),
-            Kind::Table => None,
+            Kind::Table | Kind::App => None,
         }
     }
 
@@ -269,7 +271,7 @@ impl Tab {
                     view.update(cx, |view, cx| view.reveal_hit(cx));
                 }
             }
-            Kind::Table => {}
+            Kind::Table | Kind::App => {}
         }
     }
 

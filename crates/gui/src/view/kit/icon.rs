@@ -10,5 +10,6 @@ pub(crate) fn kind_icon(kind: Kind) -> Icon {
         Kind::Board => icons::development::SquareKanban.into(),
         Kind::Article => icons::files::FileText.into(),
         Kind::Table => icons::files::Table2.into(),
+        Kind::App => icons::development::AppWindow.into(),
     }
 }

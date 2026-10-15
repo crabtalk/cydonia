@@ -179,11 +179,14 @@ impl Cydonia {
     ///
     /// `entry` is the pane's *name* — the first of its strip, which is what
     /// the space keeps and what every drop and close here is aimed at. What
-    /// the pane is showing is [`Self::front_of`], and the two are the same
+    /// the pane is showing is [`Workspace::front_of`], and the two are the same
     /// thing only for a pane holding one entry.
     fn pane(&mut self, entry: &Member, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let stack = self.workspace.read(cx).stack_of(entry);
-        let front = self.front_of(entry, &stack, cx);
+        let front = self
+            .workspace
+            .read(cx)
+            .front_of(entry)
+            .unwrap_or_else(|| entry.clone());
         let body = match self.pane_named(entry, cx) {
             Some(pane) => pane
                 .cached(StyleRefinement::default().flex().flex_col().size_full())
@@ -221,11 +224,22 @@ impl Cydonia {
             let stack = self.workspace.read(cx).stack_of(&name);
             // A pane is named by its first tab, and a close or a reorder can
             // hand the name on: the pane holding any of the strip is this one.
+            // A close takes the old name out of the strip, so the tabs it held
+            // are what still match it.
             let pane = match self
                 .panes
                 .iter()
                 .position(|pane| stack.contains(&pane.read(cx).name))
-            {
+                .or_else(|| {
+                    self.panes.iter().position(|pane| {
+                        pane.read(cx).tabs.iter().any(|tab| {
+                            tab.read(cx)
+                                .entry
+                                .as_ref()
+                                .is_some_and(|entry| stack.contains(entry))
+                        })
+                    })
+                }) {
                 Some(at) => self.panes.remove(at),
                 None => {
                     let (workspace, root) = (self.workspace.clone(), cx.entity().downgrade());
@@ -269,15 +283,6 @@ impl Cydonia {
         }
     }
 
-    /// Which of a pane's entries it is showing — see [`Pane::front`]. A pane
-    /// not yet made shows the first of its strip.
-    pub(crate) fn front_of(&self, pane: &Member, stack: &[Member], cx: &App) -> Member {
-        match self.pane_named(pane, cx) {
-            Some(held) => held.read(cx).front(cx),
-            None => stack.first().unwrap_or(pane).clone(),
-        }
-    }
-
     /// Whether a pane draws the entry `row` names: the front tab of a pane of
     /// the open space, or the single pane.
     pub(crate) fn on_screen(&self, row: &Row, cx: &App) -> bool {
@@ -293,10 +298,9 @@ impl Cydonia {
             let Some(at) = workspace.project_at(project) else {
                 return false;
             };
-            return space.panes().iter().any(|pane| {
-                let front = self.front_of(pane, &workspace.stack_of(pane), cx);
+            return space.tree.fronts().iter().any(|front| {
                 workspace
-                    .showing_of(&front, cx)
+                    .showing_of(front, cx)
                     .is_some_and(|(open, shown)| open == at && &shown == showing)
             });
         }
@@ -414,10 +418,7 @@ impl Cydonia {
         match item {
             Dragged::Row(row) => row.label(self.workspace.read(cx), cx),
             Dragged::Tab(member) => self
-                .workspace
-                .read(cx)
-                .showing_of(member, cx)
-                .and_then(|(project, showing)| self.toolbar_of(project, showing, cx))
+                .member_toolbar(member, cx)
                 .map(|toolbar| toolbar.title)
                 .unwrap_or_default(),
         }
@@ -553,29 +554,36 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Where the window lands once the tab is gone: the tab that was in
-        // front before it, anywhere in the space, so closing walks back the
-        // way the reader came. Nothing remembered falls back to a neighbour in
-        // the tab's own strip — the one to its left, or to its right for the
-        // first — and, for a pane's last tab, to the space's last tab.
-        let stack = self.workspace.read(cx).stack_of(entry);
+        // What the tab's own pane shows once it is gone — see
+        // [`Pane::front_after`].
+        let next = self
+            .workspace
+            .read(cx)
+            .stack_of(entry)
+            .first()
+            .and_then(|name| self.pane_named(name, cx))
+            .and_then(|pane| pane.read(cx).front_after(entry, cx));
+        // Where the focus lands: where it is, unless it was on the tab
+        // closing. Then on the tab its pane shows next, and for a pane's last
+        // tab on the tab that was in front before it anywhere in the space,
+        // or else the space's last tab.
         let entries = self
             .arrangement(cx)
             .map(|space| space.entries())
             .unwrap_or_default();
         let kept = self
-            .tab_history
-            .iter()
-            .rev()
-            .find(|tab| *tab != entry && entries.contains(tab))
-            .cloned()
+            .leaf()
+            .read(cx)
+            .entry
+            .clone()
+            .filter(|focused| focused != entry)
+            .or_else(|| next.clone())
             .or_else(|| {
-                let at = stack.iter().position(|tab| tab == entry)?;
-                match at {
-                    _ if stack.len() < 2 => None,
-                    0 => stack.get(1).cloned(),
-                    at => stack.get(at - 1).cloned(),
-                }
+                self.tab_history
+                    .iter()
+                    .rev()
+                    .find(|tab| *tab != entry && entries.contains(tab))
+                    .cloned()
             })
             .or_else(|| entries.iter().rev().find(|tab| *tab != entry).cloned());
         self.tab_history.retain(|tab| tab != entry);
@@ -585,10 +593,10 @@ impl Cydonia {
         let alone = self
             .workspace
             .update(cx, |workspace, cx| workspace.close_pane(entry, cx));
-        if let Some(kept) = &kept
-            && let Some(pane) = self.workspace.read(cx).stack_of(kept).first().cloned()
+        if let Some(next) = &next
+            && let Some(pane) = self.workspace.read(cx).stack_of(next).first().cloned()
         {
-            self.set_front(&pane, kept, cx);
+            self.set_front(&pane, next, cx);
         }
         // The pane left alone is the one to keep, not the one just closed:
         // [`Cydonia::sync_leaves`] keeps whichever leaf is focused when it
@@ -640,8 +648,11 @@ impl Cydonia {
         let Some(pane) = panes.get(landing) else {
             return;
         };
-        let stack = self.workspace.read(cx).stack_of(pane);
-        let front = self.front_of(pane, &stack, cx);
+        let front = self
+            .workspace
+            .read(cx)
+            .front_of(pane)
+            .unwrap_or_else(|| pane.clone());
         self.focused = usize::MAX;
         self.focus_pane(&front, window, cx);
     }
@@ -670,8 +681,7 @@ impl Cydonia {
         else {
             return;
         };
-        let stack = self.workspace.read(cx).stack_of(&pane);
-        let front = self.front_of(&pane, &stack, cx);
+        let front = self.workspace.read(cx).front_of(&pane).unwrap_or(pane);
         self.focused = usize::MAX;
         self.focus_pane(&front, window, cx);
     }
@@ -821,16 +831,19 @@ impl Cydonia {
     }
 }
 
-/// A member as something that can be an element id: which project, and which
-/// of its things. Two projects can hold the same id, so the path is part of
-/// it.
+/// A member as something that can be an element id: an entry by which
+/// project and which of its things — two projects can hold the same id, so
+/// the path is part of it — or an app by its id.
 pub(crate) fn key_of(member: &Member) -> SharedString {
-    SharedString::from(format!(
-        "{}::{:?}::{}",
-        member.project.display(),
-        member.kind,
-        member.id
-    ))
+    SharedString::from(match member {
+        Member::Entry(entry) => format!(
+            "{}::{:?}::{}",
+            entry.project.display(),
+            entry.kind,
+            entry.id
+        ),
+        Member::App { app } => format!("app::{app}"),
+    })
 }
 
 /// A seam's place in the window, as something that can be an element id.

@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 impl Workspace {
     /// The labels the entry `showing` carries in the project at `project`.
-    /// `None` for an entry that cannot carry any, which is a table.
+    /// `None` for an entry that cannot carry any: a table or an app.
     pub fn labels_of<'a>(
         &'a self,
         project: usize,

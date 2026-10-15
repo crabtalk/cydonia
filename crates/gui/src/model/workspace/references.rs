@@ -3,7 +3,10 @@
 
 use super::{Showing, Workspace};
 use crate::model::{article::Disk, project::Project};
-use artifact::board::Board;
+use artifact::board::{
+    Board,
+    blocking::{Found, Shelf},
+};
 use artifact::error::Error;
 use artifact::{
     article::anchor,
@@ -146,6 +149,16 @@ impl Workspace {
         card.blocked_by
             .iter()
             .filter_map(move |blocker| self.card_board(home, blocker, cx))
+    }
+
+    /// The open projects' boards as this workspace holds them — what
+    /// [`artifact::board::blocking`] finds the other end of a card's
+    /// references through.
+    pub fn shelf<'a>(&'a self, cx: &'a App) -> Held<'a> {
+        Held {
+            workspace: self,
+            cx,
+        }
     }
 
     /// The project `name` names, or with none the one at `home`, else the
@@ -295,3 +308,28 @@ pub fn current(cx: &App) -> Option<Entity<Workspace>> {
 #[cfg(test)]
 #[path = "../../../tests/unit/references.rs"]
 mod tests;
+
+/// The open projects' boards in memory — see [`Workspace::shelf`].
+pub struct Held<'a> {
+    workspace: &'a Workspace,
+    cx: &'a App,
+}
+
+impl Shelf for Held<'_> {
+    fn project(&self, from: &Path, name: Option<&str>) -> Option<PathBuf> {
+        let project = self.workspace.named_project(name, Some(from))?;
+        Some(project.path.clone())
+    }
+
+    fn card(&self, project: &Path, key: &str, handle: u64) -> Option<Found> {
+        let at = self.workspace.project_at(project)?;
+        let board = self.workspace.projects[at]
+            .keyed_board(key, self.cx)?
+            .read(self.cx);
+        Some(Found {
+            board: board.id.clone(),
+            key: board.key.clone(),
+            card: board.card_at(handle)?.id.clone(),
+        })
+    }
+}

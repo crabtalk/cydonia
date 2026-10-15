@@ -86,7 +86,7 @@ fn a_number_names_a_table(cx: &mut gpui::TestAppContext) {
             name: "Name".to_owned(),
             kind: ColType::Text,
         };
-        let key = Data::open(&dir)
+        let key = Data::open(&crate::data::Home::Project(dir.clone()))
             .unwrap()
             .create("Prices", None, &[column], None)
             .unwrap()

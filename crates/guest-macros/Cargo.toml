@@ -1,0 +1,18 @@
+[package]
+name = "cydonia-guest-macros"
+description = "The app! macro of cydonia-guest"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["cydonia", "wasm"]
+categories = ["wasm"]
+
+[lib]
+proc-macro = true
+
+[dependencies]
+manifest = { workspace = true, features = ["cargo"] }
+serde_json.workspace = true

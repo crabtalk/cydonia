@@ -28,7 +28,7 @@ use crate::{
 use artifact::kind::Kind;
 use artifact::{
     board::{Card, Page, View},
-    space::Member,
+    space::{Entry, Member},
 };
 use bezel::agent::orbs::engine::Frame;
 use bezel::ui::scroll as scrollbars;
@@ -839,7 +839,7 @@ struct Reveal {
 /// opens.
 pub(crate) struct BoardView {
     /// The board, as the space names it.
-    pub(crate) board: Member,
+    pub(crate) board: Entry,
     /// The pane drawing it, as [`Leaf::entry`] names it.
     pane: Option<Member>,
     workspace: Entity<Workspace>,
@@ -1106,7 +1106,7 @@ impl Cydonia {
     }
 
     /// Where the view of `board` in the pane showing it is scrolled to.
-    pub(crate) fn board_scroll(&self, board: &Member, cx: &App) -> Option<Scroll> {
+    pub(crate) fn board_scroll(&self, board: &Entry, cx: &App) -> Option<Scroll> {
         self.board_views(cx)
             .into_iter()
             .find(|view| view.read(cx).board == *board)
@@ -1200,7 +1200,7 @@ impl Cydonia {
         self.commit(cx);
         let (board, card) = (board.to_owned(), card.to_owned());
         self.workspace.update(cx, |workspace, cx| {
-            workspace.write_board(&board, cx, |board| board.remove_card(&card));
+            workspace.remove_card(&board, &card, cx);
         });
         cx.notify();
     }
@@ -1222,7 +1222,7 @@ impl Cydonia {
     pub(crate) fn open_page(
         &mut self,
         on: Option<&Member>,
-        board: Member,
+        board: Entry,
         page: Page,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1279,7 +1279,11 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let theme = Theme::of(cx).clone();
-        let member = self.workspace.read(cx).board_member(project, board_at)?;
+        let member = self
+            .workspace
+            .read(cx)
+            .board_member(project, board_at)?
+            .into_entry()?;
         let board = self.workspace.read(cx).board_in(project, board_at, cx)?;
         let lanes: Vec<(String, bool)> = board
             .columns
@@ -1394,7 +1398,7 @@ impl Cydonia {
 
 impl BoardView {
     pub(crate) fn new(
-        board: Member,
+        board: Entry,
         pane: Option<Member>,
         workspace: Entity<Workspace>,
         root: WeakEntity<Cydonia>,
@@ -1861,24 +1865,25 @@ impl BoardView {
         let text = self.card_field.read(cx).content().trim().to_owned();
         self.card_field.update(cx, |field, cx| field.clear(cx));
         let id = self.board.id.clone();
-        self.workspace.update(cx, |workspace, cx| {
-            workspace.write_board(&id, cx, |board| match &at {
-                Editing::New(place, column) => {
-                    if !text.is_empty() {
-                        match place {
-                            Place::Top => board.prepend_card(column, text.clone()),
-                            Place::End => board.add_card(column, text.clone()),
-                        };
+        self.workspace.update(cx, |workspace, cx| match &at {
+            Editing::Card(card) if text.is_empty() => {
+                workspace.remove_card(&id, card, cx);
+            }
+            _ => {
+                workspace.write_board(&id, cx, |board| match &at {
+                    Editing::New(place, column) => {
+                        if !text.is_empty() {
+                            match place {
+                                Place::Top => board.prepend_card(column, text.clone()),
+                                Place::End => board.add_card(column, text.clone()),
+                            };
+                        }
                     }
-                }
-                Editing::Card(id) => {
-                    if text.is_empty() {
-                        board.remove_card(id);
-                    } else {
+                    Editing::Card(id) => {
                         board.rewrite_card(id, &text);
                     }
-                }
-            });
+                });
+            }
         });
         cx.notify();
     }
@@ -2614,7 +2619,6 @@ impl BoardView {
         let viewport = (self.editing.is_none() && !cx.has_active_drag())
             .then_some((-scroll.down.offset().y, height));
         let mut group_top = px(0.);
-        let mut carried = HashMap::new();
         let groups: Vec<AnyElement> = ids
             .iter()
             .enumerate()
@@ -2630,7 +2634,6 @@ impl BoardView {
                     },
                     &mut group_top,
                     viewport,
-                    &mut carried,
                     window,
                     cx,
                 )
@@ -2662,12 +2665,6 @@ impl BoardView {
                             BoardItem::Card(..) => true,
                             BoardItem::Lane(at, _) => *at == key,
                         }
-                    })
-                    .carries(move |item| match item {
-                        BoardItem::Lane(_, column) => {
-                            carried.get(column).cloned().unwrap_or_default()
-                        }
-                        BoardItem::Card(..) => Vec::new(),
                     })
                     // A card lands under a heading; a heading lands in front
                     // of another or at the end.
@@ -2714,7 +2711,6 @@ impl BoardView {
         lane: Lane<'_>,
         group_top: &mut Pixels,
         viewport: Option<(Pixels, Pixels)>,
-        carried: &mut HashMap<String, Vec<BoardItem>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
@@ -2749,7 +2745,9 @@ impl BoardView {
         // otherwise happen out of sight: a query narrowing the board, and the
         // field writing a card into this lane.
         let writing = matches!(&self.editing, Some(Editing::New(_, at)) if *at == id);
-        let folded = folded && query.trim().is_empty() && !writing;
+        // A lane being carried leaves its cards out until it lands.
+        let carried = self.sort.carried() == Some(BoardItem::Lane(key.clone(), id.clone()));
+        let folded = carried || (folded && query.trim().is_empty() && !writing);
         let count = if folded { 0 } else { cards.len() };
         let visible = viewport
             .map(|(top, height)| {
@@ -2815,15 +2813,6 @@ impl BoardView {
             }
         }
         let written = id.clone();
-        if !folded {
-            carried.insert(
-                id.clone(),
-                cards
-                    .iter()
-                    .map(|card| BoardItem::Card(key.clone(), card.clone()))
-                    .collect(),
-            );
-        }
         let heading = self.list_group_header(
             &id,
             name,

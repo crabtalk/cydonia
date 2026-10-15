@@ -2,6 +2,7 @@ use super::*;
 use crate::model::{project::Project, settings::Settings, state};
 use artifact::kind::Kind;
 use artifact::project::{Project as _, fs};
+use artifact::space::Entry;
 use bezel::gpui::{Modifiers, MouseButton, TestAppContext, VisualTestContext, point, size};
 use bezel::ui::AppExt as _;
 
@@ -49,7 +50,7 @@ fn open(
 ) -> (
     Scratch,
     Entity<Cydonia>,
-    Member,
+    Entry,
     Vec<String>,
     VisualTestContext,
 ) {
@@ -70,7 +71,11 @@ fn open(
             .clone(),
     ];
     store.save_board(&mut board).unwrap();
-    let member = Member::new(&scratch.0, Kind::Board, board.id.clone());
+    let member = Entry {
+        project: scratch.0.clone(),
+        kind: Kind::Board,
+        id: board.id.clone(),
+    };
     cx.update(|cx| {
         Theme::install(bezel::theme::Appearance::Dark, cx);
         input::init(cx);
@@ -151,7 +156,7 @@ fn draft_text(root: &Entity<Cydonia>, cx: &mut VisualTestContext) -> String {
     })
 }
 
-fn saved_text(scratch: &Scratch, member: &Member, card: &str) -> Option<String> {
+fn saved_text(scratch: &Scratch, member: &Entry, card: &str) -> Option<String> {
     fs::Project::new(&scratch.0)
         .board(&member.id)
         .unwrap()

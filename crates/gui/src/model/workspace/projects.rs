@@ -221,6 +221,7 @@ impl Workspace {
                 project.table = at;
                 project.reload_page();
             }
+            Kind::App => {}
         }
         // Landing back in a session is being in front of it — see
         // [`Self::wake_session`]. Landing in an article or a board is not, and

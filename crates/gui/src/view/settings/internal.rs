@@ -1,4 +1,4 @@
-//! The developer section: switches for looking at things that have not
+//! The internal section: switches for looking at things that have not
 //! happened.
 //!
 //! Nothing here changes what the app does with a project, and nothing here is
@@ -20,7 +20,7 @@ use bezel::{
 };
 
 impl SettingsWindow {
-    pub(super) fn developer_body(&self, cx: &Context<Self>) -> AnyElement {
+    pub(super) fn internal_body(&self, cx: &Context<Self>) -> AnyElement {
         div()
             .flex()
             .flex_col()

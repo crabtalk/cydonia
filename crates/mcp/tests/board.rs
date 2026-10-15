@@ -624,6 +624,28 @@ fn a_card_waits_on_cards_across_boards_and_projects() {
         card.contains("blocked by ROAD-2, DEV-1, foo#OPS-1"),
         "{card}"
     );
+    let waited = said(server.call(
+        "board_read_card",
+        json!({ "project": scratch.path(), "card": "DEV-1" }),
+        None,
+    ));
+    assert!(waited.contains("blocks ROAD-1"), "{waited}");
+    let done = said(server.call(
+        "board_move_card",
+        json!({ "project": scratch.path(), "card": "ROAD-2", "column": "Todo" }),
+        None,
+    ));
+    assert!(done.ends_with("\nROAD-2 blocks ROAD-1"), "{done}");
+    let elsewhere = said(server.call(
+        "board_read_card",
+        json!({ "project": &foo, "card": "OPS-1" }),
+        None,
+    ));
+    let named = artifact::reference::project_name(scratch.path()).unwrap();
+    assert!(
+        elsewhere.contains(&format!("blocks {named}#ROAD-1")),
+        "{elsewhere}"
+    );
 
     refused(server.call(
         "board_set_card_blockers",
@@ -654,6 +676,64 @@ fn a_card_waits_on_cards_across_boards_and_projects() {
         None,
     ));
     assert_eq!(cleared, "ROAD-1 waits on nothing");
+}
+
+/// Both ends of a wait are kept: a card carried to another board, or on a
+/// board re-keyed, is named anew by the cards waiting on it.
+#[test]
+fn a_wait_follows_a_card_that_is_carried_or_rekeyed() {
+    let scratch = Scratch::new("card-blockers-moved");
+    Rail::holding(&[scratch.path()]);
+    let store = scratch.store();
+    store.create_board("Roadmap", "ROAD").expect("a board");
+    store.create_board("Development", "DEV").expect("a board");
+    let server = scratch.server();
+    for board in ["ROAD", "DEV"] {
+        said(server.call(
+            "board_add_column",
+            json!({ "project": scratch.path(), "board": board, "name": "Todo" }),
+            None,
+        ));
+    }
+    said(server.call(
+        "board_add_card",
+        json!({ "project": scratch.path(), "board": "ROAD", "column": "Todo", "text": "Ship it" }),
+        None,
+    ));
+    said(server.call(
+        "board_add_card",
+        json!({ "project": scratch.path(), "board": "DEV", "column": "Todo", "text": ["Fix the drag", "Wire it"] }),
+        None,
+    ));
+    said(server.call(
+        "board_set_card_blockers",
+        json!({ "project": scratch.path(), "card": "ROAD-1", "blocked_by": ["DEV-1", "DEV-2"] }),
+        None,
+    ));
+
+    let carried = said(server.call(
+        "board_move_card",
+        json!({ "project": scratch.path(), "card": "DEV-1", "to_board": "ROAD", "column": "Todo" }),
+        None,
+    ));
+    assert!(carried.ends_with("\nROAD-2 blocks ROAD-1"), "{carried}");
+    said(server.call(
+        "board_rename",
+        json!({ "project": scratch.path(), "board": "DEV", "name": "Core", "key": "CORE" }),
+        None,
+    ));
+    let card = said(server.call(
+        "board_read_card",
+        json!({ "project": scratch.path(), "card": "ROAD-1" }),
+        None,
+    ));
+    assert!(card.contains("blocked by ROAD-2, CORE-2"), "{card}");
+    let blocker = said(server.call(
+        "board_read_card",
+        json!({ "project": scratch.path(), "card": "CORE-2" }),
+        None,
+    ));
+    assert!(blocker.contains("blocks ROAD-1"), "{blocker}");
 }
 
 /// A lane and the cards in it are laid out in two calls rather than five: the

@@ -23,5 +23,5 @@ pub enum Section {
     // only while a backup exists — see [`Section::listed`].
     Backups,
     // Last, and in a debug build alone — see [`Section::listed`].
-    Developer,
+    Internal,
 }

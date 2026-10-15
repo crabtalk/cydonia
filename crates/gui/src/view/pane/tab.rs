@@ -4,7 +4,7 @@
 use crate::{
     model::workspace::{Showing, Workspace},
     view::{
-        article,
+        app, article,
         board::{self, DismissFind},
         component::{composer::Composer, ribbon::Ribbon, transcript},
         kit::watch::Watch,
@@ -88,6 +88,8 @@ pub(crate) struct Tab {
     pub(crate) sessions: Vec<Entity<transcript::SessionView>>,
     /// The same for each table.
     pub(crate) tables: Vec<Entity<table::TableView>>,
+    /// The same for each app.
+    pub(crate) apps: Vec<Entity<app::AppView>>,
     /// The board's find field, and whether its bar is up.
     ///
     /// The bar stands whenever the query does: a board narrowed with nothing on
@@ -151,6 +153,7 @@ impl Tab {
             articles: Vec::new(),
             sessions: Vec::new(),
             tables: Vec::new(),
+            apps: Vec::new(),
             find_field,
             finding: false,
             find_at: 0,
@@ -254,6 +257,20 @@ impl Tab {
         }
     }
 
+    /// An app the pane shows, drawn.
+    fn app_body(&self, cx: &App) -> AnyElement {
+        match self.app_shown(cx) {
+            Some(view) => div()
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .child(view)
+                .into_any_element(),
+            None => div().flex_1().into_any_element(),
+        }
+    }
+
     /// What the pane's drawer draws for what it holds.
     fn drawer_face(
         &self,
@@ -290,7 +307,12 @@ impl Render for Tab {
         self.watch_sessions(cx);
         let theme = Theme::of(cx).clone();
         let showing = self.showing(cx);
+        let app = match &self.entry {
+            Some(member) => member.kind() == Kind::App,
+            None => self.kind == Kind::App,
+        };
         let body = match &showing {
+            _ if app => self.app_body(cx),
             // The entry has gone since the space named it. The pane says so
             // rather than standing empty: a blank pane reads as a bug, and the
             // space is about to drop the member anyway — see

@@ -3,8 +3,9 @@
 //!
 //! `board.toml` holds each column's cards as an ordered list of card ids. A
 //! card's directory is a [`crate::document`]: `content.md` is its text,
-//! `properties.toml` its handle, status, session, label and blockers, and `assets/` its
-//! pictures, referenced as `assets/<name>`. The card's id is its directory's
+//! `properties.toml` its handle, status, session, label, the cards it waits
+//! on and the cards waiting on it, and `assets/` its pictures, referenced as
+//! `assets/<name>`. The card's id is its directory's
 //! name. The board directory is a document too: its `content.md` is the
 //! board's description, absent for none.
 
@@ -22,6 +23,7 @@ const STATUS: &str = "status";
 const SESSION: &str = "session";
 const LABEL: &str = "label";
 const BLOCKED_BY: &str = "blocked_by";
+const BLOCKS: &str = "blocks";
 
 #[derive(Serialize, Deserialize)]
 struct Disk {
@@ -106,12 +108,8 @@ pub fn card_properties(card: &Card, held: &str) -> Option<String> {
             (STATUS, card.busy.then(|| toml_edit::value(BUSY))),
             (SESSION, card.session.as_deref().map(toml_edit::value)),
             (LABEL, card.label.as_deref().map(toml_edit::value)),
-            (
-                BLOCKED_BY,
-                (!card.blocked_by.is_empty()).then(|| {
-                    toml_edit::value(card.blocked_by.iter().collect::<toml_edit::Array>())
-                }),
-            ),
+            (BLOCKED_BY, references(&card.blocked_by)),
+            (BLOCKS, references(&card.blocks)),
         ],
     )
 }
@@ -139,17 +137,27 @@ pub fn parse_card(id: &str, content: &str, properties: &str) -> Card {
             .get(LABEL)
             .and_then(|label| label.as_str())
             .and_then(crate::label::normalize),
-        blocked_by: doc
-            .get(BLOCKED_BY)
-            .and_then(|ids| ids.as_array())
-            .map(|ids| {
-                ids.iter()
-                    .filter_map(|id| id.as_str().map(str::to_owned))
-                    .collect()
-            })
-            .unwrap_or_default(),
+        blocked_by: read_references(&doc, BLOCKED_BY),
+        blocks: read_references(&doc, BLOCKS),
         version: None,
     }
+}
+
+/// A list of card references as `properties.toml` holds it; none for an empty
+/// one.
+fn references(list: &[String]) -> Option<toml_edit::Item> {
+    (!list.is_empty()).then(|| toml_edit::value(list.iter().collect::<toml_edit::Array>()))
+}
+
+fn read_references(doc: &toml_edit::DocumentMut, key: &str) -> Vec<String> {
+    doc.get(key)
+        .and_then(|ids| ids.as_array())
+        .map(|ids| {
+            ids.iter()
+                .filter_map(|id| id.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// A board from `board.toml` and the cards read beside it. Cards no column

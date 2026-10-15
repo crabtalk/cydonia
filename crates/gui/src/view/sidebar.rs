@@ -148,6 +148,8 @@ pub(crate) enum Row {
     Archive(PathBuf),
     /// An entry of the project at `project`.
     Entry { project: PathBuf, showing: Showing },
+    /// An app, by its id.
+    App(String),
 }
 
 /// How a row is drawn, which is what its height follows.
@@ -182,6 +184,7 @@ impl Row {
     pub(crate) fn kind(&self) -> Option<Kind> {
         match self {
             Row::Entry { showing, .. } => Some(showing.kind()),
+            Row::App(_) => Some(Kind::App),
             _ => None,
         }
     }
@@ -191,7 +194,7 @@ impl Row {
     pub(crate) fn showing(&self) -> Option<&Showing> {
         match self {
             Row::Entry { showing, .. } => Some(showing),
-            Row::Group(_) | Row::Archive(_) | Row::Heading(_) => None,
+            Row::Group(_) | Row::Archive(_) | Row::Heading(_) | Row::App(_) => None,
         }
     }
 
@@ -207,20 +210,32 @@ impl Row {
 
     /// What a space would name this row, so it can be dragged into one.
     pub(crate) fn member(&self, workspace: &Workspace, cx: &App) -> Option<Member> {
-        let Row::Entry { project, showing } = self else {
-            return None;
-        };
-        workspace.member_of(workspace.project_at(project)?, showing.clone(), cx)
+        match self {
+            Row::Entry { project, showing } => {
+                workspace.member_of(workspace.project_at(project)?, showing.clone(), cx)
+            }
+            Row::App(id) => Some(Member::app(id.clone())),
+            Row::Group(_) | Row::Archive(_) | Row::Heading(_) => None,
+        }
     }
 
     /// The row for a member a space holds — the way back from what it names
-    /// to the line that stands for it. Nothing where its project is not open.
+    /// to the line that stands for it. Nothing where its project is not open,
+    /// or its app is not listed.
     pub(crate) fn of_member(member: &Member, workspace: &Workspace, cx: &App) -> Option<Self> {
-        let (_, showing) = workspace.showing_of(member, cx)?;
-        Some(Row::Entry {
-            project: member.project.clone(),
-            showing,
-        })
+        match member {
+            Member::Entry(entry) => {
+                let (_, showing) = workspace.showing_of(member, cx)?;
+                Some(Row::Entry {
+                    project: entry.project.clone(),
+                    showing,
+                })
+            }
+            Member::App { app } => {
+                workspace.program(app, cx)?;
+                Some(Row::App(app.clone()))
+            }
+        }
     }
 
     /// The member a row names once it lands in a pane. A session carried with
@@ -254,6 +269,7 @@ impl Row {
                     workspace.projects.get(workspace.project_at(path)?)?.name()
                 }
                 Row::Archive(_) | Row::Heading(_) => return None,
+                Row::App(id) => workspace.program(id, cx)?.read(cx).label(),
                 Row::Group(Group::Space(id)) => workspace
                     .spaces
                     .get(workspace.space_ix(id)?)?
@@ -295,6 +311,18 @@ impl Row {
             .is_some_and(|project| workspace.is_pinned(project, showing.clone(), cx))
     }
 
+    /// The program an app's row names.
+    pub(crate) fn program(
+        &self,
+        workspace: &Workspace,
+        cx: &App,
+    ) -> Option<Entity<crate::model::apps::Program>> {
+        let Row::App(id) = self else {
+            return None;
+        };
+        workspace.program(id, cx).cloned()
+    }
+
     /// Where an entry row is on disk, for a backend that is the disk.
     pub(crate) fn place(&self, workspace: &Workspace, cx: &App) -> Option<PathBuf> {
         let (project, _) = self.located(workspace)?;
@@ -309,12 +337,14 @@ impl Row {
     }
 }
 
-/// The two sections of the list.
+/// The sections of the list.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub(crate) enum Heading {
     Projects,
     /// Drawn only while there is a space.
     Spaces,
+    /// The apps listed. Drawn only while there is one.
+    Apps,
 }
 
 impl Heading {
@@ -323,6 +353,7 @@ impl Heading {
         match self {
             Self::Projects => "Projects",
             Self::Spaces => "Spaces",
+            Self::Apps => "Apps",
         }
     }
 
@@ -330,6 +361,7 @@ impl Heading {
         match self {
             Self::Projects => "projects",
             Self::Spaces => "spaces",
+            Self::Apps => "apps",
         }
     }
 }
@@ -383,16 +415,20 @@ impl Lit {
     /// Whether the pane in front is on this entry. Never while the library
     /// stands over the panes.
     pub(crate) fn in_front(&self, entry: &Row, workspace: &Workspace) -> bool {
-        let Row::Entry { showing, .. } = entry else {
-            return false;
-        };
-        if self.library {
+        if self.library || workspace.active_space().is_some() {
             return false;
         }
+        let showing = match entry {
+            Row::Entry { showing, .. } => showing,
+            Row::App(id) => {
+                return self.showing == Some(Kind::App) && workspace.app.as_ref() == Some(id);
+            }
+            Row::Group(_) | Row::Archive(_) | Row::Heading(_) => return false,
+        };
         let Some((project, ix)) = entry.located(workspace) else {
             return false;
         };
-        if workspace.active != Some(project) || workspace.active_space().is_some() {
+        if workspace.active != Some(project) {
             return false;
         }
         let open = &workspace.projects[project];
@@ -454,11 +490,11 @@ fn project_of(row: &Row) -> Option<&Path> {
     match row {
         Row::Group(Group::Project(path)) | Row::Archive(path) => Some(path),
         Row::Entry { project, .. } => Some(project),
-        Row::Group(Group::Space(_)) | Row::Heading(_) => None,
+        Row::Group(Group::Space(_)) | Row::Heading(_) | Row::App(_) => None,
     }
 }
 
-/// Whether the kind a row names is switched on. Articles have no switch, and
+/// Whether the kind a row names is switched on. Articles and apps have no switch, and
 /// neither do the two rows that are not entries — a project heading and the
 /// line its archive folds under stand whatever is listed beneath them.
 pub(crate) fn shown(row: &Row, features: &Features) -> bool {
@@ -504,6 +540,7 @@ impl Renaming {
                 showing: Showing::Article(_) | Showing::Board(_),
                 ..
             }
+            | Row::App(_)
             | Row::Group(Group::Project(_))
             | Row::Archive(_)
             | Row::Heading(_) => None,
@@ -600,20 +637,6 @@ fn lands(
     }
 }
 
-/// The rows a project's or a space's heading takes along: its group's, down
-/// to the next heading.
-fn carried_rows(rows: &[Row], item: &Dragged) -> Vec<Dragged> {
-    let Dragged::Row(row @ Row::Group(_)) = item else {
-        return Vec::new();
-    };
-    rows.iter()
-        .skip_while(|at| *at != row)
-        .skip(1)
-        .take_while(|at| !matches!(at, Row::Heading(_) | Row::Group(_)))
-        .map(|at| Dragged::Row(at.clone()))
-        .collect()
-}
-
 /// Where each of `rows` starts down the list, and where the last one ends.
 fn tops(shapes: &[Shape]) -> Vec<f32> {
     std::iter::once(0.)
@@ -654,6 +677,7 @@ pub(crate) fn key_of(entry: &Row) -> String {
         Row::Group(Group::Space(id)) => format!("space-{id}"),
         Row::Heading(Heading::Projects) => "projects".to_owned(),
         Row::Heading(Heading::Spaces) => "spaces".to_owned(),
+        Row::Heading(Heading::Apps) => "apps".to_owned(),
         Row::Archive(path) => format!("archive-{}", path.display()),
         Row::Entry { project, showing } => {
             let project = project.display();
@@ -664,6 +688,7 @@ pub(crate) fn key_of(entry: &Row) -> String {
                 Showing::Table(key) => format!("table-{project}-{key}"),
             }
         }
+        Row::App(id) => format!("app-{id}"),
     }
 }
 
@@ -777,6 +802,8 @@ pub(crate) struct Sidebar {
     /// Redraws the extended rows every [`TICK`] while they are on.
     tick: Option<Task<()>>,
     boards: Watch,
+    /// Every app's program, whose build names its row.
+    apps: Watch,
     /// What each session's row showed when it was last drawn.
     listed: HashMap<u64, Listed>,
     sessions: Watch,
@@ -828,6 +855,7 @@ impl Sidebar {
             measured: Vec::new(),
             tick: None,
             boards: Watch::default(),
+            apps: Watch::default(),
             listed: HashMap::new(),
             sessions: Watch::default(),
             _subscriptions: subscriptions,
@@ -837,6 +865,22 @@ impl Sidebar {
     /// The list as it stands.
     fn list<'a>(&self, cx: &'a App) -> List<'a> {
         List::new(self.workspace.read(cx), self.search.read(cx), cx)
+    }
+
+    /// The rows drawn: the list's, less the rows of a project or a space whose
+    /// heading is being carried, down to the next heading.
+    fn drawn(&self, cx: &App) -> Vec<Row> {
+        let mut rows = self.list(cx).rows();
+        if let Some(Dragged::Row(head @ Row::Group(_))) = self.sort.carried()
+            && let Some(at) = rows.iter().position(|row| *row == head)
+        {
+            let end = rows[at + 1..]
+                .iter()
+                .position(|row| matches!(row, Row::Heading(_) | Row::Group(_)))
+                .map_or(rows.len(), |after| at + 1 + after);
+            rows.drain(at + 1..end);
+        }
+        rows
     }
 
     /// What the window is showing, handed over as it changes.
@@ -1166,7 +1210,6 @@ impl Sidebar {
         let places = Rc::new(list.row_places(&rows));
         let narrowed: Vec<bool> = rows.iter().map(|row| list.narrowed(row)).collect();
         let rows = Rc::new(rows);
-        let followers = rows.clone();
         let view = cx.entity().downgrade();
         let list = gpui::list(self.rail.clone(), move |ix, window, cx| {
             let Some(row) = rows.get(ix).cloned() else {
@@ -1174,9 +1217,7 @@ impl Sidebar {
             };
             view.update(cx, |this, cx| {
                 let item = Dragged::Row(row.clone());
-                let lifted = this.sort.carried().is_some_and(|carried| {
-                    carried == item || carried_rows(&rows, &carried).contains(&item)
-                });
+                let lifted = this.sort.carried().as_ref() == Some(&item);
                 let el = this.sidebar_row(&row, lifted, window, cx);
                 match row {
                     Row::Heading(_) | Row::Archive(_) => {
@@ -1193,7 +1234,6 @@ impl Sidebar {
             .region("sidebar-list", (), gpui::Axis::Vertical, list)
             .track_scroll(&self.rail)
             .accepts(|item| matches!(item, Dragged::Row(_)))
-            .carries(move |item| carried_rows(&followers, item))
             .lands(move |item, after, before| lands(&places, item, after, before))
             .size_full()
             .on_drop(cx.listener(|this, event: &drag::Drop<(), Dragged>, _, cx| {
@@ -1414,12 +1454,16 @@ impl InWindow for Sidebar {
 impl Render for Sidebar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.watch_sessions(window, cx);
+        let programs: Vec<_> = self.workspace.read(cx).programs().cloned().collect();
+        let mut apps = std::mem::take(&mut self.apps);
+        apps.set(&programs, cx);
+        self.apps = apps;
         let extended = self.extended(cx);
         if extended {
             self.watch_boards(cx);
         }
         self.keep_time(extended, cx);
-        let rows = self.list(cx).rows();
+        let rows = self.drawn(cx);
         let pinned = self.pinned_head(&rows, window, cx);
         let visibility = self
             .workspace

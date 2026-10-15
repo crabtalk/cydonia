@@ -5,7 +5,7 @@
 //! is spawned with as its `cwd`, and what [`crate::model::state`] persists.
 
 use crate::{
-    data::{Data, Page, Table},
+    data::{Data, Home, Page, Table},
     model::{
         article::{self, Article},
         session::ChatSession,
@@ -122,6 +122,7 @@ impl Project {
             Kind::Board => Showing::Board(self.boards.get(self.board?)?.id.clone()),
             Kind::Article => Showing::Article(self.articles.get(self.article?)?.id.clone()),
             Kind::Table => Showing::Table(self.tables.get(self.table?)?.key.clone()),
+            Kind::App => return None,
         })
     }
 
@@ -133,7 +134,7 @@ impl Project {
                 .map(|board| HeldBoard::new(board, cx))
                 .collect(),
             articles: article::list(&path),
-            data: Data::attach(&path),
+            data: Data::attach(&Home::Project(path.clone())),
             path,
             sessions: Vec::new(),
             active: None,
@@ -178,7 +179,7 @@ impl Project {
         // The store can appear long after the project was opened, and an agent
         // making one is exactly the case this watch is here for.
         if self.data.is_none() {
-            self.data = Data::attach(&self.path);
+            self.data = Data::attach(&Home::Project(self.path.clone()));
         }
         self.reload_articles(cx);
         let boards = self.reload_boards(cx);
@@ -379,6 +380,7 @@ impl Project {
             Kind::Board => Showing::Board(self.boards[self.board_ix(id)?].id.clone()),
             Kind::Article => Showing::Article(self.articles[self.article_ix(id)?].id.clone()),
             Kind::Table => Showing::Table(self.tables[self.table_ix(id)?].key.clone()),
+            Kind::App => return None,
         })
     }
 
@@ -394,6 +396,7 @@ impl Project {
             Kind::Board => self.boards.len(),
             Kind::Article => self.articles.len(),
             Kind::Table => self.tables.len(),
+            Kind::App => 0,
         };
         (0..len).map(move |ix| self.facts_at(kind, ix, cx))
     }
@@ -453,6 +456,7 @@ impl Project {
                     agent: None,
                 }
             }
+            Kind::App => unreachable!("an app is no project's entry"),
         }
     }
 
@@ -475,6 +479,7 @@ impl Project {
             }
             Kind::Article => self.articles[ix].preview().to_owned(),
             Kind::Table => String::new(),
+            Kind::App => unreachable!("an app is no project's entry"),
         }
     }
 

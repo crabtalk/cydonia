@@ -1,32 +1,47 @@
-//! The views a pane holds: one per board, article, table and session it has
+//! The views a pane holds: one per board, article, table, app and session it has
 //! shown, made the first time it shows each and kept so that showing one again
 //! finds it where the pane left it.
 
 use super::{Tab, find::Searchable as _};
 use crate::view::{
+    app::AppView,
     article::ArticleView,
     board::BoardView,
     component::transcript::{Drawn, SessionView},
     table::TableView,
 };
-use artifact::{kind::Kind, space::Member};
+use artifact::{
+    kind::Kind,
+    space::{Entry, Member},
+};
 use bezel::gpui::{App, AppContext as _, Context, Entity};
 
 impl Tab {
     /// The entry of `kind` the pane shows: its own, or for the pane a window
     /// with no space open shows, what the project in front is pointed at.
-    fn shown_of(&self, kind: Kind, cx: &App) -> Option<Member> {
-        if let Some(entry) = &self.entry {
-            return (entry.kind == kind).then(|| entry.clone());
+    fn shown_of(&self, kind: Kind, cx: &App) -> Option<Entry> {
+        if let Some(member) = &self.entry {
+            return member.entry().filter(|entry| entry.kind == kind).cloned();
         }
         let workspace = self.workspace.read(cx);
         let project = workspace.active?;
         let open = workspace.projects.get(project)?;
-        match kind {
+        let member = match kind {
             Kind::Board => workspace.board_member(project, open.board?),
             Kind::Article => workspace.article_member(project, open.article?),
             Kind::Table => workspace.table_member(project, open.table?),
-            Kind::Session => None,
+            Kind::App | Kind::Session => None,
+        };
+        member?.entry().cloned()
+    }
+
+    /// The app the pane shows: its own, or for the pane a window with no space
+    /// open shows, the one the workspace is pointed at.
+    fn shown_app(&self, cx: &App) -> Option<String> {
+        match &self.entry {
+            Some(Member::App { app }) => Some(app.clone()),
+            Some(Member::Entry(_)) => None,
+            None => self.workspace.read(cx).app.clone(),
         }
     }
 
@@ -49,17 +64,16 @@ impl Tab {
         if let Some(table) = self.shown_of(Kind::Table, cx) {
             self.table_view(table, cx);
         }
+        if let Some(app) = self.shown_app(cx) {
+            self.app_view(app, cx);
+        }
         if let Some(session) = self.shown_session(cx) {
             self.session_view(session, cx);
         }
     }
 
     /// The pane's view of `board`, made the first time it shows it.
-    pub(crate) fn board_view(
-        &mut self,
-        board: Member,
-        cx: &mut Context<Self>,
-    ) -> Entity<BoardView> {
+    pub(crate) fn board_view(&mut self, board: Entry, cx: &mut Context<Self>) -> Entity<BoardView> {
         if let Some(view) = self.boards.iter().find(|view| view.read(cx).board == board) {
             return view.clone();
         }
@@ -91,7 +105,7 @@ impl Tab {
     /// The pane's view of `article`, made the first time it shows it.
     pub(crate) fn article_view(
         &mut self,
-        article: Member,
+        article: Entry,
         cx: &mut Context<Self>,
     ) -> Entity<ArticleView> {
         if let Some(view) = self
@@ -118,11 +132,7 @@ impl Tab {
     }
 
     /// The pane's view of `table`, made the first time it shows it.
-    pub(crate) fn table_view(
-        &mut self,
-        table: Member,
-        cx: &mut Context<Self>,
-    ) -> Entity<TableView> {
+    pub(crate) fn table_view(&mut self, table: Entry, cx: &mut Context<Self>) -> Entity<TableView> {
         if let Some(view) = self.tables.iter().find(|view| view.read(cx).table == table) {
             return view.clone();
         }
@@ -138,6 +148,26 @@ impl Tab {
         self.tables
             .iter()
             .find(|view| view.read(cx).table == table)
+            .cloned()
+    }
+
+    /// The pane's view of the app `app`, made the first time it shows it.
+    pub(crate) fn app_view(&mut self, app: String, cx: &mut Context<Self>) -> Entity<AppView> {
+        if let Some(view) = self.apps.iter().find(|view| view.read(cx).app == app) {
+            return view.clone();
+        }
+        let workspace = self.workspace.clone();
+        let view = cx.new(|cx| AppView::new(app, workspace, cx));
+        self.apps.push(view.clone());
+        view
+    }
+
+    /// The app view the pane draws, where it shows an app.
+    pub(crate) fn app_shown(&self, cx: &App) -> Option<Entity<AppView>> {
+        let app = self.shown_app(cx)?;
+        self.apps
+            .iter()
+            .find(|view| view.read(cx).app == app)
             .cloned()
     }
 

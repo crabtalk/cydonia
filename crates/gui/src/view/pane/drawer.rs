@@ -229,7 +229,7 @@ impl Tab {
     /// already shows it.
     pub(crate) fn open_page(
         &mut self,
-        board: Member,
+        board: artifact::space::Entry,
         page: Page,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -644,7 +644,8 @@ impl Cydonia {
             let board = named
                 .row
                 .located(self.workspace.read(cx))
-                .and_then(|(project, at)| self.workspace.read(cx).board_member(project, at));
+                .and_then(|(project, at)| self.workspace.read(cx).board_member(project, at))
+                .and_then(Member::into_entry);
             if let Some(board) = board {
                 self.open_page(on, board, Page::Card(card.id.clone()), window, cx);
             }

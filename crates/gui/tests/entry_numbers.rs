@@ -1,6 +1,6 @@
 use artifact::{entry, kind::Kind};
 use cydonia_gui::{
-    data::{ColType, Column, Data},
+    data::{ColType, Column, Data, Home},
     model::article,
 };
 
@@ -25,7 +25,7 @@ impl Drop for Scratch {
 #[test]
 fn table_reference_survives_key_changes_and_is_retired_on_delete() {
     let scratch = Scratch::new("table");
-    let mut data = Data::open(&scratch.0).unwrap();
+    let mut data = Data::open(&Home::Project(scratch.0.clone())).unwrap();
     let columns = [Column {
         name: "text".into(),
         kind: ColType::Text,
@@ -37,7 +37,7 @@ fn table_reference_survives_key_changes_and_is_retired_on_delete() {
         .unwrap();
     assert_eq!(first.number, renamed.number);
     drop(data);
-    let mut data = Data::open(&scratch.0).unwrap();
+    let mut data = Data::open(&Home::Project(scratch.0.clone())).unwrap();
     assert_eq!(data.list().unwrap()[0].number, first.number);
     assert!(data.read(&reference, None, false, 200, 0).is_ok());
     data.remove(&reference).unwrap();
@@ -52,7 +52,7 @@ fn table_reference_survives_key_changes_and_is_retired_on_delete() {
 fn app_and_agent_catalog_share_article_and_table_numbers() {
     let scratch = Scratch::new("catalog");
     let article = article::create(&scratch.0).unwrap();
-    let mut data = Data::open(&scratch.0).unwrap();
+    let mut data = Data::open(&Home::Project(scratch.0.clone())).unwrap();
     let table = data
         .create(
             "Notes",

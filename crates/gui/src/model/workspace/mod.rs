@@ -51,6 +51,7 @@ const ICON_RETRIES: u32 = 6;
 // The rest of `impl Workspace`, split by what each part touches rather than
 // left as one 1500-line block. Every one of them continues this module's
 // scope — see the note at the head of each.
+mod apps;
 mod articles;
 mod boards;
 mod labels;
@@ -163,6 +164,12 @@ pub struct Workspace {
     folded_sections: std::collections::HashSet<String>,
     /// The palette's commands last run, most recent first.
     recent_commands: Vec<String>,
+    /// Every app on this machine, by id — see [`apps`].
+    pub apps: Vec<crate::model::apps::HeldApp>,
+    /// Which app the pane a window with no space open shows.
+    pub app: Option<String>,
+    /// The watch on the apps' records and loaded folders.
+    apps_watch: Option<crate::model::watch::Watch>,
 }
 
 impl Workspace {
@@ -223,7 +230,11 @@ impl Workspace {
             space_order: state.space_order,
             folded_sections: state.folded_sections.iter().cloned().collect(),
             recent_commands: state.commands,
+            apps: Vec::new(),
+            app: None,
+            apps_watch: None,
         };
+        this.app_recorded(cx);
         // The arrangement the window closed on, before any entry is opened:
         // `open_last_entry` is a project's answer and a space spans them.
         this.space = state

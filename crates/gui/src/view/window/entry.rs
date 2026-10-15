@@ -83,6 +83,7 @@ impl Cydonia {
                     self.open_space(ix, window, cx);
                 }
             }
+            Row::App(id) => self.open_app(id, window, cx),
             // A heading over a section, and nothing to open.
             Row::Heading(_) => {}
         }
@@ -102,6 +103,21 @@ impl Cydonia {
             return;
         }
         crate::view::component::file::external::reveal(path, cx);
+    }
+
+    /// Open `path` as the file manager opens it on a double click. Best
+    /// effort and off the main thread, as [`Self::reveal_path`].
+    pub(crate) fn launch_path(
+        &mut self,
+        path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if cfg!(not(feature = "desktop")) {
+            self.desktop_only("Opening it", window, cx);
+            return;
+        }
+        crate::view::component::file::external::launch(path, cx);
     }
 
     /// Pin an entry to the top of its project's list, or let it back down.
@@ -131,10 +147,13 @@ impl Cydonia {
         // page and a board's name in the band opens its identity panel, so
         // neither is offered a second route here. Everywhere else the name is
         // display-only and this is the way.
-        let named = !matches!(
-            entry.showing(),
-            Some(Showing::Article(_) | Showing::Board(_))
-        );
+        // An app's name is its manifest's, and it is not filed or pinned.
+        let app = matches!(entry, Row::App(_));
+        let named = !app
+            && !matches!(
+                entry.showing(),
+                Some(Showing::Article(_) | Showing::Board(_))
+            );
         // A page's measure and how it is being read: the open page's, since
         // [`Self::set_full_width`] and [`Self::plain_text`] are about the one
         // the window is showing. A row's menu names an entry that may not be
@@ -206,7 +225,12 @@ impl Cydonia {
                 .board_in(project, ix, cx)
                 .map(|board| (board.id.clone(), board.view, !board.description.is_empty()))
         {
-            if let Some(board) = self.workspace.read(cx).board_member(project, ix) {
+            if let Some(board) = self
+                .workspace
+                .read(cx)
+                .board_member(project, ix)
+                .and_then(artifact::space::Member::into_entry)
+            {
                 let on = match &host {
                     Host::Tab(tab) => Some(tab.clone()),
                     Host::Sidebar | Host::Library | Host::Header => None,
@@ -238,6 +262,16 @@ impl Cydonia {
             ));
         }
 
+        if let Some(program) = entry
+            .program(self.workspace.read(cx), cx)
+            .filter(|program| program.read(cx).local())
+        {
+            shown.push(menu::row::<Cydonia>(
+                Item::action("Build again").with_icon(icons::arrows::RefreshCw),
+                move |_, _, cx| program.update(cx, |program, cx| program.rebuild(cx)),
+            ));
+        }
+
         // ── the entry itself ──
         let mut held: Vec<(Item, menu::Act)> = Vec::new();
         if named {
@@ -252,7 +286,7 @@ impl Cydonia {
         }
         // Only for an entry still in hand: what is put away is not held at
         // the top of anything.
-        if !archived && entry.showing().is_some() {
+        if !archived && !app && entry.showing().is_some() {
             let pinned = entry.pinned(self.workspace.read(cx), cx);
             let pin = match pinned {
                 true => Item::action("Unpin").with_icon(icons::navigation::PinOff),
@@ -267,10 +301,12 @@ impl Cydonia {
             true => Item::action("Unarchive").with_icon(icons::files::ArchiveRestore),
             false => Item::action("Archive").with_icon(icons::files::Archive),
         };
-        held.push(menu::row::<Cydonia>(put, {
-            let entry = entry.clone();
-            move |this, window, cx| this.archive_entry(&entry, !archived, window, cx)
-        }));
+        if !app {
+            held.push(menu::row::<Cydonia>(put, {
+                let entry = entry.clone();
+                move |this, window, cx| this.archive_entry(&entry, !archived, window, cx)
+            }));
+        }
         // Into any other open project, the folder and its pictures with it.
         if let Some(Showing::Article(_)) = entry.showing()
             && let Some((project, ix)) = entry.located(self.workspace.read(cx))
@@ -389,6 +425,9 @@ impl Cydonia {
                     Showing::Session(_) => {}
                 },
                 (Row::Group(Group::Space(id)), _) => workspace.delete_space_id(id, cx),
+                (Row::App(id), _) => {
+                    let _ = workspace.delete_app(id, cx);
+                }
                 (Row::Entry { .. }, None)
                 | (Row::Group(Group::Project(_)) | Row::Archive(_) | Row::Heading(_), _) => {}
             }

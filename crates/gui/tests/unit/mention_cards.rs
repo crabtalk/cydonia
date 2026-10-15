@@ -53,6 +53,23 @@ fn a_handle_prefix_lists_the_active_projects_cards_exact_first() {
 }
 
 #[test]
+fn a_bare_number_names_the_active_projects_cards_of_that_handle() {
+    let texts: Vec<String> = (1..=12).map(|n| format!("card {n}")).collect();
+    let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
+    let here = board("DEV", &texts);
+    let road = board("ROAD", &["one", "two"]);
+    let there = board("DEV", &["elsewhere", "also"]);
+    let mut cards = carded("cloud", true, &here);
+    cards.extend(carded("cloud", true, &road));
+    cards.extend(carded("bezel", false, &there));
+    let (named, _) = Query::parse("2").rank_cards(&cards);
+    assert_eq!(handles(&cards, &named), ["DEV-2", "ROAD-2"]);
+    assert!(named.iter().all(|&ix| cards[ix].project == "cloud"));
+    let (named, _) = Query::parse("#2").rank_cards(&cards);
+    assert!(named.is_empty());
+}
+
+#[test]
 fn text_matches_follow_in_every_project_active_first() {
     let here = board("DEV", &["Fix the drag", "Ship it"]);
     let there = board("ROAD", &["drag motion"]);
