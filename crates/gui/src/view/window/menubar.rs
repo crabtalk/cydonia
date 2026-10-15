@@ -32,7 +32,7 @@ use crate::{
         window::root::{
             CloseProject, Cydonia, InstallApp, LoadApp, NewArticle, NewBoard, NewSession,
             NewSessionNext, NewSessionWith, NewTable, NextEntry, OpenProject, OpenSettings,
-            PrevEntry, ToggleChanges, ToggleSidebar, ToggleTerminal,
+            PrevEntry, ToggleChanges, ToggleSidebar, ToggleTerminal, WhatsNew,
         },
     },
 };
@@ -114,6 +114,11 @@ pub fn init(cx: &mut App) {
             this.open_settings_action(&OpenSettings, window, cx)
         })
     });
+    cx.on_action(|_: &WhatsNew, cx: &mut App| {
+        workspace(cx, |this, window, cx| {
+            this.whats_new_action(&WhatsNew, window, cx)
+        })
+    });
     cx.on_action(|_: &InstallApp, cx: &mut App| {
         workspace(cx, |this, window, cx| {
             this.install_app_action(&InstallApp, window, cx)
@@ -158,10 +163,10 @@ pub fn refresh(cx: &mut App) {
 /// No About: an about panel is a window this app does not have, and an item
 /// that opens a web page in its place is not one.
 fn menus(cx: &App) -> Vec<Menu> {
-    // The one conditional item in the tree, and it leads the app menu the way
-    // it does in every other mac app. A build that cannot replace itself — a
-    // `cargo install` binary, a working copy, an architecture no image is cut
-    // for — gets no item rather than one that would decline.
+    // Leads the app menu the way it does in every other mac app. A build that
+    // cannot replace itself — a `cargo install` binary, a working copy, an
+    // architecture no image is cut for — gets no item rather than one that
+    // would decline.
     let mut app = Vec::new();
     #[cfg(not(feature = "desktop"))]
     let _ = cx;
@@ -171,6 +176,7 @@ fn menus(cx: &App) -> Vec<Menu> {
         app.push(MenuItem::separator());
     }
     app.extend([
+        MenuItem::action("What's New", WhatsNew),
         MenuItem::action("Settings…", OpenSettings),
         MenuItem::separator(),
     ]);
@@ -346,6 +352,7 @@ impl Cydonia {
             .on_action(cx.listener(Self::open_project_action))
             .on_action(cx.listener(Self::open_settings_action))
             .on_action(cx.listener(Self::install_app_action))
+            .on_action(cx.listener(Self::whats_new_action))
             .when(developer, |root| {
                 root.on_action(cx.listener(Self::load_app_action))
             })

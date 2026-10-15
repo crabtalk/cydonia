@@ -549,7 +549,7 @@ impl Default for Appearance {
             indent_project_rows: true,
             extended_sidebar: false,
             floating: true,
-            content_opacity: bezel::theme::Theme::CONTENT_OPACITY,
+            content_opacity: CONTENT_OPACITY.0,
             settings_sidebar_fits: false,
             traffic_lights: false,
             scrollbars: Scrollbars::default(),

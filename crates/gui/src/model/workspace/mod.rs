@@ -164,6 +164,8 @@ pub struct Workspace {
     folded_sections: std::collections::HashSet<String>,
     /// The palette's commands last run, most recent first.
     recent_commands: Vec<String>,
+    /// The release whose What's New was last shown — [`State::release`].
+    release: Option<crate::model::version::Version>,
     /// Every app on this machine, by id — see [`apps`].
     pub apps: Vec<crate::model::apps::HeldApp>,
     /// Which app the pane a window with no space open shows.
@@ -230,6 +232,7 @@ impl Workspace {
             space_order: state.space_order,
             folded_sections: state.folded_sections.iter().cloned().collect(),
             recent_commands: state.commands,
+            release: state.release,
             apps: Vec::new(),
             app: None,
             apps_watch: None,
@@ -305,7 +308,23 @@ impl Workspace {
             },
             window: self.window,
             commands: self.recent_commands.clone(),
+            release: self.release.clone(),
         });
+    }
+
+    /// Whether `notes`, a release's What's New, are newer than any shown.
+    pub fn release_unseen(&self, notes: &crate::model::version::Version) -> bool {
+        self.release
+            .as_ref()
+            .is_none_or(|seen| notes.newer_than(seen))
+    }
+
+    /// Record `notes` as shown.
+    pub fn saw_release(&mut self, notes: crate::model::version::Version) {
+        if self.release_unseen(&notes) {
+            self.release = Some(notes);
+            self.save();
+        }
     }
 
     /// The palette's commands last run, most recent first.

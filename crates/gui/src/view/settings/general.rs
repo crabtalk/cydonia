@@ -9,19 +9,18 @@ use crate::{
     assets,
     view::{
         settings::{SettingsWindow, Switch, group},
-        window::menubar,
+        window::{menubar, root::WhatsNew},
     },
 };
 use bezel::{
     gpui::{AnyElement, Context, div, img, prelude::*, px},
     theme::{TextStyle, Theme, Typeset},
-    ui::widgets::{Content, Scaffolding},
+    ui::widgets::{ButtonStyle, Buttons, Content, Scaffolding},
 };
 #[cfg(feature = "desktop")]
 use bezel::{
     gpui::{Entity, SharedString},
     motion::{Fade, Painter},
-    ui::widgets::{ButtonStyle, Buttons},
 };
 
 /// What this build is, read at compile time from `Cargo.toml` — the same
@@ -91,6 +90,19 @@ impl SettingsWindow {
                                     .into_any_element(),
                                 None => theme.badge(COMMIT).into_any_element(),
                             }),
+                    )
+                    .child(
+                        theme
+                            .card_row(false)
+                            .child(theme.row_title("What's New").flex_1())
+                            .child(
+                                theme
+                                    .button("Show", ButtonStyle::Ghost, None)
+                                    .id("whats-new")
+                                    .on_click(|_, window, cx| {
+                                        window.dispatch_action(Box::new(WhatsNew), cx)
+                                    }),
+                            ),
                     ),
             )
             .children(self.updates(cx))

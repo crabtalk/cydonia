@@ -2214,7 +2214,7 @@ checksum = "f27ae1dd37df86211c42e150270f82743308803d90a6f6e6651cd730d5e1732f"
 
 [[package]]
 name = "cydonia"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "bezel",
@@ -2225,7 +2225,7 @@ dependencies = [
 
 [[package]]
 name = "cydonia-artifact"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "cacp",
@@ -2249,7 +2249,7 @@ dependencies = [
 
 [[package]]
 name = "cydonia-guest"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "base64 0.22.1",
  "cydonia-guest-macros",
@@ -2260,7 +2260,7 @@ dependencies = [
 
 [[package]]
 name = "cydonia-guest-macros"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "cydonia-manifest",
  "serde_json",
@@ -2268,7 +2268,7 @@ dependencies = [
 
 [[package]]
 name = "cydonia-gui"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2315,7 +2315,7 @@ dependencies = [
 
 [[package]]
 name = "cydonia-manifest"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "cydonia-manifest",
  "serde",
@@ -2325,7 +2325,7 @@ dependencies = [
 
 [[package]]
 name = "cydonia-mcp"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "axum",
@@ -2340,7 +2340,7 @@ dependencies = [
 
 [[package]]
 name = "cydonia-prompts"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "serde",
  "serde_yaml_ng",

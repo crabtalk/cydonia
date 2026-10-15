@@ -131,7 +131,8 @@ actions!(
         ZoomPane,
         CopySelection,
         GoBack,
-        GoForward
+        GoForward,
+        WhatsNew
     ]
 );
 
@@ -357,6 +358,9 @@ pub fn open(settings: Settings, state: State, cx: &mut App) -> Result<WindowHand
             cx.new(|cx| {
                 let mut root = Cydonia::new(settings, state, window, cx);
                 root.restore_panel_layout();
+                cx.defer_in(window, |root: &mut Cydonia, window, cx| {
+                    root.whats_new_once(window, cx)
+                });
                 cx.observe_window_bounds(window, |root: &mut Cydonia, window, cx| {
                     root.window_frame = Some(frame_of(window.window_bounds()));
                     root.window_save = Some(cx.spawn(async move |this, cx| {

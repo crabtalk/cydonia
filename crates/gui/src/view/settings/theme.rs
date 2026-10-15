@@ -6,7 +6,10 @@ use crate::model::{
 };
 use crate::{
     model::workspace::{ArticleChange, Workspace},
-    view::settings::{self, SettingsWindow, Switch, group, labelled},
+    view::{
+        kit,
+        settings::{self, SettingsWindow, Switch, group, labelled},
+    },
 };
 use artifact::board::View;
 use bezel::theme::AppExt as _;
@@ -43,15 +46,6 @@ const MODES: [AppearanceMode; 3] = [
 
 /// Swatches a row of the colour popover holds.
 const SWATCH_COLUMNS: usize = 6;
-
-/// A layout tile's window, and the parts of it drawn to scale.
-const LAYOUT_WIDTH: f32 = 112.;
-const LAYOUT_HEIGHT: f32 = 72.;
-const LAYOUT_SIDEBAR: f32 = 30.;
-const LAYOUT_INSET: f32 = 3.;
-
-/// The window layouts the picker offers, in its order: flat, then floating.
-const LAYOUTS: [(bool, &str); 2] = [(false, "Flat"), (true, "Floating")];
 
 impl SettingsWindow {
     /// The whole page: the mode it paints in, then the colours it mixes and the
@@ -264,19 +258,7 @@ impl SettingsWindow {
 
     fn window_group(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        let floating = self.workspace.read(cx).settings.appearance.floating;
-        let tiles = LAYOUTS.map(|(on, name)| (layout_picture(&theme, on), name.into()));
-        let picker = theme.picture_picker(
-            "window-layout",
-            tiles,
-            usize::from(floating),
-            cx.listener(|this, ix: &usize, _, cx| {
-                let floating = LAYOUTS[*ix].0;
-                this.workspace.update(cx, |workspace, cx| {
-                    workspace.set_floating(floating, cx);
-                });
-            }),
-        );
+        let picker = kit::layout::picker("window-layout", &theme, &self.workspace, cx);
         group(&theme, "Window")
             .child(
                 theme
@@ -1288,59 +1270,6 @@ impl SettingsWindow {
             )
             .into_any_element()
     }
-}
-
-/// A window in miniature, laid out flat or floating, in the colours the window
-/// paints.
-fn layout_picture(theme: &Theme, floating: bool) -> AnyElement {
-    let content = bezel::ui::window::content_fill(floating, theme);
-    let bar = |width: f32| {
-        div()
-            .h(px(3.))
-            .w(px(width))
-            .rounded_full()
-            .bg(theme.text_faint)
-    };
-    let sidebar = div()
-        .flex_none()
-        .w(px(LAYOUT_SIDEBAR))
-        .h_full()
-        .flex()
-        .flex_col()
-        .gap(px(4.))
-        .p(px(6.))
-        .when(!floating, |sidebar| {
-            sidebar
-                .bg(theme.sidebar_bg())
-                .border_r_1()
-                .border_color(theme.border)
-        })
-        .children([14., 18., 12.].map(bar));
-    let body = div()
-        .flex_1()
-        .flex()
-        .flex_col()
-        .gap(px(4.))
-        .p(px(8.))
-        .bg(content)
-        .children([40., 56., 32.].map(bar));
-    let body = match floating {
-        true => body
-            .m(px(LAYOUT_INSET))
-            .rounded(px(LAYOUT_INSET))
-            .border_1()
-            .border_color(theme.border),
-        false => body,
-    };
-    div()
-        .w(px(LAYOUT_WIDTH))
-        .h(px(LAYOUT_HEIGHT))
-        .flex()
-        .flex_row()
-        .when(floating, |window| window.bg(theme.sidebar_bg()))
-        .child(sidebar)
-        .child(body)
-        .into_any_element()
 }
 
 /// A theme family's face in the picker: "Aa" in its accent on its background,
