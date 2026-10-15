@@ -2,12 +2,10 @@
   {
     "version": "0.2.1",
     "date": "2026-10-15",
-    "nightly": true,
-    "summary": "Apps: install one from a registry and it runs in its own view, reaching only its own tables and the hosts it names. The Y Combinator directory is the first. Links to files open the file, and text stays readable under a selection, a highlight or a block cursor.",
+    "summary": "Apps: install one from a registry and it runs in its own view, reaching only its own tables and the hosts it names. Links to files open the file, and text stays readable under a selection, a highlight or a block cursor.",
     "new": [
-      "Install an app from File › Install App… with its reference, as in ghcr.io/crabtalk/cydonia/yc:0.1.0. Apps are listed in the sidebar's Apps group and the Library's Apps tab, belong to no project, and keep their own tables",
+      "Install an app from File › Install App… with its reference, as in ghcr.io/owner/app:1.0.0. Apps are listed in the sidebar's Apps group and the Library's Apps tab, belong to no project, and keep their own tables",
       "See what an app reaches while it starts: tables of its own, and the hosts it fetches from, the only ones it can reach",
-      "The Y Combinator directory, the first app, at ghcr.io/crabtalk/cydonia/yc",
       "Build and run an app from its source folder with File › Load App from Folder…, after turning on Developer mode in Settings › General. It is marked Local",
       "Write apps in Rust with the cydonia-guest crate",
       "Find the cards a card waits on by searching for them",

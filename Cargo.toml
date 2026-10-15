@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/cydonia", "crates/gui", "crates/artifact", "crates/guest", "crates/guest-macros", "crates/manifest", "crates/mcp", "crates/prompts"]
+members = ["crates/cydonia", "crates/gui", "crates/artifact", "crates/guest", "crates/guest-macros", "crates/manifest", "crates/mcp", "crates/prompts", "apps/yc"]
 resolver = "3"
 
 [workspace.package]
