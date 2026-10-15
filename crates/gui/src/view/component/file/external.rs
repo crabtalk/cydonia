@@ -453,9 +453,20 @@ fn menu(view: &mut FileView) -> &mut popover::Popup<()> {
 
 /// [`show`], off the main thread.
 pub(crate) fn reveal(path: std::path::PathBuf, cx: &bezel::gpui::App) {
+    detached(cx, move || show(&path));
+}
+
+/// Open a path as the file manager opens it on a double click: a file in its
+/// default application, a directory in the file manager. Off the main thread.
+pub(crate) fn launch(path: std::path::PathBuf, cx: &bezel::gpui::App) {
+    detached(cx, move || open(&path, &Target::Default));
+}
+
+/// Run `f` on the background executor, its error dropped.
+fn detached(cx: &bezel::gpui::App, f: impl FnOnce() -> Result<()> + Send + 'static) {
     cx.background_executor()
         .spawn(async move {
-            let _ = show(&path);
+            let _ = f();
         })
         .detach();
 }

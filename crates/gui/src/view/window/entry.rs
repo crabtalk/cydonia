@@ -105,6 +105,21 @@ impl Cydonia {
         crate::view::component::file::external::reveal(path, cx);
     }
 
+    /// Open `path` as the file manager opens it on a double click. Best
+    /// effort and off the main thread, as [`Self::reveal_path`].
+    pub(crate) fn launch_path(
+        &mut self,
+        path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if cfg!(not(feature = "desktop")) {
+            self.desktop_only("Opening it", window, cx);
+            return;
+        }
+        crate::view::component::file::external::launch(path, cx);
+    }
+
     /// Pin an entry to the top of its project's list, or let it back down.
     pub(crate) fn pin_entry(&mut self, entry: &Row, on: bool, cx: &mut Context<Self>) {
         let Row::Entry { project, showing } = entry else {
