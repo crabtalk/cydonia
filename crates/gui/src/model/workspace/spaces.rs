@@ -335,6 +335,17 @@ impl Workspace {
         self.edit_space(cx, |space| space.set_front(tab));
     }
 
+    /// Record the pane on `entry` as the open space's focused one. Writes the
+    /// space back and notifies nobody.
+    pub fn set_focused(&mut self, entry: &Member) {
+        let Some(space) = self.active_space_mut() else {
+            return;
+        };
+        if space.focus(entry) {
+            Shelf::save(space);
+        }
+    }
+
     /// The pane across the seam on this side of the one given, if there is one
     /// — what says whether a move that way is on offer at all.
     pub fn neighbour_pane(&self, entry: &Member, side: Side) -> Option<Member> {

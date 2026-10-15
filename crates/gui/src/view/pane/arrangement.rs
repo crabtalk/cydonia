@@ -705,14 +705,14 @@ impl Cydonia {
             workspace.open_space(ix, cx);
         });
         self.sync_leaves(window, cx);
-        // The focus lands on the first pane the arrangement lays out, which is
-        // the one at its top left.
-        if let Some(entry) = self
-            .leaves
-            .first()
-            .and_then(|leaf| leaf.read(cx).entry.clone())
-        {
-            self.focused = 0;
+        // The focus lands on the tab in front of the pane the space last had
+        // focused, or else of the first pane it lays out, at its top left.
+        let front = self.workspace.read(cx).active_space().and_then(|space| {
+            let pane = space.focused().or_else(|| space.panes().first().cloned())?;
+            space.front_of(&pane)
+        });
+        if let Some(entry) = front {
+            self.focused = usize::MAX;
             self.focus_pane(&entry, window, cx);
         }
         cx.notify();

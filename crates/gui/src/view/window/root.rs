@@ -897,6 +897,8 @@ impl Cydonia {
         let moved = self.focused != at;
         self.focused = at;
         self.sync_focus(cx);
+        self.workspace
+            .update(cx, |workspace, _| workspace.set_focused(entry));
         // An app's fields take the caret when they are pressed.
         if let Member::App { .. } = entry {
             self.leaf().update(cx, |pane, _| pane.kind = Kind::App);

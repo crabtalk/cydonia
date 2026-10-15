@@ -845,6 +845,10 @@ pub struct Space {
     /// TOML reads a bare key after one as belonging to it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub zoomed: Option<Member>,
+    /// An entry of the pane last focused. Read through [`Space::focused`]:
+    /// the pane is whichever holds it now.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub focused: Option<Member>,
     pub tree: Node<Member>,
 }
 
@@ -857,6 +861,7 @@ impl Space {
             touched: stamp::now(),
             name: name.to_owned(),
             zoomed: None,
+            focused: None,
             tree: Node::leaf(entry),
         }
     }
@@ -990,6 +995,25 @@ impl Space {
             false => pane,
         };
         self.zoomed.clone()
+    }
+
+    /// Record the pane holding `entry` as the one focused. Answers whether
+    /// that changed what is recorded.
+    pub fn focus(&mut self, entry: &Member) -> bool {
+        let Some(pane) = self.stack_of(entry).first().cloned() else {
+            return false;
+        };
+        if self.focused() == Some(pane.clone()) {
+            return false;
+        }
+        self.focused = Some(pane);
+        true
+    }
+
+    /// The name of the pane last focused, if one is recorded and an entry of
+    /// it is still here.
+    pub fn focused(&self) -> Option<Member> {
+        self.stack_of(self.focused.as_ref()?).first().cloned()
     }
 
     /// The pane standing over the others, if it is still here. Read rather

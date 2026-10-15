@@ -5,7 +5,7 @@
 //! numbers. What a member really is, and where a space is kept, is the app's
 //! — see `cydonia`'s own space tests.
 
-use cydonia_artifact::space::{Axis, Member, Node, Side};
+use cydonia_artifact::space::{Axis, Member, Node, Side, Space};
 /// Evening a split shares the room out, and reaches the splits inside it.
 #[test]
 fn evening_shares_the_room() {
@@ -895,4 +895,26 @@ fn an_app_member_is_written_by_its_id_alone() {
     let read: Member = toml::from_str(&written).unwrap();
     assert_eq!(read, app);
     assert_eq!((read.project(), read.id()), (None, "yc"));
+}
+
+/// The focused pane is recorded by its name, found from any of its tabs, and
+/// read back from the file.
+#[test]
+fn a_space_keeps_the_pane_it_was_focused_on() {
+    let (a, b, c) = (Member::app("a"), Member::app("b"), Member::app("c"));
+    let mut space = Space::new("1".into(), "space-1", a.clone());
+    assert!(space.insert(&a, &b, Side::Right));
+    assert!(space.stack(&b, &c));
+    assert_eq!(space.focused(), None);
+
+    assert!(space.focus(&c));
+    assert_eq!(space.focused(), Some(b.clone()));
+    assert!(!space.focus(&b));
+
+    let read: Space = toml::from_str(&toml::to_string(&space).unwrap()).unwrap();
+    assert_eq!(read.focused(), Some(b));
+
+    assert!(space.focus(&a));
+    space.remove(&a);
+    assert_eq!(space.focused(), None);
 }
