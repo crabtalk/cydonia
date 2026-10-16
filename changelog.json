@@ -2,7 +2,6 @@
   {
     "version": "0.2.2",
     "date": "2026-10-16",
-    "nightly": true,
     "summary": "What is open floats on a card over the window, the new default layout, with Flat a pick away in Settings. A What's New sheet says what changed the first time a release opens.",
     "new": [
       "Draw what is open on a floating card over the window, picked as a layout in Settings › Appearance › Window, with Flat to go back. Floating is the default",
