@@ -7,7 +7,7 @@
     "new": [
       "Draw what is open on a floating card over the window, picked as a layout in Settings › Appearance › Window, with Flat to go back. Floating is the default",
       "Set how much of the window shows through the card with Card transparency, as see-through as it goes by default",
-      "Give each pane in a space its own floating card, with its bars on the chrome above it",
+      "Give each pane in a space its own floating card, with its bars on the chrome above it, its front tab framed and the focused pane's card edge stronger",
       "See what is new the first time a release opens, and again from the cydonia menu or Settings › General"
     ],
     "changed": [
@@ -17,7 +17,11 @@
       "List the board's cards in a card's blocker picker before anything is typed",
       "Return to the pane a space was last focused on when switching to it",
       "Keep a space's focused and zoomed pane when its first tab closes",
-      "Settle a dropped list row into place on a board"
+      "Settle a dropped list row into place on a board",
+      "Show a selection across highlighted text: a highlight is a translucent wash of its colour, and the selection shows through it",
+      "Paint find matches as tints of the find colour, the current one included, so a selection under them still shows",
+      "Keep highlighted text and the letter under a block caret readable, drawn in the colour of what they sit on where their own does not read",
+      "Draw a letter under a block caret in the same colour a selection of the caret's colour gives it, in articles, code blocks, text fields and terminals"
     ]
   },
   {
