@@ -1,10 +1,11 @@
 name: release
 
-# Pushing `v<version>` publishes the files of the `nightly` pre-release built
-# from that same commit as a release on the tag, with the version's
-# changelog.json entry as its notes, and makes it the latest release. The
-# nightly pre-release stays as it is, and the app is not rebuilt. Then
-# `cydonia-guest` and the crates it depends on are published to crates.io.
+# Pushing `v<version>` publishes the tarballs, installers and disk images of
+# the `nightly` pre-release built from that same commit as a release on the
+# tag, with the version's changelog.json entry as its notes, and makes it the
+# latest release. The nightly pre-release stays as it is, and the app is not
+# rebuilt. Then `cydonia-guest` and the crates it depends on are published to
+# crates.io.
 on:
   push:
     tags: ["v*"]
@@ -40,7 +41,8 @@ jobs:
           fi
       - name: publish
         run: |
-          gh release download nightly --dir dist
+          gh release download nightly --dir dist \
+            --pattern '*.tar.xz' --pattern '*.exe' --pattern '*.dmg'
           gh release create "$TAG" dist/* --title "$TAG" --notes-file notes.md \
             --verify-tag --latest
 

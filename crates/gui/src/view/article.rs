@@ -254,25 +254,22 @@ pub fn marks() -> markdown::Marks {
     markdown::Marks::new().with(editor::HIGHLIGHT_MARK, "==")
 }
 
-/// How [`marks`] paint: every highlight in [`Washes::highlight`], its text
-/// in whichever of the theme's text and background reads on it.
+/// How [`marks`] paint: every highlight in the [`markdown::highlight_wash`]
+/// of [`Washes::highlight`].
 pub fn mark_paint(name: &str, theme: &Theme) -> Option<markdown::MarkPaint> {
-    let wash = Washes::current().highlight.solid(theme);
+    let wash = markdown::highlight_wash(Washes::current().highlight.solid(theme), theme);
     (name == editor::HIGHLIGHT_MARK).then(|| markdown::MarkPaint {
-        color: Some(bezel::theme::legible_on(wash, theme.text, theme.bg)),
         background: Some(wash),
         ..Default::default()
     })
 }
 
-/// How find matches paint: the current match in [`Washes::find`], the rest
-/// at half its opacity.
+/// How find matches paint: the [`markdown::find_washes`] of [`Washes::find`].
 pub fn find_paint(theme: &Theme) -> (bezel::gpui::Hsla, bezel::gpui::Hsla) {
     let Some(color) = Washes::current().find else {
         return markdown::default_find(theme);
     };
-    let solid = color.solid(theme);
-    (solid.opacity(0.5), solid)
+    markdown::find_washes(color.solid(theme))
 }
 
 /// How comments paint: cut from [`Washes::comment`]. A resolved comment paints

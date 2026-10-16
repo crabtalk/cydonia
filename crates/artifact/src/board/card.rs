@@ -1,5 +1,5 @@
 //! A card: what needs doing, the session that last held it, whether someone is
-//! on it, its label and the cards it waits on.
+//! on it and the cards it waits on.
 
 use serde::{Deserialize, Serialize};
 
@@ -31,10 +31,6 @@ pub struct Card {
         with = "busy"
     )]
     pub busy: bool,
-    /// Its one label, normalised — see [`crate::label::normalize`]. Drawn from
-    /// the labels on its board's cards, not the entries'.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub label: Option<String>,
     /// The cards it waits on, each a reference as written in its project —
     /// `DEV-12`, or `foo#DEV-12` for a card in project `foo`; see
     /// [`crate::reference`]. One that no longer resolves names nothing.
@@ -61,7 +57,6 @@ impl Card {
             text,
             session: None,
             busy: false,
-            label: None,
             blocked_by: Vec::new(),
             blocks: Vec::new(),
             version: None,

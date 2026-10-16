@@ -27,6 +27,7 @@ pub mod statistics;
 pub mod store;
 #[cfg(feature = "desktop")]
 pub mod update;
+pub mod version;
 pub mod watch;
 pub mod welcome;
 pub mod workspace;

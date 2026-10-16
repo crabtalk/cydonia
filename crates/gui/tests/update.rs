@@ -1,7 +1,7 @@
 //! What the updater decides before it touches anything: which version is worth
 //! fetching, and where the image for it is.
 
-use cydonia_gui::model::update::{self, Version};
+use cydonia_gui::model::{update, version::Version};
 
 /// The ordering, which is the whole of what decides that an app replaces
 /// itself.

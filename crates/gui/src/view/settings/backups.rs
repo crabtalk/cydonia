@@ -192,7 +192,7 @@ impl SettingsWindow {
         let Some(backup) = self.backups.iter().find(|backup| backup.version == version) else {
             return;
         };
-        let release = crate::model::update::Version::new(backup.release());
+        let release = crate::model::version::Version::new(backup.release());
         let version = version.to_owned();
         if let Some(updater) = crate::model::update::of(cx) {
             updater.update(cx, |updater, cx| updater.roll_back(release, version, cx));

@@ -514,7 +514,7 @@ fn yc() -> Vec<u8> {
         let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
         let status = Process::new(cargo)
             .current_dir(&root)
-            .args(["build", "--manifest-path", "apps/yc/Cargo.toml"])
+            .args(["build", "-p", "yc"])
             .args(["--target", "wasm32-unknown-unknown", "--target-dir"])
             .arg(&target)
             .status()

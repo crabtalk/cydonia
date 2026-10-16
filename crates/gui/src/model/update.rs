@@ -27,7 +27,7 @@
 //! (`update/macos.rs`), the tarball on Linux (`update/linux.rs`), the installer
 //! on Windows (`update/windows.rs`).
 
-use crate::model::settings;
+use crate::model::{settings, version::Version};
 #[cfg(unix)]
 use anyhow::bail;
 use anyhow::{Context as _, Result};
@@ -158,28 +158,12 @@ impl Platform for Unsupported {
     }
 }
 
-/// A release's version as the feed and its tag spell it: `0.1.4`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Version(String);
-
+/// What a release is called on disk and on its release page.
 impl Version {
-    pub fn new(text: impl Into<String>) -> Self {
-        Self(text.into())
-    }
-
-    /// This build's.
-    pub fn running() -> Self {
-        Self::new(env!("CARGO_PKG_VERSION"))
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
     /// The file this version is kept as on disk, whatever the release calls
     /// it. [`Version::of_asset`] reads the version back out of it.
     pub fn asset(&self) -> String {
-        format!("{IMAGE}{}{}", self.0, Current::SUFFIX)
+        format!("{IMAGE}{}{}", self.as_str(), Current::SUFFIX)
     }
 
     /// The version an [`Version::asset`] name carries. `None` for a name this
@@ -199,7 +183,7 @@ impl Version {
     /// The directory this version waits in beside the app it replaces.
     #[cfg(unix)]
     fn staging(&self, parent: &Path) -> PathBuf {
-        parent.join(format!("{STAGING}{}", self.0))
+        parent.join(format!("{STAGING}{}", self.as_str()))
     }
 
     /// Where this release is published: under the tag named after the
@@ -207,34 +191,9 @@ impl Version {
     pub fn url(&self) -> String {
         format!(
             "{REPO}/releases/download/v{}/{}",
-            self.0,
+            self.as_str(),
             Current::remote(self)
         )
-    }
-
-    /// Whether this is a release to move to from `running`. Only versions of
-    /// three numbers are ordered; either side being anything else, a
-    /// pre-release tag or a build suffix, is never newer.
-    pub fn newer_than(&self, running: &Self) -> bool {
-        match (self.numbers(), running.numbers()) {
-            (Some(offered), Some(running)) => offered > running,
-            _ => false,
-        }
-    }
-
-    fn numbers(&self) -> Option<[u64; 3]> {
-        let mut parts = self.0.split('.');
-        let mut out = [0; 3];
-        for slot in &mut out {
-            *slot = parts.next()?.parse().ok()?;
-        }
-        parts.next().is_none().then_some(out)
-    }
-}
-
-impl std::fmt::Display for Version {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
     }
 }
 

@@ -31,7 +31,6 @@ use bezel::{
         ListOffset, ListState, SharedString, Stateful, Subscription, Task, WeakEntity, Window, div,
         prelude::*, px,
     },
-    motion::Painter,
     theme::{self, TextStyle, Theme, Typeset},
     ui::{
         context_menu::{ContextMenu, Place as MenuPlace},
@@ -834,7 +833,7 @@ impl Sidebar {
         if let Some(updater) = crate::model::update::of(cx) {
             subscriptions.push(cx.observe(&updater, |_, _, cx| cx.notify()));
         }
-        let sort = drag::Domain::with_ghost(Painter::of(cx), {
+        let sort = drag::Domain::with_ghost({
             let this = cx.entity().downgrade();
             move |item, window, cx| {
                 this.update(cx, |this, cx| this.sidebar_ghost(item, window, cx))

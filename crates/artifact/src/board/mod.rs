@@ -23,7 +23,7 @@ pub use column::Column;
 
 use crate::{id, stamp};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeSet, HashSet};
+use std::collections::HashSet;
 
 /// What a board is called before it is named, and what one whose name has been
 /// taken off is shown as.
@@ -387,27 +387,6 @@ impl Board {
             }
             None => false,
         }
-    }
-
-    /// Give a card `label`, normalised, or take its label off. Says whether
-    /// there was a card.
-    pub fn set_card_label(&mut self, id: &str, label: Option<&str>) -> bool {
-        match self.card_mut(id) {
-            Some(card) => {
-                card.label = label.and_then(crate::label::normalize);
-                true
-            }
-            None => false,
-        }
-    }
-
-    /// The labels this board's cards carry, in name order.
-    pub fn card_labels(&self) -> BTreeSet<&str> {
-        self.columns
-            .iter()
-            .flat_map(|column| &column.cards)
-            .filter_map(|card| card.label.as_deref())
-            .collect()
     }
 
     /// What `page` says. `None` for a card the board does not hold.

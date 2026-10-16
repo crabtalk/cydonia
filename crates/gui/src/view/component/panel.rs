@@ -151,7 +151,7 @@ impl Panel {
             cwd,
             focus: cx.focus_handle(),
             strip: tabs::Strip::new(),
-            reorder: tabs::Reorder::new(Painter::of(cx)),
+            reorder: tabs::Reorder::new(),
             contents: HashMap::new(),
             next_id: 0,
             menu: ContextMenu::default(),
@@ -630,7 +630,12 @@ impl Render for Panel {
             self.focus(window, cx);
         }
         let theme = Theme::of(cx).clone();
-        let right = chrome::has(CaptionSide::Right, window, cx);
+        // Floating, the window's top right is the chrome over the panel's card.
+        let floating = self
+            .workspace
+            .upgrade()
+            .is_some_and(|workspace| workspace.read(cx).settings.appearance.floating);
+        let right = !floating && chrome::has(CaptionSide::Right, window, cx);
         let launchers = self.launchers();
         let popup = self
             .menu
@@ -748,7 +753,6 @@ impl Render for Panel {
             .size_full()
             .flex()
             .flex_col()
-            .bg(theme.window_bg())
             .key_context("SessionPanel")
             .track_focus(&self.focus)
             .on_mouse_down(
@@ -794,7 +798,7 @@ impl Render for Panel {
             .child(
                 crate::view::window::root::band()
                     .gap(px(6.))
-                    // Always at the window's top right while it is up.
+                    // At the window's top right while it is up, but floating.
                     .when(right, |band| band.pr_0())
                     .child(
                         self.reorder
@@ -924,7 +928,11 @@ impl Render for Panel {
                     )
                     .child(chrome::grip("panel-grip", &self.drag, window))
                     .child(changes_toggle("Hide right panel", self.toggle, &theme))
-                    .children(chrome::caption(CaptionSide::Right, window, cx)),
+                    .children(
+                        right
+                            .then(|| chrome::caption(CaptionSide::Right, window, cx))
+                            .flatten(),
+                    ),
             )
             .when_some(self.closing, |panel, id| {
                 panel.child(

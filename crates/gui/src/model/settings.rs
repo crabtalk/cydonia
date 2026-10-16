@@ -3,7 +3,10 @@
 
 use crate::model::watch;
 use anyhow::{Context, Result};
-use bezel::theme::{TextStyle, appearance::AppearanceMode};
+use bezel::{
+    theme::{TextStyle, appearance::AppearanceMode},
+    ui::color::SystemColor,
+};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf};
 
@@ -21,8 +24,15 @@ pub const CONTENT_TEXT_SIZE: (f32, f32) = (8., 40.);
 pub const MONO_TEXT_SIZE: f32 = 13.;
 
 /// The range [`Appearance::vibrancy`] is held to: how opaque the tint over
-/// the frosted window may be.
+/// the translucent window may be.
 pub const VIBRANCY: (f32, f32) = (0.5, 0.95);
+
+/// The range [`Appearance::content_opacity`] is held to: bezel's material
+/// scale, thinnest to thickest.
+pub const CONTENT_OPACITY: (f32, f32) = (
+    bezel::theme::Material::UltraThin.opacity(),
+    bezel::theme::Material::UltraThick.opacity(),
+);
 
 /// The range [`Appearance::blur`] is held to, in native filter pixels.
 pub const BLUR: (f32, f32) = (0., 120.);
@@ -188,10 +198,10 @@ pub struct Appearance {
     /// appearance [`Self::theme`] paints in a family.
     pub hue: f32,
     pub chroma: f32,
-    /// How opaque the tint over the frosted window is — bezel's
+    /// How opaque the tint over the translucent window is — bezel's
     /// `Brand::vibrancy_alpha`. Clamped to [`VIBRANCY`] on the way in.
     pub vibrancy: f32,
-    /// How far the desktop behind the frosted window is blurred — bezel's
+    /// How far the desktop behind the translucent window is blurred — bezel's
     /// `Brand::window_blur`. Clamped to [`BLUR`] on the way in.
     pub blur: f32,
     /// How wide a page with nothing of its own to say is set. A page that
@@ -213,6 +223,12 @@ pub struct Appearance {
     /// Sidebar entries are three lines: the name, a preview, and the labels
     /// with how long ago the entry was touched.
     pub extended_sidebar: bool,
+    /// What is open is drawn on a card over the window's chrome, rather than
+    /// flush with it — bezel's `window::content`.
+    pub floating: bool,
+    /// How much of the chrome that card covers — bezel's
+    /// `Brand::content_opacity`. Clamped to [`CONTENT_OPACITY`] on the way in.
+    pub content_opacity: f32,
     /// The settings window's section sidebar is as wide as its widest row
     /// rather than a fixed width.
     pub settings_sidebar_fits: bool,
@@ -252,71 +268,12 @@ pub struct Appearance {
     pub terminal_caret: bool,
 }
 
-/// A preset colour: one of bezel's [`bezel::ui::color::default_swatches`],
-/// in the same order, stored by its lowercase name.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Highlight {
-    Red,
-    Orange,
-    #[default]
-    Yellow,
-    Green,
-    Mint,
-    Teal,
-    Cyan,
-    Blue,
-    Indigo,
-    Purple,
-    Pink,
-    Brown,
-}
-
-impl Highlight {
-    pub const ALL: [Self; 12] = [
-        Self::Red,
-        Self::Orange,
-        Self::Yellow,
-        Self::Green,
-        Self::Mint,
-        Self::Teal,
-        Self::Cyan,
-        Self::Blue,
-        Self::Indigo,
-        Self::Purple,
-        Self::Pink,
-        Self::Brown,
-    ];
-
-    /// The colour for `theme`'s appearance.
-    pub fn solid(self, theme: &bezel::theme::Theme) -> bezel::gpui::Hsla {
-        bezel::ui::color::default_swatches()[self as usize].resolve(theme)
-    }
-
-    pub fn key(self) -> &'static str {
-        match self {
-            Self::Red => "red",
-            Self::Orange => "orange",
-            Self::Yellow => "yellow",
-            Self::Green => "green",
-            Self::Mint => "mint",
-            Self::Teal => "teal",
-            Self::Cyan => "cyan",
-            Self::Blue => "blue",
-            Self::Indigo => "indigo",
-            Self::Purple => "purple",
-            Self::Pink => "pink",
-            Self::Brown => "brown",
-        }
-    }
-}
-
 /// A colour picked in settings: a preset, which follows the appearance, or
 /// one sRGB value for both, painted as it is. Stored as the preset's name or
 /// as `#rrggbb`; a `#rrggbbaa` reads as its `#rrggbb`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Paint {
-    Named(Highlight),
+    Named(SystemColor),
     Custom { rgb: u32 },
 }
 
@@ -333,14 +290,14 @@ impl Paint {
     /// The colour as every setting paints it, at full strength.
     pub fn solid(self, theme: &bezel::theme::Theme) -> bezel::gpui::Hsla {
         match self {
-            Self::Named(named) => named.solid(theme),
+            Self::Named(named) => named.resolve(theme),
             Self::Custom { rgb } => bezel::gpui::rgb(rgb).into(),
         }
     }
 
     pub fn key(self) -> String {
         match self {
-            Self::Named(named) => named.key().to_owned(),
+            Self::Named(named) => named.name().to_owned(),
             Self::Custom { rgb } => format!("#{rgb:06x}"),
         }
     }
@@ -354,10 +311,7 @@ impl Paint {
                 _ => None,
             };
         }
-        Highlight::ALL
-            .into_iter()
-            .find(|named| named.key() == key)
-            .map(Self::Named)
+        SystemColor::from_name(key).map(Self::Named)
     }
 }
 
@@ -371,7 +325,7 @@ fn paint_or_unset<'de, D: serde::Deserializer<'de>>(
 fn highlight_or_default<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Paint, D::Error> {
-    Ok(paint_or_unset(deserializer)?.unwrap_or(Paint::Named(Highlight::default())))
+    Ok(paint_or_unset(deserializer)?.unwrap_or(Paint::Named(SystemColor::Yellow)))
 }
 
 impl Serialize for Paint {
@@ -535,6 +489,8 @@ impl Default for Appearance {
             board_view: artifact::board::View::List,
             indent_project_rows: true,
             extended_sidebar: false,
+            floating: true,
+            content_opacity: CONTENT_OPACITY.0,
             settings_sidebar_fits: false,
             traffic_lights: false,
             scrollbars: Scrollbars::default(),
@@ -545,7 +501,7 @@ impl Default for Appearance {
             // nothing scrolls a fence back to a caret typed off its right
             // edge — that is the cost, and the switch is the way back.
             wrap_code: false,
-            highlight: Paint::Named(Highlight::default()),
+            highlight: Paint::Named(SystemColor::Yellow),
             selection: None,
             search: None,
             comment_color: None,
@@ -569,6 +525,12 @@ impl Appearance {
         self.vibrancy = match self.vibrancy.is_finite() {
             true => self.vibrancy.clamp(VIBRANCY.0, VIBRANCY.1),
             false => Self::default().vibrancy,
+        };
+        self.content_opacity = match self.content_opacity.is_finite() {
+            true => self
+                .content_opacity
+                .clamp(CONTENT_OPACITY.0, CONTENT_OPACITY.1),
+            false => Self::default().content_opacity,
         };
         self.blur = match self.blur.is_finite() {
             true => self.blur.clamp(BLUR.0, BLUR.1),
@@ -1431,6 +1393,8 @@ fn write_appearance(doc: &mut toml_edit::DocumentMut, appearance: &Appearance) -
     held["board_view"] = toml_edit::value(appearance.board_view.key());
     held["indent_project_rows"] = toml_edit::value(appearance.indent_project_rows);
     held["extended_sidebar"] = toml_edit::value(appearance.extended_sidebar);
+    held["floating"] = toml_edit::value(appearance.floating);
+    held["content_opacity"] = toml_edit::value(f64::from(appearance.content_opacity));
     held["traffic_lights"] = toml_edit::value(appearance.traffic_lights);
     held["settings_sidebar_fits"] = toml_edit::value(appearance.settings_sidebar_fits);
     held["scrollbars"] = toml_edit::value(appearance.scrollbars.key());

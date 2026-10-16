@@ -164,6 +164,8 @@ pub struct Workspace {
     folded_sections: std::collections::HashSet<String>,
     /// The palette's commands last run, most recent first.
     recent_commands: Vec<String>,
+    /// The release whose What's New was last shown — [`State::release`].
+    release: Option<crate::model::version::Version>,
     /// Every app on this machine, by id — see [`apps`].
     pub apps: Vec<crate::model::apps::HeldApp>,
     /// Which app the pane a window with no space open shows.
@@ -230,6 +232,7 @@ impl Workspace {
             space_order: state.space_order,
             folded_sections: state.folded_sections.iter().cloned().collect(),
             recent_commands: state.commands,
+            release: state.release,
             apps: Vec::new(),
             app: None,
             apps_watch: None,
@@ -305,7 +308,23 @@ impl Workspace {
             },
             window: self.window,
             commands: self.recent_commands.clone(),
+            release: self.release.clone(),
         });
+    }
+
+    /// Whether `notes`, a release's What's New, are newer than any shown.
+    pub fn release_unseen(&self, notes: &crate::model::version::Version) -> bool {
+        self.release
+            .as_ref()
+            .is_none_or(|seen| notes.newer_than(seen))
+    }
+
+    /// Record `notes` as shown.
+    pub fn saw_release(&mut self, notes: crate::model::version::Version) {
+        if self.release_unseen(&notes) {
+            self.release = Some(notes);
+            self.save();
+        }
     }
 
     /// The palette's commands last run, most recent first.
@@ -354,6 +373,8 @@ impl Workspace {
             board_view: self.board_view,
             indent_project_rows: self.indent_project_rows,
             extended_sidebar: self.settings.appearance.extended_sidebar,
+            floating: self.settings.appearance.floating,
+            content_opacity: self.settings.appearance.content_opacity,
             settings_sidebar_fits: self.settings.appearance.settings_sidebar_fits,
             traffic_lights: self.settings.appearance.traffic_lights,
             scrollbars: self.settings.appearance.scrollbars,
@@ -569,9 +590,14 @@ impl Workspace {
         self.apply_transparency(cx);
     }
 
+    pub fn set_content_opacity(&mut self, opacity: f32, cx: &mut Context<Self>) {
+        let (min, max) = settings::CONTENT_OPACITY;
+        self.settings.appearance.content_opacity = opacity.clamp(min, max);
+        self.apply_transparency(cx);
+    }
+
     fn apply_transparency(&mut self, cx: &mut Context<Self>) {
-        let look = &self.settings.appearance;
-        apply_transparency(look.vibrancy, look.blur, cx);
+        apply_transparency(&self.settings.appearance, cx);
         self.save_appearance();
         cx.notify();
     }
@@ -810,6 +836,12 @@ impl Workspace {
     pub fn set_traffic_lights(&mut self, on: bool, cx: &mut Context<Self>) {
         self.settings.appearance.traffic_lights = on;
         apply_caption_style(on, cx);
+        self.save_appearance();
+        cx.notify();
+    }
+
+    pub fn set_floating(&mut self, floating: bool, cx: &mut Context<Self>) {
+        self.settings.appearance.floating = floating;
         self.save_appearance();
         cx.notify();
     }
@@ -1083,12 +1115,13 @@ pub fn apply_caption_style(traffic_lights: bool, cx: &mut App) {
 /// from then on — including the one the OS makes at sunset, which reaches
 /// nothing of ours.
 ///
-/// Never [`Vibrancy::On`]: bezel's light palette carries no frosted tokens.
+/// Never [`Vibrancy::On`]: bezel's light palette carries no translucent tokens.
 /// Off macOS the window is always opaque.
-pub fn apply_transparency(vibrancy_alpha: f32, window_blur: f32, cx: &mut App) {
+pub fn apply_transparency(look: &settings::Appearance, cx: &mut App) {
     cx.set_brand(Brand {
-        vibrancy_alpha,
-        window_blur,
+        vibrancy_alpha: look.vibrancy,
+        window_blur: look.blur,
+        content_opacity: look.content_opacity,
         vibrancy: match cfg!(target_os = "macos") {
             true => Vibrancy::Auto,
             false => Vibrancy::Off,

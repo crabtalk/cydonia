@@ -21,7 +21,6 @@ pub const CARDS: &str = "cards";
 const HANDLE: &str = "handle";
 const STATUS: &str = "status";
 const SESSION: &str = "session";
-const LABEL: &str = "label";
 const BLOCKED_BY: &str = "blocked_by";
 const BLOCKS: &str = "blocks";
 
@@ -107,7 +106,6 @@ pub fn card_properties(card: &Card, held: &str) -> Option<String> {
             ),
             (STATUS, card.busy.then(|| toml_edit::value(BUSY))),
             (SESSION, card.session.as_deref().map(toml_edit::value)),
-            (LABEL, card.label.as_deref().map(toml_edit::value)),
             (BLOCKED_BY, references(&card.blocked_by)),
             (BLOCKS, references(&card.blocks)),
         ],
@@ -133,10 +131,6 @@ pub fn parse_card(id: &str, content: &str, properties: &str) -> Card {
             .get(STATUS)
             .and_then(|status| status.as_str())
             .is_some_and(|status| status == BUSY),
-        label: doc
-            .get(LABEL)
-            .and_then(|label| label.as_str())
-            .and_then(crate::label::normalize),
         blocked_by: read_references(&doc, BLOCKED_BY),
         blocks: read_references(&doc, BLOCKS),
         version: None,

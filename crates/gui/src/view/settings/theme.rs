@@ -1,16 +1,16 @@
 //! The appearance section: which of the three modes the app paints in.
 
-use crate::model::{
-    settings::{Highlight, Paint},
-    themes,
-};
+use crate::model::{settings::Paint, themes};
 use crate::{
     model::workspace::{ArticleChange, Workspace},
-    view::settings::{self, SettingsWindow, Switch, group, labelled},
+    view::{
+        kit,
+        settings::{self, SettingsWindow, Switch, group, labelled},
+    },
 };
 use artifact::board::View;
 use bezel::theme::AppExt as _;
-use bezel::ui::color::Swatch;
+use bezel::ui::color::{Swatch, SystemColor};
 use bezel::{
     gpui::{
         AnyElement, Context, DragMoveEvent, Empty, Entity, FontWeight, Hsla, SharedString, div,
@@ -62,6 +62,7 @@ impl SettingsWindow {
                     .child(self.theme_family_row(Appearance::Light, cx))
                     .child(self.theme_family_row(Appearance::Dark, cx)),
             )
+            .child(self.window_group(cx))
             .child(self.colors_group(cx))
             .child(self.typography_group(cx))
             .child(self.families_group(cx))
@@ -250,6 +251,53 @@ impl SettingsWindow {
                     .flex_none(),
             )
             .into_any_element()
+    }
+
+    fn window_group(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let picker = kit::layout::picker("window-layout", &theme, &self.workspace, cx);
+        group(&theme, "Window")
+            .child(
+                theme
+                    .group_box()
+                    .child(
+                        theme
+                            .card_row(true)
+                            .child(labelled(
+                                &theme,
+                                "Layout",
+                                "Flush with the window, or on a card over it.",
+                                false,
+                            ))
+                            .child(picker),
+                    )
+                    .children(self.content_opacity_row(cx)),
+            )
+            .into_any_element()
+    }
+
+    /// How much of the window shows through the floating card. Shown with
+    /// [`Self::vibrancy_row`], and only while the content floats.
+    fn content_opacity_row(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        use crate::model::settings::CONTENT_OPACITY;
+        let look = &self.workspace.read(cx).settings.appearance;
+        if !(look.floating && Theme::of(cx).vibrancy) {
+            return None;
+        }
+        let (min, max) = CONTENT_OPACITY;
+        let opacity = look.content_opacity;
+        // Right is more see-through, as the window's own transparency runs.
+        Some(self.tint_row(
+            false,
+            "content-opacity",
+            "Card transparency",
+            "How much of the window shows through the card.",
+            (max - opacity) / (max - min),
+            move |workspace, fraction, cx| {
+                workspace.set_content_opacity(max - fraction * (max - min), cx);
+            },
+            cx,
+        ))
     }
 
     fn sidebar_group(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -722,7 +770,7 @@ impl SettingsWindow {
     /// The colour behind `==text==`.
     pub(super) fn highlight_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let current = self.workspace.read(cx).settings.appearance.highlight;
-        let paints = Highlight::ALL.into_iter().map(Paint::Named).collect();
+        let paints = SystemColor::ALL.into_iter().map(Paint::Named).collect();
         self.color_row(
             true,
             "highlight-color",
@@ -928,7 +976,7 @@ impl SettingsWindow {
         cx: &mut Context<Self>,
         set: fn(&mut Workspace, Option<Paint>, &mut Context<Workspace>),
     ) -> AnyElement {
-        let paints = Highlight::ALL.into_iter().map(Paint::Named).collect();
+        let paints = SystemColor::ALL.into_iter().map(Paint::Named).collect();
         self.color_row(false, id, title, current, paints, Some(system), cx, set)
     }
 
@@ -1123,8 +1171,8 @@ impl SettingsWindow {
         )
     }
 
-    /// How much the frost shows through. Nothing where the window is not
-    /// frosted — opaque, or an appearance the palette does not frost.
+    /// How much of the desktop shows through. Nothing where the window is not
+    /// translucent — opaque, or an appearance the palette keeps opaque.
     fn vibrancy_row(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         use crate::model::settings::VIBRANCY;
         if !Theme::of(cx).vibrancy {

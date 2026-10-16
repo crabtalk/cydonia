@@ -99,6 +99,11 @@ pub(crate) struct Pane {
 }
 
 impl Pane {
+    /// Whether one of this pane's tabs holds the window's focus.
+    pub(crate) fn focused(&self, cx: &App) -> bool {
+        self.tabs.iter().any(|tab| tab.read(cx).focused)
+    }
+
     pub(crate) fn new(
         name: Member,
         workspace: Entity<Workspace>,
@@ -112,7 +117,7 @@ impl Pane {
             root,
             tabs: Vec::new(),
             fronts: Vec::new(),
-            strip: tabs::Reorder::new(Painter::of(cx)),
+            strip: tabs::Reorder::new(),
             menu: ContextMenu::default(),
             hovered: false,
             seat: Seat::default(),
@@ -212,8 +217,8 @@ impl Pane {
     /// Every tab carries the close, the pane's first included. There is no
     /// separate control for closing the pane, because there is no separate
     /// thing to close: a pane is its strip, and the last `×` takes the pane
-    /// with the tab. The focus mark is on the tab rather than on the pane,
-    /// since the panes are one plane divided and take no fill of their own.
+    /// with the tab. Flat, the focus mark is on the tab. Floating, it is the
+    /// card's edge, and every pane's front tab takes the frame.
     fn tab(
         &self,
         tab: &Member,
@@ -259,8 +264,10 @@ impl Pane {
         // A tab that is showing but not focused still has to read as the one
         // its pane is on, or a background pane's strip says nothing about what
         // is under it — which is [`tabs::State::Front`].
+        let floating = self.workspace.read(cx).settings.appearance.floating;
         let state = match (focused, front) {
             (true, _) => tabs::State::Focused,
+            (false, true) if floating => tabs::State::Focused,
             (false, true) => tabs::State::Front,
             (false, false) => tabs::State::Resting,
         };
@@ -386,7 +393,12 @@ impl Pane {
         let lead = match (first, sidebar_open) {
             _ if left => 0.,
             (true, true) => root::HEADER_INSET,
-            (true, false) => root::toolbar_inset(window, cx),
+            // Floating, the column pads itself by half the gap between cards
+            // and the bar keeps the other half, so it starts a gap in.
+            (true, false) => {
+                root::toolbar_inset(window, cx)
+                    - root::card_gap(self.workspace.read(cx).settings.appearance.floating)
+            }
             (false, _) => TAB_INSET,
         };
         let owner = cx.entity().downgrade();
@@ -563,6 +575,9 @@ impl Render for Pane {
             None => div().flex_1().into_any_element(),
         };
         let root = self.root.clone();
+        let floating = self.workspace.read(cx).settings.appearance.floating;
+        // The focused pane's card has the stronger edge.
+        let strong = theme.border_strong;
         div()
             .id(SharedString::from(format!("pane-{key}")))
             // With the context but without this, a pane claims chords that
@@ -582,9 +597,9 @@ impl Render for Pane {
             .flex_col()
             .relative()
             .overflow_hidden()
-            // No fill: the panes sit on the detail column's one surface, and a
-            // wash per pane would draw the arrangement as a row of cards
-            // rather than one plane divided. The focus is said on the tab.
+            // No fill: flat, the panes sit on the detail column's one surface,
+            // and floating, the bar is on the chrome and the card fills
+            // itself.
             //
             // Pressing anywhere in a pane is how the focus moves to it, the
             // same way a click into the sidebar selects a row.
@@ -604,15 +619,28 @@ impl Render for Pane {
                         .ok();
                 }
             })
-            .child(self.bar(&theme, window, cx))
             .child(
+                // Floating, the bar is on the chrome over its card, and runs as
+                // wide as the card does.
                 div()
-                    .relative()
-                    .flex_1()
-                    .min_h_0()
-                    .flex()
-                    .flex_col()
-                    .child(body),
+                    .flex_none()
+                    .when(floating, |bar| bar.mx(px(Theme::CONTENT_INSET / 2.)))
+                    .child(self.bar(&theme, window, cx)),
+            )
+            .child(
+                // A flex item rather than full size: the card's margin is what
+                // leaves the gap, and a full-size card overflows by it.
+                match floating {
+                    true => bezel::ui::window::content(true, cx)
+                        .when(self.focused(cx), |card| card.border_color(strong)),
+                    false => div(),
+                }
+                .relative()
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .child(body),
             )
     }
 }

@@ -346,7 +346,6 @@ impl Render for Changes {
             .flex()
             .flex_col()
             .overflow_hidden()
-            .bg(theme.window_bg())
             .when_some(message, |panel, message| {
                 panel.child(
                     div()

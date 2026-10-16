@@ -2,8 +2,8 @@
 name = "yc"
 description = "The Y Combinator directory: companies from yc-oss and their founders, in tables of its own"
 version = "0.1.0"
-edition = "2024"
-license = "MIT"
+edition.workspace = true
+license.workspace = true
 publish = false
 
 [package.metadata.cydonia]
@@ -16,12 +16,4 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 cydonia-guest = { path = "../../crates/guest" }
-serde_json = "1"
-
-[workspace]
-
-[profile.release]
-opt-level = "z"
-lto = true
-codegen-units = 1
-strip = true
+serde_json.workspace = true

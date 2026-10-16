@@ -38,7 +38,7 @@ use artifact::space::Member;
 use bezel::{
     gpui::{
         self, AnyElement, App, Axis, Bounds, Context, Div, DragMoveEvent, Empty, Entity,
-        FocusHandle, Focusable, Hsla, KeyBinding, PathPromptOptions, Pixels, Point, Render,
+        FocusHandle, Focusable, KeyBinding, PathPromptOptions, Pixels, Point, Render,
         TitlebarOptions, Window, WindowBounds, WindowHandle, WindowOptions, actions, div, point,
         prelude::*, px, size,
     },
@@ -131,7 +131,8 @@ actions!(
         ZoomPane,
         CopySelection,
         GoBack,
-        GoForward
+        GoForward,
+        WhatsNew
     ]
 );
 
@@ -178,12 +179,12 @@ pub(crate) fn composer_width() -> f32 {
     COMPOSER_COLUMN - 2. * COMPOSER_MARGIN
 }
 
-/// The sidebar's fill: bezel's frost tint, or opaque the chrome tone — the
-/// light palette's `surface` is the grey the content plane's white sits inside.
-pub(crate) fn sidebar_bg(theme: &Theme) -> Hsla {
-    match theme.vibrancy {
-        true => theme.vibrancy_tint(),
-        false => theme.surface,
+/// The chrome between two floating cards, and between a card and the
+/// sidebar: a seam stands in its middle. Nothing where the content is flat.
+pub(crate) fn card_gap(floating: bool) -> f32 {
+    match floating {
+        true => Theme::CONTENT_INSET,
+        false => 0.,
     }
 }
 
@@ -357,6 +358,9 @@ pub fn open(settings: Settings, state: State, cx: &mut App) -> Result<WindowHand
             cx.new(|cx| {
                 let mut root = Cydonia::new(settings, state, window, cx);
                 root.restore_panel_layout();
+                cx.defer_in(window, |root: &mut Cydonia, window, cx| {
+                    root.whats_new_once(window, cx)
+                });
                 cx.observe_window_bounds(window, |root: &mut Cydonia, window, cx| {
                     root.window_frame = Some(frame_of(window.window_bounds()));
                     root.window_save = Some(cx.spawn(async move |this, cx| {
@@ -601,11 +605,14 @@ impl Cydonia {
     /// lights, the fold with back and forward, the grip — over the sidebar.
     fn sidebar_column(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::of(cx).clone();
+        let floating = self.workspace.read(cx).settings.appearance.floating;
         div()
             .flex_none()
             .w(px(self.sidebar_width))
             .h_full()
-            .bg(sidebar_bg(&theme))
+            // Floating, the root paints the chrome under the sidebar and the
+            // card alike.
+            .when(!floating, |column| column.bg(theme.sidebar_bg()))
             .flex()
             .flex_col()
             // The fold just past the lights, where the pane header puts it
@@ -897,6 +904,8 @@ impl Cydonia {
         let moved = self.focused != at;
         self.focused = at;
         self.sync_focus(cx);
+        self.workspace
+            .update(cx, |workspace, _| workspace.set_focused(entry));
         // An app's fields take the caret when they are pressed.
         if let Member::App { .. } = entry {
             self.leaf().update(cx, |pane, _| pane.kind = Kind::App);
@@ -1077,7 +1086,7 @@ impl Cydonia {
                     crate::view::sidebar::ghost(label.into(), Theme::of(cx))
                 }
             }),
-            board_sort: drag::Domain::with_ghost(Painter::of(cx), {
+            board_sort: drag::Domain::with_ghost({
                 let this = cx.entity().downgrade();
                 move |item, window, cx| board::ghost(&this, item, window, cx)
             }),
@@ -1579,12 +1588,14 @@ impl Render for Cydonia {
         self.publish_shown(cx);
         self.hold_drawn_tables(cx);
         let theme = Theme::of(cx).clone();
+        let floating = self.workspace.read(cx).settings.appearance.floating;
         let root = div()
             .key_context("Cydonia")
             .size_full()
             .relative()
             .flex()
             .flex_row()
+            .when(floating, |root| root.bg(theme.sidebar_bg()))
             .font_family(theme.font_sans.clone())
             .text_color(theme.text)
             .text_style(TextStyle::Body)
@@ -1637,7 +1648,9 @@ impl Render for Cydonia {
             .map(|root| self.commands(root, cx))
             .on_drag_move(
                 cx.listener(|this, event: &DragMoveEvent<SplitDrag>, _, cx| {
-                    this.sidebar_width = f32::from(event.event.position.x)
+                    let middle =
+                        card_gap(this.workspace.read(cx).settings.appearance.floating) / 2.;
+                    this.sidebar_width = (f32::from(event.event.position.x) - middle)
                         .clamp(SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX);
                     cx.notify();
                 }),
@@ -1652,15 +1665,15 @@ impl Render for Cydonia {
             .child(self.detail(window, cx))
             // Rides on the seam between the sidebar and the detail column
             // rather than sitting in flow, so neither gives up a column.
+            // Floating, the seam is the chrome between them.
             .when(self.sidebar_open, |root| {
+                use crate::view::component::divider::{HIT, seam};
                 root.child(
-                    crate::view::component::divider::divider(&theme, Axis::Horizontal)
+                    seam(&theme, Axis::Horizontal, floating)
                         .id("sidebar-split")
                         .absolute()
                         .top_0()
-                        .left(px(
-                            self.sidebar_width - crate::view::component::divider::HIT / 2.
-                        ))
+                        .left(px(self.sidebar_width + card_gap(floating) / 2. - HIT / 2.))
                         .on_drag(SplitDrag, |_, _, _, cx| cx.new(|_| Empty)),
                 )
             })

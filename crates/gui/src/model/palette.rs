@@ -24,7 +24,7 @@ pub struct Washes {
 }
 
 static WASHES: RwLock<Washes> = RwLock::new(Washes {
-    highlight: Paint::Named(settings::Highlight::Yellow),
+    highlight: Paint::Named(bezel::ui::color::SystemColor::Yellow),
     find: None,
     comment: None,
 });

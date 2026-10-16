@@ -9,7 +9,7 @@
 //! [`crate::model::settings::Appearance`], and [`crate::model::migrate`] for
 //! the move.
 
-use crate::model::settings;
+use crate::model::{settings, version::Version};
 use artifact::kind::Kind;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf};
@@ -66,6 +66,10 @@ pub struct State {
     /// Projects whose sidebar children are hidden.
     #[serde(default)]
     pub collapsed: Vec<PathBuf>,
+    /// The release whose What's New was last shown. `None` in a file written
+    /// before this field.
+    #[serde(default)]
+    pub release: Option<Version>,
     /// What each project was last showing, by project path. Last in the struct
     /// because a map renders as TOML tables, and a bare key after one of those
     /// belongs to it.
@@ -152,7 +156,11 @@ pub(crate) fn path() -> Option<PathBuf> {
 /// Paths that have since vanished are dropped — a renamed folder would
 /// otherwise leave a tab no agent can spawn in. The active project is resolved
 /// by path first, so dropping an earlier one doesn't shift it.
+///
+/// With no file at all this is a first launch, and it records the running
+/// version's What's New as seen.
 pub fn restore() -> State {
+    let first = path().is_none_or(|path| !path.exists());
     let stored: State = settings::read_toml(path());
     let active = stored.projects.get(stored.active).cloned();
     let projects: Vec<PathBuf> = stored
@@ -167,6 +175,10 @@ pub fn restore() -> State {
         projects,
         active,
         collapsed: stored.collapsed,
+        release: match first {
+            true => Some(Version::running()),
+            false => stored.release,
+        },
         last: stored.last,
         order: stored.order,
         pinned: stored.pinned,

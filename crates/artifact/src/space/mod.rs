@@ -837,14 +837,18 @@ pub struct Space {
     /// whatever it is renamed to.
     #[serde(default)]
     pub name: String,
-    /// The pane standing over the others, if one is. The tree keeps its shape
-    /// while it does: unzooming puts every pane back where it was, at the size
-    /// it was.
+    /// An entry of the pane standing over the others, if one is. The tree
+    /// keeps its shape while it does: unzooming puts every pane back where it
+    /// was, at the size it was. Read through [`Space::zoomed`].
     ///
     /// Before `tree` in the struct, and so in the file: `tree` is a table, and
     /// TOML reads a bare key after one as belonging to it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub zoomed: Option<Member>,
+    /// The tab last focused. Read through [`Space::focused`]: the pane is
+    /// whichever holds it now.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub focused: Option<Member>,
     pub tree: Node<Member>,
 }
 
@@ -857,6 +861,7 @@ impl Space {
             touched: stamp::now(),
             name: name.to_owned(),
             zoomed: None,
+            focused: None,
             tree: Node::leaf(entry),
         }
     }
@@ -885,7 +890,27 @@ impl Space {
 
     /// Drop members that no longer resolve — see [`Node::prune`].
     pub fn prune(&mut self, gone: &[Member]) -> bool {
+        self.leaving(gone);
         self.tree.prune(gone)
+    }
+
+    /// Hand `zoomed` and `focused`, where `gone` holds the entry either names,
+    /// to a tab of the same pane that stays. Left as they are where none
+    /// stays.
+    fn leaving(&mut self, gone: &[Member]) {
+        let handed = |held: &Option<Member>| {
+            let held = held.as_ref().filter(|held| gone.contains(held))?;
+            self.stack_of(held)
+                .into_iter()
+                .find(|tab| !gone.contains(tab))
+        };
+        let (zoomed, focused) = (handed(&self.zoomed), handed(&self.focused));
+        if zoomed.is_some() {
+            self.zoomed = zoomed;
+        }
+        if focused.is_some() {
+            self.focused = focused;
+        }
     }
 
     pub fn contains(&self, entry: &Member) -> bool {
@@ -898,7 +923,7 @@ impl Space {
     /// An entry already shown is moved rather than shown twice.
     pub fn insert(&mut self, target: &Member, arriving: &Member, side: Side) -> bool {
         match self.contains(arriving) {
-            true => self.tree.relocate(arriving, target, side),
+            true => self.relocate(arriving, target, side),
             false => self.tree.insert(target, arriving, side),
         }
     }
@@ -906,6 +931,10 @@ impl Space {
     /// Move a pane already here to another pane's edge — see
     /// [`Node::relocate`].
     pub fn relocate(&mut self, entry: &Member, target: &Member, side: Side) -> bool {
+        if entry == target || !self.contains(entry) || !self.contains(target) {
+            return false;
+        }
+        self.leaving(std::slice::from_ref(entry));
         self.tree.relocate(entry, target, side)
     }
 
@@ -969,9 +998,7 @@ impl Space {
     /// A zoomed pane that is closed leaves the rest unzoomed rather than
     /// standing something else in its place.
     pub fn remove(&mut self, entry: &Member) -> bool {
-        if self.zoomed.as_ref() == Some(entry) {
-            self.zoomed = None;
-        }
+        self.leaving(std::slice::from_ref(entry));
         self.tree.remove(entry)
     }
 
@@ -981,22 +1008,36 @@ impl Space {
     /// Zooming the pane already zoomed unzooms it, and zooming another swaps
     /// to it — one pane is over the rest, or none is.
     ///
-    /// Held by the pane's name however the caller named it, so a pane zoomed
-    /// from one of its tabs stays zoomed when another tab comes forward.
+    /// Held by whichever tab the caller named, so a pane zoomed from one of
+    /// its tabs stays zoomed when another tab comes forward.
     pub fn zoom(&mut self, entry: &Member) -> Option<Member> {
         let pane = self.stack_of(entry).first().cloned();
-        self.zoomed = match self.zoomed == pane {
+        self.zoomed = match self.zoomed() == pane {
             true => None,
-            false => pane,
+            false => pane.and(Some(entry.clone())),
         };
-        self.zoomed.clone()
+        self.zoomed()
     }
 
-    /// The pane standing over the others, if it is still here. Read rather
-    /// than the field: a member pruned away must not leave the space showing
-    /// a pane that has gone.
+    /// Record `tab` as the one focused. Answers whether that changed what is
+    /// recorded.
+    pub fn focus(&mut self, tab: &Member) -> bool {
+        if !self.contains(tab) || self.focused.as_ref() == Some(tab) {
+            return false;
+        }
+        self.focused = Some(tab.clone());
+        true
+    }
+
+    /// The name of the pane holding the tab last focused, if it is still
+    /// here.
+    pub fn focused(&self) -> Option<Member> {
+        self.stack_of(self.focused.as_ref()?).first().cloned()
+    }
+
+    /// The name of the pane standing over the others, if it is still here.
     pub fn zoomed(&self) -> Option<Member> {
-        self.zoomed.clone().filter(|entry| self.contains(entry))
+        self.stack_of(self.zoomed.as_ref()?).first().cloned()
     }
 }
 

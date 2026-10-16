@@ -519,58 +519,6 @@ fn several_cards_are_tagged_in_one_call() {
     assert!(text.contains("[busy]"), "and nothing was written: {text}");
 }
 
-/// One label to a card: a second replaces the first, and `none` takes it off.
-#[test]
-fn a_card_takes_one_label() {
-    let scratch = Scratch::new("card-label");
-    scratch
-        .store()
-        .create_board("Roadmap", "ROAD")
-        .expect("a board");
-    let server = scratch.server();
-    said(server.call(
-        "board_add_column",
-        json!({ "project": scratch.path(), "board": "ROAD", "name": "Todo" }),
-        None,
-    ));
-    said(server.call(
-        "board_add_card",
-        json!({ "project": scratch.path(), "board": "ROAD", "column": "Todo", "text": ["Wire it", "Ship it"] }),
-        None,
-    ));
-
-    let labelled = said(server.call(
-        "board_set_card_label",
-        json!({ "project": scratch.path(), "card": ["ROAD-1", "ROAD-2"], "label": "Big Bug" }),
-        None,
-    ));
-    assert_eq!(labelled, "ROAD-1, ROAD-2 labelled big-bug");
-    said(server.call(
-        "board_set_card_label",
-        json!({ "project": scratch.path(), "card": "ROAD-1", "label": "chore" }),
-        None,
-    ));
-    let text = said(server.call(
-        "board_read",
-        json!({ "project": scratch.path(), "board": "ROAD" }),
-        None,
-    ));
-    assert!(text.contains("ROAD-1  Wire it  #chore"), "{text}");
-    assert!(text.contains("ROAD-2  Ship it  #big-bug"), "{text}");
-
-    said(server.call(
-        "board_set_card_label",
-        json!({ "project": scratch.path(), "card": "ROAD-1", "label": "none" }),
-        None,
-    ));
-    let card = said(server.call(
-        "board_read_card",
-        json!({ "project": scratch.path(), "card": "ROAD-1" }),
-        None,
-    ));
-    assert!(!card.contains("chore"), "{card}");
-}
-
 /// A card waits on cards of any board, in its project or another open one,
 /// kept as its project writes them; one that names no card any more is left
 /// out of what is read back.

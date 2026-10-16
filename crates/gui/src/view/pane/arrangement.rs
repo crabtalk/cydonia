@@ -79,6 +79,7 @@ impl Cydonia {
             Node::Split { axis, children, .. } => {
                 let axis = *axis;
                 let theme = Theme::of(cx).clone();
+                let floating = self.workspace.read(cx).settings.appearance.floating;
                 let here = path.clone();
                 let across = match axis {
                     Split::Horizontal => Axis::Horizontal,
@@ -152,7 +153,7 @@ impl Cydonia {
                     }
                     let (path, at) = (here.clone(), ix);
                     row = row.child(
-                        divider::divider(&theme, across)
+                        divider::seam(&theme, across, floating)
                             .id(("pane-seam", seam_id(&here, at)))
                             .absolute()
                             .map(|el| match axis {
@@ -194,9 +195,23 @@ impl Cydonia {
             None => div().flex_1().into_any_element(),
         };
         // By the tab in front: that is what a drop joins or divides.
-        self.dock
-            .pane(front, px(crate::view::window::root::HEADER_HEIGHT), body)
-            .into_any_element()
+        let body = self
+            .dock
+            .pane(front, px(crate::view::window::root::HEADER_HEIGHT), body);
+        // Flat, the panes are one plane on the window's fill. Floating, each
+        // pane draws its own card under its bar.
+        let floating = self.workspace.read(cx).settings.appearance.floating;
+        match floating {
+            true => div(),
+            false => bezel::ui::window::content(false, cx),
+        }
+        .flex_1()
+        .min_w_0()
+        .min_h_0()
+        .flex()
+        .flex_col()
+        .child(body)
+        .into_any_element()
     }
 
     /// The pane of the open space named `name`.
@@ -705,14 +720,14 @@ impl Cydonia {
             workspace.open_space(ix, cx);
         });
         self.sync_leaves(window, cx);
-        // The focus lands on the first pane the arrangement lays out, which is
-        // the one at its top left.
-        if let Some(entry) = self
-            .leaves
-            .first()
-            .and_then(|leaf| leaf.read(cx).entry.clone())
-        {
-            self.focused = 0;
+        // The focus lands on the tab in front of the pane the space last had
+        // focused, or else of the first pane it lays out, at its top left.
+        let front = self.workspace.read(cx).active_space().and_then(|space| {
+            let pane = space.focused().or_else(|| space.panes().first().cloned())?;
+            space.front_of(&pane)
+        });
+        if let Some(entry) = front {
+            self.focused = usize::MAX;
             self.focus_pane(&entry, window, cx);
         }
         cx.notify();
