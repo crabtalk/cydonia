@@ -3,7 +3,10 @@
 
 use crate::model::watch;
 use anyhow::{Context, Result};
-use bezel::theme::{TextStyle, appearance::AppearanceMode};
+use bezel::{
+    theme::{TextStyle, appearance::AppearanceMode},
+    ui::color::SystemColor,
+};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf};
 
@@ -265,71 +268,12 @@ pub struct Appearance {
     pub terminal_caret: bool,
 }
 
-/// A preset colour: one of bezel's [`bezel::ui::color::default_swatches`],
-/// in the same order, stored by its lowercase name.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Highlight {
-    Red,
-    Orange,
-    #[default]
-    Yellow,
-    Green,
-    Mint,
-    Teal,
-    Cyan,
-    Blue,
-    Indigo,
-    Purple,
-    Pink,
-    Brown,
-}
-
-impl Highlight {
-    pub const ALL: [Self; 12] = [
-        Self::Red,
-        Self::Orange,
-        Self::Yellow,
-        Self::Green,
-        Self::Mint,
-        Self::Teal,
-        Self::Cyan,
-        Self::Blue,
-        Self::Indigo,
-        Self::Purple,
-        Self::Pink,
-        Self::Brown,
-    ];
-
-    /// The colour for `theme`'s appearance.
-    pub fn solid(self, theme: &bezel::theme::Theme) -> bezel::gpui::Hsla {
-        bezel::ui::color::default_swatches()[self as usize].resolve(theme)
-    }
-
-    pub fn key(self) -> &'static str {
-        match self {
-            Self::Red => "red",
-            Self::Orange => "orange",
-            Self::Yellow => "yellow",
-            Self::Green => "green",
-            Self::Mint => "mint",
-            Self::Teal => "teal",
-            Self::Cyan => "cyan",
-            Self::Blue => "blue",
-            Self::Indigo => "indigo",
-            Self::Purple => "purple",
-            Self::Pink => "pink",
-            Self::Brown => "brown",
-        }
-    }
-}
-
 /// A colour picked in settings: a preset, which follows the appearance, or
 /// one sRGB value for both, painted as it is. Stored as the preset's name or
 /// as `#rrggbb`; a `#rrggbbaa` reads as its `#rrggbb`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Paint {
-    Named(Highlight),
+    Named(SystemColor),
     Custom { rgb: u32 },
 }
 
@@ -346,14 +290,14 @@ impl Paint {
     /// The colour as every setting paints it, at full strength.
     pub fn solid(self, theme: &bezel::theme::Theme) -> bezel::gpui::Hsla {
         match self {
-            Self::Named(named) => named.solid(theme),
+            Self::Named(named) => named.resolve(theme),
             Self::Custom { rgb } => bezel::gpui::rgb(rgb).into(),
         }
     }
 
     pub fn key(self) -> String {
         match self {
-            Self::Named(named) => named.key().to_owned(),
+            Self::Named(named) => named.name().to_owned(),
             Self::Custom { rgb } => format!("#{rgb:06x}"),
         }
     }
@@ -367,10 +311,7 @@ impl Paint {
                 _ => None,
             };
         }
-        Highlight::ALL
-            .into_iter()
-            .find(|named| named.key() == key)
-            .map(Self::Named)
+        SystemColor::from_name(key).map(Self::Named)
     }
 }
 
@@ -384,7 +325,7 @@ fn paint_or_unset<'de, D: serde::Deserializer<'de>>(
 fn highlight_or_default<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Paint, D::Error> {
-    Ok(paint_or_unset(deserializer)?.unwrap_or(Paint::Named(Highlight::default())))
+    Ok(paint_or_unset(deserializer)?.unwrap_or(Paint::Named(SystemColor::Yellow)))
 }
 
 impl Serialize for Paint {
@@ -560,7 +501,7 @@ impl Default for Appearance {
             // nothing scrolls a fence back to a caret typed off its right
             // edge — that is the cost, and the switch is the way back.
             wrap_code: false,
-            highlight: Paint::Named(Highlight::default()),
+            highlight: Paint::Named(SystemColor::Yellow),
             selection: None,
             search: None,
             comment_color: None,

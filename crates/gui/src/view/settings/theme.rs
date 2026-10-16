@@ -1,9 +1,6 @@
 //! The appearance section: which of the three modes the app paints in.
 
-use crate::model::{
-    settings::{Highlight, Paint},
-    themes,
-};
+use crate::model::{settings::Paint, themes};
 use crate::{
     model::workspace::{ArticleChange, Workspace},
     view::{
@@ -13,7 +10,7 @@ use crate::{
 };
 use artifact::board::View;
 use bezel::theme::AppExt as _;
-use bezel::ui::color::Swatch;
+use bezel::ui::color::{Swatch, SystemColor};
 use bezel::{
     gpui::{
         AnyElement, Context, DragMoveEvent, Empty, Entity, FontWeight, Hsla, SharedString, div,
@@ -773,7 +770,7 @@ impl SettingsWindow {
     /// The colour behind `==text==`.
     pub(super) fn highlight_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let current = self.workspace.read(cx).settings.appearance.highlight;
-        let paints = Highlight::ALL.into_iter().map(Paint::Named).collect();
+        let paints = SystemColor::ALL.into_iter().map(Paint::Named).collect();
         self.color_row(
             true,
             "highlight-color",
@@ -979,7 +976,7 @@ impl SettingsWindow {
         cx: &mut Context<Self>,
         set: fn(&mut Workspace, Option<Paint>, &mut Context<Workspace>),
     ) -> AnyElement {
-        let paints = Highlight::ALL.into_iter().map(Paint::Named).collect();
+        let paints = SystemColor::ALL.into_iter().map(Paint::Named).collect();
         self.color_row(false, id, title, current, paints, Some(system), cx, set)
     }
 

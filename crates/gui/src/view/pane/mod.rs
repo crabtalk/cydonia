@@ -217,8 +217,8 @@ impl Pane {
     /// Every tab carries the close, the pane's first included. There is no
     /// separate control for closing the pane, because there is no separate
     /// thing to close: a pane is its strip, and the last `×` takes the pane
-    /// with the tab. The focus mark is on the tab rather than on the pane,
-    /// since the panes are one plane divided and take no fill of their own.
+    /// with the tab. Flat, the focus mark is on the tab. Floating, it is the
+    /// card's edge, and every pane's front tab takes the frame.
     fn tab(
         &self,
         tab: &Member,
@@ -264,8 +264,10 @@ impl Pane {
         // A tab that is showing but not focused still has to read as the one
         // its pane is on, or a background pane's strip says nothing about what
         // is under it — which is [`tabs::State::Front`].
+        let floating = self.workspace.read(cx).settings.appearance.floating;
         let state = match (focused, front) {
             (true, _) => tabs::State::Focused,
+            (false, true) if floating => tabs::State::Focused,
             (false, true) => tabs::State::Front,
             (false, false) => tabs::State::Resting,
         };
