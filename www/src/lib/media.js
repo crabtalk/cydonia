@@ -2,7 +2,7 @@
 export const cdn = 'https://cdn.crabtalk.ai';
 
 /** The release whose recording the hero plays and the home share card shows. */
-export const hero = '0.1.23';
+export const hero = '0.2.2';
 
 const VIDEO = /\.(mp4|webm|mov)$/i;
 

@@ -2,8 +2,9 @@
 // Laser Altimeter's gridded topography (MOLA MEGDR, 128 px/deg, NASA, public domain):
 // static/terrain.svg, the region behind the page, and static/terrain-plate.svg, the
 // footer plate's scene: its window plus PLATE_OVERSCAN on every side, centred on the
-// Face (40.75°N 350.54°E) to the pixel.
-// Run with `npm run terrain`; the SVGs are committed, so builds never fetch the data.
+// Face (40.75°N 350.54°E) to the pixel; and static/terrain-relief.json, the region's
+// contours a level each and its heights, which /backdrop/ animates.
+// Run with `npm run terrain`; its outputs are committed, so builds never fetch the data.
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
@@ -22,6 +23,7 @@ const SIMPLIFY = 0.25;
 const PLATE_ROWS = 228;
 const PLATE_COLS = 1024;
 const PLATE_OVERSCAN = 0.08;
+const FIELD_CELL = 4;
 
 const at = (path) => fileURLToPath(new URL(path, import.meta.url));
 const KX = Math.cos((FACE[0] * Math.PI) / 180);
@@ -134,8 +136,8 @@ function simplify(points, epsilon) {
 	return [...simplify(points.slice(0, at + 1), epsilon).slice(0, -1), ...simplify(points.slice(at), epsilon)];
 }
 
-/** Contours of the band's rows `row`.. for `h`, tile columns `col`.. for `w`, as a mask SVG. */
-function drawing(data, row, h, col, w) {
+/** The band's rows `row`.. for `h`, tile columns `col`.. for `w`, blurred, and its contours a level each. */
+function relief(data, row, h, col, w) {
 	let grid = new Float32Array(w * h);
 	for (let r = 0; r < h; r++) for (let c = 0; c < w; c++) grid[r * w + c] = data.readInt16BE(((row + r) * TILE_COLS + col + c) * 2);
 	grid = blur(grid, w, h, SIGMA);
@@ -143,25 +145,47 @@ function drawing(data, row, h, col, w) {
 	let hi = -Infinity;
 	for (const v of grid) [lo, hi] = [Math.min(lo, v), Math.max(hi, v)];
 	const path = (points) => 'M' + points.map(([x, y]) => `${(x * KX).toFixed(1)} ${y.toFixed(1)}`).join('L');
-	const minor = [];
-	const major = [];
-	for (let level = Math.ceil(lo / STEP) * STEP; level < hi; level += STEP) {
-		const d = contour(grid, w, h, level).map((line) => path(simplify(line, SIMPLIFY))).join('');
-		(level % INDEX === 0 ? major : minor).push(d);
-	}
+	const levels = [];
+	for (let level = Math.ceil(lo / STEP) * STEP; level < hi; level += STEP)
+		levels.push({ m: level, d: contour(grid, w, h, level).map((line) => path(simplify(line, SIMPLIFY))).join('') });
+	return { grid, w, h, levels };
+}
+
+/** A relief's contours as a mask SVG. */
+function drawing({ w, h, levels }) {
+	const minor = levels.filter(({ m }) => m % INDEX !== 0).map(({ d }) => d);
+	const major = levels.filter(({ m }) => m % INDEX === 0).map(({ d }) => d);
 	// White strokes: used as a mask, so the minor lines carry half the index lines' weight.
 	return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${(w * KX).toFixed(0)} ${h}"><g fill="none" stroke="#fff" stroke-width="0.5" stroke-linejoin="round"><path stroke-opacity="0.5" d="${minor.join('')}"/><path d="${major.join('')}"/></g></svg>`;
 }
 
+/** A relief for the backdrop: its contours a level each in the SVG's units, and its heights in metres every FIELD_CELL px. */
+function heights({ grid, w, h, levels }) {
+	const cols = Math.floor(w / FIELD_CELL);
+	const rows = Math.floor(h / FIELD_CELL);
+	const field = [];
+	for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) field.push(Math.round(grid[r * FIELD_CELL * w + c * FIELD_CELL]));
+	return JSON.stringify({
+		width: Math.round(w * KX),
+		height: h,
+		index: INDEX,
+		levels,
+		field: { cols, rows, cell: [+(FIELD_CELL * KX).toFixed(3), FIELD_CELL], heights: field }
+	});
+}
+
 export async function generateTerrain() {
 	const data = await band();
-	const region = drawing(data, 0, BAND_ROWS, (346.5 - TILE_LON) * PPD, 8 * PPD);
+	const area = relief(data, 0, BAND_ROWS, (346.5 - TILE_LON) * PPD, 8 * PPD);
+	const region = drawing(area);
+	const backdrop = heights(area);
 	const rows = 2 * Math.round((PLATE_ROWS * (1 + 2 * PLATE_OVERSCAN)) / 2);
 	const cols = 2 * Math.round((PLATE_COLS * (1 + 2 * PLATE_OVERSCAN)) / 2);
-	const plate = drawing(data, FACE_ROW - rows / 2, rows, FACE_COL - cols / 2, cols);
+	const plate = drawing(relief(data, FACE_ROW - rows / 2, rows, FACE_COL - cols / 2, cols));
 	await writeFile(at('../static/terrain.svg'), region);
 	await writeFile(at('../static/terrain-plate.svg'), plate);
-	console.log(`terrain: region ${(region.length / 1024).toFixed(0)} KB, plate ${(plate.length / 1024).toFixed(0)} KB`);
+	await writeFile(at('../static/terrain-relief.json'), backdrop);
+	console.log(`terrain: region ${(region.length / 1024).toFixed(0)} KB, plate ${(plate.length / 1024).toFixed(0)} KB, relief ${(backdrop.length / 1024).toFixed(0)} KB`);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) await generateTerrain();
