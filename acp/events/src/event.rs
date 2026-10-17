@@ -9,56 +9,56 @@ use crate::Reply;
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum Event {
-    Update(acp_proto::SessionNotification),
+    Update(cydonia_acp_proto::SessionNotification),
     Permission(
-        acp_proto::RequestPermissionRequest,
-        Reply<acp_proto::RequestPermissionResponse>,
+        cydonia_acp_proto::RequestPermissionRequest,
+        Reply<cydonia_acp_proto::RequestPermissionResponse>,
     ),
     ReadTextFile(
-        acp_proto::ReadTextFileRequest,
-        Reply<acp_proto::ReadTextFileResponse>,
+        cydonia_acp_proto::ReadTextFileRequest,
+        Reply<cydonia_acp_proto::ReadTextFileResponse>,
     ),
     WriteTextFile(
-        acp_proto::WriteTextFileRequest,
-        Reply<acp_proto::WriteTextFileResponse>,
+        cydonia_acp_proto::WriteTextFileRequest,
+        Reply<cydonia_acp_proto::WriteTextFileResponse>,
     ),
     CreateTerminal(
-        acp_proto::CreateTerminalRequest,
-        Reply<acp_proto::CreateTerminalResponse>,
+        cydonia_acp_proto::CreateTerminalRequest,
+        Reply<cydonia_acp_proto::CreateTerminalResponse>,
     ),
     TerminalOutput(
-        acp_proto::TerminalOutputRequest,
-        Reply<acp_proto::TerminalOutputResponse>,
+        cydonia_acp_proto::TerminalOutputRequest,
+        Reply<cydonia_acp_proto::TerminalOutputResponse>,
     ),
     ReleaseTerminal(
-        acp_proto::ReleaseTerminalRequest,
-        Reply<acp_proto::ReleaseTerminalResponse>,
+        cydonia_acp_proto::ReleaseTerminalRequest,
+        Reply<cydonia_acp_proto::ReleaseTerminalResponse>,
     ),
     WaitForTerminalExit(
-        acp_proto::WaitForTerminalExitRequest,
-        Reply<acp_proto::WaitForTerminalExitResponse>,
+        cydonia_acp_proto::WaitForTerminalExitRequest,
+        Reply<cydonia_acp_proto::WaitForTerminalExitResponse>,
     ),
     KillTerminal(
-        acp_proto::KillTerminalRequest,
-        Reply<acp_proto::KillTerminalResponse>,
+        cydonia_acp_proto::KillTerminalRequest,
+        Reply<cydonia_acp_proto::KillTerminalResponse>,
     ),
     CreateElicitation(
-        acp_proto::CreateElicitationRequest,
-        Reply<acp_proto::CreateElicitationResponse>,
+        cydonia_acp_proto::CreateElicitationRequest,
+        Reply<cydonia_acp_proto::CreateElicitationResponse>,
     ),
-    CompleteElicitation(acp_proto::CompleteElicitationNotification),
+    CompleteElicitation(cydonia_acp_proto::CompleteElicitationNotification),
     ConnectMcp(
-        acp_proto::ConnectMcpRequest,
-        Reply<acp_proto::ConnectMcpResponse>,
+        cydonia_acp_proto::ConnectMcpRequest,
+        Reply<cydonia_acp_proto::ConnectMcpResponse>,
     ),
     MessageMcp(
-        acp_proto::MessageMcpRequest,
-        Reply<acp_proto::MessageMcpResponse>,
+        cydonia_acp_proto::MessageMcpRequest,
+        Reply<cydonia_acp_proto::MessageMcpResponse>,
     ),
-    NotifyMcp(acp_proto::MessageMcpNotification),
+    NotifyMcp(cydonia_acp_proto::MessageMcpNotification),
     DisconnectMcp(
-        acp_proto::DisconnectMcpRequest,
-        Reply<acp_proto::DisconnectMcpResponse>,
+        cydonia_acp_proto::DisconnectMcpRequest,
+        Reply<cydonia_acp_proto::DisconnectMcpResponse>,
     ),
     ExtRequest {
         method: String,

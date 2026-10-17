@@ -12,15 +12,20 @@ categories = ["api-bindings", "asynchronous", "network-programming"]
 
 [features]
 default = ["client", "server"]
-# `spawn` runs the agent as a subprocess; `serve_on_stdio` reads the agent's own.
-client = ["tokio/process"]
-server = ["tokio/io-std"]
+peer = ["dep:serde", "dep:serde_json", "dep:tokio"]
+client = ["peer", "tokio/process"]
+server = ["peer", "tokio/io-std"]
+agents = ["dep:cydonia-acp-agents"]
+install = ["agents", "cydonia-acp-agents/install"]
 
 [dependencies]
-acp-proto.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-tokio = { workspace = true, features = ["io-util", "rt", "sync"] }
+cydonia-acp-proto.workspace = true
+cydonia-acp-agents = { workspace = true, optional = true }
+
+# crates-io
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true, features = ["io-util", "rt", "sync"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "process", "time"] }

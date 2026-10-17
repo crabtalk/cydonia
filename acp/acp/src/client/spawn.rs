@@ -24,7 +24,7 @@ pub fn spawn<C: Client>(
     command: &mut Command,
     client: Arc<C>,
     tap: Option<Tap>,
-) -> acp_proto::Result<(AgentConn, Child)> {
+) -> cydonia_acp_proto::Result<(AgentConn, Child)> {
     // Without this the agent outlives its `Child`: dropping the handle does not
     // signal it, and its stdin belongs to the write loop rather than to us.
     let mut child = command
@@ -33,14 +33,12 @@ pub fn spawn<C: Client>(
         .kill_on_drop(true)
         .spawn()?;
 
-    let stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| acp_proto::Error::internal_error().data("agent stdin was not piped"))?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| acp_proto::Error::internal_error().data("agent stdout was not piped"))?;
+    let stdin = child.stdin.take().ok_or_else(|| {
+        cydonia_acp_proto::Error::internal_error().data("agent stdin was not piped")
+    })?;
+    let stdout = child.stdout.take().ok_or_else(|| {
+        cydonia_acp_proto::Error::internal_error().data("agent stdout was not piped")
+    })?;
 
     let peer = Peer::new(BufReader::new(stdout), stdin, Arc::new(Serve(client)), tap);
     Ok((AgentConn(peer), child))

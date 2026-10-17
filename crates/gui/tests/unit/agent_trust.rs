@@ -1,7 +1,7 @@
 //! What an install is agreed to: the source, which outlives a version.
 
 use super::*;
-use acp_agents::registry::{Agent, Binary, Distribution};
+use cydonia_acp::agents::registry::{Agent, Binary, Distribution};
 
 fn npm(id: &str, package: &str, version: &str) -> Agent {
     Agent {

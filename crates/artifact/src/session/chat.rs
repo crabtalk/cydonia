@@ -6,7 +6,7 @@
 //! from the live session for that reason — a session is a connection and a
 //! process, and neither of those is in the file.
 
-use acp::schema::ToolKind;
+use cydonia_acp::proto::ToolKind;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, PartialEq, Serialize, Deserialize)]

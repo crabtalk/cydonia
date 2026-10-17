@@ -22,7 +22,6 @@ use crate::{
         watch::{self, Watch},
     },
 };
-use acp::schema::SessionConfigOptionValue;
 use artifact::board::Board;
 use bezel::theme::AppExt as _;
 use bezel::ui::AppExt as _;
@@ -31,6 +30,7 @@ use bezel::{
     theme::{Brand, Tint, Vibrancy, appearance::AppearanceMode},
     ui::icons::Icon,
 };
+use cydonia_acp::proto::SessionConfigOptionValue;
 use editor::AppExt as _;
 use futures::{StreamExt as _, channel::mpsc};
 use markdown::AppExt as _;

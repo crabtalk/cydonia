@@ -1,7 +1,7 @@
 //! Client-side forks for agents without checkpoint support.
 
 use super::AgentConn;
-use acp_proto::{
+use cydonia_acp_proto::{
     ContentBlock, NewSessionRequest, NewSessionResponse, PromptRequest, PromptResponse,
 };
 use serde::{Deserialize, Serialize};
@@ -47,11 +47,11 @@ impl AgentConn {
         request: NewSessionRequest,
         history: &[HistoryEntry],
         before: usize,
-    ) -> acp_proto::Result<HistoryFork> {
+    ) -> cydonia_acp_proto::Result<HistoryFork> {
         let history = history
             .get(..before)
             .ok_or_else(|| {
-                acp_proto::Error::invalid_params().data("fork position exceeds history")
+                cydonia_acp_proto::Error::invalid_params().data("fork position exceeds history")
             })?
             .to_vec();
         let session = self.new_session(request).await?;
@@ -86,9 +86,11 @@ impl HistoryFork {
     pub async fn prompt(
         &mut self,
         mut request: PromptRequest,
-    ) -> acp_proto::Result<PromptResponse> {
+    ) -> cydonia_acp_proto::Result<PromptResponse> {
         if request.session_id != self.session.session_id {
-            return Err(acp_proto::Error::invalid_params().data("prompt must target the fork"));
+            return Err(
+                cydonia_acp_proto::Error::invalid_params().data("prompt must target the fork")
+            );
         }
         if !self.history.is_empty() {
             let mut content = vec![ContentBlock::from(

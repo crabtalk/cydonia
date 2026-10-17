@@ -1,4 +1,4 @@
-use acp::schema::{ContentBlock, EmbeddedResourceResource};
+use cydonia_acp::proto::{ContentBlock, EmbeddedResourceResource};
 use cydonia_gui::agent::context;
 use std::path::Path;
 

@@ -6,15 +6,15 @@ use tokio::sync::oneshot;
 /// A request waiting on the consumer.
 ///
 /// Dropping it declines the request with `method not found` — the same refusal
-/// [`Client`](acp::Client) sends for a method left unimplemented.
-pub struct Reply<T>(pub(crate) oneshot::Sender<acp_proto::Result<T>>);
+/// [`Client`](cydonia_acp::Client) sends for a method left unimplemented.
+pub struct Reply<T>(pub(crate) oneshot::Sender<cydonia_acp_proto::Result<T>>);
 
 impl<T> Reply<T> {
     pub fn send(self, value: T) {
         let _ = self.0.send(Ok(value));
     }
 
-    pub fn fail(self, error: acp_proto::Error) {
+    pub fn fail(self, error: cydonia_acp_proto::Error) {
         let _ = self.0.send(Err(error));
     }
 

@@ -16,16 +16,23 @@
 //! cydonia-acp = { version = "0.2.0", default-features = false, features = ["client"] }
 //! ```
 //!
-//! Depend on `cydonia-acp-proto` instead if you only need the wire types; it pulls
-//! in no async runtime.
+//! The wire types are [`proto`]. The `agents` feature adds [`agents`], the ACP
+//! agent registry, and `install` its installer. With `client`, `server` and
+//! `peer` off, the crate pulls in no async runtime.
 //!
 //! [acp]: https://agentclientprotocol.com
 
-pub use acp_proto::{self as schema, Error, RequestId, Result, method};
-pub use codec::{Direction, Message, Tap};
-pub use handler::Handler;
-pub use peer::Peer;
+#[cfg(feature = "agents")]
+pub use cydonia_acp_agents as agents;
+pub use cydonia_acp_proto::{self as proto, Error, RequestId, Result, method};
+#[cfg(feature = "peer")]
+pub use {
+    codec::{Direction, Message, Tap},
+    handler::Handler,
+    peer::Peer,
+};
 
+#[cfg(feature = "peer")]
 pub mod codec;
 
 #[cfg(feature = "client")]
@@ -33,7 +40,9 @@ pub mod client;
 #[cfg(feature = "server")]
 pub mod server;
 
+#[cfg(feature = "peer")]
 mod handler;
+#[cfg(feature = "peer")]
 mod peer;
 
 #[cfg(feature = "client")]

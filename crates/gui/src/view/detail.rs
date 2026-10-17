@@ -14,10 +14,6 @@ use crate::{
         window::root::{self, Cydonia, NewArticle, NewBoard, NewSession, NewTable},
     },
 };
-use acp::schema::{
-    PermissionOptionKind, SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory,
-    SessionConfigOptionValue, SessionConfigSelectOptions, SessionModeState,
-};
 use artifact::kind::Kind;
 use artifact::{session::chat::ChatItem, space::Member};
 use bezel::{
@@ -37,6 +33,10 @@ use bezel::{
         popover,
         widgets::Content,
     },
+};
+use cydonia_acp::proto::{
+    PermissionOptionKind, SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory,
+    SessionConfigOptionValue, SessionConfigSelectOptions, SessionModeState,
 };
 use std::path::{Path, PathBuf};
 

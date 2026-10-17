@@ -9,8 +9,8 @@
 //! catalog runs to thousands of entries and the query is answered server-side.
 
 use crate::model::settings;
-use acp_agents::mcp::{self as registry, Distribution};
 use anyhow::{Context, Result};
+use cydonia_acp::agents::mcp::{self as registry, Distribution};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf};
 

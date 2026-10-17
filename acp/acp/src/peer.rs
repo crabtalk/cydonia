@@ -20,10 +20,13 @@ use tokio::{
 
 type Pending = Arc<
     Mutex<
-        HashMap<acp_proto::RequestId, oneshot::Sender<Result<serde_json::Value, acp_proto::Error>>>,
+        HashMap<
+            cydonia_acp_proto::RequestId,
+            oneshot::Sender<Result<serde_json::Value, cydonia_acp_proto::Error>>,
+        >,
     >,
 >;
-type InFlight = Arc<Mutex<HashMap<acp_proto::RequestId, AbortHandle>>>;
+type InFlight = Arc<Mutex<HashMap<cydonia_acp_proto::RequestId, AbortHandle>>>;
 
 /// A handle for calling the other side. Cheap to clone.
 #[derive(Clone)]
@@ -71,8 +74,8 @@ impl Peer {
         &self,
         method: &str,
         params: P,
-    ) -> Result<R, acp_proto::Error> {
-        let id = acp_proto::RequestId::Num(self.0.next_id.fetch_add(1, Ordering::Relaxed));
+    ) -> Result<R, cydonia_acp_proto::Error> {
+        let id = cydonia_acp_proto::RequestId::Num(self.0.next_id.fetch_add(1, Ordering::Relaxed));
         let params = serde_json::to_value(params)?;
 
         let (tx, rx) = oneshot::channel();
@@ -109,7 +112,11 @@ impl Peer {
     }
 
     /// Tell the other side something. Returns once queued for writing.
-    pub fn notify<P: Serialize>(&self, method: &str, params: P) -> Result<(), acp_proto::Error> {
+    pub fn notify<P: Serialize>(
+        &self,
+        method: &str,
+        params: P,
+    ) -> Result<(), cydonia_acp_proto::Error> {
         let params = serde_json::to_value(params)?;
         self.0
             .outgoing
@@ -119,8 +126,8 @@ impl Peer {
 
     fn resolve(
         &self,
-        id: &acp_proto::RequestId,
-        outcome: Result<serde_json::Value, acp_proto::Error>,
+        id: &cydonia_acp_proto::RequestId,
+        outcome: Result<serde_json::Value, cydonia_acp_proto::Error>,
     ) {
         let waiter = self
             .0
@@ -149,7 +156,7 @@ impl Peer {
 /// Sends `$/cancel_request` for a call the caller walked away from.
 struct Abandon<'a> {
     peer: &'a Peer,
-    id: acp_proto::RequestId,
+    id: cydonia_acp_proto::RequestId,
     armed: bool,
 }
 
@@ -171,8 +178,8 @@ impl Drop for Abandon<'_> {
             .expect("pending map poisoned")
             .remove(&self.id);
         let _ = self.peer.notify(
-            acp_proto::method::CANCEL_REQUEST,
-            acp_proto::CancelRequestNotification {
+            cydonia_acp_proto::method::CANCEL_REQUEST,
+            cydonia_acp_proto::CancelRequestNotification {
                 request_id: self.id.clone(),
                 meta: None,
             },
@@ -180,8 +187,8 @@ impl Drop for Abandon<'_> {
     }
 }
 
-fn disconnected() -> acp_proto::Error {
-    acp_proto::Error::internal_error().data("connection closed")
+fn disconnected() -> cydonia_acp_proto::Error {
+    cydonia_acp_proto::Error::internal_error().data("connection closed")
 }
 
 async fn write_loop<W: AsyncWrite + Unpin>(
@@ -212,14 +219,14 @@ where
             // A malformed frame is the peer's bug, not ours; report and continue.
             // JSON-RPC answers an unparseable frame with a null id.
             Err(e) => {
-                peer.send(Message::error(Some(acp_proto::RequestId::Null), e));
+                peer.send(Message::error(Some(cydonia_acp_proto::RequestId::Null), e));
                 continue;
             }
         };
         match classify(message) {
             Frame::Response { id, outcome } => peer.resolve(&id, outcome),
             Frame::Notification { method, params } => {
-                if method == acp_proto::method::CANCEL_REQUEST {
+                if method == cydonia_acp_proto::method::CANCEL_REQUEST {
                     cancel(&in_flight, &params);
                 } else {
                     handler.notification(method, params).await;
@@ -250,8 +257,8 @@ where
             }
             Frame::Ignore => {}
             Frame::Invalid => peer.send(Message::error(
-                Some(acp_proto::RequestId::Null),
-                acp_proto::Error::invalid_request(),
+                Some(cydonia_acp_proto::RequestId::Null),
+                cydonia_acp_proto::Error::invalid_request(),
             )),
         }
     }
@@ -259,7 +266,7 @@ where
 }
 
 fn cancel(in_flight: &InFlight, params: &serde_json::Value) {
-    let Ok(acp_proto::CancelRequestNotification { request_id, .. }) =
+    let Ok(cydonia_acp_proto::CancelRequestNotification { request_id, .. }) =
         serde_json::from_value(params.clone())
     else {
         return;
@@ -275,7 +282,7 @@ fn cancel(in_flight: &InFlight, params: &serde_json::Value) {
 
 enum Frame {
     Request {
-        id: acp_proto::RequestId,
+        id: cydonia_acp_proto::RequestId,
         method: String,
         params: serde_json::Value,
     },
@@ -284,8 +291,8 @@ enum Frame {
         params: serde_json::Value,
     },
     Response {
-        id: acp_proto::RequestId,
-        outcome: Result<serde_json::Value, acp_proto::Error>,
+        id: cydonia_acp_proto::RequestId,
+        outcome: Result<serde_json::Value, cydonia_acp_proto::Error>,
     },
     Ignore,
     Invalid,

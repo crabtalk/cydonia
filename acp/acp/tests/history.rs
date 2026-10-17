@@ -1,7 +1,7 @@
 use cydonia_acp::{
     Agent, Client, Result,
     client::{HistoryEntry, HistoryRole},
-    schema,
+    proto,
 };
 use std::sync::{
     Arc,
@@ -11,21 +11,18 @@ use tokio::sync::mpsc;
 
 struct Fake {
     opens: Arc<AtomicUsize>,
-    prompts: mpsc::UnboundedSender<schema::PromptRequest>,
+    prompts: mpsc::UnboundedSender<proto::PromptRequest>,
     fail: Arc<AtomicBool>,
 }
 
 impl Agent for Fake {
-    async fn initialize(&self, _: schema::InitializeRequest) -> Result<schema::InitializeResponse> {
+    async fn initialize(&self, _: proto::InitializeRequest) -> Result<proto::InitializeResponse> {
         unreachable!()
     }
 
-    async fn new_session(
-        &self,
-        _: schema::NewSessionRequest,
-    ) -> Result<schema::NewSessionResponse> {
+    async fn new_session(&self, _: proto::NewSessionRequest) -> Result<proto::NewSessionResponse> {
         self.opens.fetch_add(1, Ordering::SeqCst);
-        Ok(schema::NewSessionResponse {
+        Ok(proto::NewSessionResponse {
             session_id: "fork".into(),
             modes: None,
             config_options: None,
@@ -33,29 +30,29 @@ impl Agent for Fake {
         })
     }
 
-    async fn prompt(&self, request: schema::PromptRequest) -> Result<schema::PromptResponse> {
+    async fn prompt(&self, request: proto::PromptRequest) -> Result<proto::PromptResponse> {
         self.prompts.send(request).unwrap();
         if self.fail.swap(false, Ordering::SeqCst) {
-            return Err(schema::Error::invalid_params());
+            return Err(proto::Error::invalid_params());
         }
-        Ok(schema::PromptResponse::new(schema::StopReason::EndTurn))
+        Ok(proto::PromptResponse::new(proto::StopReason::EndTurn))
     }
 }
 
 struct Ui;
 impl Client for Ui {
-    async fn session_update(&self, _: schema::SessionNotification) {}
+    async fn session_update(&self, _: proto::SessionNotification) {}
     async fn request_permission(
         &self,
-        _: schema::RequestPermissionRequest,
-    ) -> Result<schema::RequestPermissionResponse> {
-        Err(schema::Error::method_not_found())
+        _: proto::RequestPermissionRequest,
+    ) -> Result<proto::RequestPermissionResponse> {
+        Err(proto::Error::method_not_found())
     }
 }
 
 fn setup() -> (
     cydonia_acp::AgentConn,
-    mpsc::UnboundedReceiver<schema::PromptRequest>,
+    mpsc::UnboundedReceiver<proto::PromptRequest>,
     Arc<AtomicUsize>,
     Arc<AtomicBool>,
 ) {
@@ -102,13 +99,13 @@ async fn fork_stays_idle_then_sends_only_the_selected_prefix_once() {
     let (agent, mut prompts, opens, _) = setup();
     let saved = history();
     let mut fork = agent
-        .fork_session_from_history(schema::NewSessionRequest::new("/tmp"), &saved, 2)
+        .fork_session_from_history(proto::NewSessionRequest::new("/tmp"), &saved, 2)
         .await
         .unwrap();
     assert_eq!(opens.load(Ordering::SeqCst), 1);
     assert!(prompts.try_recv().is_err());
     assert_eq!(fork.pending_history(), &saved[..2]);
-    let mut request = schema::PromptRequest::new(
+    let mut request = proto::PromptRequest::new(
         fork.session().session_id.clone(),
         vec!["edited question".into()],
     );
@@ -131,16 +128,16 @@ async fn empty_fork_and_invalid_cutoff_do_not_import_history() {
     let (agent, mut prompts, opens, _) = setup();
     assert!(
         agent
-            .fork_session_from_history(schema::NewSessionRequest::new("/tmp"), &history(), 4)
+            .fork_session_from_history(proto::NewSessionRequest::new("/tmp"), &history(), 4)
             .await
             .is_err()
     );
     assert_eq!(opens.load(Ordering::SeqCst), 0);
     let mut fork = agent
-        .fork_session_from_history(schema::NewSessionRequest::new("/tmp"), &history(), 0)
+        .fork_session_from_history(proto::NewSessionRequest::new("/tmp"), &history(), 0)
         .await
         .unwrap();
-    let request = schema::PromptRequest::new("fork", vec!["new question".into()]);
+    let request = proto::PromptRequest::new("fork", vec!["new question".into()]);
     fork.prompt(request.clone()).await.unwrap();
     assert_eq!(prompts.recv().await.unwrap(), request);
 }
@@ -150,24 +147,24 @@ async fn errors_keep_pending_history_and_wrong_session_is_rejected_locally() {
     let (agent, mut prompts, _, fail) = setup();
     let saved = history();
     let mut fork = agent
-        .fork_session_from_history(schema::NewSessionRequest::new("/tmp"), &saved, saved.len())
+        .fork_session_from_history(proto::NewSessionRequest::new("/tmp"), &saved, saved.len())
         .await
         .unwrap();
     assert!(
-        fork.prompt(schema::PromptRequest::new("original", vec![]))
+        fork.prompt(proto::PromptRequest::new("original", vec![]))
             .await
             .is_err()
     );
     assert!(prompts.try_recv().is_err());
     fail.store(true, Ordering::SeqCst);
     assert!(
-        fork.prompt(schema::PromptRequest::new("fork", vec!["retry".into()]))
+        fork.prompt(proto::PromptRequest::new("fork", vec!["retry".into()]))
             .await
             .is_err()
     );
     assert_eq!(fork.pending_history(), saved);
     let failed = prompts.recv().await.unwrap();
-    fork.prompt(schema::PromptRequest::new("fork", vec!["retry".into()]))
+    fork.prompt(proto::PromptRequest::new("fork", vec!["retry".into()]))
         .await
         .unwrap();
     assert_eq!(prompts.recv().await.unwrap(), failed);
@@ -177,7 +174,7 @@ async fn errors_keep_pending_history_and_wrong_session_is_rejected_locally() {
 #[tokio::test]
 async fn typed_content_and_restored_history_survive_without_text_conversion() {
     let (agent, mut prompts, _, _) = setup();
-    let image: schema::ContentBlock = serde_json::from_value(serde_json::json!({
+    let image: proto::ContentBlock = serde_json::from_value(serde_json::json!({
         "type": "image", "data": "aGVsbG8=", "mimeType": "image/png"
     }))
     .unwrap();
@@ -186,7 +183,7 @@ async fn typed_content_and_restored_history_survive_without_text_conversion() {
         content: vec![image.clone()],
     }];
     let fork = agent
-        .fork_session_from_history(schema::NewSessionRequest::new("/tmp"), &saved, 1)
+        .fork_session_from_history(proto::NewSessionRequest::new("/tmp"), &saved, 1)
         .await
         .unwrap();
     let persisted = serde_json::to_string(fork.pending_history()).unwrap();
@@ -196,7 +193,7 @@ async fn typed_content_and_restored_history_survive_without_text_conversion() {
         serde_json::from_str(&persisted).unwrap(),
     );
     restored
-        .prompt(schema::PromptRequest::new(
+        .prompt(proto::PromptRequest::new(
             "fork",
             vec!["describe it".into()],
         ))

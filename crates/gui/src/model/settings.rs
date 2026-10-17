@@ -1006,7 +1006,7 @@ impl Agent {
             .iter()
             .filter(|arg| !arg.starts_with('-'))
             .all(|spec| {
-                let name = acp_agents::package_name(spec);
+                let name = cydonia_acp::agents::package_name(spec);
                 spec.len() > name.len()
                     && spec[name.len() + 1..].starts_with(|c: char| c.is_ascii_digit())
             })
@@ -1281,7 +1281,7 @@ pub struct ArticleSession {
 impl ArticleSession {
     /// The choices a session opened on this default starts with.
     pub fn choices(&self) -> crate::model::session_preferences::Choices {
-        use acp::schema::SessionConfigOptionValue;
+        use cydonia_acp::proto::SessionConfigOptionValue;
         crate::model::session_preferences::Choices {
             mode: self.mode.clone(),
             config: self
@@ -1680,7 +1680,7 @@ fn claims(table: &toml_edit::Table, agent: &Agent, supersedes: Option<&str>) -> 
         .is_some_and(|args| {
             args.iter()
                 .filter_map(|v| v.as_str())
-                .any(|arg| acp_agents::package_name(arg) == package)
+                .any(|arg| cydonia_acp::agents::package_name(arg) == package)
         })
 }
 

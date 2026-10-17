@@ -1,7 +1,7 @@
 //! Which permission requests come down to an alert, and which fall to the
 //! stack of buttons instead.
 
-use acp::schema::PermissionOptionKind;
+use cydonia_acp::proto::PermissionOptionKind;
 use cydonia_gui::{
     model::session::Choice,
     view::detail::{adrift, adrift_line, agent_missing, alert},

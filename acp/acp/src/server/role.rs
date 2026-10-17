@@ -1,7 +1,7 @@
 //! What an ACP agent implements.
 
 use crate::handler::{decode, encode};
-use acp_proto::method::agent as method;
+use cydonia_acp_proto::method::agent as method;
 use std::future::Future;
 
 /// What an ACP agent serves.
@@ -10,30 +10,30 @@ use std::future::Future;
 /// and [`prompt`](Agent::prompt) are required. Every other method defaults to
 /// replying "method not found", so an agent that does not implement a capability
 /// declines it instead of leaving the client waiting — advertise what you do
-/// implement in [`acp_proto::InitializeResponse::agent_capabilities`].
+/// implement in [`cydonia_acp_proto::InitializeResponse::agent_capabilities`].
 pub trait Agent: Send + Sync + 'static {
     fn initialize(
         &self,
-        request: acp_proto::InitializeRequest,
-    ) -> impl Future<Output = acp_proto::Result<acp_proto::InitializeResponse>> + Send;
+        request: cydonia_acp_proto::InitializeRequest,
+    ) -> impl Future<Output = cydonia_acp_proto::Result<cydonia_acp_proto::InitializeResponse>> + Send;
 
     fn new_session(
         &self,
-        request: acp_proto::NewSessionRequest,
-    ) -> impl Future<Output = acp_proto::Result<acp_proto::NewSessionResponse>> + Send;
+        request: cydonia_acp_proto::NewSessionRequest,
+    ) -> impl Future<Output = cydonia_acp_proto::Result<cydonia_acp_proto::NewSessionResponse>> + Send;
 
     /// Run a turn. Report progress with
     /// [`ClientConn::session_update`](crate::ClientConn::session_update) as it goes.
     fn prompt(
         &self,
-        request: acp_proto::PromptRequest,
-    ) -> impl Future<Output = acp_proto::Result<acp_proto::PromptResponse>> + Send;
+        request: cydonia_acp_proto::PromptRequest,
+    ) -> impl Future<Output = cydonia_acp_proto::Result<cydonia_acp_proto::PromptResponse>> + Send;
 
     /// Stop the session's current turn. The in-flight `prompt` should still
-    /// return, with [`StopReason::Cancelled`](acp_proto::StopReason::Cancelled).
+    /// return, with [`StopReason::Cancelled`](cydonia_acp_proto::StopReason::Cancelled).
     fn cancel(
         &self,
-        notification: acp_proto::CancelNotification,
+        notification: cydonia_acp_proto::CancelNotification,
     ) -> impl Future<Output = ()> + Send {
         let _ = notification;
         async {}
@@ -41,155 +41,171 @@ pub trait Agent: Send + Sync + 'static {
 
     fn authenticate(
         &self,
-        request: acp_proto::AuthenticateRequest,
-    ) -> impl Future<Output = acp_proto::Result<acp_proto::AuthenticateResponse>> + Send {
+        request: cydonia_acp_proto::AuthenticateRequest,
+    ) -> impl Future<Output = cydonia_acp_proto::Result<cydonia_acp_proto::AuthenticateResponse>> + Send
+    {
         let _ = request;
-        async { Err(acp_proto::Error::method_not_found()) }
+        async { Err(cydonia_acp_proto::Error::method_not_found()) }
     }
 
     fn logout(
         &self,
-        request: acp_proto::LogoutRequest,
-    ) -> impl Future<Output = acp_proto::Result<acp_proto::LogoutResponse>> + Send {
+        request: cydonia_acp_proto::LogoutRequest,
+    ) -> impl Future<Output = cydonia_acp_proto::Result<cydonia_acp_proto::LogoutResponse>> + Send
+    {
         let _ = request;
-        async { Err(acp_proto::Error::method_not_found()) }
+        async { Err(cydonia_acp_proto::Error::method_not_found()) }
     }
 
     fn load_session(
         &self,
-        request: acp_proto::LoadSessionRequest,
-    ) -> impl Future<Output = acp_proto::Result<acp_proto::LoadSessionResponse>> + Send {
+        request: cydonia_acp_proto::LoadSessionRequest,
+    ) -> impl Future<Output = cydonia_acp_proto::Result<cydonia_acp_proto::LoadSessionResponse>> + Send
+    {
         let _ = request;
-        async { Err(acp_proto::Error::method_not_found()) }
+        async { Err(cydonia_acp_proto::Error::method_not_found()) }
     }
 
     fn resume_session(
         &self,
-        request: acp_proto::ResumeSessionRequest,
-    ) -> impl Future<Output = acp_proto::Result<acp_proto::ResumeSessionResponse>> + Send {
+        request: cydonia_acp_proto::ResumeSessionRequest,
+    ) -> impl Future<Output = cydonia_acp_proto::Result<cydonia_acp_proto::ResumeSessionResponse>> + Send
+    {
         let _ = request;
-        async { Err(acp_proto::Error::method_not_found()) }
+        async { Err(cydonia_acp_proto::Error::method_not_found()) }
     }
 
     /// Branch a session. The response carries the *new* session's id; the
     /// one in the request keeps running untouched.
     fn fork_session(
         &self,
-        request: acp_proto::ForkSessionRequest,
-    ) -> impl Future<Output = acp_proto::Result<acp_proto::ForkSessionResponse>> + Send {
+        request: cydonia_acp_proto::ForkSessionRequest,
+    ) -> impl Future<Output = cydonia_acp_proto::Result<cydonia_acp_proto::ForkSessionResponse>> + Send
+    {
         let _ = request;
-        async { Err(acp_proto::Error::method_not_found()) }
+        async { Err(cydonia_acp_proto::Error::method_not_found()) }
     }
 
     fn close_session(
         &self,
-        request: acp_proto::CloseSessionRequest,
-    ) -> impl Future<Output = acp_proto::Result<acp_proto::CloseSessionResponse>> + Send {
+        request: cydonia_acp_proto::CloseSessionRequest,
+    ) -> impl Future<Output = cydonia_acp_proto::Result<cydonia_acp_proto::CloseSessionResponse>> + Send
+    {
         let _ = request;
-        async { Err(acp_proto::Error::method_not_found()) }
+        async { Err(cydonia_acp_proto::Error::method_not_found()) }
     }
 
     fn list_sessions(
         &self,
-        request: acp_proto::ListSessionsRequest,
-    ) -> impl Future<Output = acp_proto::Result<acp_proto::ListSessionsResponse>> + Send {
+        request: cydonia_acp_proto::ListSessionsRequest,
+    ) -> impl Future<Output = cydonia_acp_proto::Result<cydonia_acp_proto::ListSessionsResponse>> + Send
+    {
         let _ = request;
-        async { Err(acp_proto::Error::method_not_found()) }
+        async { Err(cydonia_acp_proto::Error::method_not_found()) }
     }
 
     fn delete_session(
         &self,
-        request: acp_proto::DeleteSessionRequest,
-    ) -> impl Future<Output = acp_proto::Result<acp_proto::DeleteSessionResponse>> + Send {
+        request: cydonia_acp_proto::DeleteSessionRequest,
+    ) -> impl Future<Output = cydonia_acp_proto::Result<cydonia_acp_proto::DeleteSessionResponse>> + Send
+    {
         let _ = request;
-        async { Err(acp_proto::Error::method_not_found()) }
+        async { Err(cydonia_acp_proto::Error::method_not_found()) }
     }
 
     fn set_session_mode(
         &self,
-        request: acp_proto::SetSessionModeRequest,
-    ) -> impl Future<Output = acp_proto::Result<acp_proto::SetSessionModeResponse>> + Send {
+        request: cydonia_acp_proto::SetSessionModeRequest,
+    ) -> impl Future<Output = cydonia_acp_proto::Result<cydonia_acp_proto::SetSessionModeResponse>> + Send
+    {
         let _ = request;
-        async { Err(acp_proto::Error::method_not_found()) }
+        async { Err(cydonia_acp_proto::Error::method_not_found()) }
     }
 
     fn set_session_config_option(
         &self,
-        request: acp_proto::SetSessionConfigOptionRequest,
-    ) -> impl Future<Output = acp_proto::Result<acp_proto::SetSessionConfigOptionResponse>> + Send
-    {
+        request: cydonia_acp_proto::SetSessionConfigOptionRequest,
+    ) -> impl Future<
+        Output = cydonia_acp_proto::Result<cydonia_acp_proto::SetSessionConfigOptionResponse>,
+    > + Send {
         let _ = request;
-        async { Err(acp_proto::Error::method_not_found()) }
+        async { Err(cydonia_acp_proto::Error::method_not_found()) }
     }
 
     /// The LLM endpoints this agent can be pointed at, and where each one
     /// points right now.
     fn list_providers(
         &self,
-        request: acp_proto::ListProvidersRequest,
-    ) -> impl Future<Output = acp_proto::Result<acp_proto::ListProvidersResponse>> + Send {
+        request: cydonia_acp_proto::ListProvidersRequest,
+    ) -> impl Future<Output = cydonia_acp_proto::Result<cydonia_acp_proto::ListProvidersResponse>> + Send
+    {
         let _ = request;
-        async { Err(acp_proto::Error::method_not_found()) }
+        async { Err(cydonia_acp_proto::Error::method_not_found()) }
     }
 
     fn set_provider(
         &self,
-        request: acp_proto::SetProviderRequest,
-    ) -> impl Future<Output = acp_proto::Result<acp_proto::SetProviderResponse>> + Send {
+        request: cydonia_acp_proto::SetProviderRequest,
+    ) -> impl Future<Output = cydonia_acp_proto::Result<cydonia_acp_proto::SetProviderResponse>> + Send
+    {
         let _ = request;
-        async { Err(acp_proto::Error::method_not_found()) }
+        async { Err(cydonia_acp_proto::Error::method_not_found()) }
     }
 
     fn disable_provider(
         &self,
-        request: acp_proto::DisableProviderRequest,
-    ) -> impl Future<Output = acp_proto::Result<acp_proto::DisableProviderResponse>> + Send {
+        request: cydonia_acp_proto::DisableProviderRequest,
+    ) -> impl Future<Output = cydonia_acp_proto::Result<cydonia_acp_proto::DisableProviderResponse>> + Send
+    {
         let _ = request;
-        async { Err(acp_proto::Error::method_not_found()) }
+        async { Err(cydonia_acp_proto::Error::method_not_found()) }
     }
 
     /// Open a next-edit session. Its id is its own — it does not name a chat
     /// session, and the two lifecycles are unrelated.
     fn start_nes(
         &self,
-        request: acp_proto::StartNesRequest,
-    ) -> impl Future<Output = acp_proto::Result<acp_proto::StartNesResponse>> + Send {
+        request: cydonia_acp_proto::StartNesRequest,
+    ) -> impl Future<Output = cydonia_acp_proto::Result<cydonia_acp_proto::StartNesResponse>> + Send
+    {
         let _ = request;
-        async { Err(acp_proto::Error::method_not_found()) }
+        async { Err(cydonia_acp_proto::Error::method_not_found()) }
     }
 
     /// Predict the user's next edit. Called on every keystroke a client
     /// decides is worth asking about, so it should be cheap to decline.
     fn suggest_nes(
         &self,
-        request: acp_proto::SuggestNesRequest,
-    ) -> impl Future<Output = acp_proto::Result<acp_proto::SuggestNesResponse>> + Send {
+        request: cydonia_acp_proto::SuggestNesRequest,
+    ) -> impl Future<Output = cydonia_acp_proto::Result<cydonia_acp_proto::SuggestNesResponse>> + Send
+    {
         let _ = request;
-        async { Err(acp_proto::Error::method_not_found()) }
+        async { Err(cydonia_acp_proto::Error::method_not_found()) }
     }
 
     fn close_nes(
         &self,
-        request: acp_proto::CloseNesRequest,
-    ) -> impl Future<Output = acp_proto::Result<acp_proto::CloseNesResponse>> + Send {
+        request: cydonia_acp_proto::CloseNesRequest,
+    ) -> impl Future<Output = cydonia_acp_proto::Result<cydonia_acp_proto::CloseNesResponse>> + Send
+    {
         let _ = request;
-        async { Err(acp_proto::Error::method_not_found()) }
+        async { Err(cydonia_acp_proto::Error::method_not_found()) }
     }
 
     /// The user took a suggestion.
     fn accept_nes(
         &self,
-        notification: acp_proto::AcceptNesNotification,
+        notification: cydonia_acp_proto::AcceptNesNotification,
     ) -> impl Future<Output = ()> + Send {
         let _ = notification;
         async {}
     }
 
     /// The user did not take a suggestion — see
-    /// [`NesRejectReason`](acp_proto::NesRejectReason) for why.
+    /// [`NesRejectReason`](cydonia_acp_proto::NesRejectReason) for why.
     fn reject_nes(
         &self,
-        notification: acp_proto::RejectNesNotification,
+        notification: cydonia_acp_proto::RejectNesNotification,
     ) -> impl Future<Output = ()> + Send {
         let _ = notification;
         async {}
@@ -197,7 +213,7 @@ pub trait Agent: Send + Sync + 'static {
 
     fn did_open_document(
         &self,
-        notification: acp_proto::DidOpenDocumentNotification,
+        notification: cydonia_acp_proto::DidOpenDocumentNotification,
     ) -> impl Future<Output = ()> + Send {
         let _ = notification;
         async {}
@@ -205,7 +221,7 @@ pub trait Agent: Send + Sync + 'static {
 
     fn did_change_document(
         &self,
-        notification: acp_proto::DidChangeDocumentNotification,
+        notification: cydonia_acp_proto::DidChangeDocumentNotification,
     ) -> impl Future<Output = ()> + Send {
         let _ = notification;
         async {}
@@ -213,7 +229,7 @@ pub trait Agent: Send + Sync + 'static {
 
     fn did_close_document(
         &self,
-        notification: acp_proto::DidCloseDocumentNotification,
+        notification: cydonia_acp_proto::DidCloseDocumentNotification,
     ) -> impl Future<Output = ()> + Send {
         let _ = notification;
         async {}
@@ -221,7 +237,7 @@ pub trait Agent: Send + Sync + 'static {
 
     fn did_save_document(
         &self,
-        notification: acp_proto::DidSaveDocumentNotification,
+        notification: cydonia_acp_proto::DidSaveDocumentNotification,
     ) -> impl Future<Output = ()> + Send {
         let _ = notification;
         async {}
@@ -229,7 +245,7 @@ pub trait Agent: Send + Sync + 'static {
 
     fn did_focus_document(
         &self,
-        notification: acp_proto::DidFocusDocumentNotification,
+        notification: cydonia_acp_proto::DidFocusDocumentNotification,
     ) -> impl Future<Output = ()> + Send {
         let _ = notification;
         async {}
@@ -239,17 +255,18 @@ pub trait Agent: Send + Sync + 'static {
     /// on this agent's behalf is asking the agent something.
     fn message_mcp(
         &self,
-        request: acp_proto::MessageMcpRequest,
-    ) -> impl Future<Output = acp_proto::Result<acp_proto::MessageMcpResponse>> + Send {
+        request: cydonia_acp_proto::MessageMcpRequest,
+    ) -> impl Future<Output = cydonia_acp_proto::Result<cydonia_acp_proto::MessageMcpResponse>> + Send
+    {
         let _ = request;
-        async { Err(acp_proto::Error::method_not_found()) }
+        async { Err(cydonia_acp_proto::Error::method_not_found()) }
     }
 
     /// The same tunnel as [`message_mcp`](Agent::message_mcp), for MCP
     /// messages that want no reply.
     fn notify_mcp(
         &self,
-        notification: acp_proto::MessageMcpNotification,
+        notification: cydonia_acp_proto::MessageMcpNotification,
     ) -> impl Future<Output = ()> + Send {
         let _ = notification;
         async {}
@@ -261,9 +278,9 @@ pub trait Agent: Send + Sync + 'static {
         &self,
         method: String,
         params: serde_json::Value,
-    ) -> impl Future<Output = acp_proto::Result<serde_json::Value>> + Send {
+    ) -> impl Future<Output = cydonia_acp_proto::Result<serde_json::Value>> + Send {
         let _ = params;
-        async move { Err(acp_proto::Error::method_not_found().data(method)) }
+        async move { Err(cydonia_acp_proto::Error::method_not_found().data(method)) }
     }
 
     /// The same, for a notification. Ignored by default.
@@ -281,7 +298,7 @@ pub trait Agent: Send + Sync + 'static {
         &self,
         method: String,
         params: serde_json::Value,
-    ) -> impl Future<Output = acp_proto::Result<serde_json::Value>> + Send {
+    ) -> impl Future<Output = cydonia_acp_proto::Result<serde_json::Value>> + Send {
         async move {
             match method.as_str() {
                 method::INITIALIZE => encode(self.initialize(decode(params)?).await?),

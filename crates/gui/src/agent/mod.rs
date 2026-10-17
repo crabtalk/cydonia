@@ -5,7 +5,7 @@
 //! Settings name a command, the catalog names a package, and the two meet at
 //! the npm package: the registry pins `…/claude-agent-acp@0.70.0` where a
 //! settings entry says `@latest`, so both sides go through
-//! [`acp_agents::package_name`] before they are compared. Matching on the
+//! [`cydonia_acp::agents::package_name`] before they are compared. Matching on the
 //! package rather than on `command` covers `npx`, `bunx` and anything else
 //! that takes the package as an argument — and an agent that is a binary on
 //! this machine matches nothing, which is the right answer.
@@ -18,8 +18,8 @@
 //! icon in the app takes.
 
 use crate::model::settings::{self, Agent};
-use acp_agents::{Distribution, Installed, registry};
 use bezel::ui::icons::Icon;
+use cydonia_acp::agents::{Distribution, Installed, registry};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -66,9 +66,10 @@ pub fn icons(configured: &[settings::Agent]) -> HashMap<String, Icon> {
         .agents
         .iter()
         .filter_map(|agent| match &agent.distribution {
-            Distribution::Npm { package, .. } => {
-                Some((acp_agents::package_name(package), agent.id.as_str()))
-            }
+            Distribution::Npm { package, .. } => Some((
+                cydonia_acp::agents::package_name(package),
+                agent.id.as_str(),
+            )),
             _ => None,
         })
         .collect();
@@ -79,10 +80,11 @@ pub fn icons(configured: &[settings::Agent]) -> HashMap<String, Icon> {
         .filter_map(|entry| {
             let id = match entry.id.as_deref() {
                 Some(id) => id,
-                None => entry
-                    .args
-                    .iter()
-                    .find_map(|arg| by_package.get(acp_agents::package_name(arg)).copied())?,
+                None => entry.args.iter().find_map(|arg| {
+                    by_package
+                        .get(cydonia_acp::agents::package_name(arg))
+                        .copied()
+                })?,
             };
             let path = fetch(&dir, id, icons.get(id)?)?;
             Some((entry.name.clone(), Icon::file(path)))
@@ -95,7 +97,7 @@ fn fetch(dir: &Path, id: &str, url: &str) -> Option<String> {
     if let Some(path) = cached(dir, id) {
         return Some(path);
     }
-    let path = acp_agents::contained(dir, &format!("{id}.svg")).ok()?;
+    let path = cydonia_acp::agents::contained(dir, &format!("{id}.svg")).ok()?;
     let body = ureq::get(url).call().ok()?.body_mut().read_to_vec().ok()?;
     std::fs::create_dir_all(dir).ok()?;
     std::fs::write(&path, body).ok()?;
@@ -104,7 +106,7 @@ fn fetch(dir: &Path, id: &str, url: &str) -> Option<String> {
 
 /// The icon already on disk, if it is.
 fn cached(dir: &Path, id: &str) -> Option<String> {
-    let path = acp_agents::contained(dir, &format!("{id}.svg")).ok()?;
+    let path = cydonia_acp::agents::contained(dir, &format!("{id}.svg")).ok()?;
     path.exists().then(|| path.to_str())?.map(str::to_owned)
 }
 
@@ -206,7 +208,7 @@ pub fn record(held: &mut Vec<String>, line: String) {
 pub fn source_mark(agent: &registry::Agent) -> String {
     match &agent.distribution {
         Distribution::Npm { package, .. } => {
-            format!("npm:{}", acp_agents::package_name(package))
+            format!("npm:{}", cydonia_acp::agents::package_name(package))
         }
         Distribution::Binary(binary) => format!("binary:{}", archive_host(&binary.archive)),
         Distribution::Unsupported { kind } => format!("unsupported:{kind}"),
@@ -235,7 +237,7 @@ pub fn install(agent: &registry::Agent, on_line: impl FnMut(&str)) -> anyhow::Re
         env: installed.env,
     };
     let package = match &agent.distribution {
-        Distribution::Npm { package, .. } => Some(acp_agents::package_name(package)),
+        Distribution::Npm { package, .. } => Some(cydonia_acp::agents::package_name(package)),
         _ => None,
     };
     settings::put_agent(&entry, package)

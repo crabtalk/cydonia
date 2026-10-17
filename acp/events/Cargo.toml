@@ -11,8 +11,8 @@ keywords = ["acp", "agent", "protocol", "client", "async"]
 categories = ["api-bindings", "asynchronous"]
 
 [dependencies]
-acp = { workspace = true, features = ["client"] }
-acp-proto.workspace = true
+cydonia-acp = { workspace = true, features = ["client"] }
+cydonia-acp-proto.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["sync"] }
 

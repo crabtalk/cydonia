@@ -1,12 +1,12 @@
-use cydonia_acp::{Agent, Result, schema};
+use cydonia_acp::{Agent, Result, proto};
 use std::sync::Arc;
 
 struct Echo;
 
 impl Agent for Echo {
-    async fn initialize(&self, _: schema::InitializeRequest) -> Result<schema::InitializeResponse> {
-        Ok(schema::InitializeResponse {
-            protocol_version: schema::ProtocolVersion::LATEST,
+    async fn initialize(&self, _: proto::InitializeRequest) -> Result<proto::InitializeResponse> {
+        Ok(proto::InitializeResponse {
+            protocol_version: proto::ProtocolVersion::LATEST,
             agent_capabilities: Default::default(),
             auth_methods: Vec::new(),
             agent_info: None,
@@ -14,11 +14,8 @@ impl Agent for Echo {
         })
     }
 
-    async fn new_session(
-        &self,
-        _: schema::NewSessionRequest,
-    ) -> Result<schema::NewSessionResponse> {
-        Ok(schema::NewSessionResponse {
+    async fn new_session(&self, _: proto::NewSessionRequest) -> Result<proto::NewSessionResponse> {
+        Ok(proto::NewSessionResponse {
             session_id: "session-1".into(),
             modes: None,
             config_options: None,
@@ -26,8 +23,8 @@ impl Agent for Echo {
         })
     }
 
-    async fn prompt(&self, _: schema::PromptRequest) -> Result<schema::PromptResponse> {
-        Ok(schema::PromptResponse::new(schema::StopReason::EndTurn))
+    async fn prompt(&self, _: proto::PromptRequest) -> Result<proto::PromptResponse> {
+        Ok(proto::PromptResponse::new(proto::StopReason::EndTurn))
     }
 }
 

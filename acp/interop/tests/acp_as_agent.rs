@@ -4,9 +4,9 @@
 //! calls every agent method, and cydonia-acp's agent calls back into it for every
 //! client method.
 
-use acp::{Agent, ClientConn, Result, schema};
 use agent_client_protocol as official;
 use agent_client_protocol::schema::{ProtocolVersion, v1};
+use cydonia_acp::{Agent, ClientConn, Result, proto};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
@@ -34,19 +34,19 @@ impl Echo {
 impl Agent for Echo {
     async fn initialize(
         &self,
-        request: schema::InitializeRequest,
-    ) -> Result<schema::InitializeResponse> {
+        request: proto::InitializeRequest,
+    ) -> Result<proto::InitializeResponse> {
         self.served.saw("initialize");
-        Ok(schema::InitializeResponse {
+        Ok(proto::InitializeResponse {
             protocol_version: request.protocol_version,
             agent_capabilities: Default::default(),
-            auth_methods: vec![schema::AuthMethod::Agent(schema::AuthMethodAgent {
+            auth_methods: vec![proto::AuthMethod::Agent(proto::AuthMethodAgent {
                 id: "oauth".into(),
                 name: "Sign in".into(),
                 description: None,
                 meta: None,
             })],
-            agent_info: Some(schema::Implementation {
+            agent_info: Some(proto::Implementation {
                 name: "echo".into(),
                 version: "0.1.0".into(),
                 title: None,
@@ -58,23 +58,20 @@ impl Agent for Echo {
 
     async fn authenticate(
         &self,
-        _: schema::AuthenticateRequest,
-    ) -> Result<schema::AuthenticateResponse> {
+        _: proto::AuthenticateRequest,
+    ) -> Result<proto::AuthenticateResponse> {
         self.served.saw("authenticate");
         Ok(Default::default())
     }
 
-    async fn logout(&self, _: schema::LogoutRequest) -> Result<schema::LogoutResponse> {
+    async fn logout(&self, _: proto::LogoutRequest) -> Result<proto::LogoutResponse> {
         self.served.saw("logout");
         Ok(Default::default())
     }
 
-    async fn new_session(
-        &self,
-        _: schema::NewSessionRequest,
-    ) -> Result<schema::NewSessionResponse> {
+    async fn new_session(&self, _: proto::NewSessionRequest) -> Result<proto::NewSessionResponse> {
         self.served.saw("session/new");
-        Ok(schema::NewSessionResponse {
+        Ok(proto::NewSessionResponse {
             session_id: "s1".into(),
             modes: None,
             config_options: None,
@@ -84,26 +81,26 @@ impl Agent for Echo {
 
     async fn load_session(
         &self,
-        _: schema::LoadSessionRequest,
-    ) -> Result<schema::LoadSessionResponse> {
+        _: proto::LoadSessionRequest,
+    ) -> Result<proto::LoadSessionResponse> {
         self.served.saw("session/load");
         Ok(Default::default())
     }
 
     async fn resume_session(
         &self,
-        _: schema::ResumeSessionRequest,
-    ) -> Result<schema::ResumeSessionResponse> {
+        _: proto::ResumeSessionRequest,
+    ) -> Result<proto::ResumeSessionResponse> {
         self.served.saw("session/resume");
         Ok(Default::default())
     }
 
     async fn fork_session(
         &self,
-        _: schema::ForkSessionRequest,
-    ) -> Result<schema::ForkSessionResponse> {
+        _: proto::ForkSessionRequest,
+    ) -> Result<proto::ForkSessionResponse> {
         self.served.saw("session/fork");
-        Ok(schema::ForkSessionResponse {
+        Ok(proto::ForkSessionResponse {
             session_id: "s2".into(),
             modes: None,
             config_options: None,
@@ -113,19 +110,19 @@ impl Agent for Echo {
 
     async fn close_session(
         &self,
-        _: schema::CloseSessionRequest,
-    ) -> Result<schema::CloseSessionResponse> {
+        _: proto::CloseSessionRequest,
+    ) -> Result<proto::CloseSessionResponse> {
         self.served.saw("session/close");
         Ok(Default::default())
     }
 
     async fn list_sessions(
         &self,
-        _: schema::ListSessionsRequest,
-    ) -> Result<schema::ListSessionsResponse> {
+        _: proto::ListSessionsRequest,
+    ) -> Result<proto::ListSessionsResponse> {
         self.served.saw("session/list");
-        Ok(schema::ListSessionsResponse {
-            sessions: vec![schema::SessionInfo {
+        Ok(proto::ListSessionsResponse {
+            sessions: vec![proto::SessionInfo {
                 session_id: "s1".into(),
                 cwd: "/tmp".into(),
                 additional_directories: Vec::new(),
@@ -140,56 +137,53 @@ impl Agent for Echo {
 
     async fn delete_session(
         &self,
-        _: schema::DeleteSessionRequest,
-    ) -> Result<schema::DeleteSessionResponse> {
+        _: proto::DeleteSessionRequest,
+    ) -> Result<proto::DeleteSessionResponse> {
         self.served.saw("session/delete");
         Ok(Default::default())
     }
 
     async fn set_session_mode(
         &self,
-        _: schema::SetSessionModeRequest,
-    ) -> Result<schema::SetSessionModeResponse> {
+        _: proto::SetSessionModeRequest,
+    ) -> Result<proto::SetSessionModeResponse> {
         self.served.saw("session/set_mode");
         Ok(Default::default())
     }
 
     async fn set_session_config_option(
         &self,
-        _: schema::SetSessionConfigOptionRequest,
-    ) -> Result<schema::SetSessionConfigOptionResponse> {
+        _: proto::SetSessionConfigOptionRequest,
+    ) -> Result<proto::SetSessionConfigOptionResponse> {
         self.served.saw("session/set_config_option");
         Ok(Default::default())
     }
 
-    async fn message_mcp(
-        &self,
-        _: schema::MessageMcpRequest,
-    ) -> Result<schema::MessageMcpResponse> {
+    async fn message_mcp(&self, _: proto::MessageMcpRequest) -> Result<proto::MessageMcpResponse> {
         self.served.saw("mcp/message");
-        Ok(schema::MessageMcpResponse(
+        Ok(proto::MessageMcpResponse(
             serde_json::json!({"jsonrpc": "2.0", "id": 1, "result": {}}),
         ))
     }
 
-    async fn notify_mcp(&self, _: schema::MessageMcpNotification) {
+    async fn notify_mcp(&self, _: proto::MessageMcpNotification) {
         self.served.saw("mcp/message (notification)");
     }
 
-    async fn cancel(&self, _: schema::CancelNotification) {
+    async fn cancel(&self, _: proto::CancelNotification) {
         self.served.saw("session/cancel");
     }
 
     /// The turn is where the agent calls the client, so every client-served
     /// method runs from here.
-    async fn prompt(&self, request: schema::PromptRequest) -> Result<schema::PromptResponse> {
+    async fn prompt(&self, request: proto::PromptRequest) -> Result<proto::PromptResponse> {
         self.served.saw("session/prompt");
         let client = self.client();
         let session = request.session_id;
 
-        client.session_update(schema::SessionNotification {
+        client.session_update(proto::SessionNotification {
             session_id: session.clone(),
-            update: schema::SessionUpdate::AgentMessageChunk(schema::ContentChunk {
+            update: proto::SessionUpdate::AgentMessageChunk(proto::ContentChunk {
                 content: "pong".into(),
                 message_id: None,
                 meta: None,
@@ -197,7 +191,7 @@ impl Agent for Echo {
             meta: None,
         })?;
         client
-            .read_text_file(schema::ReadTextFileRequest {
+            .read_text_file(proto::ReadTextFileRequest {
                 session_id: session.clone(),
                 path: "/tmp/a".into(),
                 line: None,
@@ -206,7 +200,7 @@ impl Agent for Echo {
             })
             .await?;
         client
-            .write_text_file(schema::WriteTextFileRequest {
+            .write_text_file(proto::WriteTextFileRequest {
                 session_id: session.clone(),
                 path: "/tmp/a".into(),
                 content: "hi".into(),
@@ -214,7 +208,7 @@ impl Agent for Echo {
             })
             .await?;
         let terminal = client
-            .create_terminal(schema::CreateTerminalRequest {
+            .create_terminal(proto::CreateTerminalRequest {
                 session_id: session.clone(),
                 command: "true".into(),
                 args: Vec::new(),
@@ -226,51 +220,51 @@ impl Agent for Echo {
             .await?
             .terminal_id;
         client
-            .terminal_output(schema::TerminalOutputRequest {
+            .terminal_output(proto::TerminalOutputRequest {
                 session_id: session.clone(),
                 terminal_id: terminal.clone(),
                 meta: None,
             })
             .await?;
         client
-            .wait_for_terminal_exit(schema::WaitForTerminalExitRequest {
+            .wait_for_terminal_exit(proto::WaitForTerminalExitRequest {
                 session_id: session.clone(),
                 terminal_id: terminal.clone(),
                 meta: None,
             })
             .await?;
         client
-            .kill_terminal(schema::KillTerminalRequest {
+            .kill_terminal(proto::KillTerminalRequest {
                 session_id: session.clone(),
                 terminal_id: terminal.clone(),
                 meta: None,
             })
             .await?;
         client
-            .release_terminal(schema::ReleaseTerminalRequest {
+            .release_terminal(proto::ReleaseTerminalRequest {
                 session_id: session.clone(),
                 terminal_id: terminal,
                 meta: None,
             })
             .await?;
         client
-            .request_permission(schema::RequestPermissionRequest {
+            .request_permission(proto::RequestPermissionRequest {
                 session_id: session.clone(),
-                tool_call: schema::ToolCall::new("t1", "read").into(),
-                options: vec![schema::PermissionOption {
+                tool_call: proto::ToolCall::new("t1", "read").into(),
+                options: vec![proto::PermissionOption {
                     option_id: "allow".into(),
                     name: "Allow".into(),
-                    kind: schema::PermissionOptionKind::AllowOnce,
+                    kind: proto::PermissionOptionKind::AllowOnce,
                     meta: None,
                 }],
                 meta: None,
             })
             .await?;
         client
-            .create_elicitation(schema::CreateElicitationRequest {
+            .create_elicitation(proto::CreateElicitationRequest {
                 message: "sign in".into(),
-                mode: schema::ElicitationMode::Url(schema::ElicitationUrlMode {
-                    scope: schema::ElicitationScope::Session(schema::ElicitationSessionScope {
+                mode: proto::ElicitationMode::Url(proto::ElicitationUrlMode {
+                    scope: proto::ElicitationScope::Session(proto::ElicitationSessionScope {
                         session_id: session.clone(),
                         tool_call_id: None,
                     }),
@@ -280,39 +274,39 @@ impl Agent for Echo {
                 meta: None,
             })
             .await?;
-        client.complete_elicitation(schema::CompleteElicitationNotification {
+        client.complete_elicitation(proto::CompleteElicitationNotification {
             elicitation_id: "e1".into(),
             meta: None,
         })?;
         let connection = client
-            .connect_mcp(schema::ConnectMcpRequest {
+            .connect_mcp(proto::ConnectMcpRequest {
                 server_id: "server".into(),
                 meta: None,
             })
             .await?
             .connection_id;
         client
-            .message_mcp(schema::MessageMcpRequest {
+            .message_mcp(proto::MessageMcpRequest {
                 connection_id: connection.clone(),
                 method: "ping".into(),
                 params: None,
                 meta: None,
             })
             .await?;
-        client.notify_mcp(schema::MessageMcpNotification {
+        client.notify_mcp(proto::MessageMcpNotification {
             connection_id: connection.clone(),
             method: "note".into(),
             params: None,
             meta: None,
         })?;
         client
-            .disconnect_mcp(schema::DisconnectMcpRequest {
+            .disconnect_mcp(proto::DisconnectMcpRequest {
                 connection_id: connection,
                 meta: None,
             })
             .await?;
 
-        Ok(schema::PromptResponse::new(schema::StopReason::EndTurn))
+        Ok(proto::PromptResponse::new(proto::StopReason::EndTurn))
     }
 }
 
@@ -347,7 +341,7 @@ async fn every_method() {
         client: Mutex::new(None),
         served: agent_side.clone(),
     });
-    let conn = acp::serve(ours, Arc::clone(&echo), None);
+    let conn = cydonia_acp::serve(ours, Arc::clone(&echo), None);
     *echo.client.lock().expect("poisoned") = Some(conn);
 
     let client = official::Client.builder().name("official-client");
@@ -563,9 +557,9 @@ impl Drop for Signal {
 impl Agent for Sleeper {
     async fn initialize(
         &self,
-        request: schema::InitializeRequest,
-    ) -> Result<schema::InitializeResponse> {
-        Ok(schema::InitializeResponse {
+        request: proto::InitializeRequest,
+    ) -> Result<proto::InitializeResponse> {
+        Ok(proto::InitializeResponse {
             protocol_version: request.protocol_version,
             agent_capabilities: Default::default(),
             auth_methods: Vec::new(),
@@ -574,11 +568,8 @@ impl Agent for Sleeper {
         })
     }
 
-    async fn new_session(
-        &self,
-        _: schema::NewSessionRequest,
-    ) -> Result<schema::NewSessionResponse> {
-        Ok(schema::NewSessionResponse {
+    async fn new_session(&self, _: proto::NewSessionRequest) -> Result<proto::NewSessionResponse> {
+        Ok(proto::NewSessionResponse {
             session_id: "s1".into(),
             modes: None,
             config_options: None,
@@ -586,7 +577,7 @@ impl Agent for Sleeper {
         })
     }
 
-    async fn prompt(&self, _: schema::PromptRequest) -> Result<schema::PromptResponse> {
+    async fn prompt(&self, _: proto::PromptRequest) -> Result<proto::PromptResponse> {
         let _signal = Signal(self.aborted.clone());
         let _ = self.started.send(());
         std::future::pending::<()>().await;
@@ -606,7 +597,7 @@ async fn dropped_call() {
     let (started, mut serving) = mpsc::unbounded_channel();
     let (aborted, mut torn_down) = mpsc::unbounded_channel();
 
-    acp::serve(ours, Arc::new(Sleeper { started, aborted }), None);
+    cydonia_acp::serve(ours, Arc::new(Sleeper { started, aborted }), None);
 
     official::Client
         .builder()

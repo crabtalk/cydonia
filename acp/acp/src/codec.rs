@@ -24,7 +24,7 @@ pub type Tap = Arc<dyn Fn(Direction, &str) + Send + Sync>;
 pub struct Message {
     pub jsonrpc: Version,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub id: Option<acp_proto::RequestId>,
+    pub id: Option<cydonia_acp_proto::RequestId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub method: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -32,12 +32,12 @@ pub struct Message {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error: Option<acp_proto::Error>,
+    pub error: Option<cydonia_acp_proto::Error>,
 }
 
 impl Message {
     pub fn request(
-        id: acp_proto::RequestId,
+        id: cydonia_acp_proto::RequestId,
         method: impl Into<String>,
         params: serde_json::Value,
     ) -> Self {
@@ -62,7 +62,7 @@ impl Message {
         }
     }
 
-    pub fn response(id: acp_proto::RequestId, result: serde_json::Value) -> Self {
+    pub fn response(id: cydonia_acp_proto::RequestId, result: serde_json::Value) -> Self {
         Self {
             jsonrpc: Version,
             id: Some(id),
@@ -73,7 +73,10 @@ impl Message {
         }
     }
 
-    pub fn error(id: Option<acp_proto::RequestId>, error: acp_proto::Error) -> Self {
+    pub fn error(
+        id: Option<cydonia_acp_proto::RequestId>,
+        error: cydonia_acp_proto::Error,
+    ) -> Self {
         Self {
             jsonrpc: Version,
             id,
@@ -112,7 +115,7 @@ impl<'de> Deserialize<'de> for Version {
 pub async fn read<R: AsyncBufRead + Unpin>(
     reader: &mut R,
     tap: Option<&Tap>,
-) -> Result<Option<Message>, acp_proto::Error> {
+) -> Result<Option<Message>, cydonia_acp_proto::Error> {
     let mut line = String::new();
     loop {
         line.clear();
@@ -133,7 +136,7 @@ pub async fn write<W: AsyncWrite + Unpin>(
     writer: &mut W,
     message: &Message,
     tap: Option<&Tap>,
-) -> Result<(), acp_proto::Error> {
+) -> Result<(), cydonia_acp_proto::Error> {
     let mut line = serde_json::to_string(message)?;
     if let Some(tap) = tap {
         tap(Direction::Outgoing, &line);

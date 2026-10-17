@@ -10,7 +10,7 @@ impl<C: Client> Handler for Serve<C> {
         &self,
         method: String,
         params: serde_json::Value,
-    ) -> impl Future<Output = acp_proto::Result<serde_json::Value>> + Send {
+    ) -> impl Future<Output = cydonia_acp_proto::Result<serde_json::Value>> + Send {
         self.0.dispatch(method, params)
     }
 

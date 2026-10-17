@@ -1,6 +1,8 @@
 //! App context sent alongside each user prompt, including resumed sessions.
 
-use acp::schema::{ContentBlock, EmbeddedResource, EmbeddedResourceResource, TextResourceContents};
+use cydonia_acp::proto::{
+    ContentBlock, EmbeddedResource, EmbeddedResourceResource, TextResourceContents,
+};
 use std::path::Path;
 
 pub fn prompt(

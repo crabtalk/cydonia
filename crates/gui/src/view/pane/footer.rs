@@ -14,7 +14,6 @@ use crate::{
         window::section::Section,
     },
 };
-use acp::schema::PermissionOptionKind;
 use artifact::session::chat::PlanStatus;
 use bezel::{
     gpui::{
@@ -30,6 +29,7 @@ use bezel::{
         widgets::{ButtonStyle, Buttons, Content, Controls, Status},
     },
 };
+use cydonia_acp::proto::PermissionOptionKind;
 use std::{cell::Cell, rc::Rc};
 
 /// What a press on the band does.

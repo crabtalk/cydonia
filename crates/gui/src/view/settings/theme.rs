@@ -471,7 +471,7 @@ impl SettingsWindow {
     /// window is on, once its agent has connected there.
     fn article_session_rows(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         use crate::model::session_preferences;
-        use acp::schema::{SessionConfigKind, SessionConfigOptionCategory};
+        use cydonia_acp::proto::{SessionConfigKind, SessionConfigOptionCategory};
         let theme = Theme::of(cx).clone();
         let workspace = self.workspace.read(cx);
         let Some(cwd) = workspace

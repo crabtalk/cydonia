@@ -11,10 +11,10 @@ repository = "https://github.com/crabtalk/cydonia"
 homepage = "https://cydonia.sh"
 
 [workspace.dependencies]
-acp = { version = "0.2.0", path = "acp/acp", package = "cydonia-acp", default-features = false }
-acp-agents = { version = "0.2.0", path = "acp/agents", package = "cydonia-acp-agents", default-features = false }
-acp-events = { version = "0.2.0", path = "acp/events", package = "cydonia-acp-events" }
-acp-proto = { version = "0.2.0", path = "acp/proto", package = "cydonia-acp-proto" }
+cydonia-acp = { version = "0.2.0", path = "acp/acp", default-features = false }
+cydonia-acp-agents = { version = "0.2.0", path = "acp/agents", default-features = false }
+cydonia-acp-events = { version = "0.2.0", path = "acp/events" }
+cydonia-acp-proto = { version = "0.2.0", path = "acp/proto" }
 artifact = { version = "0.2.0", path = "crates/artifact", package = "cydonia-artifact", default-features = false }
 anyhow = "1"
 axum = "0.8"

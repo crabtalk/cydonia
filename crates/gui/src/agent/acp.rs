@@ -16,10 +16,11 @@ use crate::{
         settings,
     },
 };
-use acp::{
+use anyhow::{Result, anyhow};
+use cydonia_acp::{
     AgentConn, Client, Direction, Error, Tap,
     client::{HistoryEntry, HistoryFork, HistoryRole},
-    schema::{
+    proto::{
         AuthenticateRequest, CancelNotification, ClientCapabilities, ContentBlock, EnvVariable,
         FileSystemCapabilities, HttpHeader, ImageContent, InitializeRequest, InitializeResponse,
         LoadSessionRequest, McpServer, McpServerHttp, McpServerStdio, NewSessionRequest,
@@ -29,7 +30,6 @@ use acp::{
         StopReason, WriteTextFileRequest, WriteTextFileResponse,
     },
 };
-use anyhow::{Result, anyhow};
 use std::process::Stdio;
 
 /// `CREATE_NO_WINDOW` from the Win32 process creation flags.
@@ -207,7 +207,7 @@ impl Session {
         let configured = mcp::servers();
 
         let (conn, mut child) =
-            acp::spawn(&mut command, Arc::new(Frontend(tx.clone())), debug_tap())
+            cydonia_acp::spawn(&mut command, Arc::new(Frontend(tx.clone())), debug_tap())
                 .map_err(|e| anyhow!("failed to start {}: {}", entry.command, error_text(&e)))?;
         if let Some(stderr) = child.stderr.take() {
             runtime().spawn(drain(stderr, tx.clone()));
@@ -389,7 +389,7 @@ impl Session {
             .iter()
             .map(|option| {
                 (
-                    option.category != Some(acp::schema::SessionConfigOptionCategory::Model),
+                    option.category != Some(cydonia_acp::proto::SessionConfigOptionCategory::Model),
                     option.id.to_string(),
                 )
             })
@@ -606,7 +606,7 @@ impl Client for Frontend {
 
 /// Take the agent down: the connection first, then the process behind it.
 ///
-/// `acp::spawn` sets `kill_on_drop`, so letting the child field drop on its own
+/// `cydonia_acp::spawn` sets `kill_on_drop`, so letting the child field drop on its own
 /// is an immediate SIGKILL — mid-request, if the agent was answering one.
 /// [`crate::model::session::ChatSession::close`] sends `session/cancel` ahead
 /// of this, and the pause here is what gives that notification time to be read.

@@ -10,7 +10,7 @@ repository.workspace = true
 
 [dev-dependencies]
 agent-client-protocol = { version = "2", features = ["unstable"] }
-acp = { workspace = true, features = ["client", "server"] }
+cydonia-acp = { workspace = true, features = ["client", "server"] }
 futures = "0.3.34"
 serde_json.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "rt-multi-thread", "sync", "time"] }

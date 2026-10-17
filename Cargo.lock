@@ -2278,6 +2278,7 @@ dependencies = [
 name = "cydonia-acp"
 version = "0.2.2"
 dependencies = [
+ "cydonia-acp-agents",
  "cydonia-acp-proto",
  "serde",
  "serde_json",
@@ -2386,7 +2387,6 @@ dependencies = [
  "bezel-terminal",
  "chrono",
  "cydonia-acp",
- "cydonia-acp-agents",
  "cydonia-artifact",
  "cydonia-guest",
  "cydonia-mcp",

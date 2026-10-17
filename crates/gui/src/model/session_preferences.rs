@@ -1,12 +1,12 @@
 //! Personal session choices, scoped to a project and agent, outside the repository.
 
 use super::settings::{self, Agent};
-use acp::schema::{
+use anyhow::Result;
+use bezel::gpui::{App, Global};
+use cydonia_acp::proto::{
     SessionConfigKind, SessionConfigOption, SessionConfigOptionValue, SessionConfigSelectOption,
     SessionConfigSelectOptions, SessionModeState,
 };
-use anyhow::Result;
-use bezel::gpui::{App, Global};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
