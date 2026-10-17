@@ -30,17 +30,20 @@ Written after `cydonia://`, a reference is a link: `cydonia://cydonia#43:5-7`. I
 
 ## Finding an entry
 
-`@` in an article or a message, and the search palette, list the entries what you type names, in this order:
+`@` in an article or a message, and the search palette, list the entries and cards what you type names, in this order:
 
-1. The entry whose number or board key you typed exactly: `#43`, `cydonia#43`, `DEV`.
-2. Entries whose title starts with what you typed.
-3. Entries whose title contains it, and entries whose number or board key starts with it: `#4`, `DE`.
-4. Sessions whose agent's name contains it.
+1. The entry whose number or board key you typed exactly: `#43`, `cydonia#43`, `43`, `DEV`.
+2. Cards whose handle starts with what you typed, the exact one first: `DEV-12`, `DEV-1`, `bezel#DEV-12`. A number alone, such as `12`, names this project's cards of that number on every board.
+3. Entries whose title or one of whose labels starts with what you typed.
+4. Entries whose title or one of whose labels contains it, and entries whose number or board key starts with it: `#4`, `DE`.
+5. Sessions whose agent's name contains it.
+6. In `@` alone, cards whose text contains it: this project's first, archived boards last.
 
-- Titles are matched in every open project; numbers and keys in this project, or in the one named before the `#`.
+- Titles, labels and card text are matched in every open project; numbers, keys and handles in this project, or in the one named before the `#`.
+- What you type is matched against labels as a label is written, so `Machine Learning` finds `machine-learning`.
+- With a `#` in what you typed, only numbers, keys and handles are matched: `#12` names entry 12 and no card.
 - Within each step, this project's entries come first, then the most recently changed.
 - Archived entries come after every other match, unless named exactly.
-- Card handles such as `DEV-12` are not matched.
 - With nothing typed, `@` lists this project's entries.
 
 Start with a kind's prefix to list that kind alone:
@@ -51,7 +54,7 @@ Start with a kind's prefix to list that kind alone:
 | `a:` | Articles |
 | `b:` | Boards |
 
-`@s:review` lists the sessions matching `review`. A prefix comes first and a turn range after a number, so `@s:#43` and `#43:5` do not collide.
+`@s:review` lists the sessions matching `review`. A kind's prefix or a label's lists entries alone, no cards. A prefix comes first and a turn range after a number, so `@s:#43` and `#43:5` do not collide.
 
 `l:` and a label lists the entries carrying that label, in every open project: `l:research` lists them all, `l:research plan` those matching `plan`. It follows a kind's prefix when there is one, as in `a:l:research`.
 

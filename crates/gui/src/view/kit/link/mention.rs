@@ -264,13 +264,6 @@ pub(crate) fn carded<'a>(workspace: &'a Workspace, cx: &'a App) -> Vec<Carded<'a
     cards
 }
 
-/// What `query` lists of `cards`, as positions in it: the cards a card
-/// prefix names — see [`reference::partial`] — in the project named before
-/// the `#` or the active one, the exact one first, then by number; and apart,
-/// the others whose text holds the query, the active project first and
-/// archived boards last. Nothing for an empty query or one with a kind or
-/// label prefix — see [`prefixes`] — and no text matches for a query holding
-/// `#`.
 /// What `@` or the search palette is asked for: a kind's prefix, `s:`, `a:` or
 /// `b:` in either case, then a label's, `l:` and the label, then the rest.
 #[derive(Debug, PartialEq, Eq)]
@@ -323,8 +316,10 @@ impl<'a> Query<'a> {
     ///
     /// Each entry is placed by its best match: an exact reference — see
     /// [`Query::references`] — then a title starting with the query, then a reference
-    /// prefix or a title holding it, then a session's agent holding it. Titles
-    /// are matched in every project, and not for a query holding `#`. Archived
+    /// prefix or a title holding it, then a session's agent holding it. A
+    /// label is matched as a title is, against the query as a label — see
+    /// [`artifact::label::normalize`]. Titles and labels are matched in every
+    /// project, and not for a query holding `#`. Archived
     /// entries follow every other match but an exact reference. Within a place
     /// the active project leads; ties keep the most recently touched first.
     pub(crate) fn rank(&self, held: &[Linkable]) -> Vec<usize> {
@@ -443,21 +438,24 @@ impl<'a> Query<'a> {
         }
         if !query.contains('#') {
             let lower = query.to_lowercase();
+            let label = artifact::label::normalize(query).unwrap_or_default();
             for (ix, linkable) in held.iter().enumerate() {
                 let title = linkable.title.to_lowercase();
-                let found = if title.starts_with(&lower) {
-                    Some(1)
-                } else if title.contains(&lower) {
-                    Some(2)
-                } else if linkable
-                    .agent
-                    .as_ref()
-                    .is_some_and(|agent| agent.to_lowercase().contains(&lower))
-                {
-                    Some(3)
-                } else {
-                    None
-                };
+                let labels = || linkable.labels.iter();
+                let found =
+                    if title.starts_with(&lower) || labels().any(|held| held.starts_with(&label)) {
+                        Some(1)
+                    } else if title.contains(&lower) || labels().any(|held| held.contains(&label)) {
+                        Some(2)
+                    } else if linkable
+                        .agent
+                        .as_ref()
+                        .is_some_and(|agent| agent.to_lowercase().contains(&lower))
+                    {
+                        Some(3)
+                    } else {
+                        None
+                    };
                 place[ix] = match (place[ix], found) {
                     (Some(a), Some(b)) => Some(a.min(b)),
                     (a, b) => a.or(b),
