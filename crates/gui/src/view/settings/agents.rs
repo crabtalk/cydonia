@@ -6,6 +6,7 @@ use crate::{
     model::settings,
     view::{kit::dialog::answers, settings::SettingsWindow, window::menubar},
 };
+use acp_agents::{Distribution, registry};
 use bezel::{
     gpui::{AnyElement, Context, Focusable as _, SharedString, Window, div, prelude::*, px},
     motion::{Fade, Painter},
@@ -16,7 +17,6 @@ use bezel::{
         widgets::{ButtonStyle, Buttons, Content, Scaffolding, Status},
     },
 };
-use cacp_agents::{Distribution, registry};
 use tokio::sync::mpsc;
 
 /// Where the version goes when it is pressed: the page the agent is published
@@ -58,7 +58,7 @@ fn named(fetching: &str) -> String {
 
 fn source_url(agent: &registry::Agent, version: &str) -> Option<String> {
     if let Distribution::Npm { package, .. } = &agent.distribution {
-        let name = cacp_agents::package_name(package);
+        let name = acp_agents::package_name(package);
         return Some(format!("https://www.npmjs.com/package/{name}/v/{version}"));
     }
     agent.website.clone().or_else(|| agent.repository.clone())

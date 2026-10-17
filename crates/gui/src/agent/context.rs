@@ -1,8 +1,6 @@
 //! App context sent alongside each user prompt, including resumed sessions.
 
-use cacp::schema::{
-    ContentBlock, EmbeddedResource, EmbeddedResourceResource, TextResourceContents,
-};
+use acp::schema::{ContentBlock, EmbeddedResource, EmbeddedResourceResource, TextResourceContents};
 use std::path::Path;
 
 pub fn prompt(

@@ -26,6 +26,7 @@ use artifact::{
     text::{clip, one_line},
 };
 
+use acp::schema::ToolKind;
 use bezel::{
     agent::orbs::{OrbSize, OrbState, engine::Frame, orb_element},
     gpui::{
@@ -41,7 +42,6 @@ use bezel::{
         widgets::{Icons, Layout, Status, Takeover},
     },
 };
-use cacp::schema::ToolKind;
 use markdown::{
     Doc, Selection,
     selectable::{self, Pointer},

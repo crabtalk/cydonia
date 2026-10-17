@@ -1,0 +1,15 @@
+[package]
+name = "cydonia-acp-proto"
+description = "ACP v1 wire types and method names"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["acp", "agent", "protocol", "jsonrpc", "serde"]
+categories = ["api-bindings", "encoding"]
+
+[dependencies]
+serde = { workspace = true, features = ["rc"] }
+serde_json.workspace = true

@@ -1,7 +1,7 @@
 //! What an install is agreed to: the source, which outlives a version.
 
 use super::*;
-use cacp_agents::registry::{Agent, Binary, Distribution};
+use acp_agents::registry::{Agent, Binary, Distribution};
 
 fn npm(id: &str, package: &str, version: &str) -> Agent {
     Agent {

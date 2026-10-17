@@ -23,6 +23,14 @@ use crate::model::{
     store::{self, Store},
 };
 #[cfg(feature = "desktop")]
+use ::acp::schema::{
+    ContentBlock, MaybeUndefined, PlanEntryStatus, RequestPermissionRequest,
+    RequestPermissionResponse, SessionUpdate, StopReason, ToolCallContent, ToolCallStatus,
+};
+use ::acp::schema::{
+    PermissionOptionKind, SessionConfigOption, SessionConfigOptionValue, SessionModeState,
+};
+#[cfg(feature = "desktop")]
 use anyhow::anyhow;
 use artifact::kind::Kind;
 use artifact::project::Project as _;
@@ -34,14 +42,6 @@ use artifact::session::{
 };
 use bezel::agent::orbs::engine::Frame;
 use bezel::gpui::{App, Context, Task};
-#[cfg(feature = "desktop")]
-use cacp::schema::{
-    ContentBlock, MaybeUndefined, PlanEntryStatus, RequestPermissionRequest,
-    RequestPermissionResponse, SessionUpdate, StopReason, ToolCallContent, ToolCallStatus,
-};
-use cacp::schema::{
-    PermissionOptionKind, SessionConfigOption, SessionConfigOptionValue, SessionModeState,
-};
 use std::{
     cell::RefCell,
     collections::{BTreeMap, VecDeque},
