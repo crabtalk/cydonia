@@ -745,6 +745,9 @@ impl Searchable for SessionView {
 
 impl Render for SessionView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.state
+            .selection
+            .clear_on_blur(window, cx, |view: &mut Self| &mut view.state.selection);
         let id = self.session;
         let chat = self.workspace.read(cx).session_entity(id).cloned();
         self.watch.set(&chat, cx);
