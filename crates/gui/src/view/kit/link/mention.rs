@@ -166,9 +166,8 @@ pub(crate) fn read(workspace: &Workspace, cx: &App) -> Linkables {
     Linkables(held)
 }
 
-/// The mention source cydonia installs: the cards a handle names, then the
-/// entries — see [`rank`] — then the cards whose text holds the query — see
-/// [`rank_cards`].
+/// The mention source cydonia installs, in [`Query::rank_named`]'s order, the
+/// cards whose text holds the query last.
 pub(crate) fn source(query: &str, cx: &App) -> Vec<Mention> {
     let held = cx
         .try_global::<Linkables>()
@@ -178,24 +177,32 @@ pub(crate) fn source(query: &str, cx: &App) -> Vec<Mention> {
         .as_ref()
         .map(|workspace| carded(workspace.read(cx), cx))
         .unwrap_or_default();
-    let query = Query::parse(query);
-    let (named, holding) = query.rank_cards(&cards);
-    let entries = query.rank(held).into_iter().map(|ix| {
-        let linkable = &held[ix];
-        Mention {
-            icon: Some(linkable.icon.clone()),
-            label: SharedString::from(linkable.title.clone()),
-            description: Some(SharedString::from(linkable.about.clone())),
-            url: linkable.url.clone(),
-        }
-    });
+    let (named, holding) = Query::parse(query).rank_named(held, &cards);
     named
         .into_iter()
-        .map(|ix| card_mention(&cards[ix]))
-        .chain(entries)
+        .map(|named| match named {
+            Named::Entry(ix) => {
+                let linkable = &held[ix];
+                Mention {
+                    icon: Some(linkable.icon.clone()),
+                    label: SharedString::from(linkable.title.clone()),
+                    description: Some(SharedString::from(linkable.about.clone())),
+                    url: linkable.url.clone(),
+                }
+            }
+            Named::Card(ix) => card_mention(&cards[ix]),
+        })
         .chain(holding.into_iter().map(|ix| card_mention(&cards[ix])))
         .take(SHOWN)
         .collect()
+}
+
+/// One row of [`Query::rank_named`]: a position in the entries or in the
+/// cards.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Named {
+    Entry(usize),
+    Card(usize),
 }
 
 /// A card `@` can link: one with a handle, on a board with a key.
@@ -257,13 +264,6 @@ pub(crate) fn carded<'a>(workspace: &'a Workspace, cx: &'a App) -> Vec<Carded<'a
     cards
 }
 
-/// What `query` lists of `cards`, as positions in it: the cards a card
-/// prefix names — see [`reference::partial`] — in the project named before
-/// the `#` or the active one, the exact one first, then by number; and apart,
-/// the others whose text holds the query, the active project first and
-/// archived boards last. Nothing for an empty query or one with a kind or
-/// label prefix — see [`prefixes`] — and no text matches for a query holding
-/// `#`.
 /// What `@` or the search palette is asked for: a kind's prefix, `s:`, `a:` or
 /// `b:` in either case, then a label's, `l:` and the label, then the rest.
 #[derive(Debug, PartialEq, Eq)]
@@ -316,8 +316,10 @@ impl<'a> Query<'a> {
     ///
     /// Each entry is placed by its best match: an exact reference — see
     /// [`Query::references`] — then a title starting with the query, then a reference
-    /// prefix or a title holding it, then a session's agent holding it. Titles
-    /// are matched in every project, and not for a query holding `#`. Archived
+    /// prefix or a title holding it, then a session's agent holding it. A
+    /// label is matched as a title is, against the query as a label — see
+    /// [`artifact::label::normalize`]. Titles and labels are matched in every
+    /// project, and not for a query holding `#`. Archived
     /// entries follow every other match but an exact reference. Within a place
     /// the active project leads; ties keep the most recently touched first.
     pub(crate) fn rank(&self, held: &[Linkable]) -> Vec<usize> {
@@ -395,6 +397,31 @@ impl<'a> Query<'a> {
         (named, holding)
     }
 
+    /// What the query names of `held` and `cards`, best first: the entries an
+    /// exact reference names, then the cards a handle names — see
+    /// [`Query::rank_cards`] — then the rest of [`Query::rank`]. Apart, the
+    /// cards whose text holds the query.
+    pub(crate) fn rank_named(
+        &self,
+        held: &[Linkable],
+        cards: &[Carded],
+    ) -> (Vec<Named>, Vec<usize>) {
+        let (named, holding) = self.rank_cards(cards);
+        let query = self.rest.trim();
+        let exact = Self::references(query, held);
+        let (lead, rest): (Vec<usize>, Vec<usize>) = self
+            .rank(held)
+            .into_iter()
+            .partition(|ix| exact.contains(ix) && held[*ix].named_by(query));
+        let rows = lead
+            .into_iter()
+            .map(Named::Entry)
+            .chain(named.into_iter().map(Named::Card))
+            .chain(rest.into_iter().map(Named::Entry))
+            .collect();
+        (rows, holding)
+    }
+
     fn rank_all(&self, held: &[Linkable]) -> Vec<usize> {
         let query = self.rest.trim();
         if query.is_empty() {
@@ -411,21 +438,24 @@ impl<'a> Query<'a> {
         }
         if !query.contains('#') {
             let lower = query.to_lowercase();
+            let label = artifact::label::normalize(query).unwrap_or_default();
             for (ix, linkable) in held.iter().enumerate() {
                 let title = linkable.title.to_lowercase();
-                let found = if title.starts_with(&lower) {
-                    Some(1)
-                } else if title.contains(&lower) {
-                    Some(2)
-                } else if linkable
-                    .agent
-                    .as_ref()
-                    .is_some_and(|agent| agent.to_lowercase().contains(&lower))
-                {
-                    Some(3)
-                } else {
-                    None
-                };
+                let labels = || linkable.labels.iter();
+                let found =
+                    if title.starts_with(&lower) || labels().any(|held| held.starts_with(&label)) {
+                        Some(1)
+                    } else if title.contains(&lower) || labels().any(|held| held.contains(&label)) {
+                        Some(2)
+                    } else if linkable
+                        .agent
+                        .as_ref()
+                        .is_some_and(|agent| agent.to_lowercase().contains(&lower))
+                    {
+                        Some(3)
+                    } else {
+                        None
+                    };
                 place[ix] = match (place[ix], found) {
                     (Some(a), Some(b)) => Some(a.min(b)),
                     (a, b) => a.or(b),

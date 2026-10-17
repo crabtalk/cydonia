@@ -48,8 +48,8 @@ async fn answer(events: &mut acp::Events) -> String {
         let mut text = String::new();
         loop {
             match events.recv().await.expect("agent closed") {
-                Event::Update(cacp::schema::SessionUpdate::AgentMessageChunk(chunk)) => {
-                    if let cacp::schema::ContentBlock::Text(body) = chunk.content {
+                Event::Update(cydonia_acp::proto::SessionUpdate::AgentMessageChunk(chunk)) => {
+                    if let cydonia_acp::proto::ContentBlock::Text(body) = chunk.content {
                         text.push_str(&body.text);
                     }
                 }
@@ -130,10 +130,12 @@ fn tool_history_is_context_in_order() {
     ];
     let history = acp::history(&items);
     assert_eq!(history.len(), items.len());
-    assert_eq!(history[1].role, cacp::client::HistoryRole::Tool);
+    assert_eq!(history[1].role, cydonia_acp::client::HistoryRole::Tool);
     assert_eq!(
         history[1].content,
-        vec![cacp::schema::ContentBlock::from("echo example\nexample")]
+        vec![cydonia_acp::proto::ContentBlock::from(
+            "echo example\nexample"
+        )]
     );
 }
 

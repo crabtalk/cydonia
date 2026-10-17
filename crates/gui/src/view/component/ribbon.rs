@@ -480,11 +480,13 @@ impl Tab {
         if formatting.mode != Mode::Blocks {
             return None;
         }
-        // Writing a link takes the focus off the document, and the bar is what
-        // is holding the field it went to.
+        // Writing a link, asking and the turn menu take the focus off the
+        // document, and the bar is what is holding what it went to.
         let linking = self.ribbon.linking.is_some();
         let asking = self.ribbon.asking;
-        if !linking && !asking && !editor.focus_handle(cx).contains_focused(window, cx) {
+        let turning = self.menu.key() == Some(&TabMenu::Turn);
+        if !linking && !asking && !turning && !editor.focus_handle(cx).contains_focused(window, cx)
+        {
             return None;
         }
         let at = perch(port, head)?;

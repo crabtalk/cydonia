@@ -3,7 +3,7 @@
 use super::settings::{self, Agent};
 use anyhow::Result;
 use bezel::gpui::{App, Global};
-use cacp::schema::{
+use cydonia_acp::proto::{
     SessionConfigKind, SessionConfigOption, SessionConfigOptionValue, SessionConfigSelectOption,
     SessionConfigSelectOptions, SessionModeState,
 };

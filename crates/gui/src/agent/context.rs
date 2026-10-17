@@ -1,6 +1,6 @@
 //! App context sent alongside each user prompt, including resumed sessions.
 
-use cacp::schema::{
+use cydonia_acp::proto::{
     ContentBlock, EmbeddedResource, EmbeddedResourceResource, TextResourceContents,
 };
 use std::path::Path;

@@ -99,6 +99,8 @@ impl NoteText {
 
 impl Render for NoteText {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.selection
+            .clear_on_blur(window, cx, |note: &mut Self| &mut note.selection);
         let theme = Theme::of(cx).clone();
         let Some(comment) = self.comment(cx) else {
             return div().into_any_element();

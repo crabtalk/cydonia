@@ -390,15 +390,15 @@ impl Pane {
         let fold = first && !sidebar_open;
         let left = fold && chrome::has(CaptionSide::Left, window, cx);
         let right = last && chrome::has(CaptionSide::Right, window, cx);
+        let floating = self.workspace.read(cx).settings.appearance.floating;
         let lead = match (first, sidebar_open) {
             _ if left => 0.,
-            (true, true) => root::HEADER_INSET,
             // Floating, the column pads itself by half the gap between cards
             // and the bar keeps the other half, so it starts a gap in.
-            (true, false) => {
-                root::toolbar_inset(window, cx)
-                    - root::card_gap(self.workspace.read(cx).settings.appearance.floating)
-            }
+            (true, false) => root::toolbar_inset(window, cx) - root::card_gap(floating),
+            // Floating, the first tab stands on its card's left edge.
+            _ if floating => 0.,
+            (true, true) => root::HEADER_INSET,
             (false, _) => TAB_INSET,
         };
         let owner = cx.entity().downgrade();

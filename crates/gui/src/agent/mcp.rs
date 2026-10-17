@@ -10,7 +10,7 @@
 
 use crate::model::settings;
 use anyhow::{Context, Result};
-use cacp_agents::mcp::{self as registry, Distribution};
+use cydonia_acp::agents::mcp::{self as registry, Distribution};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf};
 
