@@ -166,9 +166,8 @@ pub(crate) fn read(workspace: &Workspace, cx: &App) -> Linkables {
     Linkables(held)
 }
 
-/// The mention source cydonia installs: the cards a handle names, then the
-/// entries — see [`rank`] — then the cards whose text holds the query — see
-/// [`rank_cards`].
+/// The mention source cydonia installs, in [`Query::rank_named`]'s order, the
+/// cards whose text holds the query last.
 pub(crate) fn source(query: &str, cx: &App) -> Vec<Mention> {
     let held = cx
         .try_global::<Linkables>()
@@ -178,24 +177,32 @@ pub(crate) fn source(query: &str, cx: &App) -> Vec<Mention> {
         .as_ref()
         .map(|workspace| carded(workspace.read(cx), cx))
         .unwrap_or_default();
-    let query = Query::parse(query);
-    let (named, holding) = query.rank_cards(&cards);
-    let entries = query.rank(held).into_iter().map(|ix| {
-        let linkable = &held[ix];
-        Mention {
-            icon: Some(linkable.icon.clone()),
-            label: SharedString::from(linkable.title.clone()),
-            description: Some(SharedString::from(linkable.about.clone())),
-            url: linkable.url.clone(),
-        }
-    });
+    let (named, holding) = Query::parse(query).rank_named(held, &cards);
     named
         .into_iter()
-        .map(|ix| card_mention(&cards[ix]))
-        .chain(entries)
+        .map(|named| match named {
+            Named::Entry(ix) => {
+                let linkable = &held[ix];
+                Mention {
+                    icon: Some(linkable.icon.clone()),
+                    label: SharedString::from(linkable.title.clone()),
+                    description: Some(SharedString::from(linkable.about.clone())),
+                    url: linkable.url.clone(),
+                }
+            }
+            Named::Card(ix) => card_mention(&cards[ix]),
+        })
         .chain(holding.into_iter().map(|ix| card_mention(&cards[ix])))
         .take(SHOWN)
         .collect()
+}
+
+/// One row of [`Query::rank_named`]: a position in the entries or in the
+/// cards.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Named {
+    Entry(usize),
+    Card(usize),
 }
 
 /// A card `@` can link: one with a handle, on a board with a key.
@@ -393,6 +400,31 @@ impl<'a> Query<'a> {
             .collect();
         holding.sort_by_key(|&ix| (cards[ix].board.archived, !cards[ix].active));
         (named, holding)
+    }
+
+    /// What the query names of `held` and `cards`, best first: the entries an
+    /// exact reference names, then the cards a handle names — see
+    /// [`Query::rank_cards`] — then the rest of [`Query::rank`]. Apart, the
+    /// cards whose text holds the query.
+    pub(crate) fn rank_named(
+        &self,
+        held: &[Linkable],
+        cards: &[Carded],
+    ) -> (Vec<Named>, Vec<usize>) {
+        let (named, holding) = self.rank_cards(cards);
+        let query = self.rest.trim();
+        let exact = Self::references(query, held);
+        let (lead, rest): (Vec<usize>, Vec<usize>) = self
+            .rank(held)
+            .into_iter()
+            .partition(|ix| exact.contains(ix) && held[*ix].named_by(query));
+        let rows = lead
+            .into_iter()
+            .map(Named::Entry)
+            .chain(named.into_iter().map(Named::Card))
+            .chain(rest.into_iter().map(Named::Entry))
+            .collect();
+        (rows, holding)
     }
 
     fn rank_all(&self, held: &[Linkable]) -> Vec<usize> {

@@ -125,3 +125,33 @@ fn a_card_opening_with_a_heading_is_chipped_by_the_whole_heading() {
         "one file per card: the board file and one…"
     );
 }
+
+#[test]
+fn a_bare_number_names_the_entry_of_that_number_before_cards() {
+    let entry = |number: u64, title: &str| Linkable {
+        icon: kind_icon(Kind::Article),
+        title: title.to_owned(),
+        about: format!("Article · #{number}"),
+        url: format!("cydonia://cloud#{number}"),
+        touched: 0,
+        project: "cloud".to_owned(),
+        active: true,
+        number,
+        key: None,
+        labels: Vec::new(),
+        agent: None,
+        archived: false,
+        kind: Kind::Article,
+        row: Row::Entry {
+            project: "cloud".into(),
+            showing: crate::model::workspace::Showing::Article(number.to_string()),
+        },
+    };
+    let held = vec![entry(21, "Later"), entry(2, "Design")];
+    let here = board("DEV", &["one", "two"]);
+    let cards = carded("cloud", true, &here);
+    let (named, _) = Query::parse("2").rank_named(&held, &cards);
+    assert_eq!(named, [Named::Entry(1), Named::Card(1), Named::Entry(0)]);
+    let (named, _) = Query::parse("dev-2").rank_named(&held, &cards);
+    assert_eq!(named[0], Named::Card(1));
+}

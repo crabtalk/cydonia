@@ -9,8 +9,7 @@
 //! the label, after it or alone, lists the entries carrying that label.
 //!
 //! A query lists the cards and entries `@` would name for it first — see
-//! [`mention::Query::rank_cards`] and [`mention::Query::rank`] — then the ones
-//! it is found in. A card opens in the drawer, as its chip does.
+//! [`mention::Query::rank_named`] — then the ones it is found in. A card opens in the drawer, as its chip does.
 //!
 //! An empty query lists what was touched last. A query is searched off disk on
 //! a background thread — see [`artifact::search::disk`] — so an entry's hits
@@ -493,48 +492,43 @@ impl Palette {
             .is_some_and(|labels| labels.iter().any(|held| held == label))
     }
 
-    /// The entries the field's query names — see [`mention::Query::rank`].
+    /// The entries and cards the field's query names — see
+    /// [`mention::Query::rank_named`].
     fn named_hits(&self, cx: &App) -> Vec<Hit> {
-        let Some(Linkables(held)) = cx.try_global::<Linkables>() else {
-            return Vec::new();
-        };
-        let entries = mention::Query::parse(self.field.read(cx).content())
-            .rank(held)
-            .into_iter()
-            .map(|ix| Hit {
-                row: held[ix].row.clone(),
-                snippet: None,
-                card: None,
-            });
-        self.card_hits(cx).into_iter().chain(entries).collect()
-    }
-
-    /// The cards the field's query names by handle — see
-    /// [`mention::Query::rank_cards`].
-    fn card_hits(&self, cx: &App) -> Vec<Hit> {
+        let held = cx
+            .try_global::<Linkables>()
+            .map_or(&[][..], |Linkables(held)| held.as_slice());
         let workspace = self.workspace.read(cx);
         let cards = mention::carded(workspace, cx);
-        let (named, _) = mention::Query::parse(self.field.read(cx).content()).rank_cards(&cards);
+        let (named, _) =
+            mention::Query::parse(self.field.read(cx).content()).rank_named(held, &cards);
         named
             .into_iter()
-            .filter_map(|ix| {
-                let carded = &cards[ix];
-                let project = workspace
-                    .projects
-                    .iter()
-                    .find(|open| artifact::reference::names(&open.path, &carded.project))?;
-                Some(Hit {
-                    row: Row::Entry {
-                        project: project.path.clone(),
-                        showing: Showing::Board(carded.board.id.clone()),
-                    },
+            .filter_map(|named| match named {
+                mention::Named::Entry(ix) => Some(Hit {
+                    row: held[ix].row.clone(),
                     snippet: None,
-                    card: Some(HitCard {
-                        reference: carded.reference().to_string(),
-                        handle: carded.handle.clone(),
-                        title: carded.card.title(),
-                    }),
-                })
+                    card: None,
+                }),
+                mention::Named::Card(ix) => {
+                    let carded = &cards[ix];
+                    let project = workspace
+                        .projects
+                        .iter()
+                        .find(|open| artifact::reference::names(&open.path, &carded.project))?;
+                    Some(Hit {
+                        row: Row::Entry {
+                            project: project.path.clone(),
+                            showing: Showing::Board(carded.board.id.clone()),
+                        },
+                        snippet: None,
+                        card: Some(HitCard {
+                            reference: carded.reference().to_string(),
+                            handle: carded.handle.clone(),
+                            title: carded.card.title(),
+                        }),
+                    })
+                }
             })
             .collect()
     }
