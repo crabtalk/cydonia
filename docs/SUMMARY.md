@@ -8,7 +8,6 @@
 - [Features](./general/features.md)
 - [Where things live](./general/files.md)
 - [Backups and rolling back](./general/backups.md)
-- [Cydonia and similar tools](./general/compare.md)
 
 # Working
 
