@@ -144,3 +144,13 @@ fn a_label_prefix_lists_the_entries_carrying_it_in_every_project() {
         }
     );
 }
+
+#[test]
+fn a_query_finds_entries_by_their_labels_as_by_their_titles() {
+    let mut held = held();
+    held[1].labels = vec!["machine-learning".into()];
+    held[4].labels = vec!["deep-learning".into()];
+    assert_eq!(Query::parse("Machine Learning").rank(&held), vec![1]);
+    assert_eq!(Query::parse("learning").rank(&held), vec![1, 4]);
+    assert_eq!(Query::parse("deep").rank(&held), vec![4]);
+}

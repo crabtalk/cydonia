@@ -1,0 +1,31 @@
+[package]
+name = "cydonia-acp"
+description = "A compact implementation of the Agent Client Protocol"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["acp", "agent", "protocol", "jsonrpc", "ai"]
+categories = ["api-bindings", "asynchronous", "network-programming"]
+
+[features]
+default = ["client", "server"]
+peer = ["dep:serde", "dep:serde_json", "dep:tokio"]
+client = ["peer", "tokio/process"]
+server = ["peer", "tokio/io-std"]
+agents = ["dep:cydonia-acp-agents"]
+install = ["agents", "cydonia-acp-agents/install"]
+
+[dependencies]
+cydonia-acp-proto.workspace = true
+cydonia-acp-agents = { workspace = true, optional = true }
+
+# crates-io
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true, features = ["io-util", "rt", "sync"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "process", "time"] }

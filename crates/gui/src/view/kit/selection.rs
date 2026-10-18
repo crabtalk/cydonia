@@ -3,7 +3,7 @@
 //! selection, what of it, and the press that is extending it.
 
 use bezel::{
-    gpui::{App, FocusHandle},
+    gpui::{App, Context, FocusHandle, Subscription, Window},
     ui::input::{Granularity, drag_selection},
 };
 use markdown::{BlockLayouts, Cursor, Doc, Selection, selectable::Pointer};
@@ -24,6 +24,9 @@ pub struct Selections<K> {
     layouts: RefCell<HashMap<K, BlockLayouts>>,
     /// Each text's focus, which is what copy is bound through.
     focus: RefCell<HashMap<K, FocusHandle>>,
+    /// The text whose losing the focus drops the selection — see
+    /// [`Selections::clear_on_blur`].
+    blur: Option<(K, Subscription)>,
 }
 
 impl<K> Default for Selections<K> {
@@ -34,6 +37,7 @@ impl<K> Default for Selections<K> {
             pressed_doc: None,
             layouts: RefCell::default(),
             focus: RefCell::default(),
+            blur: None,
         }
     }
 }
@@ -130,6 +134,36 @@ impl<K: Copy + Eq + Hash> Selections<K> {
         let keep = |key: &K| keep(key) || held == Some(*key);
         self.layouts.borrow_mut().retain(|key, _| keep(key));
         self.focus.borrow_mut().retain(|key, _| keep(key));
+    }
+
+    /// Drop the selection once the focus leaves the text holding it. Called
+    /// each frame `cx`'s view draws, with `of` reaching these selections on
+    /// it, so it follows whichever text holds the selection.
+    pub fn clear_on_blur<V: 'static>(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<V>,
+        of: fn(&mut V) -> &mut Self,
+    ) where
+        K: 'static,
+    {
+        let held = self.held.map(|(key, _)| key);
+        if self.blur.as_ref().map(|(key, _)| *key) == held {
+            return;
+        }
+        self.blur = held.and_then(|key| {
+            let focus = self.focus_of(key)?;
+            let subscription = cx.on_focus_out(&focus, window, move |view, _, _, cx| {
+                // A press in another text has already moved the selection
+                // there by the time this one hears it lost the focus.
+                let selections = of(view);
+                if selections.held.is_some_and(|(at, _)| at == key) {
+                    selections.clear();
+                    cx.notify();
+                }
+            });
+            Some((key, subscription))
+        });
     }
 
     /// Drop the selection.

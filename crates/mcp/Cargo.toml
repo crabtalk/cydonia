@@ -18,7 +18,7 @@ serde.workspace = true
 serde_json.workspace = true
 prompts.workspace = true
 regex.workspace = true
-tokio = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true, features = ["net", "process", "rt-multi-thread", "sync", "time"] }
 
 [features]
 default = ["http"]

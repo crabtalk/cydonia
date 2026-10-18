@@ -6,10 +6,7 @@ use crate::view::kit::rename::{NameEvent, NameField};
 use crate::view::window::chrome;
 use crate::view::window::lights::{self, Lights};
 #[cfg(feature = "desktop")]
-use crate::view::{
-    component::terminal::TerminalPanel,
-    settings::{self, SettingsWindow},
-};
+use crate::view::{component::terminal::TerminalPanel, settings};
 use crate::{
     model::{
         session::ChatSession,
@@ -518,8 +515,6 @@ pub struct Cydonia {
     /// no space open shows. Where a link opens — see
     /// [`Cydonia::open_reference`].
     pub(crate) pressed_pane: Option<Member>,
-    #[cfg(feature = "desktop")]
-    settings_window: Option<WindowHandle<SettingsWindow>>,
     /// The modal over the window, while one is up.
     pub(crate) modals: Entity<ModalLayer>,
     /// Where a sidebar row or a pane's tab lands on a pane. The panes are its
@@ -1074,8 +1069,6 @@ impl Cydonia {
             session_cards: Default::default(),
             threads: Default::default(),
             pressed_pane: None,
-            #[cfg(feature = "desktop")]
-            settings_window: None,
             dock: docking::Dock::new(Painter::of(cx), {
                 let this = cx.entity().downgrade();
                 move |item, _, cx| {
@@ -1460,8 +1453,7 @@ impl Cydonia {
         #[cfg(feature = "desktop")]
         {
             let _ = window;
-            let workspace = self.workspace.clone();
-            self.settings_window = settings::open(workspace, self.settings_window, section, cx);
+            settings::open(self.workspace.clone(), section, cx);
         }
         #[cfg(not(feature = "desktop"))]
         self.settings_sheet(section, window, cx);

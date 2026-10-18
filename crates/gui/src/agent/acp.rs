@@ -1,11 +1,11 @@
 //! One ACP session over a spawned agent subprocess.
 //!
 //! Two things here are load-bearing:
-//! - All agent-side events flow through ONE channel. cacp's read loop awaits
+//! - All agent-side events flow through ONE channel. cydonia-acp's read loop awaits
 //!   each notification before it reads the next frame, so a single channel
 //!   preserves the exact wire order (a turn's final updates arrive before its
 //!   result — separate channels lose that).
-//! - The connection runs on its own tokio runtime. cacp spawns its read and
+//! - The connection runs on its own tokio runtime. cydonia-acp spawns its read and
 //!   write loops with `tokio::spawn`, and gpui's executor is smol's.
 
 use crate::{
@@ -17,10 +17,10 @@ use crate::{
     },
 };
 use anyhow::{Result, anyhow};
-use cacp::{
+use cydonia_acp::{
     AgentConn, Client, Direction, Error, Tap,
     client::{HistoryEntry, HistoryFork, HistoryRole},
-    schema::{
+    proto::{
         AuthenticateRequest, CancelNotification, ClientCapabilities, ContentBlock, EnvVariable,
         FileSystemCapabilities, HttpHeader, ImageContent, InitializeRequest, InitializeResponse,
         LoadSessionRequest, McpServer, McpServerHttp, McpServerStdio, NewSessionRequest,
@@ -60,7 +60,7 @@ const SERVER: &str = "cydonia";
 ///
 /// Short, because it is all this can buy. Closing the agent's stdin — the thing
 /// that would actually let it wind itself up — is not reachable from here:
-/// cacp's read loop holds a `Peer` of its own, so the write loop that owns
+/// cydonia-acp's read loop holds a `Peer` of its own, so the write loop that owns
 /// stdin outlives every handle this side can drop.
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(250);
 
@@ -190,7 +190,7 @@ impl Session {
                 .or_else(|| std::env::var(key).ok())
         }));
         command.env("NO_PROXY", &bypass).env("no_proxy", &bypass);
-        // An agent's diagnostics are not this app's to print. cacp leaves the
+        // An agent's diagnostics are not this app's to print. cydonia-acp leaves the
         // choice to the caller — "a TUI usually wants it captured and a CLI
         // usually does not" — and a desktop app that inherits them sprays a
         // node SDK's teardown chatter over whichever terminal happened to
@@ -207,7 +207,7 @@ impl Session {
         let configured = mcp::servers();
 
         let (conn, mut child) =
-            cacp::spawn(&mut command, Arc::new(Frontend(tx.clone())), debug_tap())
+            cydonia_acp::spawn(&mut command, Arc::new(Frontend(tx.clone())), debug_tap())
                 .map_err(|e| anyhow!("failed to start {}: {}", entry.command, error_text(&e)))?;
         if let Some(stderr) = child.stderr.take() {
             runtime().spawn(drain(stderr, tx.clone()));
@@ -389,7 +389,7 @@ impl Session {
             .iter()
             .map(|option| {
                 (
-                    option.category != Some(cacp::schema::SessionConfigOptionCategory::Model),
+                    option.category != Some(cydonia_acp::proto::SessionConfigOptionCategory::Model),
                     option.id.to_string(),
                 )
             })
@@ -606,12 +606,12 @@ impl Client for Frontend {
 
 /// Take the agent down: the connection first, then the process behind it.
 ///
-/// `cacp::spawn` sets `kill_on_drop`, so letting the child field drop on its own
+/// `cydonia_acp::spawn` sets `kill_on_drop`, so letting the child field drop on its own
 /// is an immediate SIGKILL — mid-request, if the agent was answering one.
 /// [`crate::model::session::ChatSession::close`] sends `session/cancel` ahead
 /// of this, and the pause here is what gives that notification time to be read.
 ///
-/// It is not a clean shutdown, and cannot be until cacp can close an agent's
+/// It is not a clean shutdown, and cannot be until cydonia-acp can close an agent's
 /// stdin: its read loop is handed a `Peer` by value, so the write loop holding
 /// stdin lives as long as the agent does, whatever this side drops. Until then
 /// the kill is the only exit and the agent's stderr is where the noise goes —
@@ -628,7 +628,7 @@ impl Drop for Session {
     }
 }
 
-/// cacp drops the client when its read loop ends, which is the only notice
+/// cydonia-acp drops the client when its read loop ends, which is the only notice
 /// the frontend gets that the agent is gone.
 impl Drop for Frontend {
     fn drop(&mut self) {

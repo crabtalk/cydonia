@@ -1,8 +1,27 @@
 [
   {
+    "version": "0.2.3",
+    "date": "2026-10-18",
+    "nightly": true,
+    "summary": "Find entries by their labels from the search palette and @, and fixes to floating tabs, the formatting bar, selections and the Settings window.",
+    "new": [
+      "Find articles, boards and sessions by their labels in the search palette and @, without typing l: first"
+    ],
+    "changed": [
+      "List the entry a bare number names, as in @12, ahead of the cards with that handle, in @ and the search palette"
+    ],
+    "fixed": [
+      "Line up each pane's first tab with the left edge of its floating card",
+      "Keep the formatting bar up while its block menu is open, so opening the menu no longer dismisses it",
+      "Drop a selection in a session or a comment once the focus moves elsewhere, such as into the composer",
+      "Bring the open Settings window forward instead of opening a second one after the main window was closed and reopened, and apply what it changes to the reopened window",
+      "Set the composer and other glass controls off a light floating card with a soft shadow, where they blended into it",
+      "Keep a link's preview card opaque while the pointer is over it"
+    ]
+  },
+  {
     "version": "0.2.2",
     "date": "2026-10-16",
-    "nightly": true,
     "summary": "What is open floats on a card over the window, the new default layout, with Flat a pick away in Settings. A What's New sheet says what changed the first time a release opens.",
     "new": [
       "Draw what is open on a floating card over the window, picked as a layout in Settings › Appearance › Window, with Flat to go back. Floating is the default",

@@ -32,7 +32,7 @@ use bezel::{
 #[cfg(feature = "desktop")]
 use bezel::{
     gpui::{
-        Bounds, TitlebarOptions, WindowBackgroundAppearance, WindowBounds, WindowHandle,
+        AnyWindowHandle, Bounds, TitlebarOptions, WindowBackgroundAppearance, WindowBounds,
         WindowOptions, size,
     },
     theme::appearance,
@@ -284,23 +284,32 @@ pub struct SettingsWindow {
 }
 
 /// Open the window, or bring the open one forward — a second settings window
-/// would be two views of one preference.
+/// would be two views of one preference. One open over another workspace
+/// than `workspace`, left by a workspace window that has since closed, is
+/// drawn again over `workspace`.
 #[cfg(feature = "desktop")]
-pub fn open(
-    workspace: Entity<Workspace>,
-    existing: Option<WindowHandle<SettingsWindow>>,
-    section: Section,
-    cx: &mut App,
-) -> Option<WindowHandle<SettingsWindow>> {
-    if let Some(handle) = existing
-        && handle
-            .update(cx, |this, window, cx| {
+pub fn open(workspace: Entity<Workspace>, section: Section, cx: &mut App) {
+    let open = cx
+        .windows()
+        .into_iter()
+        .find_map(|window| window.downcast::<SettingsWindow>());
+    if let Some(handle) = open {
+        let shown = match handle.read(cx).map(|this| this.workspace == workspace) {
+            Ok(true) => handle.update(cx, |this, window, cx| {
                 this.show(section, cx);
                 window.activate_window();
-            })
-            .is_ok()
-    {
-        return Some(handle);
+            }),
+            Ok(false) => AnyWindowHandle::from(handle).update(cx, |_, window, cx| {
+                window.replace_root(cx, |_, cx| {
+                    SettingsWindow::new(workspace.clone(), section, cx)
+                });
+                window.activate_window();
+            }),
+            Err(error) => Err(error),
+        };
+        if shown.is_ok() {
+            return;
+        }
     }
     let (width, height) = WINDOW_SIZE;
     let bounds = Bounds::centered(None, size(px(width), px(height)), cx);
@@ -335,7 +344,7 @@ pub fn open(
             cx.new(|cx| SettingsWindow::new(workspace, section, cx))
         },
     )
-    .ok()
+    .ok();
 }
 
 /// The same page, drawn inside the one window there is.

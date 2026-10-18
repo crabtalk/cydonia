@@ -457,7 +457,7 @@ impl Workspace {
                 }
             }
             ArticleChange::Config { id, value } => {
-                let choice = cacp::schema::SessionConfigOptionValue::ValueId {
+                let choice = cydonia_acp::proto::SessionConfigOptionValue::ValueId {
                     value: value.as_str().into(),
                 };
                 let offered = offers.config.iter().any(|option| {

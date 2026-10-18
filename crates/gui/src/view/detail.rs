@@ -34,7 +34,7 @@ use bezel::{
         widgets::Content,
     },
 };
-use cacp::schema::{
+use cydonia_acp::proto::{
     PermissionOptionKind, SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory,
     SessionConfigOptionValue, SessionConfigSelectOptions, SessionModeState,
 };

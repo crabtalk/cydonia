@@ -25,7 +25,7 @@ notify.workspace = true
 pulldown-cmark.workspace = true
 regex.workspace = true
 rusqlite = { workspace = true, optional = true }
-cacp.workspace = true
+cydonia-acp.workspace = true
 dirs.workspace = true
 image = { workspace = true, optional = true }
 serde.workspace = true

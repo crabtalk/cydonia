@@ -35,11 +35,11 @@ use artifact::session::{
 use bezel::agent::orbs::engine::Frame;
 use bezel::gpui::{App, Context, Task};
 #[cfg(feature = "desktop")]
-use cacp::schema::{
+use cydonia_acp::proto::{
     ContentBlock, MaybeUndefined, PlanEntryStatus, RequestPermissionRequest,
     RequestPermissionResponse, SessionUpdate, StopReason, ToolCallContent, ToolCallStatus,
 };
-use cacp::schema::{
+use cydonia_acp::proto::{
     PermissionOptionKind, SessionConfigOption, SessionConfigOptionValue, SessionModeState,
 };
 use std::{

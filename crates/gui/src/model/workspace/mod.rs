@@ -30,7 +30,7 @@ use bezel::{
     theme::{Brand, Tint, Vibrancy, appearance::AppearanceMode},
     ui::icons::Icon,
 };
-use cacp::schema::SessionConfigOptionValue;
+use cydonia_acp::proto::SessionConfigOptionValue;
 use editor::AppExt as _;
 use futures::{StreamExt as _, channel::mpsc};
 use markdown::AppExt as _;
