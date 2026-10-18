@@ -39,7 +39,7 @@ A card is tagged busy while an agent works on it, and shows an orb while its run
 
 A card carries at most one label. Open the card and click beside its handle to pick one or type a new one. The labels offered are the ones on that board's cards, apart from the labels on articles, boards and sessions.
 
-A card can wait on other cards, on any board of any open project. Open the card and click under its head to pick them. Each is kept the way a link to it is written from the card's project: `DEV-12` in the same project, `foo#DEV-12` in project `foo`. The card shows `blocked` while any of them still names a card. A blocker that is deleted, or moved to another board and so given a new handle, no longer counts. A card that waits on others or is busy cannot be run.
+A card can wait on other cards, on any board of any open project. Open the card and click under its head to pick them. Each is kept the way a link to it is written from the card's project: `DEV-12` in the same project, `foo#DEV-12` in project `foo`. The card shows `blocked` while any of them still names a card. A blocker that is deleted no longer counts. Moving a blocker to another board gives it a new handle, and the cards waiting on it are rewritten to name the new one. A card that waits on others or is busy cannot be run.
 
 ## Tables
 

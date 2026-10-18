@@ -41,7 +41,7 @@ A client added by hand reaches every project the app has open, and names one per
 | --- | --- |
 | Projects | `project_open`, `project_close`, `project_entries`, `project_read_entry`, `project_label_entry` |
 | Articles | `article_list`, `article_read`, `article_add`, `article_edit`, `article_rewrite`, `article_rename`, `article_move`, `article_comment`, `article_set_cover`, `article_archive`, `article_remove` |
-| Boards | `board_list`, `board_search`, `board_search_cards`, `board_read`, `board_add`, `board_rename`, `board_archive`, `board_remove`, `board_add_column`, `board_rename_column`, `board_move_column`, `board_remove_column`, `board_add_card`, `board_rewrite_card`, `board_move_card`, `board_remove_card`, `board_set_card_busy`, `board_set_card_blockers` |
+| Boards | `board_list`, `board_search`, `board_search_cards`, `board_read`, `board_read_card`, `board_describe`, `board_add`, `board_rename`, `board_archive`, `board_remove`, `board_add_column`, `board_rename_column`, `board_move_column`, `board_remove_column`, `board_add_card`, `board_rewrite_card`, `board_move_card`, `board_remove_card`, `board_set_card_busy`, `board_set_card_blockers` |
 | Sessions | `session_send`, `session_read`, `session_search`, `session_rename` |
 | Workspace | `workspace_focus` |
 | Browser | `browser_tabs`, `browser_open`, `browser_read`, `browser_scroll`, `browser_console`, `browser_click`, `browser_type` |

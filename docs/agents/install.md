@@ -28,10 +28,7 @@ A hand-written entry has no registry id and is never touched by the installer.
 
 ## Pinning
 
-`npx`, `bunx` and `pnpx` resolve a package name against the registry on every
-launch, so `npx pkg@latest` is a different program each time. Cydonia checks
-whether every package an entry names carries an exact version, and says so where
-one does not. Pin the version:
+`npx`, `bunx` and `pnpx` resolve a package name against the registry on every launch, so `npx pkg@latest` is a different program each time. An entry run through one of them is loaded only when every package it names carries a version starting with a digit. One that does not stays in `settings.toml` but is left out of the agents Cydonia offers, with no notice. Pin the version:
 
 ```toml
 [[agents]]

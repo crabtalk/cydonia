@@ -1,6 +1,6 @@
 # Grammar catalog
 
-WASM modules and highlight queries come from `tree-sitter-wasm@2.0.1` via jsDelivr. `catalog.json` pins the size and SHA-256 of each file from the npm tarball. Downloads begin only after the file view's Install action. Verified bundles are saved under `$XDG_DATA_HOME/cydonia/grammars/2.0.1` (default `~/.local/share/cydonia/grammars/2.0.1`).
+WASM modules and highlight queries come from `tree-sitter-wasm@2.0.1` via jsDelivr. `catalog.json` pins the size and SHA-256 of each file from the npm tarball. Downloads begin from the file view's Install action, or when a Markdown fence is tagged with a language that is not cached yet. Verified bundles are saved under `$XDG_DATA_HOME/cydonia/grammars/2.0.1` (default `~/.local/share/cydonia/grammars/2.0.1`).
 
 To update the catalog, verify the npm tarball against its published integrity, regenerate asset sizes/checksums, and run:
 
