@@ -4,10 +4,9 @@
 
 https://github.com/user-attachments/assets/4f13ea59-98ca-491a-9fd9-0bd6ccc2e90d
 
-A desktop workspace for the coding agents you run. Open a directory as a
-project, put any agent that speaks [ACP](https://agentclientprotocol.com) to work
-in it, and keep what comes out as durable artifacts on disk — articles, boards
-and tables, not a chat log.
+A desktop workspace for the coding agents you run: Claude Code, Codex, Cursor, OpenCode, pi, or any agent that speaks [ACP](https://agentclientprotocol.com). Open a directory as a project, put agents to work in it, and keep what comes out as durable artifacts on disk — articles, boards and tables, not a chat log.
+
+Download it for macOS, Linux and Windows from [cydonia.sh](https://cydonia.sh), read the [docs](https://cydonia.sh/docs/), or build it from crates.io:
 
 ```sh
 cargo install cydonia

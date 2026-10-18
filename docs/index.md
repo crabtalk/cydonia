@@ -11,8 +11,7 @@ session, each in a pane you can see.
 What they produce stays: articles, boards and tables written into the project
 directory as files, not a chat log that scrolls away.
 
-It runs on macOS on Apple silicon, is written in Rust, and has no account and
-no sync.
+It runs on macOS on Apple silicon, Linux and Windows, is written in Rust, and has no account and no sync.
 
 ## Running agents
 

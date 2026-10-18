@@ -8,7 +8,7 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 readme = "README.md"
-keywords = ["acp", "agents", "desktop", "gpui", "workspace"]
+keywords = ["acp", "agents", "claude-code", "desktop", "gpui"]
 categories = ["gui", "development-tools"]
 
 [[bin]]

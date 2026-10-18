@@ -3,8 +3,7 @@ title: Running several agents
 description: More than one agent at a time — sending cards to sessions, watching runs, and the board that tracks them.
 ---
 
-One agent in one project is a session. Several of them is what the panes and
-the boards are for.
+Cydonia runs several coding agents at once, in one project or across several. One agent in one project is a session; the panes put several sessions on screen, and the boards hand them work.
 
 ## Starting more than one
 

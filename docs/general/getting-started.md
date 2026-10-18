@@ -5,16 +5,21 @@ description: Install Cydonia, open a project, and get an agent working in it.
 
 ## Install
 
-Download the disk image from [cydonia.sh](https://cydonia.sh), or build it from
-crates.io:
+Cydonia runs on macOS on Apple silicon, Linux on x86_64 and aarch64, and Windows on x86_64. Download it from [cydonia.sh](https://cydonia.sh), or install it from a shell:
+
+```sh
+curl -fsSL https://cydonia.sh/install.sh | sh   # macOS, Linux
+irm https://cydonia.sh/install.ps1 | iex        # Windows, in PowerShell
+```
+
+Or build it from crates.io:
 
 ```sh
 cargo install cydonia
 cydonia
 ```
 
-Cydonia runs on macOS on Apple silicon. It asks for no account and reaches the
-network only to look for a new release and to install an agent you asked for.
+It asks for no account and reaches the network only to look for a new release and to install an agent you asked for.
 
 ## Open a project
 

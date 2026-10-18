@@ -8,6 +8,7 @@
 - [Features](./general/features.md)
 - [Where things live](./general/files.md)
 - [Backups and rolling back](./general/backups.md)
+- [Cydonia and similar tools](./general/compare.md)
 
 # Working
 
@@ -21,6 +22,7 @@
 
 - [Sessions](./agents/sessions.md)
 - [Installing agents](./agents/install.md)
+- [Supported agents](./agents/supported.md)
 - [Running several agents](./agents/orchestration.md)
 - [MCP](./agents/mcp.md)
 - [What agents are told](./agents/prompts.md)
