@@ -79,6 +79,10 @@ impl Location {
     }
 
     /// What a stored string names.
+    pub fn parse(stored: &str) -> Self {
+        Self::read(PathBuf::from(stored))
+    }
+
     fn read(path: PathBuf) -> Self {
         #[cfg(feature = "remote")]
         if let Some(remote) = Self::remote(&path) {

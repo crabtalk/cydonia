@@ -1,4 +1,4 @@
-use artifact::{entry, kind::Kind, location::Location};
+use artifact::{kind::Kind, location::Location};
 use cydonia_gui::{
     data::{ColType, Column},
     model::{article, store},
@@ -40,7 +40,7 @@ fn app_and_agent_catalog_share_article_and_table_numbers(cx: &mut gpui::TestAppC
     .unwrap();
     assert_ne!(article.number, table.number);
     futures::executor::block_on(data.write("INSERT INTO notes (text) VALUES ('hello')")).unwrap();
-    let catalog = entry::list(&scratch.0).unwrap();
+    let catalog = store.entries().unwrap();
     let found = catalog
         .iter()
         .find(|entry| entry.kind == Kind::Article)
@@ -51,9 +51,9 @@ fn app_and_agent_catalog_share_article_and_table_numbers(cx: &mut gpui::TestAppC
         .find(|entry| entry.kind == Kind::Table)
         .unwrap();
     assert_eq!(Some(found.number), table.number);
-    let content = entry::read(&scratch.0, found).unwrap();
+    let content = store.read(found).unwrap();
     assert_eq!(content["rows"][0][0], "hello");
     cx.update(|cx| article.remove(cx));
     cx.run_until_parked();
-    assert_eq!(entry::list(&scratch.0).unwrap().len(), 1);
+    assert_eq!(store.entries().unwrap().len(), 1);
 }

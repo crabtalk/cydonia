@@ -292,7 +292,7 @@ impl Session {
             &init,
             &ours,
             files,
-            &cwd,
+            &launch.location,
             launch.record.as_deref(),
         );
 
@@ -743,14 +743,14 @@ fn acp_mcp_servers(
     init: &InitializeResponse,
     ours: &Ours,
     local: bool,
-    cwd: &Path,
+    location: &Location,
     record: Option<&str>,
 ) -> (Vec<McpServer>, bool) {
     let http = init.agent_capabilities.mcp_capabilities.http;
     let door = || http.then(serve::url).flatten();
     let ours = match ours {
-        Ours::Relay(program) => Some(remote_mcp_server(program, cwd, record)),
-        Ours::Door => door().map(|url| door_server(url, cwd, record)),
+        Ours::Relay(program) => Some(remote_mcp_server(program, location, record)),
+        Ours::Door => door().map(|url| door_server(url, location.root(), record)),
     };
     let available = ours.is_some();
     let servers = ours
@@ -831,15 +831,16 @@ impl Ours {
 
 /// Cydonia's own server for an agent on a remote host, as a stdio server
 /// there: `program`, the absolute path of cydonia-server on that host, run as
-/// [`server::Command::Mcp`] bound to `cwd`, a directory there, and to the
+/// [`server::Command::Mcp`] bound to the project at `location` and to the
 /// session filed under `record`.
 pub fn remote_mcp_server(
     program: &std::path::Path,
-    cwd: &std::path::Path,
+    location: &Location,
     record: Option<&str>,
 ) -> McpServer {
     let binding = server::mcp::Binding {
-        project: Some(cwd.to_owned()),
+        project: Some(location.clone()),
+
         session: record.map(str::to_owned),
     };
     McpServer::Stdio(McpServerStdio {

@@ -5,7 +5,6 @@
 //! these.
 
 use crate::{kind::Kind, location::Location};
-use std::path::PathBuf;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -25,9 +24,13 @@ pub enum Error {
         cause: anyhow::Error,
     },
 
-    /// `path` is not among the projects cydonia has open, which are `open`.
-    #[error("{}", closed(path, open))]
-    ProjectClosed { path: PathBuf, open: Vec<Location> },
+    /// `location` is not among the projects cydonia has open, which are
+    /// `open`.
+    #[error("{}", closed(location, open))]
+    ProjectClosed {
+        location: Location,
+        open: Vec<Location>,
+    },
 
     /// No project cydonia has open goes by `name`.
     #[error("{}", unnamed(name, open))]
@@ -131,15 +134,11 @@ fn listed(open: &[Location]) -> String {
         .join(", ")
 }
 
-fn closed(path: &std::path::Path, open: &[Location]) -> String {
+fn closed(location: &Location, open: &[Location]) -> String {
     match open.is_empty() {
-        true => format!(
-            "cydonia has no project open, so {} is not one to work in",
-            path.display()
-        ),
+        true => format!("cydonia has no project open, so {location} is not one to work in"),
         false => format!(
-            "cydonia does not have {} open — it has {}",
-            path.display(),
+            "cydonia does not have {location} open — it has {}",
             listed(open)
         ),
     }

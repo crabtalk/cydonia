@@ -1,14 +1,12 @@
+use artifact::location::Location;
 use cydonia_mcp::{
     Server,
     proto::{self, Request, Response},
 };
 use serde_json::{Value, json};
-use std::{
-    path::Path,
-    sync::{Arc, atomic::AtomicBool},
-};
+use std::sync::{Arc, atomic::AtomicBool};
 
-fn call(server: &Server, method: &str, params: Value, project: Option<&Path>) -> Response {
+fn call(server: &Server, method: &str, params: Value, project: Option<&Location>) -> Response {
     server
         .handle(
             &Request {
@@ -38,7 +36,8 @@ fn listed_resources_return_bundled_content() {
         assert_eq!(resource["uri"], skill.uri());
         assert_eq!(resource["mimeType"], "text/markdown");
         assert_eq!(resource["size"], skill.content.len());
-        for project in [None, Some(Path::new("/does/not/need/to/exist"))] {
+        let nowhere = Location::from(std::path::Path::new("/does/not/need/to/exist"));
+        for project in [None, Some(&nowhere)] {
             let read = call(
                 &server,
                 "resources/read",

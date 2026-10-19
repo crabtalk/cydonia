@@ -169,7 +169,7 @@ fn element(args: &Args<'_>) -> Result<usize, Trouble> {
 }
 
 fn ask(args: &Args<'_>, tab: Option<u64>, act: Act) -> Outcome {
-    let project = super::on_the_rail(root(args)?)?.to_path_buf();
+    let project = super::on_the_rail(root(args)?.location)?;
     rail::browse(project, tab, act).map(Answer::said)
 }
 

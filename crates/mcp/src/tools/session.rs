@@ -3,12 +3,12 @@
 use crate::{
     rail::{self, Change},
     tool::{Answer, Arg, Args, Outcome, Tool, Trouble},
-    tools::{HITS, PROJECT, QUERY, fields, project_of, root},
+    tools::{HITS, PROJECT, Project, QUERY, fields, project_of, root},
 };
 use artifact::error::{Act, Error};
 use artifact::{
     kind::Kind,
-    project::{Project as _, fs},
+    project::Project as _,
     reference::{self, Reference, Span, Target, Within},
     search::{self, Block, Query},
     session::{
@@ -18,7 +18,7 @@ use artifact::{
 };
 use futures::executor::block_on;
 use serde_json::json;
-use std::{collections::BTreeMap, path::Path, sync::mpsc};
+use std::{collections::BTreeMap, sync::mpsc};
 
 const SESSION: Arg = Arg {
     name: "session",
@@ -157,18 +157,18 @@ fn send(args: Args<'_>) -> Outcome {
         return Err(Trouble::Refused("message is empty".to_owned()));
     }
     // Sessions run in the app, and only for projects on the rail.
-    super::on_the_rail(project)?;
+    super::on_the_rail(project.location.clone())?;
     let signed = match sender(&args) {
         Some(from) => format!("from {from}\n\n{message}"),
         None => message.to_owned(),
     };
     let message = signed.as_str();
     let Some(named) = args.maybe(SESSION) else {
-        return start(project, args.maybe(AGENT), message);
+        return start(&project, args.maybe(AGENT), message);
     };
-    let number = super::number_in(project, named)?
+    let number = super::number_in(&project, named)?
         .ok_or_else(|| Trouble::Invalid("session must be a reference such as #43".to_owned()))?;
-    let entry = super::entry_numbered(project, number, named)?;
+    let entry = super::entry_numbered(&project, number, named)?;
     if entry.kind != Kind::Session {
         return Err(Trouble::Refused(format!(
             "{named} is a {}, not a session",
@@ -192,7 +192,8 @@ fn rename(args: Args<'_>) -> Outcome {
             "only a session can rename itself, and this caller is not one".to_owned(),
         ));
     };
-    let filed = fs::Project::new(at)
+    let filed = Project::at(at.clone())?
+        .store
         .session(record)
         .ok_or_else(|| Trouble::Refused("this session is not on disk yet".to_owned()))?;
     if let Some(name) = &filed.name
@@ -222,10 +223,10 @@ fn sender(args: &Args<'_>) -> Option<String> {
 /// caller that is not a session, or one with no turn on disk yet.
 pub(crate) fn turn_link(args: &Args<'_>) -> Option<String> {
     let (at, record) = (args.at()?, args.session()?);
-    let store = fs::Project::new(at);
+    let store = Project::at(at.clone()).ok()?.store;
     let turn = chat::turns(&store.session(record)?.items).len();
     let number = block_on(store.number(Kind::Session, record)).ok()?;
-    let project = reference::project_name(at)?;
+    let project = reference::project_name(at.root())?;
     let turn = turn as u64;
     (turn > 0).then(|| {
         Reference::entry(
@@ -241,7 +242,7 @@ pub(crate) fn turn_link(args: &Args<'_>) -> Option<String> {
 }
 
 /// A new session on `agent`, seeded with `message`.
-fn start(project: &Path, agent: Option<&str>, message: &str) -> Outcome {
+fn start(project: &Project, agent: Option<&str>, message: &str) -> Outcome {
     let named = agent
         .ok_or_else(|| Trouble::Invalid("session or agent is required, as a string".to_owned()))?;
     let agents = rail::agents();
@@ -259,11 +260,8 @@ fn start(project: &Path, agent: Option<&str>, message: &str) -> Outcome {
                 false => format!("no agent named {named} — cydonia has {}", listed(&agents)),
             })
         })?;
-    let project = project
-        .canonicalize()
-        .unwrap_or_else(|_| project.to_path_buf());
     rail::ask(Change::Start {
-        project,
+        project: project.location.settled(),
         agent: agent.key().to_owned(),
         message: message.to_owned(),
     })?;
@@ -319,7 +317,7 @@ fn found(args: &Args<'_>, named: &str) -> Result<Found, Trouble> {
     let project = project_of(args, &reference)?;
     // Resolved through the registry alone: listing the project's entries would
     // parse every session file to find one.
-    let store = fs::Project::new(&project);
+    let store = &project.store;
     let id = store
         .resolve(Kind::Session, number)
         .map_err(|e| Error::failed("this project's entries", Act::Read, e))?
@@ -457,10 +455,10 @@ fn search(args: Args<'_>) -> Outcome {
             Searched::One(Box::new(found))
         }
         None => {
-            let store = fs::Project::new(root(&args)?);
-            search::disk(&store, &[Kind::Session], &query, &tx);
+            let project = root(&args)?;
+            project.store.search(&[Kind::Session], &query, &tx);
             drop(tx);
-            Searched::All(store)
+            Searched::All(project)
         }
     };
     // The first line matched in each turn, per session.
@@ -481,11 +479,11 @@ fn search(args: Args<'_>) -> Outcome {
             .map(|at| (found.number, found.record, at))
             .into_iter()
             .collect(),
-        Searched::All(store) => lines
+        Searched::All(project) => lines
             .into_iter()
             .filter_map(|(id, at)| {
-                let number = block_on(store.number(Kind::Session, &id)).ok()?;
-                let record = store.session(&id)?;
+                let number = block_on(project.store.number(Kind::Session, &id)).ok()?;
+                let record = project.store.session(&id)?;
                 Some((number, record, at))
             })
             .collect(),
@@ -493,7 +491,7 @@ fn search(args: Args<'_>) -> Outcome {
     sessions.sort_by_key(|(number, ..)| *number);
     let mut hits = Vec::new();
     let mut more = false;
-    let project = fs::Project::new(root(&args)?);
+    let project = root(&args)?.store;
     'sessions: for (number, record, at) in sessions {
         let named = record.label();
         let title = match record
@@ -547,7 +545,7 @@ fn search(args: Args<'_>) -> Outcome {
 /// What a search looked through: one named session, or the whole project.
 enum Searched {
     One(Box<Found>),
-    All(fs::Project),
+    All(Project),
 }
 
 pub(crate) fn snippet(line: &str) -> String {

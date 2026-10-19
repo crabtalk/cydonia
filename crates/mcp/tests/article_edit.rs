@@ -14,7 +14,7 @@ fn fixture(name: &str) -> (Scratch, Server) {
     said(server.call(
         "article_add",
         json!({ "title": "Notes", "text": ORIGINAL }),
-        Some(scratch.path()),
+        Some(&scratch.at()),
     ));
     (scratch, server)
 }
@@ -23,7 +23,7 @@ fn read(server: &Server, scratch: &Scratch) -> String {
     said(server.call(
         "article_read",
         json!({ "article": "Notes" }),
-        Some(scratch.path()),
+        Some(&scratch.at()),
     ))
 }
 
@@ -57,7 +57,7 @@ fn ambiguous_or_missing_matches_do_not_change_the_article() {
         let why = refused(server.call(
             "article_edit",
             json!({ "article": "Notes", "old_string": old, "new_string": "changed", "replace_all": all }),
-            Some(scratch.path()),
+            Some(&scratch.at()),
         ));
         assert!(why.contains(message), "{why}");
         assert_eq!(read(&server, &scratch), ORIGINAL);
@@ -65,7 +65,7 @@ fn ambiguous_or_missing_matches_do_not_change_the_article() {
     let why = refused(server.call(
         "article_edit",
         json!({ "article": "Notes", "old_string": "draft", "new_string": "changed" }),
-        Some(scratch.path()),
+        Some(&scratch.at()),
     ));
     assert!(why.contains("2 occurrences"));
     assert_eq!(read(&server, &scratch), ORIGINAL);
@@ -77,7 +77,7 @@ fn replace_all_is_explicit_and_does_not_reprocess_inserted_text() {
     let answer = match server.call(
         "article_edit",
         json!({ "article": "Notes", "old_string": "draft", "new_string": "draft revised", "replace_all": true }),
-        Some(scratch.path()),
+        Some(&scratch.at()),
     ) {
         Ok(answer) => answer,
         Err(_) => panic!("edit should succeed"),
@@ -100,7 +100,7 @@ fn edits_can_insert_and_delete_literal_markdown() {
         said(server.call(
             "article_edit",
             json!({ "article": "Notes", "old_string": old, "new_string": new }),
-            Some(scratch.path()),
+            Some(&scratch.at()),
         ));
         assert_eq!(read(&server, &scratch), expected);
     }
@@ -116,7 +116,7 @@ fn invalid_arguments_leave_the_article_unchanged() {
         json!({ "article": "Notes", "old_string": "draft" }),
         json!({ "article": "Notes", "new_string": "x" }),
     ] {
-        invalid(server.call("article_edit", arguments, Some(scratch.path())));
+        invalid(server.call("article_edit", arguments, Some(&scratch.at())));
         assert_eq!(read(&server, &scratch), ORIGINAL);
     }
 }
@@ -147,7 +147,7 @@ fn edit_schema_has_an_optional_boolean_and_respects_project_binding() {
 fn read_only_mode_refuses_edits() {
     let (scratch, server) = fixture("edit-read-only");
     let server = server.writable(Arc::new(AtomicBool::new(false)));
-    let why = refused(server.call("article_edit", Value::Null, Some(scratch.path())));
+    let why = refused(server.call("article_edit", Value::Null, Some(&scratch.at())));
     assert!(why.contains("read only"));
     assert_eq!(read(&server, &scratch), ORIGINAL);
 }

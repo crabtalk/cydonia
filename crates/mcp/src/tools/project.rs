@@ -8,13 +8,9 @@ use crate::{
 use artifact::error::{Act, Error};
 use artifact::kind::Kind;
 use artifact::location::Location;
-use artifact::{
-    project::{Project as _, fs},
-    reference::Within,
-};
+use artifact::{project::Project as _, reference::Within};
 use futures::executor::block_on;
 use serde_json::json;
-use std::path::{Path, PathBuf};
 
 const PATH: Arg = Arg {
     name: "path",
@@ -95,82 +91,83 @@ pub static TOOLS: [Tool; 5] = [
 
 // ── the tools ────────────────────────────────────────────────────
 
+/// A directory on another machine is not made here: the app opens it on its
+/// host.
 fn open(args: Args<'_>) -> Outcome {
-    let path = whole(&args, args.text(PATH)?)?;
-    let made = !path.is_dir();
-    if made {
-        // A path that is something other than a directory is a mistake worth
-        // reporting rather than one to route around: `create_dir_all` would
-        // fail on it anyway, with an error about the parent.
-        if path.exists() {
-            return Err(Trouble::Refused(format!(
-                "{} is not a directory",
-                path.display()
-            )));
+    let location = whole(&args, args.text(PATH)?)?;
+    let made = match location.local() {
+        Some(path) if !path.is_dir() => {
+            // A path that is something other than a directory is a mistake
+            // worth reporting rather than one to route around:
+            // `create_dir_all` would fail on it anyway, with an error about
+            // the parent.
+            if path.exists() {
+                return Err(Trouble::Refused(format!(
+                    "{} is not a directory",
+                    path.display()
+                )));
+            }
+            std::fs::create_dir_all(path)
+                .map_err(|e| Error::failed(path.display().to_string(), Act::Made, e))?;
+            true
         }
-        std::fs::create_dir_all(&path)
-            .map_err(|e| Error::failed(path.display().to_string(), Act::Made, e))?;
-    }
-    let path = settled(path);
+        _ => false,
+    };
+    let location = location.settled();
     // What the app itself does with a project already on the rail — see
     // `Workspace::open_project`. Said plainly, because "opened" would have a
     // model believe it had just made something.
-    let did = match (made, rail::is_open(&Location::from(path.as_path()))) {
+    let did = match (made, rail::is_open(&location)) {
         (true, _) => "made and opened",
         (false, true) => "brought forward",
         (false, false) => "opened",
     };
-    rail::ask(Change::Open(path.clone().into()))?;
-    Ok(
-        Answer::said(format!("{did} {}", path.display())).with(json!({
-            "path": path,
-            "created": made,
-        })),
-    )
+    rail::ask(Change::Open(location.clone()))?;
+    Ok(Answer::said(format!("{did} {location}")).with(json!({
+        "path": location,
+        "created": made,
+    })))
 }
 
 /// One project or several. Every path is read and checked open before any of
 /// them is closed, so a path that names nothing open refuses the whole call
 /// rather than the half that was left.
 fn close(args: Args<'_>) -> Outcome {
-    let mut shutting: Vec<PathBuf> = Vec::new();
+    let mut shutting: Vec<Location> = Vec::new();
     for named in args.list(PATHS)? {
-        let path = settled(whole(&args, named)?);
-        if !rail::is_open(&Location::from(path.as_path())) {
+        let location = whole(&args, named)?.settled();
+        if !rail::is_open(&location) {
             return Err(Trouble::Refused(match held() {
-                None => format!(
-                    "{} is not open, and neither is anything else",
-                    path.display()
-                ),
-                Some(open) => format!("{} is not open — cydonia has {open}", path.display()),
+                None => format!("{location} is not open, and neither is anything else"),
+                Some(open) => format!("{location} is not open — cydonia has {open}"),
             }));
         }
-        shutting.push(path);
+        shutting.push(location);
     }
     let mut shut: Vec<String> = Vec::new();
-    for path in &shutting {
-        rail::ask(Change::Close(path.clone().into()))?;
-        shut.push(path.display().to_string());
+    for location in &shutting {
+        rail::ask(Change::Close(location.clone()))?;
+        shut.push(location.to_string());
     }
     Ok(Answer::said(format!("closed {}", shut.join(", "))).with(json!({ "paths": shutting })))
 }
 
 // ── the path ─────────────────────────────────────────────────────
 
-/// The directory a call names, as a whole path.
+/// The directory a call names, as a whole location.
 ///
-/// A relative one is read against the project the caller was opened in, which
-/// is the only thing it could be relative to — the door's own working directory
-/// is wherever the app was launched from, and a folder made there would be
-/// somewhere nobody asked for. A caller bound to nothing is asked for the whole
-/// path instead of guessing.
-fn whole(args: &Args<'_>, named: &str) -> Result<PathBuf, Trouble> {
-    let path = Path::new(named);
-    if path.is_absolute() {
-        return Ok(path.to_path_buf());
+/// A relative one is read against the project the caller was opened in, on
+/// that project's machine, which is the only thing it could be relative to —
+/// the door's own working directory is wherever the app was launched from, and
+/// a folder made there would be somewhere nobody asked for. A caller bound to
+/// nothing is asked for the whole path instead of guessing.
+fn whole(args: &Args<'_>, named: &str) -> Result<Location, Trouble> {
+    let location = Location::parse(named);
+    if location.root().is_absolute() {
+        return Ok(location);
     }
     match args.at() {
-        Some(at) => Ok(at.join(path)),
+        Some(at) => Ok(at.with_root(at.root().join(location.root()))),
         None => Err(Trouble::Refused(format!(
             "{named} is a relative path and this session is not in a project to \
              read it against — give the whole path"
@@ -178,20 +175,11 @@ fn whole(args: &Args<'_>, named: &str) -> Result<PathBuf, Trouble> {
     }
 }
 
-/// The path with `..`, `.` and any symlink on the way resolved, where the
-/// directory is there to resolve it against.
-///
-/// Two spellings of one directory are two projects as far as a list of paths
-/// can tell, and the rail is a list of paths. Left alone where it cannot be
-/// resolved, which is the path that was asked about — the honest answer to
-/// `project_close` on a directory that has since been deleted.
-fn settled(path: PathBuf) -> PathBuf {
-    path.canonicalize().unwrap_or(path)
-}
-
 fn entries(args: Args<'_>) -> Outcome {
-    let entries =
-        artifact::entry::list(root(&args)?).map_err(|e| Trouble::Refused(e.to_string()))?;
+    let entries = root(&args)?
+        .store
+        .entries()
+        .map_err(|e| Trouble::Refused(e.to_string()))?;
     let text = if entries.is_empty() {
         "this project has no saved entries".to_owned()
     } else {
@@ -231,7 +219,7 @@ fn label_entry(args: Args<'_>) -> Outcome {
         )));
     }
     let entry = super::entry_numbered(&project, number, named)?;
-    let store = fs::Project::new(&project);
+    let store = &project.store;
     let refused = |e: Error| Error::failed(named, Act::Written, e);
     let gone = || Error::Gone {
         named: named.to_owned(),
@@ -249,12 +237,10 @@ fn label_entry(args: Args<'_>) -> Outcome {
         }
         // An open project's sessions are the app's to write: a file written
         // under it would be overwritten by the app's next save.
-        Kind::Session if rail::is_open(&Location::from(project.as_path())) => {
-            rail::ask(Change::Label {
-                session: entry.id.clone(),
-                labels: labels.clone(),
-            })?
-        }
+        Kind::Session if project.is_open() => rail::ask(Change::Label {
+            session: entry.id.clone(),
+            labels: labels.clone(),
+        })?,
         Kind::Session => {
             let mut record = store.session(&entry.id).ok_or_else(gone)?;
             record.labels = labels.clone();
@@ -279,22 +265,24 @@ fn read_entry(args: Args<'_>) -> Outcome {
         && let artifact::reference::Target::Card { .. } = reference.target
     {
         let project = super::project_of(&args, &reference)?;
-        return super::board::cards(&artifact::project::fs::Project::new(project), &[named]);
+        return super::board::cards(&project, &[named]);
     }
     let (project, number, within) = entry_of(&args, named)?;
-    let project = project.as_path();
-    let entry = super::entry_numbered(project, number, named)?;
+    let entry = super::entry_numbered(&project, number, named)?;
     artifact::reference::fits(named, entry.kind, within)?;
     if entry.kind == Kind::Board {
-        return super::board::listed(&artifact::project::fs::Project::new(project), &entry.id);
+        return super::board::listed(&project, &entry.id);
     }
     if let (Kind::Session, Some(Within::Span(_))) = (entry.kind, within) {
         return Err(Trouble::Invalid(format!(
             "{named} names turns — read them with session_read"
         )));
     }
-    let content =
-        artifact::entry::read(project, &entry).map_err(|e| Trouble::Refused(e.to_string()))?;
+    let content = project
+        .store
+        .read(&entry)
+        .map_err(|e| Trouble::Refused(e.to_string()))?;
+
     let markdown = content.get("markdown").and_then(serde_json::Value::as_str);
     if let (Some(within), Some(markdown)) = (within, markdown) {
         let (range, lines) = super::article::excerpt(markdown, within, named)?;

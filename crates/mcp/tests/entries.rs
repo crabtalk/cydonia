@@ -22,14 +22,14 @@ fn external_and_bound_agents_share_references_across_renames() {
         said(server.call(
             "article_read",
             json!({"article": reference}),
-            Some(scratch.path())
+            Some(&scratch.at())
         )),
         "hello"
     );
     said(server.call(
         "article_rename",
         json!({"article": reference, "title": "Final"}),
-        Some(scratch.path()),
+        Some(&scratch.at()),
     ));
     let catalog = server
         .call("project_entries", json!({"project": scratch.path()}), None)
@@ -47,7 +47,7 @@ fn external_and_bound_agents_share_references_across_renames() {
         said(scratch.server().call(
             "project_read_entry",
             json!({"entry": reference}),
-            Some(scratch.path())
+            Some(&scratch.at())
         )),
         "hello"
     );
@@ -56,7 +56,7 @@ fn external_and_bound_agents_share_references_across_renames() {
         said(server.call(
             "board_read",
             json!({"board": board_ref}),
-            Some(scratch.path())
+            Some(&scratch.at())
         ))
         .contains("Roadmap")
     );
@@ -64,7 +64,7 @@ fn external_and_bound_agents_share_references_across_renames() {
         refused(server.call(
             "article_rewrite",
             json!({"article": board_ref, "text": "wrong"}),
-            Some(scratch.path())
+            Some(&scratch.at())
         ))
         .contains("no article")
     );
@@ -72,7 +72,7 @@ fn external_and_bound_agents_share_references_across_renames() {
         refused(server.call(
             "project_read_entry",
             json!({"entry": "#9999"}),
-            Some(scratch.path())
+            Some(&scratch.at())
         ))
         .contains("no entry")
     );
@@ -87,18 +87,18 @@ fn references_are_scoped_to_the_project_a_call_is_about() {
     let two = Scratch::new("entry-scope-two");
     let server = one.server();
     Rail::also(two.path());
-    for (root, text) in [(one.path(), "one"), (two.path(), "two")] {
+    for (root, text) in [(one.at(), "one"), (two.at(), "two")] {
         said(server.call(
             "article_add",
             json!({"title": "Notes", "text": text}),
-            Some(root),
+            Some(&root),
         ));
     }
     assert_eq!(
         said(server.call(
             "project_read_entry",
             json!({"entry": "#1"}),
-            Some(one.path())
+            Some(&one.at())
         )),
         "one"
     );
@@ -106,7 +106,7 @@ fn references_are_scoped_to_the_project_a_call_is_about() {
         said(server.call(
             "project_read_entry",
             json!({"project": two.path(), "entry": "#1"}),
-            Some(one.path())
+            Some(&one.at())
         )),
         "two"
     );
@@ -118,11 +118,11 @@ fn a_named_reference_or_link_reaches_its_project() {
     let two = Scratch::new("entry-link-two");
     let server = one.server();
     Rail::also(two.path());
-    for (root, text) in [(one.path(), "one"), (two.path(), "two")] {
+    for (root, text) in [(one.at(), "one"), (two.at(), "two")] {
         said(server.call(
             "article_add",
             json!({"title": "Notes", "text": text}),
-            Some(root),
+            Some(&root),
         ));
     }
     let name = |scratch: &Scratch| {
@@ -139,7 +139,7 @@ fn a_named_reference_or_link_reaches_its_project() {
             said(server.call(
                 "project_read_entry",
                 json!({"entry": entry}),
-                Some(one.path())
+                Some(&one.at())
             )),
             "two"
         );
@@ -148,14 +148,14 @@ fn a_named_reference_or_link_reaches_its_project() {
         said(server.call(
             "article_read",
             json!({"article": format!("cydonia://{here}#1")}),
-            Some(one.path())
+            Some(&one.at())
         )),
         "one"
     );
     let why = refused(server.call(
         "article_read",
         json!({"article": format!("{there}#1")}),
-        Some(one.path()),
+        Some(&one.at()),
     ));
     assert!(why.contains(&format!("is in project {there}")), "{why}");
 }
@@ -172,20 +172,18 @@ fn a_bound_session_writes_into_another_open_project() {
     said(server.call(
         "article_add",
         json!({"project": there.path(), "title": "What A knows about B", "text": "findings"}),
-        Some(here.path()),
+        Some(&here.at()),
     ));
 
     assert_eq!(
         said(server.call(
             "article_read",
             json!({"article": "What A knows about B"}),
-            Some(there.path())
+            Some(&there.at())
         )),
         "findings"
     );
-    assert!(
-        said(server.call("article_list", json!({}), Some(here.path()))).contains("no articles")
-    );
+    assert!(said(server.call("article_list", json!({}), Some(&here.at()))).contains("no articles"));
 }
 
 /// A project cydonia does not have open is not one a call can name, however
@@ -199,7 +197,7 @@ fn a_project_that_is_not_open_cannot_be_named() {
     let why = refused(server.call(
         "article_add",
         json!({"project": elsewhere.path(), "title": "Notes", "text": "x"}),
-        Some(here.path()),
+        Some(&here.at()),
     ));
 
     assert!(why.contains("does not have"), "{why}");
@@ -223,12 +221,12 @@ fn labels_are_set_normalised_and_listed_with_the_entries() {
     said(server.call(
         "project_label_entry",
         json!({"entry": article_ref, "labels": ["Q3 Plan", "research", "q3-plan"]}),
-        Some(scratch.path()),
+        Some(&scratch.at()),
     ));
     said(server.call(
         "project_label_entry",
         json!({"entry": board_ref, "labels": "research"}),
-        Some(scratch.path()),
+        Some(&scratch.at()),
     ));
     let catalog = server
         .call("project_entries", json!({"project": scratch.path()}), None)
@@ -244,7 +242,7 @@ fn labels_are_set_normalised_and_listed_with_the_entries() {
     said(server.call(
         "project_label_entry",
         json!({"entry": article_ref, "labels": []}),
-        Some(scratch.path()),
+        Some(&scratch.at()),
     ));
     let catalog = server
         .call("project_entries", json!({"project": scratch.path()}), None)

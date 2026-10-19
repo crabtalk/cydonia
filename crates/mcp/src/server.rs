@@ -4,8 +4,8 @@ use crate::{
     proto::{self, Error, Request, Response},
     resources, tool,
 };
+use artifact::location::Location;
 use serde_json::{Value, json};
-use std::path::Path;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -167,13 +167,13 @@ impl Server {
     /// A frame with no id is a notification whatever its method is —
     /// `notifications/initialized` is the one that arrives — and answering one
     /// is a protocol error rather than a courtesy.
-    pub fn handle(&self, request: &Request, at: Option<&Path>) -> Option<Response> {
+    pub fn handle(&self, request: &Request, at: Option<&Location>) -> Option<Response> {
         self.handle_from(request, at, None)
     }
 
     /// [`Self::handle_from`] for one JSON-RPC message as a transport carries
     /// it.
-    pub fn message(&self, text: &str, at: Option<&Path>, session: Option<&str>) -> Reply {
+    pub fn message(&self, text: &str, at: Option<&Location>, session: Option<&str>) -> Reply {
         match serde_json::from_str::<Request>(text) {
             Ok(request) => match self.handle_from(&request, at, session) {
                 Some(response) => Reply::Answer(response),
@@ -190,7 +190,7 @@ impl Server {
     pub fn handle_from(
         &self,
         request: &Request,
-        at: Option<&Path>,
+        at: Option<&Location>,
         session: Option<&str>,
     ) -> Option<Response> {
         let id = request.id.clone()?;
@@ -217,7 +217,12 @@ impl Server {
 
     /// Run one tool by name. The surface the tests drive, and what
     /// `tools/call` is a wire around.
-    pub fn call(&self, name: &str, arguments: Value, at: Option<&Path>) -> Result<Answer, Trouble> {
+    pub fn call(
+        &self,
+        name: &str,
+        arguments: Value,
+        at: Option<&Location>,
+    ) -> Result<Answer, Trouble> {
         self.call_from(name, arguments, at, None)
     }
 
@@ -226,7 +231,7 @@ impl Server {
         &self,
         name: &str,
         arguments: Value,
-        at: Option<&Path>,
+        at: Option<&Location>,
         session: Option<&str>,
     ) -> Result<Answer, Trouble> {
         if let Some(tool) = self.offered().find(|tool| tool.name == name) {
@@ -256,7 +261,7 @@ impl Server {
         Err(Trouble::Invalid(format!("no tool {name}")))
     }
 
-    fn initialize(&self, at: Option<&Path>) -> Value {
+    fn initialize(&self, at: Option<&Location>) -> Value {
         let instructions = prompts::tool_context(at.is_some(), &self.hidden());
         let capabilities = json!({ "tools": { "listChanged": false }, "resources": {} });
         json!({
@@ -292,7 +297,7 @@ impl Server {
     fn invoke(
         &self,
         params: Option<&Value>,
-        at: Option<&Path>,
+        at: Option<&Location>,
         session: Option<&str>,
     ) -> Result<Value, Error> {
         let params = params.ok_or_else(|| Error::invalid_params("no params"))?;

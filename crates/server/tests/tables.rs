@@ -220,3 +220,29 @@ fn a_held_root_holds_neither_a_ping_nor_another_root() {
     lock.execute_batch("COMMIT").unwrap();
     assert_eq!(side.served.runtime.block_on(waiting).unwrap().len(), 1);
 }
+
+#[test]
+fn a_blob_cell_previews_as_its_length_on_the_server() {
+    let scratch = Scratch::new("blob");
+    let root = artifact::project::fs::Project::new(scratch.path())
+        .init()
+        .unwrap();
+    rusqlite::Connection::open(root.join(DATA))
+        .unwrap()
+        .execute_batch("CREATE TABLE pics (data BLOB); INSERT INTO pics VALUES (x'00010203');")
+        .unwrap();
+    let served = Served::new();
+    let (project, refresh) = served
+        .runtime
+        .block_on(artifact::project::remote::Project::open(
+            served.client.clone(),
+            scratch.path().to_owned(),
+        ))
+        .unwrap();
+    served.runtime.spawn(refresh);
+    let store = artifact::project::store::Store::Remote(project);
+    let catalog = store.entries().unwrap();
+    assert_eq!(catalog[0].kind, Kind::Table);
+    let content = store.read(&catalog[0]).unwrap();
+    assert_eq!(content["rows"][0][0], json!({ "blob_bytes": 4 }));
+}

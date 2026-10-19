@@ -79,7 +79,7 @@ fn a_relative_path_needs_a_project_to_read_it_against() {
     let made = said(server.call(
         "project_open",
         json!({ "path": "sub" }),
-        Some(scratch.path()),
+        Some(&scratch.at()),
     ));
     assert!(scratch.path().join("sub").is_dir());
     assert!(made.ends_with("sub"), "{made}");

@@ -10,9 +10,12 @@ use serde_json::json;
 fn reach(text: &str, at: &std::path::Path) -> Result<std::path::PathBuf, String> {
     let reference = artifact::reference::parse(text).unwrap();
     let arguments = json!({});
-    project_of(&Args::new(&arguments, Some(at)), &reference).map_err(|trouble| match trouble {
-        Trouble::Refused(why) | Trouble::Invalid(why) => why,
-    })
+    let at = artifact::location::Location::from(at);
+    project_of(&Args::new(&arguments, Some(&at)), &reference)
+        .map(|project| project.root().to_path_buf())
+        .map_err(|trouble| match trouble {
+            Trouble::Refused(why) | Trouble::Invalid(why) => why,
+        })
 }
 
 #[test]

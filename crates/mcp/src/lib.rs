@@ -7,9 +7,9 @@
 //! all — and neither of them is named in here.
 //!
 //! Nothing here holds a project. One server answers for the whole app, and
-//! which directory a call is about is an argument on the call — so there is no
-//! registry of what is open, and a tool reaches a project the app never opened
-//! the same way it reaches one it did.
+//! which project a call is about is an argument on the call or the binding it
+//! arrived with, named by its [`artifact::location::Location`]. A tool reads
+//! and writes it through the store [`rail::store`] answers for that location.
 
 #[cfg(feature = "http")]
 pub mod http;

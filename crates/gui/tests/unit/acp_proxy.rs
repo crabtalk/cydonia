@@ -1,4 +1,5 @@
 use super::{Ours, acp_mcp_servers, loopback_bypass, mcp};
+use artifact::location::Location;
 use cydonia_acp::proto::{InitializeResponse, McpServer};
 use std::path::{Path, PathBuf};
 
@@ -21,12 +22,13 @@ fn a_remote_agent_gets_the_relay_and_only_the_stdio_servers_marked_remote() {
         serde_json::from_value(serde_json::json!({"protocolVersion": 1})).unwrap();
     let configured = [stdio("here", false), stdio("there", true)];
     let program = PathBuf::from("/home/me/.cupola/cydonia-server-0.2.3");
+    let location = Location::parse("cupola://7/home/me/work");
     let (servers, built_in) = acp_mcp_servers(
         &configured,
         &init,
         &Ours::Relay(program.clone()),
         false,
-        Path::new("/home/me/work"),
+        &location,
         Some("rec"),
     );
     assert!(built_in);
@@ -43,6 +45,19 @@ fn a_remote_agent_gets_the_relay_and_only_the_stdio_servers_marked_remote() {
             ("cydonia", program.as_path()),
             ("there", Path::new("/bin/there"))
         ]
+    );
+    let McpServer::Stdio(relay) = &servers[0] else {
+        unreachable!("matched above");
+    };
+    let at = relay
+        .args
+        .iter()
+        .position(|arg| arg == "--project")
+        .unwrap();
+    assert_eq!(
+        relay.args[at + 1],
+        "cupola://7/home/me/work",
+        "the binding names the project by its location, not by its path on the host"
     );
 }
 

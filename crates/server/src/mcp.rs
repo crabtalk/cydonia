@@ -7,11 +7,11 @@
 use std::{
     ffi::OsString,
     io::{self, BufRead as _, BufReader, Read, Write},
-    path::PathBuf,
     pin::pin,
     sync::Arc,
 };
 
+use artifact::location::Location;
 use cupola::{Client, Connection, Error, Server, Service};
 use futures::{
     StreamExt as _,
@@ -31,8 +31,9 @@ pub struct Mcp;
 /// What every message relayed for one agent is about.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Binding {
-    /// The project the agent runs in, a directory on the server's machine.
-    pub project: Option<PathBuf>,
+    /// The project the agent runs in, as the client holds it: a directory on
+    /// the server's machine, at the client's location for it.
+    pub project: Option<Location>,
     /// The record id of the session the agent is.
     pub session: Option<String>,
 }
@@ -46,15 +47,17 @@ pub struct Request {
 }
 
 impl Binding {
-    /// The binding `args` name: `--project <dir>` and `--session <id>`,
-    /// each at most once, in either order.
+    /// The binding `args` name: `--project <location>`, in its stored form,
+    /// and `--session <id>`, each at most once, in either order.
     pub fn parse(args: &[&str]) -> Option<Self> {
         let mut binding = Self::default();
         let mut args = args.iter();
         while let Some(flag) = args.next() {
             let value = *args.next()?;
             match *flag {
-                PROJECT if binding.project.is_none() => binding.project = Some(value.into()),
+                PROJECT if binding.project.is_none() => {
+                    binding.project = Some(Location::parse(value))
+                }
                 SESSION if binding.session.is_none() => binding.session = Some(value.to_owned()),
                 _ => return None,
             }
@@ -66,7 +69,7 @@ impl Binding {
     pub fn args(&self) -> Vec<OsString> {
         let mut args = Vec::new();
         if let Some(project) = &self.project {
-            args.extend([OsString::from(PROJECT), project.into()]);
+            args.extend([OsString::from(PROJECT), project.to_string().into()]);
         }
         if let Some(session) = &self.session {
             args.extend([OsString::from(SESSION), session.into()]);

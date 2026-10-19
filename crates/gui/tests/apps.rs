@@ -363,7 +363,7 @@ cydonia_guest::app!(Hello);
 fn a_crate_loaded_from_a_folder_is_recorded_built_and_listed_by_its_manifest() {
     use artifact::{
         app::{Installed, Loaded, Origin},
-        entry,
+        project::{fs, store::Store},
     };
     use cydonia_gui::model::apps::cargo::Cargo;
 
@@ -405,7 +405,12 @@ fn a_crate_loaded_from_a_folder_is_recorded_built_and_listed_by_its_manifest() {
     assert!(krate.built.starts_with(scratch.0.join("data")));
     let (mut app, _) = Runtime::start(&wasm).unwrap();
     assert!(shows(&app.view().unwrap(), "Hello"));
-    assert!(entry::list(&project).unwrap().is_empty());
+    assert!(
+        Store::Fs(fs::Project::new(&project))
+            .entries()
+            .unwrap()
+            .is_empty()
+    );
 
     write_crate(
         &folder,

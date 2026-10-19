@@ -64,7 +64,7 @@ fn an_agent_lists_and_calls_tools_through_the_daemon() {
         tools
             .message(
                 &request.message,
-                binding.project.as_deref(),
+                binding.project.as_ref(),
                 binding.session.as_deref(),
             )
             .text()
@@ -73,7 +73,7 @@ fn an_agent_lists_and_calls_tools_through_the_daemon() {
     let _proxy = attach(&runtime, &state, &client);
 
     let binding = Binding {
-        project: Some(project.clone()),
+        project: Some(Location::from(project.as_path())),
         session: None,
     };
     let mut agent = Process::new(env!("CARGO_BIN_EXE_cydonia-server"))

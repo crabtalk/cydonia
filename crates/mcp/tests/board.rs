@@ -402,7 +402,7 @@ fn board_creation_respects_bound_projects_and_read_only_mode() {
     said(server.call(
         "board_add",
         json!({"name": "Tasks", "key": "TASK"}),
-        Some(scratch.path()),
+        Some(&scratch.at()),
     ));
     assert_eq!(scratch.store().boards()[0].key, "TASK");
     let server = scratch.server().writable(Arc::new(AtomicBool::new(false)));
@@ -410,7 +410,7 @@ fn board_creation_respects_bound_projects_and_read_only_mode() {
         refused(server.call(
             "board_add",
             json!({"name": "Other", "key": "NEW"}),
-            Some(scratch.path())
+            Some(&scratch.at())
         ))
         .contains("read only")
     );

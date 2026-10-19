@@ -4,6 +4,7 @@
 mod common;
 use common::Wait as _;
 
+use artifact::location::Location;
 use common::{Scratch, invalid, refused, said, structured};
 use serde_json::json;
 
@@ -28,7 +29,7 @@ fn article_results_expose_an_article_local_media_path_without_creating_it() {
         .call(
             "article_read",
             json!({ "article": data["id"] }),
-            Some(scratch.path()),
+            Some(&scratch.at()),
         )
         .unwrap_or_else(|_| panic!("article read failed"));
     assert_eq!(read.text, "Body");
@@ -149,7 +150,11 @@ fn a_refusal_says_what_is_there() {
     // A binding is taken as given, so a directory that went away under one is
     // where the missing-directory answer still comes from.
     let gone = scratch.path().join("gone");
-    let why = refused(server.call("article_list", json!({}), Some(&gone)));
+    let why = refused(server.call(
+        "article_list",
+        json!({}),
+        Some(&Location::from(gone.as_path())),
+    ));
     assert!(why.contains("no directory"), "{why}");
 
     let why = invalid(server.call("article_read", json!({ "project": scratch.path() }), None));
@@ -386,13 +391,13 @@ fn a_search_answers_the_article_and_line() {
     said(server.call(
         "article_add",
         json!({ "title": "Pump notes", "text": "# Notes\n\nThe PUMP feeds \"chunks\".\nnothing" }),
-        Some(scratch.path()),
+        Some(&scratch.at()),
     ));
 
     let hits = said(server.call(
         "article_search",
         json!({ "query": "pump" }),
-        Some(scratch.path()),
+        Some(&scratch.at()),
     ));
     assert_eq!(
         hits,
@@ -402,7 +407,7 @@ fn a_search_answers_the_article_and_line() {
     let quoted = said(server.call(
         "article_search",
         json!({ "query": "\"chunks\"" }),
-        Some(scratch.path()),
+        Some(&scratch.at()),
     ));
     assert!(quoted.contains("line 3"), "{quoted}");
 }
@@ -427,7 +432,7 @@ fn a_part_of_an_article_reads_alone() {
         .call(
             "article_read",
             json!({ "article": "#1:3-5" }),
-            Some(scratch.path()),
+            Some(&scratch.at()),
         )
         .unwrap_or_else(|_| panic!("lines read failed"));
     assert_eq!(read.text, "Intro.\n\n## Set up\n");
@@ -437,7 +442,7 @@ fn a_part_of_an_article_reads_alone() {
         .call(
             "article_read",
             json!({ "article": "#1#set-up" }),
-            Some(scratch.path()),
+            Some(&scratch.at()),
         )
         .unwrap_or_else(|_| panic!("section read failed"));
     assert_eq!(read.text, "## Set up\n\nStep one.\n\n");
@@ -446,26 +451,26 @@ fn a_part_of_an_article_reads_alone() {
     let read = said(server.call(
         "project_read_entry",
         json!({ "entry": "#1#use" }),
-        Some(scratch.path()),
+        Some(&scratch.at()),
     ));
     assert_eq!(read, "## Use\n\nGo.\n");
 
     let why = refused(server.call(
         "article_read",
         json!({ "article": "#1#missing" }),
-        Some(scratch.path()),
+        Some(&scratch.at()),
     ));
     assert!(why.contains("guide, set-up, use"), "{why}");
     let why = refused(server.call(
         "article_read",
         json!({ "article": "#1:40" }),
-        Some(scratch.path()),
+        Some(&scratch.at()),
     ));
     assert!(why.contains("last line, 11"), "{why}");
     let why = invalid(server.call(
         "article_rewrite",
         json!({ "article": "#1:3", "text": "gone" }),
-        Some(scratch.path()),
+        Some(&scratch.at()),
     ));
     assert!(why.contains("names part of an entry"), "{why}");
 }

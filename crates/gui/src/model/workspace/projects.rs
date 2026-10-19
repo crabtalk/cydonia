@@ -31,6 +31,7 @@ impl Workspace {
         rail::install(move |change| {
             let _ = asked.unbounded_send(change);
         });
+        rail::install_stores(store::open);
         rail::set_open(self.locations());
         rail::set_agents(self.rail_agents());
         cx.spawn(async move |workspace, cx| {
@@ -52,7 +53,7 @@ impl Workspace {
                             project,
                             agent,
                             message,
-                        } => workspace.start_in(&Location::Local(project), &agent, message, cx),
+                        } => workspace.start_in(&project, &agent, message, cx),
                     })
                     .is_ok();
                 // The workspace has gone, and there is no rail to move.

@@ -1,10 +1,7 @@
-//! The projects the app has open, from a tool's side of the glass.
-//!
-//! Everything else here is a directory and a file layout, which is why the rest
-//! of this crate holds nothing at all: a project is wherever the call says it
-//! is, opened or not. Which projects a *window* is showing is not like that —
-//! it is the app's own list, in memory, rewritten whole every time it moves —
-//! so this is the one place the two have to meet.
+//! The projects the app has open, from a tool's side of the glass: which ones
+//! the rail holds, the store each is kept in, the agents configured and what
+//! the window shows. The rail is the app's own list, in memory, rewritten
+//! whole every time it moves.
 //!
 //! The app installs what to do about a change and pushes what it is holding; a
 //! tool asks, and reads. **Asked rather than done**: a call arrives on whichever
@@ -14,12 +11,17 @@
 //!
 //! Installed once at launch, like a highlighter or a link preview. A build with
 //! nothing installed — the tests, a caller that mounted the tool sets on their
-//! own — refuses rather than pretends.
+//! own — refuses a change rather than pretends, and keeps a project in its
+//! files on this machine.
 
 #[cfg(feature = "http")]
 use crate::tool::Trouble;
-use artifact::{kind::Kind, location::Location};
-use std::{path::PathBuf, sync::RwLock};
+use artifact::{
+    kind::Kind,
+    location::Location,
+    project::{fs, store::Store},
+};
+use std::sync::RwLock;
 
 /// What the app does about a change.
 static HAND: RwLock<Option<Hand>> = RwLock::new(None);
@@ -34,6 +36,9 @@ static AGENTS: RwLock<Vec<Agent>> = RwLock::new(Vec::new());
 static SHOWN: RwLock<Vec<Shown>> = RwLock::new(Vec::new());
 
 static BROWSER: RwLock<Option<Browser>> = RwLock::new(None);
+
+/// Where the app keeps each project it holds.
+static STORES: RwLock<Option<Stores>> = RwLock::new(None);
 
 /// How long a browser call waits for the window's answer.
 #[cfg(feature = "http")]
@@ -66,7 +71,7 @@ pub enum Change {
     /// A new session in `project` on the agent `settings.toml` names `agent`,
     /// with `message` as its first prompt.
     Start {
-        project: PathBuf,
+        project: Location,
         agent: String,
         message: String,
     },
@@ -90,7 +95,7 @@ impl Agent {
 /// An entry the window is showing: an article, a board or a table.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Shown {
-    pub project: PathBuf,
+    pub project: Location,
     /// Never [`Kind::Session`].
     pub kind: Kind,
     pub id: String,
@@ -100,11 +105,34 @@ pub struct Shown {
 
 type Hand = Box<dyn Fn(Change) + Send + Sync>;
 
+type Stores = Box<dyn Fn(&Location) -> Option<Store> + Send + Sync>;
+
 /// Hand the rail over. The app calls this once, at launch.
 pub fn install(hand: impl Fn(Change) + Send + Sync + 'static) {
     if let Ok(mut held) = HAND.write() {
         *held = Some(Box::new(hand));
     }
+}
+
+/// Hand over where each project is kept. The app calls this once, at launch.
+pub fn install_stores(stores: impl Fn(&Location) -> Option<Store> + Send + Sync + 'static) {
+    if let Ok(mut held) = STORES.write() {
+        *held = Some(Box::new(stores));
+    }
+}
+
+/// The store the project at `location` is kept in. `None` for a location the
+/// app holds no store for. With none installed, the files of a location on
+/// this machine, and nothing on another.
+pub fn store(location: &Location) -> Option<Store> {
+    if let Ok(held) = STORES.read()
+        && let Some(stores) = held.as_ref()
+    {
+        return stores(location);
+    }
+    location
+        .local()
+        .map(|root| Store::Fs(fs::Project::new(root)))
 }
 
 /// Say what is on the rail. Pushed by the app wherever the list is written
@@ -200,7 +228,7 @@ pub enum Act {
 
 /// One browser call, with where its answer goes.
 pub struct Browse {
-    pub project: PathBuf,
+    pub project: Location,
     /// A tab id from [`Act::Tabs`]. `None` is the panel's front browser tab,
     /// except for [`Act::Open`], where it is a new tab.
     pub tab: Option<u64>,
@@ -223,7 +251,7 @@ pub fn install_browser(hand: impl Fn(Browse) + Send + Sync + 'static) {
 /// Blocks the calling thread. Never call it from the thread the window is
 /// drawn on: the answer is made there.
 #[cfg(feature = "http")]
-pub(crate) fn browse(project: PathBuf, tab: Option<u64>, act: Act) -> Result<String, Trouble> {
+pub(crate) fn browse(project: Location, tab: Option<u64>, act: Act) -> Result<String, Trouble> {
     let (reply, answer) = std::sync::mpsc::channel();
     {
         let held = BROWSER.read().map_err(|_| no_browser())?;

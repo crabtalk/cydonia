@@ -744,7 +744,7 @@ impl Cydonia {
                 .filter_map(|(ix, leaf)| {
                     let entry = leaf.read(cx).entry.as_ref()?.entry()?;
                     Some(mcp::rail::Shown {
-                        project: entry.project.root().to_path_buf(),
+                        project: entry.project.clone(),
                         kind: kind(entry.kind)?,
                         id: entry.id.clone(),
                         focused: ix == self.focused,
@@ -757,7 +757,7 @@ impl Cydonia {
                 .landed()
                 .and_then(|(project, entry)| {
                     Some(mcp::rail::Shown {
-                        project: project.root().to_path_buf(),
+                        project: project.clone(),
                         kind: kind(entry.kind)?,
                         id: entry.id.clone(),
                         focused: true,

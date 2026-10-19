@@ -14,7 +14,7 @@
 
 use crate::{
     tool::{Answer, Arg, Args, Outcome, Tool, Trouble},
-    tools::{HITS, PROJECT, QUERY, fields, many, on_the_rail, root, session},
+    tools::{HITS, PROJECT, Project, QUERY, fields, many, on_the_rail, root, session},
 };
 use artifact::error::{Act, Error};
 use artifact::{
@@ -24,18 +24,15 @@ use artifact::{
         properties::Properties,
     },
     kind::Kind,
-    project::{Project as _, fs},
+    location::Location,
+    project::Project as _,
     reference::{Span, Within},
-    search::{self, Block, Query},
+    search::{Block, Query},
     stamp,
 };
 use futures::executor::block_on;
 use serde_json::{Value, json};
-use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
-    sync::mpsc,
-};
+use std::{collections::HashMap, path::PathBuf, sync::mpsc};
 
 const ARTICLE: Arg = Arg {
     name: "article",
@@ -91,7 +88,7 @@ const MARKDOWN_NOW: Arg = Arg {
 /// the project the article is in now.
 const TO_PROJECT: Arg = Arg {
     name: "to_project",
-    about: "The project to move it to: the path of the directory, which must be one cydonia has open.",
+    about: "The project to move it to: the path of the directory, or the cupola:// location cydonia lists for one on another machine, which must be one cydonia has open.",
 };
 
 const OLD_STRING: Arg = Arg {
@@ -280,7 +277,7 @@ pub static TOOLS: [Tool; 14] = [
 // ── the tools ────────────────────────────────────────────────────
 
 fn list(args: Args<'_>) -> Outcome {
-    let held = articles(root(&args)?);
+    let held = articles(&root(&args)?);
     if held.is_empty() {
         return Ok(Answer::said("this project has no articles"));
     }
@@ -304,9 +301,9 @@ fn search(args: Args<'_>) -> Outcome {
     let query = Query::literal(args.text(QUERY)?)
         .ok_or_else(|| Trouble::Refused("query is empty".to_owned()))?;
     let (tx, rx) = mpsc::channel();
-    search::disk(&fs::Project::new(project), &[Kind::Article], &query, &tx);
+    project.store.search(&[Kind::Article], &query, &tx);
     drop(tx);
-    let held: HashMap<String, Held> = articles(project)
+    let held: HashMap<String, Held> = articles(&project)
         .into_iter()
         .map(|article| (article.id.clone(), article))
         .collect();
@@ -369,8 +366,9 @@ fn search(args: Args<'_>) -> Outcome {
 fn read(args: Args<'_>) -> Outcome {
     let project = root(&args)?;
     let named = args.text(ARTICLE)?;
-    let (found, part) = located(project, named)?;
-    let text = fs::Project::new(project)
+    let (found, part) = located(&project, named)?;
+    let text = project
+        .store
         .read_article(&found.id)
         .map_err(|e| Error::failed(found.label(), Act::Read, e))?;
     let (text, lines) = match part {
@@ -380,7 +378,8 @@ fn read(args: Args<'_>) -> Outcome {
             (text[range].to_owned(), Some(lines))
         }
     };
-    let mut opened: Vec<_> = fs::Project::new(project)
+    let mut opened: Vec<_> = project
+        .store
         .sessions()
         .into_iter()
         .filter(|record| record.article.as_deref() == Some(found.id.as_str()))
@@ -393,16 +392,17 @@ fn read(args: Args<'_>) -> Outcome {
         "title": found.title,
         "sessions": sessions,
         "lines": lines.map(|lines| json!({ "from": lines.from, "to": lines.to })),
-        "assets_path": within(project, &article::assets(&found.content)),
-        "article_path": within(project, found.content.parent().unwrap_or(project)),
-        "cover_path": article::cover::of(&found.content).map(|cover| within(project, &cover)),
+        "assets_path": found.dir.as_deref().map(|dir| project.within(&article::assets(&article::content(dir)))),
+        "article_path": found.dir.as_deref().map(|dir| project.within(dir)),
+        "cover_path": found.cover.as_deref().map(|cover| project.within(cover)),
     })))
 }
 
 fn highlights(args: Args<'_>) -> Outcome {
     let project = root(&args)?;
-    let found = locate(project, args.text(ARTICLE)?)?;
-    let text = fs::Project::new(project)
+    let found = locate(&project, args.text(ARTICLE)?)?;
+    let text = project
+        .store
         .read_article(&found.id)
         .map_err(|e| Error::failed(found.label(), Act::Read, e))?;
     let found_marks = marked(&text);
@@ -520,7 +520,7 @@ fn add(args: Args<'_>) -> Outcome {
     let project = root(&args)?;
     let title = args.text(TITLE)?;
     let text = args.text(MARKDOWN)?;
-    let store = fs::Project::new(project);
+    let store = &project.store;
     let made = block_on(store.create_article(text))
         .map_err(|e| Error::failed("the article", Act::Written, e))?;
     let titled = Properties {
@@ -530,9 +530,7 @@ fn add(args: Args<'_>) -> Outcome {
     block_on(store.save_properties(&made.id, &titled))
         .map_err(|e| Error::failed("the article", Act::Named, e))?;
     let id = made.id;
-    let content = store
-        .article_file(&id)
-        .map_err(|e| Trouble::Refused(e.to_string()))?;
+    let dir = store.place(Kind::Article, &id);
     let number =
         block_on(store.number(Kind::Article, &id)).map_err(|e| Trouble::Refused(e.to_string()))?;
     Ok(
@@ -540,15 +538,10 @@ fn add(args: Args<'_>) -> Outcome {
             "id": id,
             "number": number,
             "title": title,
-            "assets_path": within(project, &article::assets(&content)),
-            "article_path": within(project, content.parent().unwrap_or(project)),
+            "assets_path": dir.as_deref().map(|dir| project.within(&article::assets(&article::content(dir)))),
+            "article_path": dir.as_deref().map(|dir| project.within(dir)),
         })),
     )
-}
-
-/// `path` as the caller names it: relative to the project's directory.
-fn within(project: &Path, path: &Path) -> PathBuf {
-    path.strip_prefix(project).unwrap_or(path).to_path_buf()
 }
 
 /// File a picture as the article's cover, or take the one it has off.
@@ -560,8 +553,12 @@ fn within(project: &Path, path: &Path) -> PathBuf {
 /// `cover::of` reads the first one it finds and a second would shadow it.
 fn set_cover(args: Args<'_>) -> Outcome {
     let project = root(&args)?;
-    let found = locate(project, args.text(ARTICLE)?)?;
-    let previous = article::cover::of(&found.content);
+    let found = locate(&project, args.text(ARTICLE)?)?;
+    let files = project.files().ok_or_else(|| project.not_here("A cover"))?;
+    let content = files
+        .article_file(&found.id)
+        .map_err(|e| Trouble::Refused(e.to_string()))?;
+    let previous = article::cover::of(&content);
     let Some(source) = args.maybe(COVER) else {
         if let Some(old) = previous {
             std::fs::remove_file(&old).map_err(|e| {
@@ -570,11 +567,11 @@ fn set_cover(args: Args<'_>) -> Outcome {
         }
         return Ok(Answer::said(format!("{} has no cover now", found.label())));
     };
-    let source = project.join(source);
+    let source = project.root().join(source);
     if !source.is_file() {
         return Err(Trouble::Refused(format!(
             "no picture at {} on this host",
-            within(project, &source).display()
+            project.within(&source).display()
         )));
     }
     let ext = source
@@ -584,12 +581,12 @@ fn set_cover(args: Args<'_>) -> Outcome {
         .ok_or_else(|| {
             Trouble::Refused(format!(
                 "{} has no extension to name its format by",
-                within(project, &source).display()
+                project.within(&source).display()
             ))
         })?;
     // Named for when it was filed, so a second cover never lands on the name
     // the first is cached under.
-    let to = article::cover::path(&found.content, stamp::now(), &ext);
+    let to = article::cover::path(&content, stamp::now(), &ext);
     if article::cover::is_cover(&source) && source == to {
         return Ok(Answer::said(format!("{} keeps its cover", found.label())));
     }
@@ -600,17 +597,17 @@ fn set_cover(args: Args<'_>) -> Outcome {
     }
     Ok(
         Answer::said(format!("{} is covered", found.label())).with(json!({
-            "cover_path": within(project, &to),
-            "article_path": within(project, found.content.parent().unwrap_or(project)),
+            "cover_path": project.within(&to),
+            "article_path": content.parent().map(|dir| project.within(dir)),
         })),
     )
 }
 
 fn rewrite(args: Args<'_>) -> Outcome {
     let project = root(&args)?;
-    let found = locate(project, args.text(ARTICLE)?)?;
+    let found = locate(&project, args.text(ARTICLE)?)?;
     let text = args.text(MARKDOWN_NOW)?;
-    block_on(fs::Project::new(project).write_article(&found.id, text))
+    block_on(project.store.write_article(&found.id, text))
         .map_err(|e| Error::failed(found.label(), Act::Written, e))?;
     Ok(Answer::said(format!("{} rewritten", found.label())))
 }
@@ -623,8 +620,9 @@ fn edit(args: Args<'_>) -> Outcome {
         return Err(Trouble::Invalid("old_string must not be empty".to_owned()));
     }
     let project = root(&args)?;
-    let found = locate(project, args.text(ARTICLE)?)?;
-    let text = fs::Project::new(project)
+    let found = locate(&project, args.text(ARTICLE)?)?;
+    let text = project
+        .store
         .read_article(&found.id)
         .map_err(|e| Error::failed(found.label(), Act::Read, e))?;
     let count = text.matches(old).count();
@@ -640,7 +638,7 @@ fn edit(args: Args<'_>) -> Outcome {
         )));
     }
     let edited = text.replacen(old, new, count);
-    block_on(fs::Project::new(project).write_article(&found.id, &edited))
+    block_on(project.store.write_article(&found.id, &edited))
         .map_err(|e| Error::failed(found.label(), Act::Written, e))?;
     Ok(
         Answer::said(format!("{} edited: {count} replacement(s)", found.label()))
@@ -655,8 +653,8 @@ fn comment(args: Args<'_>) -> Outcome {
         return Err(Trouble::Invalid("quote must not be empty".to_owned()));
     }
     let project = root(&args)?;
-    let found = locate(project, args.text(ARTICLE)?)?;
-    let store = fs::Project::new(project);
+    let found = locate(&project, args.text(ARTICLE)?)?;
+    let store = &project.store;
     let text = store
         .read_article(&found.id)
         .map_err(|e| Error::failed(found.label(), Act::Read, e))?;
@@ -704,8 +702,8 @@ fn comment_reply(args: Args<'_>) -> Outcome {
     }
     .ok_or_else(|| Trouble::Invalid("comment is required, as the note's id".to_owned()))?;
     let project = root(&args)?;
-    let found = locate(project, args.text(ARTICLE)?)?;
-    let store = fs::Project::new(project);
+    let found = locate(&project, args.text(ARTICLE)?)?;
+    let store = &project.store;
     let mut held = store.comments(&found.id);
     let Some(comment) = held.get_mut(id) else {
         return Err(Trouble::Refused(format!(
@@ -728,9 +726,9 @@ fn comment_reply(args: Args<'_>) -> Outcome {
 
 fn rename(args: Args<'_>) -> Outcome {
     let project = root(&args)?;
-    let found = locate(project, args.text(ARTICLE)?)?;
+    let found = locate(&project, args.text(ARTICLE)?)?;
     let title = args.text(TITLE_NOW)?;
-    let store = fs::Project::new(project);
+    let store = &project.store;
     let mut held = store.properties(&found.id);
     held.title = title.to_owned();
     block_on(store.save_properties(&found.id, &held))
@@ -740,12 +738,12 @@ fn rename(args: Args<'_>) -> Outcome {
 
 /// One article or a run of them, put away or brought back in one write.
 fn archive(args: Args<'_>) -> Outcome {
-    let root = root(&args)?;
+    let project = root(&args)?;
     let archived = args.boolean(ARCHIVED, true)?;
     let mut said: Vec<String> = Vec::new();
     for needle in args.list(ARTICLES)? {
-        let found = locate(root, needle)?;
-        let store = fs::Project::new(root);
+        let found = locate(&project, needle)?;
+        let store = &project.store;
         let mut held = store.properties(&found.id);
         held.archived = archived;
         block_on(store.save_properties(&found.id, &held))
@@ -765,14 +763,14 @@ fn archive(args: Args<'_>) -> Outcome {
 /// refused call should leave behind, and a name that does not answer is the
 /// usual reason one is refused.
 fn remove(args: Args<'_>) -> Outcome {
-    let root = root(&args)?;
+    let project = root(&args)?;
     let mut found = Vec::new();
     for needle in args.list(ARTICLES)? {
-        found.push(locate(root, needle)?);
+        found.push(locate(&project, needle)?);
     }
     let mut gone: Vec<String> = Vec::new();
     for article in &found {
-        block_on(fs::Project::new(root).remove_article(&article.id))
+        block_on(project.store.remove_article(&article.id))
             .map_err(|e| Error::failed(article.label(), Act::Deleted, e))?;
         gone.push(article.label().to_owned());
     }
@@ -790,7 +788,10 @@ struct Held {
     title: String,
     archived: bool,
     touched: u128,
-    content: PathBuf,
+    /// Its directory, on the project's machine.
+    dir: Option<PathBuf>,
+    /// Its cover, on the project's machine.
+    cover: Option<PathBuf>,
 }
 
 impl Held {
@@ -821,21 +822,27 @@ fn move_article(args: Args<'_>) -> Outcome {
     let found: Vec<Held> = args
         .list(ARTICLES)?
         .into_iter()
-        .map(|needle| locate(from, needle))
+        .map(|needle| locate(&from, needle))
         .collect::<Result<_, _>>()?;
-    let to = on_the_rail(Path::new(args.text(TO_PROJECT)?))?;
-    if to == from {
+    let to = Project::at(on_the_rail(Location::parse(args.text(TO_PROJECT)?))?)?;
+    if to.location == from.location {
         return Err(Trouble::Refused(format!(
             "{} is already in {}",
             found.iter().map(Held::label).collect::<Vec<_>>().join(", "),
-            from.display()
+            from.location
         )));
     }
+    let (Some(files), Some(_)) = (from.files(), to.files()) else {
+        return Err(from.not_here("Moving an article to another project"));
+    };
     let mut landed: Vec<Value> = Vec::new();
     let mut spoken: Vec<String> = Vec::new();
     for held in &found {
         let label = held.label().to_owned();
-        let arrived = article::move_to(&held.content, to).map_err(|e| {
+        let content = files
+            .article_file(&held.id)
+            .map_err(|e| Error::failed(label.clone(), Act::Moved, e))?;
+        let arrived = article::move_to(&content, to.root()).map_err(|e| {
             let error = Error::failed(label.clone(), Act::Moved, e);
             Trouble::Refused(match spoken.is_empty() {
                 true => error.to_string(),
@@ -843,39 +850,40 @@ fn move_article(args: Args<'_>) -> Outcome {
             })
         })?;
         let id = article::id_of(&arrived);
-        let number = artifact::entry::number(to, Kind::Article, &id)
+        let number = block_on(to.store.number(Kind::Article, &id))
             .map_err(|e| Trouble::Refused(e.to_string()))?;
         spoken.push(format!("{label} as #{number}"));
         landed.push(json!({
             "id": id,
             "number": number,
             "title": held.title,
-            "assets_path": within(to, &article::assets(&arrived)),
-            "article_path": within(to, arrived.parent().unwrap_or(to)),
+            "assets_path": to.within(&article::assets(&arrived)),
+            "article_path": arrived.parent().map(|dir| to.within(dir)),
         }));
     }
     Ok(
-        Answer::said(format!("{} moved to {}", spoken.join(", "), to.display())).with(json!({
+        Answer::said(format!("{} moved to {}", spoken.join(", "), to.location)).with(json!({
             "articles": landed,
-            "project": to,
+            "project": to.location,
         })),
     )
 }
 
-fn articles(project: &Path) -> Vec<Held> {
-    let store = fs::Project::new(project);
+fn articles(project: &Project) -> Vec<Held> {
+    let store = &project.store;
     store
         .articles()
         .into_iter()
-        .filter_map(|found| {
-            Some(Held {
-                number: block_on(store.number(Kind::Article, &found.id)).ok(),
-                content: store.article_file(&found.id).ok()?,
-                id: found.id,
-                title: found.title,
-                archived: found.archived,
-                touched: found.touched,
-            })
+        .map(|found| Held {
+            number: found
+                .number
+                .or_else(|| block_on(store.number(Kind::Article, &found.id)).ok()),
+            dir: store.place(Kind::Article, &found.id),
+            cover: found.cover.and_then(|cover| cover.to_file_path().ok()),
+            id: found.id,
+            title: found.title,
+            archived: found.archived,
+            touched: found.touched,
         })
         .collect()
 }
@@ -883,7 +891,7 @@ fn articles(project: &Path) -> Vec<Held> {
 /// The article a needle names: its id, or its title. A title that hits twice is
 /// refused rather than guessed at — nothing stops two articles sharing one, and
 /// the caller is one `list_articles` away from the ids.
-fn locate(project: &Path, needle: &str) -> Result<Held, Trouble> {
+fn locate(project: &Project, needle: &str) -> Result<Held, Trouble> {
     match located(project, needle)? {
         (_, Some(_)) => Err(super::whole(needle)),
         (held, None) => Ok(held),
@@ -892,7 +900,7 @@ fn locate(project: &Path, needle: &str) -> Result<Held, Trouble> {
 
 /// [`locate`], with the part of the article a reference names after its
 /// number.
-fn located<'a>(project: &Path, needle: &'a str) -> Result<(Held, Option<Within<'a>>), Trouble> {
+fn located<'a>(project: &Project, needle: &'a str) -> Result<(Held, Option<Within<'a>>), Trouble> {
     let mut held = articles(project);
     if let Some((number, within)) = super::part_in(project, needle)? {
         return held

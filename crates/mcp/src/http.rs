@@ -13,6 +13,7 @@
 //! business answering it.
 
 use crate::{Reply, Server};
+use artifact::location::Location;
 use axum::{
     Router,
     extract::State,
@@ -128,7 +129,8 @@ async fn call(State(server): State<Arc<Server>>, headers: HeaderMap, body: Strin
     let at = headers
         .get(PROJECT)
         .and_then(|value| value.to_str().ok())
-        .and_then(decoded);
+        .and_then(decoded)
+        .map(Location::from);
     let session = headers
         .get(SESSION)
         .and_then(|value| value.to_str().ok())
@@ -142,7 +144,7 @@ async fn call(State(server): State<Arc<Server>>, headers: HeaderMap, body: Strin
     }
     // A browser tool waits on the window, so the call may block.
     let answer =
-        tokio::task::block_in_place(|| server.message(&body, at.as_deref(), session.as_deref()));
+        tokio::task::block_in_place(|| server.message(&body, at.as_ref(), session.as_deref()));
     match answer {
         Reply::Answer(response) => axum::Json(response).into_response(),
         // A notification is answered by not answering, which over HTTP is the

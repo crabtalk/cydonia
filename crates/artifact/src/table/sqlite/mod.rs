@@ -497,14 +497,14 @@ fn columns_of(conn: &Connection, key: &str) -> Result<Vec<Column>> {
 
 /// One cell as JSON, by what SQLite actually stored rather than by what the
 /// column was declared — a `NUMERIC` column holds whichever of the two the
-/// value converted to, and the reader wants the value.
+/// value converted to, and the reader wants the value. A blob is
+/// `{"blob_bytes": n}`, its length.
 fn value(row: &SqlRow, i: usize) -> Value {
     match row.get_ref(i) {
         Ok(ValueRef::Integer(n)) => Value::from(n),
         Ok(ValueRef::Real(f)) => Value::from(f),
         Ok(ValueRef::Text(t)) => Value::from(String::from_utf8_lossy(t).into_owned()),
-        // Nothing here writes a blob, and there is no JSON form of one that a
-        // reader would not have to guess at.
+        Ok(ValueRef::Blob(bytes)) => serde_json::json!({ "blob_bytes": bytes.len() }),
         _ => Value::Null,
     }
 }

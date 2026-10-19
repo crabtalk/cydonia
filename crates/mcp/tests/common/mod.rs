@@ -41,6 +41,11 @@ impl Scratch {
         &self.0
     }
 
+    /// Where it is, as a call bound to it names it.
+    pub fn at(&self) -> Location {
+        Location::from(self.path())
+    }
+
     /// The store under it, which is what the app writes through too.
     pub fn store(&self) -> project::fs::Project {
         project::fs::Project::new(&self.0)

@@ -10,12 +10,13 @@
 
 use super::{browser::Browser, panel::Panel};
 use crate::{model::settings::Browsing, view::window::root::Cydonia};
+use artifact::location::Location;
 use bezel::gpui::{AnyWindowHandle, AsyncApp, Context, Entity, WeakEntity, Window};
 use browser::WebView;
 use futures::{StreamExt as _, channel::mpsc};
 use mcp::rail::{self, Act, Browse};
 use serde::{Deserialize, de::DeserializeOwned};
-use std::{fmt::Write as _, path::Path, time::Duration};
+use std::{fmt::Write as _, time::Duration};
 
 /// Characters of a page's text a read carries. Sliced in the page, so the rest
 /// never crosses the bridge.
@@ -162,15 +163,15 @@ impl Cydonia {
         .detach();
     }
 
-    /// The right panel of the open project at `path`.
+    /// The right panel of the open project at `location`.
     fn project_panel(
         &mut self,
-        path: &Path,
+        location: &Location,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Entity<Panel>> {
         let workspace = self.workspace.read(cx);
-        let at = workspace.project_at(&artifact::location::Location::from(path))?;
+        let at = workspace.project_at(location)?;
         let project = workspace.projects[at].location().clone();
         let cwd = if self
             .workspace
@@ -189,7 +190,7 @@ impl Cydonia {
 async fn serve(
     this: &WeakEntity<Cydonia>,
     window: AnyWindowHandle,
-    project: &Path,
+    project: &Location,
     tab: Option<u64>,
     act: Act,
     cx: &mut AsyncApp,
@@ -201,7 +202,8 @@ async fn serve(
         .ok()
         .and_then(Result::ok)
         .flatten()
-        .ok_or_else(|| format!("cydonia does not have {} open", project.display()))?;
+        .ok_or_else(|| format!("cydonia does not have {project} open"))?;
+
     let browsing = cx.update(|cx| cx.try_global::<Browsing>().cloned().unwrap_or_default());
     if let Act::Open(url) = &act {
         refuse_blocked(&browsing, url)?;

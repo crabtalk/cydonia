@@ -27,6 +27,7 @@ use crate::{
 use artifact::archive::Archived;
 use artifact::error::{Act, Error};
 use artifact::location::Location;
+use artifact::project::{fs, store::Store};
 use artifact::reference::{Reference, Target, Within};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -35,7 +36,8 @@ use std::path::{Path, PathBuf};
 /// directory a call is about is the call's to say.
 pub(crate) const PROJECT: Arg = Arg {
     name: "project",
-    about: "The project: the path of the directory the work is in. A session \
+    about: "The project: the path of the directory the work is in, or the \
+cupola:// location cydonia lists for one on another machine. A session \
 already in a project may leave this out to mean that one, and must name a \
 project cydonia has open to mean another.",
 };
@@ -77,38 +79,102 @@ pub(crate) fn archived(args: &Args<'_>) -> Result<Archived, Trouble> {
     })
 }
 
-/// The directory a call is about: the one it named, or the one the caller was
+/// A project a call is about: where it is, and the store the app keeps it in.
+#[derive(Clone)]
+pub struct Project {
+    pub location: Location,
+    pub store: Store,
+}
+
+impl Project {
+    /// The project at `location`, through the store the rail hands over for
+    /// it. Refused where there is none.
+    pub(crate) fn at(location: Location) -> Result<Self, Trouble> {
+        match rail::store(&location) {
+            Some(store) => Ok(Self { location, store }),
+            None => Err(Error::ProjectClosed {
+                location,
+                open: rail::open(),
+            }
+            .into()),
+        }
+    }
+
+    /// The project's directory, on whichever machine holds it.
+    pub fn root(&self) -> &Path {
+        self.location.root()
+    }
+
+    /// Whether `name`, as written before a reference's `#`, names this
+    /// project.
+    pub(crate) fn names(&self, name: &str) -> bool {
+        artifact::reference::names(self.root(), name)
+    }
+
+    /// Whether the rail is holding this project.
+    pub(crate) fn is_open(&self) -> bool {
+        rail::is_open(&self.location)
+    }
+
+    /// `path`, a path on the project's machine, relative to its directory
+    /// where it is under it.
+    pub(crate) fn within(&self, path: &Path) -> PathBuf {
+        path.strip_prefix(self.root()).unwrap_or(path).to_path_buf()
+    }
+
+    /// The project's files, where they are on this machine.
+    pub(crate) fn files(&self) -> Option<&fs::Project> {
+        match &self.store {
+            Store::Fs(files) => Some(files),
+            _ => None,
+        }
+    }
+
+    /// The refusal for `what`, which only a project kept in files on this
+    /// machine can do.
+    pub(crate) fn not_here(&self, what: &str) -> Trouble {
+        Trouble::Refused(format!(
+            "{what} is not done for {}, which is not kept on this machine",
+            self.location
+        ))
+    }
+}
+
+/// The project a call is about: the one it named, or the one the caller was
 /// opened in.
 ///
 /// A named project wins over the binding, which is a default. A named one must
 /// be on the rail; a binding is taken as given and is not checked against it.
+/// Either way the app must hold a store for it.
 ///
-/// Either way it has to be a directory. A path with a typo in it would
+/// One on this machine has to be a directory. A path with a typo in it would
 /// otherwise read as a project with nothing in it, which is a thing a model
 /// would believe.
-pub(crate) fn root<'a>(args: &Args<'a>) -> Result<&'a Path, Trouble> {
-    let path = match (args.maybe(PROJECT), args.at()) {
-        (Some(named), _) => on_the_rail(Path::new(named))?,
-        (None, Some(at)) => at,
-        (None, None) => Path::new(args.text(PROJECT)?),
+pub(crate) fn root(args: &Args<'_>) -> Result<Project, Trouble> {
+    let location = match (args.maybe(PROJECT), args.at()) {
+        (Some(named), _) => on_the_rail(Location::parse(named))?,
+        (None, Some(at)) => at.clone(),
+        (None, None) => Location::parse(args.text(PROJECT)?),
     };
-    match path.is_dir() {
-        true => Ok(path),
-        false => Err(Trouble::Refused(format!(
+    if let Some(path) = location.local()
+        && !path.is_dir()
+    {
+        return Err(Trouble::Refused(format!(
             "no directory at {}",
             path.display()
-        ))),
+        )));
     }
+    Project::at(location)
 }
 
 /// A named project, where cydonia has it open. Anywhere else is refused, and
 /// no `.cydonia/` is made there.
-pub(crate) fn on_the_rail(path: &Path) -> Result<&Path, Trouble> {
-    if rail::is_open(&Location::from(path)) {
-        return Ok(path);
+pub(crate) fn on_the_rail(location: Location) -> Result<Location, Trouble> {
+    if rail::is_open(&location) {
+        return Ok(location);
     }
     Err(Error::ProjectClosed {
-        path: path.to_path_buf(),
+        location,
         open: rail::open(),
     }
     .into())
@@ -120,22 +186,21 @@ pub(crate) fn on_the_rail(path: &Path) -> Result<&Path, Trouble> {
 /// A written name is the last component of a project's directory, matched
 /// against the projects cydonia has open. None open under it, or more than one,
 /// is refused.
-pub fn project_of(args: &Args<'_>, reference: &Reference<'_>) -> Result<PathBuf, Trouble> {
+pub fn project_of(args: &Args<'_>, reference: &Reference<'_>) -> Result<Project, Trouble> {
     match reference.project {
         Some(name) => project_named(name),
-        None => root(args).map(Path::to_path_buf),
+        None => root(args),
     }
 }
 
 /// The open project `name`, as written before a reference's `#`, names.
-pub(crate) fn project_named(name: &str) -> Result<PathBuf, Trouble> {
+pub(crate) fn project_named(name: &str) -> Result<Project, Trouble> {
     let open = rail::open();
     let mut named = open
         .iter()
-        .filter_map(Location::local)
-        .filter(|path| artifact::reference::names(path, name));
+        .filter(|location| artifact::reference::names(location.root(), name));
     match (named.next(), named.next()) {
-        (Some(one), None) => Ok(one.to_path_buf()),
+        (Some(one), None) => Project::at(one.clone()),
         (Some(_), Some(_)) => Err(Trouble::Refused(format!(
             "more than one open project is named {name} — {}; name it by its whole path",
             open.iter()
@@ -152,14 +217,16 @@ pub(crate) fn project_named(name: &str) -> Result<PathBuf, Trouble> {
     }
 }
 
-/// Entry `number` of the project at `project`. `named` is the reference as
-/// written, for the refusal.
+/// Entry `number` of `project`. `named` is the reference as written, for the
+/// refusal.
 pub(crate) fn entry_numbered(
-    project: &Path,
+    project: &Project,
     number: u64,
     named: &str,
 ) -> Result<artifact::entry::Entry, Trouble> {
-    artifact::entry::list(project)
+    project
+        .store
+        .entries()
         .map_err(|e| Error::failed("this project's entries", Act::Read, e))?
         .into_iter()
         .find(|entry| entry.number == number)
@@ -176,7 +243,7 @@ pub(crate) fn entry_numbered(
 /// after the number, or nothing when `needle` is not an entry reference. A
 /// reference naming another project is refused.
 pub(crate) fn part_in<'a>(
-    project: &Path,
+    project: &Project,
     needle: &'a str,
 ) -> Result<Option<(u64, Option<Within<'a>>)>, Trouble> {
     let Some(Reference {
@@ -187,11 +254,11 @@ pub(crate) fn part_in<'a>(
         return Ok(None);
     };
     if let Some(name) = named
-        && !artifact::reference::names(project, name)
+        && !project.names(name)
     {
         return Err(Trouble::Refused(format!(
             "{needle} is in project {name}, not {} — pass that project",
-            project.display()
+            project.location
         )));
     }
     Ok(Some((number, within)))
@@ -199,7 +266,7 @@ pub(crate) fn part_in<'a>(
 
 /// [`part_in`] for a tool that takes a whole entry: a reference naming part
 /// of one is refused.
-pub(crate) fn number_in(project: &Path, needle: &str) -> Result<Option<u64>, Trouble> {
+pub(crate) fn number_in(project: &Project, needle: &str) -> Result<Option<u64>, Trouble> {
     match part_in(project, needle)? {
         Some((_, Some(_))) => Err(whole(needle)),
         found => Ok(found.map(|(number, _)| number)),
@@ -220,7 +287,7 @@ read a session's turns with session_read, an article's lines or section with art
 pub(crate) fn entry_of<'a>(
     args: &Args<'_>,
     named: &'a str,
-) -> Result<(PathBuf, u64, Option<Within<'a>>), Trouble> {
+) -> Result<(Project, u64, Option<Within<'a>>), Trouble> {
     let invalid = || Trouble::Invalid(format!("{named} is not an entry reference such as #12"));
     let reference = artifact::reference::parse(named).ok_or_else(invalid)?;
     let Target::Entry { number, within } = reference.target else {

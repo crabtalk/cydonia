@@ -16,6 +16,7 @@ pub struct Scratch(PathBuf);
 pub struct Served {
     pub runtime: Runtime,
     pub client: Client,
+    pub server: Server,
     _wire: Wire,
 }
 
@@ -54,18 +55,21 @@ impl Served {
         let (server, runner) = Server::new();
         Services::register(&server);
         runtime.spawn(runner);
-        let (client, _) = Client::new();
+        let (client, runner) = Client::new();
+        runtime.spawn(runner);
         let (wire, near, far) = Wire::pair();
         let attached = client.clone();
         runtime.spawn(async move {
             let _ = attached.attach(near).await;
         });
+        let attaching = server.clone();
         runtime.spawn(async move {
-            let _ = server.attach(far).await;
+            let _ = attaching.attach(far).await;
         });
         Self {
             runtime,
             client,
+            server,
             _wire: wire,
         }
     }

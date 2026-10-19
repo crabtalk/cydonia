@@ -9,7 +9,7 @@ use serde_json::json;
 
 fn shown(scratch: &Scratch, id: &str, focused: bool) -> Shown {
     Shown {
-        project: scratch.path().to_path_buf(),
+        project: scratch.at(),
         kind: Kind::Board,
         id: id.to_owned(),
         focused,

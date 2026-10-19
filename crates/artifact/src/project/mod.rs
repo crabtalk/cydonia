@@ -21,6 +21,7 @@ pub mod memory;
 pub mod remote;
 #[cfg(feature = "remote")]
 pub mod service;
+pub mod store;
 
 use crate::kind::Kind;
 use crate::{

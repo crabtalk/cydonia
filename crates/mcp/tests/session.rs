@@ -3,7 +3,7 @@
 mod common;
 use common::Wait as _;
 
-use artifact::kind::Kind;
+use artifact::{kind::Kind, location::Location};
 use common::{Rail, Scratch, refused, said};
 use cydonia_mcp::rail::Change;
 use serde_json::json;
@@ -24,7 +24,7 @@ fn a_session_is_sent_to_by_its_reference() {
     said(server.call(
         "session_send",
         json!({"session": format!("#{number}"), "message": "foo"}),
-        Some(scratch.path()),
+        Some(&scratch.at()),
     ));
 
     assert!(rail.was_asked(Change::Send {
@@ -42,7 +42,7 @@ fn an_entry_that_is_not_a_session_is_refused() {
     let why = refused(server.call(
         "session_send",
         json!({"session": format!("#{}", board.number.unwrap()), "message": "foo"}),
-        Some(scratch.path()),
+        Some(&scratch.at()),
     ));
 
     assert!(why.contains("not a session"), "{why}");
@@ -67,18 +67,18 @@ fn no_session_starts_one_on_the_named_agent() {
     said(server.call(
         "session_send",
         json!({"agent": "claude agent", "message": "foo"}),
-        Some(scratch.path()),
+        Some(&scratch.at()),
     ));
 
     assert!(rail.was_asked(Change::Start {
-        project: scratch.path().canonicalize().unwrap(),
+        project: Location::from(scratch.path().canonicalize().unwrap()),
         agent: "claude-acp".to_owned(),
         message: "foo".to_owned(),
     }));
     let why = refused(server.call(
         "session_send",
         json!({"agent": "Claude", "message": "foo"}),
-        Some(scratch.path()),
+        Some(&scratch.at()),
     ));
     assert!(
         why.contains("cydonia has Claude Agent (claude-acp), Codex"),
@@ -88,7 +88,7 @@ fn no_session_starts_one_on_the_named_agent() {
         .handle(
             &serde_json::from_value(json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}))
                 .unwrap(),
-            Some(scratch.path()),
+            Some(&scratch.at()),
         )
         .unwrap();
     let listing = serde_json::to_value(listing).unwrap();
@@ -139,7 +139,7 @@ fn a_run_of_turns_is_read_by_reference() {
     let read = said(server.call(
         "session_read",
         json!({ "session": format!("{at}:2-3") }),
-        Some(scratch.path()),
+        Some(&scratch.at()),
     ));
 
     assert!(read.contains(&format!("## {at}:2")), "{read}");
@@ -165,7 +165,7 @@ fn without_turns_the_latest_are_read() {
     let read = said(server.call(
         "session_read",
         json!({ "session": at }),
-        Some(scratch.path()),
+        Some(&scratch.at()),
     ));
 
     assert!(read.contains("turns 2-4 of 4"), "{read}");
@@ -181,7 +181,7 @@ fn a_turn_past_the_end_is_refused() {
     let why = refused(server.call(
         "session_read",
         json!({ "session": at, "turns": "3" }),
-        Some(scratch.path()),
+        Some(&scratch.at()),
     ));
 
     assert!(why.contains("has 1 turns"), "{why}");
@@ -200,7 +200,7 @@ fn a_search_answers_turn_references() {
     let hits = said(server.call(
         "session_search",
         json!({ "query": "parser" }),
-        Some(scratch.path()),
+        Some(&scratch.at()),
     ));
 
     assert!(
@@ -216,7 +216,7 @@ fn a_search_answers_turn_references() {
     let one = said(server.call(
         "session_search",
         json!({ "query": "parser", "session": second }),
-        Some(scratch.path()),
+        Some(&scratch.at()),
     ));
     assert!(!one.contains(&first), "{one}");
 }
@@ -231,7 +231,7 @@ fn a_query_with_quotes_is_found() {
     let hits = said(server.call(
         "session_search",
         json!({ "query": r#""HI" to c:\"# }),
-        Some(scratch.path()),
+        Some(&scratch.at()),
     ));
 
     assert!(hits.contains(&format!("{at}:1")), "{hits}");
@@ -259,7 +259,7 @@ fn a_message_from_a_session_is_signed_with_its_turn() {
     said(server.call_from(
         "session_send",
         json!({ "session": to, "message": "foo" }),
-        Some(scratch.path()),
+        Some(&scratch.at()),
         Some(&caller),
     ));
 
@@ -296,7 +296,7 @@ fn a_session_renames_itself() {
     said(server.call_from(
         "session_rename",
         json!({ "title": " New " }),
-        Some(scratch.path()),
+        Some(&scratch.at()),
         Some(&record),
     ));
 
@@ -316,7 +316,7 @@ fn a_title_the_user_gave_is_replaced_only_when_asked() {
     let why = refused(server.call_from(
         "session_rename",
         json!({ "title": "New" }),
-        Some(scratch.path()),
+        Some(&scratch.at()),
         Some(&record),
     ));
     assert!(why.contains("\"Mine\""), "{why}");
@@ -324,7 +324,7 @@ fn a_title_the_user_gave_is_replaced_only_when_asked() {
     said(server.call_from(
         "session_rename",
         json!({ "title": "New", "replace_user_title": true }),
-        Some(scratch.path()),
+        Some(&scratch.at()),
         Some(&record),
     ));
     assert!(rail.was_asked(Change::Rename {
@@ -341,7 +341,7 @@ fn a_caller_that_is_not_a_session_cannot_rename() {
     let why = refused(server.call(
         "session_rename",
         json!({ "title": "New" }),
-        Some(scratch.path()),
+        Some(&scratch.at()),
     ));
 
     assert!(why.contains("not one"), "{why}");

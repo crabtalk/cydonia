@@ -16,13 +16,13 @@ fn an_article_moves_to_another_open_project() {
     said(server.call(
         "article_add",
         json!({"title": "Findings", "text": "what A knows"}),
-        Some(here.path()),
+        Some(&here.at()),
     ));
 
     let moved = said(server.call(
         "article_move",
         json!({"article": "Findings", "to_project": there.path()}),
-        Some(here.path()),
+        Some(&here.at()),
     ));
 
     assert!(moved.contains("moved to"), "{moved}");
@@ -30,13 +30,11 @@ fn an_article_moves_to_another_open_project() {
         said(server.call(
             "article_read",
             json!({"article": "Findings"}),
-            Some(there.path())
+            Some(&there.at())
         )),
         "what A knows"
     );
-    assert!(
-        said(server.call("article_list", json!({}), Some(here.path()))).contains("no articles")
-    );
+    assert!(said(server.call("article_list", json!({}), Some(&here.at()))).contains("no articles"));
 }
 
 /// A project cydonia does not have open is not somewhere to move an article.
@@ -48,13 +46,13 @@ fn an_article_does_not_move_to_a_project_that_is_shut() {
     said(server.call(
         "article_add",
         json!({"title": "Findings", "text": "x"}),
-        Some(here.path()),
+        Some(&here.at()),
     ));
 
     let why = refused(server.call(
         "article_move",
         json!({"article": "Findings", "to_project": shut.path()}),
-        Some(here.path()),
+        Some(&here.at()),
     ));
 
     assert!(why.contains("does not have"), "{why}");
@@ -62,7 +60,7 @@ fn an_article_does_not_move_to_a_project_that_is_shut() {
         said(server.call(
             "article_read",
             json!({"article": "Findings"}),
-            Some(here.path())
+            Some(&here.at())
         )),
         "x"
     );
@@ -76,13 +74,13 @@ fn an_article_does_not_move_to_its_own_project() {
     said(server.call(
         "article_add",
         json!({"title": "Findings", "text": "x"}),
-        Some(here.path()),
+        Some(&here.at()),
     ));
 
     let why = refused(server.call(
         "article_move",
         json!({"article": "Findings", "to_project": here.path()}),
-        Some(here.path()),
+        Some(&here.at()),
     ));
 
     assert!(why.contains("already in"), "{why}");
@@ -116,13 +114,13 @@ fn a_card_still_moves_between_lanes_of_its_own_board() {
     said(server.call(
         "board_add_card",
         json!({"board": "ROAD", "column": "TODO", "text": "ship it"}),
-        Some(here.path()),
+        Some(&here.at()),
     ));
 
     let moved = said(server.call(
         "board_move_card",
         json!({"card": "ROAD-1", "column": "DOING"}),
-        Some(here.path()),
+        Some(&here.at()),
     ));
 
     assert_eq!(moved, "ROAD-1 moved to DOING");
@@ -141,13 +139,13 @@ fn a_card_moves_to_a_board_in_another_project() {
     said(server.call(
         "board_add_card",
         json!({"board": "ROAD", "column": "DOING", "text": "ship it"}),
-        Some(here.path()),
+        Some(&here.at()),
     ));
 
     let moved = said(server.call(
         "board_move_card",
         json!({"card": "ROAD-1", "to_board": "PLAN", "to_project": there.path()}),
-        Some(here.path()),
+        Some(&here.at()),
     ));
 
     assert!(moved.contains("PLAN-1"), "{moved}");
@@ -159,7 +157,7 @@ fn a_card_moves_to_a_board_in_another_project() {
     assert!(landed.contains("ship it"), "{landed}");
     assert!(landed.contains("PLAN-1"), "{landed}");
     // And it is gone from where it was.
-    let left = said(server.call("board_read", json!({"board": "ROAD"}), Some(here.path())));
+    let left = said(server.call("board_read", json!({"board": "ROAD"}), Some(&here.at())));
     assert!(!left.contains("ship it"), "{left}");
 }
 
@@ -175,13 +173,13 @@ fn a_project_without_a_board_is_not_somewhere_to_move_a_card() {
     said(server.call(
         "board_add_card",
         json!({"board": "ROAD", "column": "TODO", "text": "ship it"}),
-        Some(here.path()),
+        Some(&here.at()),
     ));
 
     let why = refused(server.call(
         "board_move_card",
         json!({"card": "ROAD-1", "to_project": there.path()}),
-        Some(here.path()),
+        Some(&here.at()),
     ));
 
     assert!(why.contains("name the board"), "{why}");
@@ -200,18 +198,18 @@ fn several_cards_move_between_lanes_in_one_call() {
         said(server.call(
             "board_add_card",
             json!({"board": "ROAD", "column": "TODO", "text": text}),
-            Some(here.path()),
+            Some(&here.at()),
         ));
     }
 
     let moved = said(server.call(
         "board_move_card",
         json!({"card": ["ROAD-1", "ROAD-3"], "column": "DOING"}),
-        Some(here.path()),
+        Some(&here.at()),
     ));
 
     assert_eq!(moved, "ROAD-1, ROAD-3 moved to DOING");
-    let read = said(server.call("board_read", json!({"board": "ROAD"}), Some(here.path())));
+    let read = said(server.call("board_read", json!({"board": "ROAD"}), Some(&here.at())));
     let doing = read.split("DOING").nth(1).unwrap_or_default();
     assert!(doing.contains("ship it"), "{read}");
     assert!(doing.contains("and this"), "{read}");
@@ -234,7 +232,7 @@ fn several_cards_move_to_another_board_or_none_do() {
         said(server.call(
             "board_add_card",
             json!({"board": "ROAD", "column": "TODO", "text": text}),
-            Some(here.path()),
+            Some(&here.at()),
         ));
     }
 
@@ -242,16 +240,16 @@ fn several_cards_move_to_another_board_or_none_do() {
     let why = refused(server.call(
         "board_move_card",
         json!({"card": ["ROAD-1", "ROAD-9"], "to_board": "PLAN", "to_project": there.path()}),
-        Some(here.path()),
+        Some(&here.at()),
     ));
     assert!(why.contains("ROAD-9"), "{why}");
-    let left = said(server.call("board_read", json!({"board": "ROAD"}), Some(here.path())));
+    let left = said(server.call("board_read", json!({"board": "ROAD"}), Some(&here.at())));
     assert!(left.contains("ship it"), "{left}");
 
     let moved = said(server.call(
         "board_move_card",
         json!({"card": ["ROAD-1", "ROAD-2"], "to_board": "PLAN", "to_project": there.path()}),
-        Some(here.path()),
+        Some(&here.at()),
     ));
 
     assert!(moved.contains("PLAN-1"), "{moved}");
@@ -263,7 +261,7 @@ fn several_cards_move_to_another_board_or_none_do() {
     ));
     assert!(landed.contains("ship it"), "{landed}");
     assert!(landed.contains("then this"), "{landed}");
-    let left = said(server.call("board_read", json!({"board": "ROAD"}), Some(here.path())));
+    let left = said(server.call("board_read", json!({"board": "ROAD"}), Some(&here.at())));
     assert!(!left.contains("ship it"), "{left}");
     assert!(!left.contains("then this"), "{left}");
 }
@@ -281,7 +279,7 @@ fn several_articles_move_to_another_project() {
         said(server.call(
             "article_add",
             json!({"title": title, "text": text}),
-            Some(here.path()),
+            Some(&here.at()),
         ));
     }
 
@@ -289,14 +287,14 @@ fn several_articles_move_to_another_project() {
     let why = refused(server.call(
         "article_move",
         json!({"article": ["Findings", "Nothing"], "to_project": there.path()}),
-        Some(here.path()),
+        Some(&here.at()),
     ));
     assert!(why.contains("Nothing"), "{why}");
     assert_eq!(
         said(server.call(
             "article_read",
             json!({"article": "Findings"}),
-            Some(here.path())
+            Some(&here.at())
         )),
         "what A knows"
     );
@@ -304,7 +302,7 @@ fn several_articles_move_to_another_project() {
     let moved = said(server.call(
         "article_move",
         json!({"article": ["Findings", "Notes"], "to_project": there.path()}),
-        Some(here.path()),
+        Some(&here.at()),
     ));
 
     assert!(moved.contains("Findings"), "{moved}");
@@ -313,11 +311,9 @@ fn several_articles_move_to_another_project() {
         said(server.call(
             "article_read",
             json!({"article": "Notes"}),
-            Some(there.path())
+            Some(&there.at())
         )),
         "what B knows"
     );
-    assert!(
-        said(server.call("article_list", json!({}), Some(here.path()))).contains("no articles")
-    );
+    assert!(said(server.call("article_list", json!({}), Some(&here.at()))).contains("no articles"));
 }

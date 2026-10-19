@@ -4,8 +4,8 @@
 //! `static` slice and mounting one costs nothing at all — see
 //! [`crate::Server::mount`].
 
+use artifact::location::Location;
 use serde_json::Value;
-use std::path::Path;
 
 pub struct Tool {
     /// What `tools/call` names. Flat and snake_cased, which is what every
@@ -106,12 +106,12 @@ impl From<artifact::error::Error> for Trouble {
 /// A bound session supplies its project separately from the tool arguments.
 pub struct Args<'a> {
     arguments: &'a Value,
-    at: Option<&'a Path>,
+    at: Option<&'a Location>,
     session: Option<&'a str>,
 }
 
 impl<'a> Args<'a> {
-    pub fn new(arguments: &'a Value, at: Option<&'a Path>) -> Self {
+    pub fn new(arguments: &'a Value, at: Option<&'a Location>) -> Self {
         Self {
             arguments,
             at,
@@ -131,7 +131,7 @@ impl<'a> Args<'a> {
     }
 
     /// The project the caller is bound to, if it is bound to one.
-    pub fn at(&self) -> Option<&'a Path> {
+    pub fn at(&self) -> Option<&'a Location> {
         self.at
     }
 

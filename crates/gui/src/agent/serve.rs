@@ -117,7 +117,7 @@ pub fn relayed(request: ::server::mcp::Request) -> Option<String> {
     server()
         .message(
             &request.message,
-            binding.project.as_deref(),
+            binding.project.as_ref(),
             binding.session.as_deref(),
         )
         .text()
