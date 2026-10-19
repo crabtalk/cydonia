@@ -61,7 +61,7 @@ impl View {
 }
 
 /// A document a board holds: one of its cards, by id, or its description.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Page {
     Card(String),
     Description,

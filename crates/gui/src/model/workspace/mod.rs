@@ -248,6 +248,7 @@ impl Workspace {
         for ix in restore {
             this.restore_sessions(ix, cx);
             this.watch_project(ix, cx);
+            this.list_tables(ix, cx);
         }
         this.open_last_entry(cx);
         this.bring_up_space(cx);

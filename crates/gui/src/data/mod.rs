@@ -3,7 +3,7 @@
 //! machine at a [`Home`].
 
 pub use artifact::table::{
-    ColType, Column, Home, Local, Table, Tables,
+    ColType, Column, Home, Local, Reply, Table, Tables,
     rows::{Edit, Page, Row, Rows},
 };
 pub use call::Calls;

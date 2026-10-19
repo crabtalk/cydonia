@@ -5,7 +5,7 @@ mod persistence;
 #[cfg(not(target_os = "linux"))]
 use super::browser::Browser;
 #[cfg(feature = "desktop")]
-use super::terminal::{DirectoryChanged, Exited, Terminal};
+use super::terminal::{DirectoryChanged, Exited, Login, Terminal};
 use super::{changes::Changes, file::FileView, files::Files};
 use crate::model::{settings::PanelTabs, workspace::Workspace};
 use crate::view::window::root::{Cydonia, ToggleChanges};
@@ -320,7 +320,7 @@ impl Panel {
 
     #[cfg(feature = "desktop")]
     fn terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let terminal = cx.new(|cx| Terminal::new(&self.cwd, cx));
+        let terminal = cx.new(|cx| Terminal::new(Login::Local(self.cwd.clone()), cx));
         let id = self.next_id;
         let exit = cx.subscribe_in(&terminal, window, move |this, _, _: &Exited, window, cx| {
             let focused = this.contents.get(&id).is_some_and(|tab| {
@@ -538,6 +538,31 @@ impl Panel {
             self.remove(id, cx);
             self.focus(window, cx);
         }
+    }
+
+    /// Save the file in tab `id`, and close the tab once the save landed,
+    /// unless the close was called off meanwhile.
+    fn save_and_close(&mut self, id: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(Tab {
+            content: Content::File(file),
+            ..
+        }) = self.contents.get(&id)
+        else {
+            return;
+        };
+        let saved = file.update(cx, |file, cx| file.save(false, cx));
+        cx.spawn_in(window, async move |this, cx| {
+            if !saved.await {
+                return;
+            }
+            let _ = this.update_in(cx, |this, window, cx| {
+                if this.closing == Some(id) {
+                    this.remove(id, cx);
+                    this.focus(window, cx);
+                }
+            });
+        })
+        .detach();
     }
 
     fn choose(&mut self, launch: Launch, window: &mut Window, cx: &mut Context<Self>) {
@@ -950,18 +975,7 @@ impl Render for Panel {
                                         .cursor_pointer()
                                         .child("Save and close")
                                         .on_click(cx.listener(move |this, _, window, cx| {
-                                            let file = this.contents.get(&id).and_then(|tab| {
-                                                match &tab.content {
-                                                    Content::File(file) => Some(file.clone()),
-                                                    _ => None,
-                                                }
-                                            });
-                                            if file.is_some_and(|file| {
-                                                file.update(cx, |file, cx| file.save(false, cx))
-                                            }) {
-                                                this.remove(id, cx);
-                                                this.focus(window, cx);
-                                            }
+                                            this.save_and_close(id, window, cx);
                                         })),
                                 )
                                 .child(

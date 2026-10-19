@@ -15,12 +15,15 @@
 //! so which directory to write into is still noted by [`aim`] as a document
 //! opens. One window and one document in front of it, so one target.
 
+use crate::model::store::Store;
+use artifact::project::{Owner, Project as _};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 #[cfg(feature = "desktop")]
 use bezel::gpui::WeakEntity;
 use bezel::gpui::{App, ClipboardEntry, ClipboardItem, Entity, Image, hash};
 use editor::AppExt as _;
 use editor::{Editor, ImageStore, Mode, PasteContent, PasteContext, Source};
+use futures::{FutureExt as _, future::BoxFuture};
 use image::{ImageFormat, imageops::FilterType};
 use markdown::BlockKind;
 use std::{
@@ -47,6 +50,87 @@ const FETCH_LIMIT: u64 = 25 * 1024 * 1024;
 pub enum Attachment {
     Bytes(Arc<Image>),
     File(PathBuf),
+}
+
+impl Attachment {
+    /// The picture it is. `None` for a file that cannot be read.
+    pub fn picture(&self) -> Option<Picture> {
+        match self {
+            Attachment::Bytes(image) => Some(Picture::of(image)),
+            Attachment::File(path) => Picture::read(path),
+        }
+    }
+}
+
+/// A picture's bytes, and the extension it is filed under.
+pub struct Picture {
+    bytes: Vec<u8>,
+    extension: String,
+}
+
+impl Picture {
+    pub fn new(bytes: Vec<u8>, extension: &str) -> Self {
+        Self {
+            bytes,
+            extension: extension.to_ascii_lowercase(),
+        }
+    }
+
+    fn of(image: &Image) -> Self {
+        Self::new(image.bytes.clone(), image.format.extension())
+    }
+
+    /// The picture file at `path`. `None` for one that cannot be read or has
+    /// no extension.
+    fn read(path: &Path) -> Option<Self> {
+        Some(Self::new(std::fs::read(path).ok()?, &extension(path)?))
+    }
+
+    /// The name it is filed under, taken from its bytes, so the same picture
+    /// kept twice is the one file — and gpui, which caches a decoded picture
+    /// against its path, is handed the copy it already has.
+    pub fn name(&self) -> String {
+        format!("{MARK}{:x}.{}", hash(&self.bytes), self.extension)
+    }
+}
+
+/// Where pictures are filed: a project's backend, and whose pictures they go
+/// among there.
+#[derive(Clone)]
+pub struct Shelf {
+    pub store: Store,
+    pub owner: Owner,
+}
+
+impl Shelf {
+    /// The shared pictures of the project at `root`.
+    pub fn shared(root: &Path) -> Self {
+        Self {
+            store: crate::model::store::open(&artifact::location::Location::Local(
+                root.to_path_buf(),
+            )),
+            owner: Owner::Shared,
+        }
+    }
+
+    /// File `picture` here: its name, and the write.
+    pub fn put(
+        &self,
+        picture: &Picture,
+    ) -> (String, BoxFuture<'static, artifact::project::Result<()>>) {
+        let name = picture.name();
+        let write = self
+            .store
+            .put_asset(&self.owner, &name, &picture.bytes)
+            .boxed();
+        (name, write)
+    }
+
+    /// Where the picture filed here under `name` is — see
+    /// [`Store::asset_file`].
+    pub fn file(&self, name: &str) -> Option<PathBuf> {
+        self.store.asset_file(&self.owner, name)
+    }
 }
 
 /// Install the store. Called once, beside the other `init`s.
@@ -170,9 +254,9 @@ fn fetch_into(url: String, base: PathBuf, editor: WeakEntity<Editor>, cx: &mut A
                 async move {
                     let path = url.split(['?', '#']).next().unwrap_or(&url);
                     let extension = extension(Path::new(path))?;
-                    let bytes = download(&url).ok()?;
+                    let picture = Picture::new(download(&url).ok()?, &extension);
                     let dir = artifact::article::assets(&artifact::article::content(&base));
-                    let file = store(&dir, &bytes, &extension)?;
+                    let file = store(&dir, &picture)?;
                     let file = file.strip_prefix(&base).unwrap_or(&file).to_owned();
                     Some(file.to_string_lossy().into_owned())
                 }
@@ -186,31 +270,15 @@ fn fetch_into(url: String, base: PathBuf, editor: WeakEntity<Editor>, cx: &mut A
     .detach();
 }
 
-/// Write `bytes` into `dir` under a name taken from their hash, so the same
-/// picture kept twice is the one file — and gpui, which caches a decoded
-/// picture against its path, is handed the copy it already has.
-pub fn store(dir: &Path, bytes: &[u8], extension: &str) -> Option<PathBuf> {
-    let file = dir.join(format!("{MARK}{:x}.{extension}", hash(&bytes)));
+/// Write `picture` into `dir` under its name, unless a file there holds that
+/// name already.
+fn store(dir: &Path, picture: &Picture) -> Option<PathBuf> {
+    let file = dir.join(picture.name());
     if !file.is_file() {
         std::fs::create_dir_all(dir).ok()?;
-        std::fs::write(&file, bytes).ok()?;
+        std::fs::write(&file, &picture.bytes).ok()?;
     }
     Some(file)
-}
-
-/// Keep an attachment in `dir`. A file is copied in rather than pointed at
-/// where it is: a transcript that outlives the download it was sent from is
-/// the reason the picture lives with the project.
-pub fn keep_attachment(dir: &Path, attachment: &Attachment) -> Option<PathBuf> {
-    match attachment {
-        Attachment::Bytes(image) => store(dir, &image.bytes, image.format.extension()),
-        Attachment::File(path) => store_file(dir, path),
-    }
-}
-
-/// The picture file at `path`, copied into `dir` — see [`store`].
-fn store_file(dir: &Path, path: &Path) -> Option<PathBuf> {
-    store(dir, &std::fs::read(path).ok()?, &extension(path)?)
 }
 
 /// A picture as a message line. The destination is bracketed, since a
@@ -303,8 +371,8 @@ fn keep(source: Source, _: &Entity<Editor>, base: Option<&Path>, _: &App) -> Opt
     let base = base?.to_path_buf();
     let dir = artifact::article::assets(&artifact::article::content(&base));
     let file = match source {
-        Source::Bytes(image) => store(&dir, &image.bytes, image.format.extension())?,
-        Source::File(path) => store_file(&dir, path)?,
+        Source::Bytes(image) => store(&dir, &Picture::of(image))?,
+        Source::File(path) => store(&dir, &Picture::read(path)?)?,
     };
     let file = file.strip_prefix(&base).unwrap_or(&file);
     Some(file.to_string_lossy().into_owned())

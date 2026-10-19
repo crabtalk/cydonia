@@ -1,7 +1,10 @@
-//! The backend that runs `git` on this machine, with literal pathspecs.
+//! The backend that runs `git` on this machine, with literal pathspecs, each
+//! call on a blocking thread.
 
-use crate::{Area, Backend, Change, Repository, Sources, wire};
+use crate::{Area, Backend, Change, Repository, Sources};
 use anyhow::{Context as _, Result, bail};
+use cupola::bytes::{Names as _, Platform};
+use futures::{FutureExt as _, future::BoxFuture};
 use std::{
     ffi::OsString,
     io::Read as _,
@@ -56,9 +59,9 @@ impl Local {
             if entry.len() < 4 || entry[2] != b' ' {
                 bail!("Invalid Git status record");
             }
-            let path = wire::path(entry[3..].to_vec());
+            let path = Platform::path(entry[3..].to_vec());
             let original = if entry[..2].iter().any(|code| matches!(code, b'R' | b'C')) {
-                Some(wire::path(
+                Some(Platform::path(
                     entries
                         .next()
                         .context("Missing Git rename source")?
@@ -141,7 +144,24 @@ impl Local {
 }
 
 impl Backend for Local {
-    fn status(&self, dir: &Path) -> Result<Option<Repository>> {
+    fn status(&self, dir: &Path) -> BoxFuture<'static, Result<Option<Repository>>> {
+        let dir = dir.to_owned();
+        blocking::unblock(move || Self::repository(&dir)).boxed()
+    }
+
+    fn diff(&self, root: &Path, change: &Change) -> BoxFuture<'static, Result<String>> {
+        let (root, change) = (root.to_owned(), change.clone());
+        blocking::unblock(move || Self::patch(&root, &change)).boxed()
+    }
+
+    fn sources(&self, root: &Path, change: &Change) -> BoxFuture<'static, Sources> {
+        let (root, change) = (root.to_owned(), change.clone());
+        blocking::unblock(move || Self::texts(&root, &change)).boxed()
+    }
+}
+
+impl Local {
+    fn repository(dir: &Path) -> Result<Option<Repository>> {
         let output = Self::command(dir)
             .args(["rev-parse", "--show-toplevel"])
             .output()
@@ -154,7 +174,7 @@ impl Backend for Local {
             bail!("{}", message.trim());
         }
         // Remove Git's terminator only: whitespace can be part of the root path.
-        let root = wire::path(
+        let root = Platform::path(
             output
                 .stdout
                 .strip_suffix(b"\n")
@@ -180,7 +200,7 @@ impl Backend for Local {
         }))
     }
 
-    fn diff(&self, root: &Path, change: &Change) -> Result<String> {
+    fn patch(root: &Path, change: &Change) -> Result<String> {
         let mut git = Self::command(root);
         git.args([
             "diff",
@@ -223,7 +243,7 @@ impl Backend for Local {
         Ok(patch)
     }
 
-    fn sources(&self, root: &Path, change: &Change) -> Sources {
+    fn texts(root: &Path, change: &Change) -> Sources {
         let (old, new) = match change.area {
             Area::Staged => (
                 Self::blob(

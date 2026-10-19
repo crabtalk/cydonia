@@ -61,7 +61,7 @@ impl Platform for MacOs {
             .with_context(|| format!("{} cannot be written to", parent.display()))?;
 
         let image = super::download(version)?;
-        let mount = super::cache()?.join("mount");
+        let mount = artifact::backup::cache_dir()?.join("mount");
         let _ = std::fs::create_dir_all(&mount);
         // In case a crash left the last one attached: `attach` will not take a
         // mountpoint that is already in use, and this is the only thing that uses

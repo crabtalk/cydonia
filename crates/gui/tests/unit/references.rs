@@ -2,12 +2,18 @@
 //! the card a handle names, and the entry a number names.
 
 use super::{Part, card, entry, passage};
-use crate::data::{ColType, Column, Local as _, Tables as _};
-use crate::model::{article::Disk, project::Project, workspace::Showing};
+use crate::data::{ColType, Column, Local as _};
+use crate::model::{
+    article::Disk,
+    project::Project,
+    settings::Settings,
+    state::State,
+    workspace::{Showing, Workspace},
+};
 use artifact::kind::Kind;
 use artifact::project::{Project as _, fs};
 use artifact::reference::{Span, Within};
-use bezel::gpui;
+use bezel::gpui::{self, AppContext as _};
 use std::rc::Rc;
 
 const TEXT: &str = "# Guide\n\nIntro.\n\n## Set up\n\nStep one.\n\n- a\n- b\n\n## Use\n\nGo.\n";
@@ -77,28 +83,33 @@ fn a_handle_names_its_card_on_the_keyed_board(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 fn a_number_names_a_table(cx: &mut gpui::TestAppContext) {
-    cx.update(|cx| {
-        let dir =
-            std::env::temp_dir().join(format!("cydonia-references-table-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let column = Column {
-            name: "Name".to_owned(),
-            kind: ColType::Text,
-        };
-        let key = crate::data::Here::open(&crate::data::Home::Project(dir.clone()))
-            .unwrap()
-            .create("Prices", None, &[column], None)
-            .unwrap()
-            .key;
-        let project = Project::new(dir.clone(), cx);
-        let number = project.tables[0].number.unwrap();
+    let dir = std::env::temp_dir().join(format!("cydonia-references-table-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let column = Column {
+        name: "Name".to_owned(),
+        kind: ColType::Text,
+    };
+    let key = crate::data::Here::open(&crate::data::Home::Project(dir.clone()))
+        .unwrap()
+        .create("Prices", None, &[column], None)
+        .unwrap()
+        .key;
+    let workspace = cx.new(|cx| Workspace::new(Settings::default(), State::default(), cx));
+    workspace.update(cx, |workspace, cx| {
+        workspace.projects.push(Project::new(dir.clone(), cx));
+        workspace.projects[0].reload_tables(cx).detach();
+    });
+    cx.run_until_parked();
 
-        let (kind, showing, title) = entry(&project, number, cx).unwrap();
+    workspace.read_with(cx, |workspace, cx| {
+        let project = &workspace.projects[0];
+        let number = project.tables[0].number.unwrap();
+        let (kind, showing, title) = entry(project, number, cx).unwrap();
         assert_eq!(kind, Kind::Table);
         assert_eq!(showing, Showing::Table(key));
         assert_eq!(title, "Prices");
-        assert!(entry(&project, number + 1, cx).is_none());
-        let _ = std::fs::remove_dir_all(&dir);
+        assert!(entry(project, number + 1, cx).is_none());
     });
+    let _ = std::fs::remove_dir_all(&dir);
 }

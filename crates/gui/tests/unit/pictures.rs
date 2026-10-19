@@ -20,7 +20,7 @@ fn a_saved_picture_reloads(cx: &mut TestAppContext) {
     let pictures = cx.new(|cx| {
         Pictures::new(
             dir.clone(),
-            Assets::Dir(dir.clone()),
+            Shelf::shared(&dir),
             WeakEntity::new_invalid(),
             cx,
         )
@@ -62,7 +62,7 @@ fn a_saved_picture_repaints_in_the_editor(cx: &mut TestAppContext) {
             let pictures = cx.new(|cx| {
                 Pictures::new(
                     dir.clone(),
-                    Assets::Dir(dir.clone()),
+                    Shelf::shared(&dir),
                     WeakEntity::new_invalid(),
                     cx,
                 )
@@ -123,7 +123,7 @@ fn a_picture_saved_between_documents_reloads(cx: &mut TestAppContext) {
     let first = cx.new(|cx| {
         Pictures::new(
             dir.clone(),
-            Assets::Dir(dir.clone()),
+            Shelf::shared(&dir),
             WeakEntity::new_invalid(),
             cx,
         )
@@ -138,7 +138,7 @@ fn a_picture_saved_between_documents_reloads(cx: &mut TestAppContext) {
     let second = cx.new(|cx| {
         Pictures::new(
             dir.clone(),
-            Assets::Dir(dir.clone()),
+            Shelf::shared(&dir),
             WeakEntity::new_invalid(),
             cx,
         )

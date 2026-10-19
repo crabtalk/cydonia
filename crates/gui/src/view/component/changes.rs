@@ -96,7 +96,7 @@ impl Changes {
             let result = cx
                 .background_executor()
                 .spawn(async move {
-                    let repository = git.status(&cwd)?;
+                    let repository = git.status(&cwd).await?;
                     let selected = repository.as_ref().and_then(|repo| {
                         selected
                             .and_then(|selected| {
@@ -110,8 +110,10 @@ impl Changes {
                             .or_else(|| repo.files.first().cloned())
                     });
                     let preview = match (&repository, &selected) {
-                        (Some(repo), Some(file)) => match git.diff(&repo.root, file) {
-                            Ok(patch) => Preview::load(&*git, &repo.root, file, patch, previous),
+                        (Some(repo), Some(file)) => match git.diff(&repo.root, file).await {
+                            Ok(patch) => {
+                                Preview::load(&*git, &repo.root, file, patch, previous).await
+                            }
                             Err(error) => Preview::plain(format!("Could not read diff: {error}")),
                         },
                         _ => Arc::default(),

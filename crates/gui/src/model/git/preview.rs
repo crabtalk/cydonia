@@ -47,7 +47,7 @@ impl Preview {
     }
 
     /// Reuse highlighting only when the patch and both source snapshots match.
-    pub fn load(
+    pub async fn load(
         git: &dyn Backend,
         root: &Path,
         file: &Change,
@@ -55,7 +55,7 @@ impl Preview {
         previous: Arc<Self>,
     ) -> Arc<Self> {
         let sources = if language::Here::of(&file.path).is_some() {
-            git.sources(root, file)
+            git.sources(root, file).await
         } else {
             Sources::default()
         };

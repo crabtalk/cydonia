@@ -1,35 +1,53 @@
 //! What the login shell's answer is worth: reading a PATH out of it, and
 //! what that PATH is joined with.
 
-use cydonia_gui::agent::path::{merge, parse, resolve};
+use cydonia_gui::agent::path::{Environment, merge, resolve};
 use std::{
     ffi::OsStr,
     path::{Path, PathBuf},
 };
 
-/// The plain case — an `env` dump, one variable per line, in no order this
-/// side chose.
+/// The plain case: a dump, one variable per entry, in no order this side
+/// chose.
 #[test]
 fn the_path_comes_out_of_an_env_dump() {
-    let dump = "SHELL=/bin/zsh\nPATH=/opt/homebrew/bin:/usr/bin\nHOME=/Users/x\n";
-    assert_eq!(parse(dump), Some("/opt/homebrew/bin:/usr/bin"));
+    let dump = "\0SHELL=/bin/zsh\0PATH=/opt/homebrew/bin:/usr/bin\0HOME=/Users/x\0";
+    let env = Environment::parse(dump);
+    assert_eq!(env.get("PATH"), Some("/opt/homebrew/bin:/usr/bin"));
+    assert_eq!(env.get("HOME"), Some("/Users/x"));
+}
+
+/// A value may hold `=` and line breaks; an entry whose text before the first
+/// `=` is not a variable name sets nothing.
+#[test]
+fn only_variable_names_are_taken() {
+    let dump = "\0OPTS=a=b\0hello world=1\09LIVES=x\0_UNDER=one\nTWO=two\0";
+    let env = Environment::parse(dump);
+    assert_eq!(env.get("OPTS"), Some("a=b"));
+    assert_eq!(env.get("_UNDER"), Some("one\nTWO=two"));
+    assert_eq!(env.iter().count(), 2);
 }
 
 /// A startup file that greets the terminal greets us too, and it does it
-/// before `env` runs. Anything that looks like the answer but arrives first
-/// is the banner, not the answer.
+/// before the dump's first NUL. Anything that looks like the answer but
+/// arrives first is the banner, not the answer.
 #[test]
 fn a_banner_ahead_of_the_dump_does_not_win() {
-    let dump = "welcome back\nPATH=/nonsense\nSHELL=/bin/zsh\nPATH=/opt/homebrew/bin\n";
-    assert_eq!(parse(dump), Some("/opt/homebrew/bin"));
+    let dump = "welcome back\nPATH=/nonsense\n\0SHELL=/bin/zsh\0PATH=/opt/homebrew/bin\0";
+    assert_eq!(
+        Environment::parse(dump).get("PATH"),
+        Some("/opt/homebrew/bin")
+    );
 }
 
 /// A shell that failed, or printed nothing we can use. The caller keeps the
 /// PATH it was launched with.
 #[test]
 fn nothing_that_names_a_path_is_no_answer() {
-    assert_eq!(parse(""), None);
-    assert_eq!(parse("HOME=/Users/x\nMANPATH=/usr/share/man\n"), None);
+    assert_eq!(Environment::parse("").get("PATH"), None);
+    assert_eq!(Environment::parse("PATH=/usr/bin\n").get("PATH"), None);
+    let dump = "\0HOME=/Users/x\0MANPATH=/usr/share/man\0";
+    assert_eq!(Environment::parse(dump).get("PATH"), None);
 }
 
 /// The shell's answer leads, because it is the one with homebrew and nvm on

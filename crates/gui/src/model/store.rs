@@ -3,16 +3,19 @@
 //! Every read and write of boards, sessions, articles, numbers and tables goes
 //! through the [`Store`] that [`open`] answers, and `open` is the one place
 //! that picks the backend: the memory project [`seed`] put at a location, else
-//! the files there. A memory project holds no tables.
+//! the files there. A memory project holds no tables. [`Store::Remote`], a
+//! project on another machine, is not opened by `open`.
 
 use crate::data::{Data, Here, Home, Local as _};
 use artifact::project::Result;
+#[cfg(feature = "desktop")]
+use artifact::project::remote;
 use artifact::{
     article::{Article, comments::Comments, properties::Properties},
     board::Board,
     kind::Kind,
     location::Location,
-    project::{Project, Watching, fs, memory},
+    project::{Owner, Project, Watching, fs, memory},
     session::record::Record,
 };
 use futures::{FutureExt as _, future::BoxFuture};
@@ -27,6 +30,8 @@ use std::{
 pub enum Store {
     Fs(fs::Project),
     Memory(Arc<memory::Project>),
+    #[cfg(feature = "desktop")]
+    Remote(remote::Project),
 }
 
 /// Projects held in memory, by the location they stand at, for the life of
@@ -58,13 +63,27 @@ pub fn open(location: &Location) -> Store {
 }
 
 impl Store {
-    /// The project's tables as they already are. `None` while it has none,
-    /// and from a backend that holds no tables. Writes nothing.
+    /// The project's tables as they already are. `None` while a project on
+    /// this machine has none, and from a memory project. Writes nothing.
     pub fn tables(&self) -> Option<Data> {
         match self {
             Store::Fs(store) => Here::attach(&Home::Project(store.root().to_owned()))
                 .map(|tables| Box::new(tables) as Data),
             Store::Memory(_) => None,
+            #[cfg(feature = "desktop")]
+            Store::Remote(store) => Some(Box::new(store.tables())),
+        }
+    }
+
+    /// Where `owner`'s picture `name` is, as a path on the host the backend
+    /// keeps its files on, whether or not it has been written. `None` from a
+    /// backend that keeps no files.
+    pub fn asset_file(&self, owner: &Owner, name: &str) -> Option<PathBuf> {
+        match self {
+            Store::Fs(store) => Some(store.asset_dir(owner).ok()?.join(name)),
+            Store::Memory(_) => None,
+            #[cfg(feature = "desktop")]
+            Store::Remote(store) => Some(store.asset_dir(owner).ok()?.join(name)),
         }
     }
 
@@ -75,6 +94,8 @@ impl Store {
                 store.root().to_owned(),
             ))?)),
             Store::Memory(_) => anyhow::bail!("This project holds no tables"),
+            #[cfg(feature = "desktop")]
+            Store::Remote(store) => Ok(Box::new(store.tables())),
         }
     }
 }
@@ -85,12 +106,14 @@ macro_rules! each {
         match $self {
             Store::Fs($store) => $call,
             Store::Memory($store) => $call,
+            #[cfg(feature = "desktop")]
+            Store::Remote($store) => $call,
         }
     };
 }
 
-/// [`each!`] for a write, whose answer is a different future per backend.
-macro_rules! each_write {
+/// [`each!`] for a call answered with a future, a different one per backend.
+macro_rules! each_future {
     ($self:ident, $store:ident => $call:expr) => {{
         let answer: BoxFuture<'static, _> = each!($self, $store => $call.boxed());
         answer
@@ -111,15 +134,15 @@ impl Project for Store {
         name: &str,
         key: &str,
     ) -> impl Future<Output = Result<Board>> + Send + use<> {
-        each_write!(self, store => store.create_board(name, key))
+        each_future!(self, store => store.create_board(name, key))
     }
 
     fn save_board(&self, board: &mut Board) -> impl Future<Output = Result<()>> + Send + use<> {
-        each_write!(self, store => store.save_board(board))
+        each_future!(self, store => store.save_board(board))
     }
 
     fn remove_board(&self, id: &str) -> impl Future<Output = Result<()>> + Send + use<> {
-        each_write!(self, store => store.remove_board(id))
+        each_future!(self, store => store.remove_board(id))
     }
 
     fn sessions(&self) -> Vec<Record> {
@@ -131,15 +154,15 @@ impl Project for Store {
     }
 
     fn create_session(&self) -> impl Future<Output = Result<String>> + Send + use<> {
-        each_write!(self, store => store.create_session())
+        each_future!(self, store => store.create_session())
     }
 
     fn save_session(&self, record: &Record) -> impl Future<Output = Result<()>> + Send + use<> {
-        each_write!(self, store => store.save_session(record))
+        each_future!(self, store => store.save_session(record))
     }
 
     fn remove_session(&self, id: &str) -> impl Future<Output = Result<()>> + Send + use<> {
-        each_write!(self, store => store.remove_session(id))
+        each_future!(self, store => store.remove_session(id))
     }
 
     fn articles(&self) -> Vec<Article> {
@@ -154,7 +177,7 @@ impl Project for Store {
         &self,
         markdown: &str,
     ) -> impl Future<Output = Result<Article>> + Send + use<> {
-        each_write!(self, store => store.create_article(markdown))
+        each_future!(self, store => store.create_article(markdown))
     }
 
     fn read_article(&self, id: &str) -> Result<String> {
@@ -166,7 +189,7 @@ impl Project for Store {
         id: &str,
         markdown: &str,
     ) -> impl Future<Output = Result<()>> + Send + use<> {
-        each_write!(self, store => store.write_article(id, markdown))
+        each_future!(self, store => store.write_article(id, markdown))
     }
 
     fn comments(&self, id: &str) -> Comments {
@@ -178,7 +201,7 @@ impl Project for Store {
         id: &str,
         comments: &Comments,
     ) -> impl Future<Output = Result<()>> + Send + use<> {
-        each_write!(self, store => store.save_comments(id, comments))
+        each_future!(self, store => store.save_comments(id, comments))
     }
 
     fn properties(&self, id: &str) -> Properties {
@@ -190,24 +213,28 @@ impl Project for Store {
         id: &str,
         properties: &Properties,
     ) -> impl Future<Output = Result<()>> + Send + use<> {
-        each_write!(self, store => store.save_properties(id, properties))
+        each_future!(self, store => store.save_properties(id, properties))
     }
 
     fn remove_article(&self, id: &str) -> impl Future<Output = Result<()>> + Send + use<> {
-        each_write!(self, store => store.remove_article(id))
+        each_future!(self, store => store.remove_article(id))
     }
 
-    fn asset(&self, id: &str, name: &str) -> Result<Vec<u8>> {
-        each!(self, store => store.asset(id, name))
+    fn asset(
+        &self,
+        owner: &Owner,
+        name: &str,
+    ) -> impl Future<Output = Result<Vec<u8>>> + Send + use<> {
+        each_future!(self, store => store.asset(owner, name))
     }
 
     fn put_asset(
         &self,
-        id: &str,
+        owner: &Owner,
         name: &str,
         bytes: &[u8],
     ) -> impl Future<Output = Result<()>> + Send + use<> {
-        each_write!(self, store => store.put_asset(id, name, bytes))
+        each_future!(self, store => store.put_asset(owner, name, bytes))
     }
 
     /// Nothing is carried between two different backends.
@@ -224,6 +251,10 @@ impl Project for Store {
                 .carry_card_files(board, card, to, to_board, to_card)
                 .boxed(),
             (Store::Memory(from), Store::Memory(to)) => from
+                .carry_card_files(board, card, to, to_board, to_card)
+                .boxed(),
+            #[cfg(feature = "desktop")]
+            (Store::Remote(from), Store::Remote(to)) => from
                 .carry_card_files(board, card, to, to_board, to_card)
                 .boxed(),
             _ => std::future::ready(Ok(())).boxed(),
@@ -243,7 +274,7 @@ impl Project for Store {
     }
 
     fn number(&self, kind: Kind, id: &str) -> impl Future<Output = Result<u64>> + Send + use<> {
-        each_write!(self, store => store.number(kind, id))
+        each_future!(self, store => store.number(kind, id))
     }
 
     fn resolve(&self, kind: Kind, number: u64) -> Result<Option<String>> {
@@ -251,6 +282,6 @@ impl Project for Store {
     }
 
     fn retire(&self, kind: Kind, id: &str) -> impl Future<Output = Result<()>> + Send + use<> {
-        each_write!(self, store => store.retire(kind, id))
+        each_future!(self, store => store.retire(kind, id))
     }
 }

@@ -20,6 +20,9 @@ anyhow.workspace = true
 bezel = { workspace = true, features = ["platform"] }
 gui = { workspace = true, features = ["desktop"] }
 
+[target.'cfg(unix)'.dependencies]
+cupola.workspace = true
+
 [build-dependencies]
 embed-resource = "3"
 image = { version = "0.25", default-features = false, features = ["ico", "png"] }

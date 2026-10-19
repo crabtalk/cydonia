@@ -12,7 +12,7 @@
 //! carrying one came from somewhere with a name, and this server has no
 //! business answering it.
 
-use crate::{Server, proto::Request};
+use crate::{Reply, Server};
 use axum::{
     Router,
     extract::State,
@@ -140,18 +140,17 @@ async fn call(State(server): State<Arc<Server>>, headers: HeaderMap, body: Strin
     if headers.contains_key(header::ORIGIN) {
         return (StatusCode::FORBIDDEN, "this server is not for a browser").into_response();
     }
-    let Ok(request) = serde_json::from_str::<Request>(&body) else {
-        return (StatusCode::BAD_REQUEST, "not a JSON-RPC request").into_response();
-    };
     // A browser tool waits on the window, so the call may block.
-    let answer = tokio::task::block_in_place(|| {
-        server.handle_from(&request, at.as_deref(), session.as_deref())
-    });
+    let answer =
+        tokio::task::block_in_place(|| server.message(&body, at.as_deref(), session.as_deref()));
     match answer {
-        Some(response) => axum::Json(response).into_response(),
+        Reply::Answer(response) => axum::Json(response).into_response(),
         // A notification is answered by not answering, which over HTTP is the
         // status that says so.
-        None => StatusCode::ACCEPTED.into_response(),
+        Reply::Nothing => StatusCode::ACCEPTED.into_response(),
+        Reply::Unreadable(response) => {
+            (StatusCode::BAD_REQUEST, axum::Json(response)).into_response()
+        }
     }
 }
 

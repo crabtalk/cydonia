@@ -21,17 +21,26 @@ impl Drop for Tree {
     }
 }
 
+fn scan_here(
+    root: &Path,
+    expanded: &HashSet<PathBuf>,
+    query: &str,
+) -> anyhow::Result<(Vec<Entry>, bool)> {
+    let files = Backend::open(&Location::from(root));
+    futures::executor::block_on(scan(&files, root, expanded, query))
+}
+
 #[test]
 fn starts_at_root_and_only_expands_requested_folders() {
     let tree = Tree::new();
-    let (rows, truncated) = scan(&tree.0, &HashSet::new(), "").unwrap();
+    let (rows, truncated) = scan_here(&tree.0, &HashSet::new(), "").unwrap();
     assert!(!truncated);
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].path, tree.0.join("src"));
     assert!(rows[0].directory);
     assert_eq!(rows[1].path, tree.0.join("README.md"));
     let expanded = HashSet::from([tree.0.join("src"), tree.0.join("src/ui")]);
-    let (rows, _) = scan(&tree.0, &expanded, "").unwrap();
+    let (rows, _) = scan_here(&tree.0, &expanded, "").unwrap();
     assert_eq!(rows.len(), 4);
     assert_eq!(rows[2].path, tree.0.join("src/ui/view.rs"));
     assert_eq!(rows[2].depth, 2);
@@ -40,7 +49,7 @@ fn starts_at_root_and_only_expands_requested_folders() {
 #[test]
 fn filtering_finds_nested_files_without_expanding_folders() {
     let tree = Tree::new();
-    let (rows, _) = scan(&tree.0, &HashSet::new(), "VIEW").unwrap();
+    let (rows, _) = scan_here(&tree.0, &HashSet::new(), "VIEW").unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].path, tree.0.join("src/ui/view.rs"));
     assert_eq!(rows[0].depth, 0);
@@ -51,7 +60,7 @@ fn filtering_finds_nested_files_without_expanding_folders() {
 fn folder_symlinks_do_not_recurse_outside_the_project() {
     let tree = Tree::new();
     std::os::unix::fs::symlink(&tree.0, tree.0.join("loop")).unwrap();
-    let (rows, _) = scan(&tree.0, &HashSet::new(), "view").unwrap();
+    let (rows, _) = scan_here(&tree.0, &HashSet::new(), "view").unwrap();
     assert_eq!(rows.len(), 1);
 }
 

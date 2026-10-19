@@ -1,7 +1,7 @@
 mod common;
 
 use common::Scratch;
-use cydonia_artifact::table::{ColType, Column, Home, Local as _, Tables as _, sqlite::Sqlite};
+use cydonia_artifact::table::{ColType, Column, Home, Local as _, sqlite::Sqlite};
 
 #[test]
 fn table_reference_survives_key_changes_and_is_retired_on_delete() {

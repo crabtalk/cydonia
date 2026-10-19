@@ -18,7 +18,7 @@ impl Sqlite {
     /// On the read-only handle, so the guarantee is the connection rather than
     /// anything believed about the text. The single-statement rule is here only
     /// so a caller who sent two gets told which answer they lost.
-    pub(super) fn query(&self, sql: &str) -> Result<Rows> {
+    pub fn query(&self, sql: &str) -> Result<Rows> {
         let mut stmts = split(sql);
         let Some(stmt) = stmts.pop() else {
             bail!("empty statement");
@@ -43,7 +43,7 @@ impl Sqlite {
     /// one string: a leading-keyword check on the whole text says nothing about
     /// what follows the first semicolon, which is the difference between a
     /// guard and the appearance of one.
-    pub(super) fn write(&mut self, sql: &str) -> Result<u64> {
+    pub fn write(&mut self, sql: &str) -> Result<u64> {
         let stmts = split(sql);
         if stmts.is_empty() {
             bail!("empty statement");

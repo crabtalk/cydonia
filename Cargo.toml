@@ -48,6 +48,7 @@ pulldown-cmark = { version = "0.13", default-features = false }
 regex = "1"
 rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
+server = { version = "0.2.0", path = "crates/server", package = "cydonia-server" }
 serde_json = "1"
 sha2 = "0.10"
 similar = "2"

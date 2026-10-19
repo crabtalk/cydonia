@@ -336,16 +336,17 @@ impl AppView {
             }
             call => {
                 let declared = manifest.is_some_and(|manifest| manifest.calls(calls::TABLES));
-                Task::ready(match (declared, &self.program) {
+                match (declared, &self.program) {
                     (true, Some(program)) => {
-                        program.update(cx, |program, _| program.table_call(call))
+                        let answer = program.update(cx, |program, _| program.table_call(call));
+                        cx.spawn(async move |_, _| answer.await)
                     }
-                    (true, None) => Answer::Error("The app is gone".into()),
-                    (false, _) => Answer::Error(format!(
+                    (true, None) => Task::ready(Answer::Error("The app is gone".into())),
+                    (false, _) => Task::ready(Answer::Error(format!(
                         "The app's manifest does not declare `{}` among its calls",
                         calls::TABLES
-                    )),
-                })
+                    ))),
+                }
             }
         };
         cx.spawn(async move |this, cx| {

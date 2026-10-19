@@ -1,6 +1,7 @@
 //! Project-root file navigation, loaded off the UI thread.
 
-use crate::model::disk::{Files as _, Here};
+use crate::model::disk::{Backend, Files as _};
+use artifact::location::Location;
 use bezel::{
     gpui::{
         self, Context, Entity, EventEmitter, Focusable, Render, Subscription, Task,
@@ -12,6 +13,7 @@ use bezel::{
         input::{FieldEvent, TextField},
     },
 };
+use futures::{FutureExt as _, future::BoxFuture};
 use std::{
     collections::HashSet,
     path::{Path, PathBuf},
@@ -28,71 +30,79 @@ struct Entry {
     depth: usize,
 }
 
-fn scan(
+async fn scan(
+    files: &Backend,
     root: &Path,
     expanded: &HashSet<PathBuf>,
     query: &str,
 ) -> anyhow::Result<(Vec<Entry>, bool)> {
-    fn visit(
-        path: &Path,
-        expanded: &HashSet<PathBuf>,
-        query: &str,
+    fn visit<'a>(
+        files: &'a Backend,
+        path: &'a Path,
+        expanded: &'a HashSet<PathBuf>,
+        query: &'a str,
         depth: usize,
-        remaining: &mut usize,
-        rows: &mut Vec<Entry>,
-    ) -> anyhow::Result<()> {
-        let mut entries = Vec::new();
-        for entry in Here::read_dir(path)? {
-            if *remaining == 0 {
-                break;
+        remaining: &'a mut usize,
+        rows: &'a mut Vec<Entry>,
+    ) -> BoxFuture<'a, anyhow::Result<()>> {
+        async move {
+            let mut entries = Vec::new();
+            for entry in files.read_dir(path).await? {
+                if *remaining == 0 {
+                    break;
+                }
+                *remaining -= 1;
+                entries.push(entry);
             }
-            *remaining -= 1;
-            entries.push(entry);
+            entries.sort_by(|a, b| {
+                b.0.cmp(&a.0)
+                    .then_with(|| a.1.file_name().cmp(&b.1.file_name()))
+            });
+            for (directory, path) in entries {
+                let matches = query.is_empty()
+                    || path
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_lowercase()
+                        .contains(query);
+                if matches {
+                    rows.push(Entry {
+                        path: path.clone(),
+                        directory,
+                        depth: if query.is_empty() { depth } else { 0 },
+                    });
+                }
+                if directory
+                    && *remaining > 0
+                    && depth < 64
+                    && (!query.is_empty() || expanded.contains(&path))
+                {
+                    visit(files, &path, expanded, query, depth + 1, remaining, rows).await?;
+                }
+            }
+            Ok(())
         }
-        entries.sort_by(|a, b| {
-            b.0.cmp(&a.0)
-                .then_with(|| a.1.file_name().cmp(&b.1.file_name()))
-        });
-        for (directory, path) in entries {
-            let matches = query.is_empty()
-                || path
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_lowercase()
-                    .contains(query);
-            if matches {
-                rows.push(Entry {
-                    path: path.clone(),
-                    directory,
-                    depth: if query.is_empty() { depth } else { 0 },
-                });
-            }
-            if directory
-                && *remaining > 0
-                && depth < 64
-                && (!query.is_empty() || expanded.contains(&path))
-            {
-                visit(&path, expanded, query, depth + 1, remaining, rows)?;
-            }
-        }
-        Ok(())
+        .boxed()
     }
     let mut rows = Vec::new();
     let mut remaining = 20_000;
     visit(
+        files,
         root,
         expanded,
         &query.to_lowercase(),
         0,
         &mut remaining,
         &mut rows,
-    )?;
+    )
+    .await?;
     Ok((rows, remaining == 0))
 }
 
 pub struct Files {
     root: PathBuf,
+    files: Backend,
     focus: gpui::FocusHandle,
     filter_open: bool,
     filter: Entity<TextField>,
@@ -133,6 +143,7 @@ impl Files {
             }
         });
         let mut this = Self {
+            files: Backend::open(&Location::from(root.as_path())),
             root,
             focus: cx.focus_handle(),
             filter_open: false,
@@ -165,14 +176,14 @@ impl Files {
     }
 
     fn refresh(&mut self, cx: &mut Context<Self>) {
-        let root = self.root.clone();
+        let (files, root) = (self.files.clone(), self.root.clone());
         let expanded = self.expanded.clone();
         let query = self.filter.read(cx).content().to_string();
         self.loading = true;
         self.load = Some(cx.spawn(async move |this, cx| {
             let result = cx
                 .background_executor()
-                .spawn(async move { scan(&root, &expanded, &query) })
+                .spawn(async move { scan(&files, &root, &expanded, &query).await })
                 .await;
             let _ = this.update(cx, |this, cx| {
                 this.loading = false;

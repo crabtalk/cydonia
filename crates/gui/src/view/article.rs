@@ -750,10 +750,13 @@ impl ArticleView {
     /// Put an editor over the article's document, or take it away while the
     /// article holds none; and keep it at the article text size.
     pub(crate) fn ensure_editor(&mut self, cx: &mut Context<Self>) {
-        let Some((document, path)) = self
-            .model(cx)
-            .and_then(|article| Some((article.document.clone()?, article.path.clone())))
-        else {
+        let Some((document, path, shelf)) = self.model(cx).and_then(|article| {
+            Some((
+                article.document.clone()?,
+                article.path.clone(),
+                article.shelf(),
+            ))
+        }) else {
             self.editor = None;
             self.pictures = None;
             self._editor = None;
@@ -772,6 +775,7 @@ impl ArticleView {
         let scroll = self.scroll.clone();
         let (editor, pictures) = crate::view::kit::document::editor(
             &dir,
+            shelf,
             document,
             self.workspace.downgrade(),
             |editor| editor.with_text_size(size).with_scroll(scroll),

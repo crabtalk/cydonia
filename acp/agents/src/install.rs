@@ -1,7 +1,7 @@
 //! Putting an agent on disk and finding what it left there.
 
 use crate::{
-    registry::{Agent, Binary, Distribution},
+    registry::{self, Agent, Binary, Distribution},
     utils::{self, package_name},
 };
 use anyhow::{Context, Result, anyhow, bail};
@@ -69,6 +69,27 @@ impl Installed {
         let body = std::fs::read_to_string(record_file(data_dir, id).ok()?).ok()?;
         let record: Self = serde_json::from_str(&body).ok()?;
         Path::new(&record.command).exists().then_some(record)
+    }
+
+    /// The installation for `id`: the recorded one, or else the catalog's
+    /// agent of that id installed now, streaming installer output to
+    /// `on_line`. Blocking: a cold catalog reaches the network.
+    pub fn resolve(
+        cache_dir: &Path,
+        data_dir: &Path,
+        id: &str,
+        on_line: impl FnMut(&str),
+    ) -> Result<Self> {
+        if let Some(installed) = Self::find(data_dir, id) {
+            return Ok(installed);
+        }
+        let catalog = registry::catalog(cache_dir).context("no agent catalog")?;
+        let agent = catalog
+            .agents
+            .into_iter()
+            .find(|agent| agent.id == id)
+            .with_context(|| format!("{id} is not in the agent catalog"))?;
+        agent.install(data_dir, on_line)
     }
 
     /// Delete an installed agent. Succeeds whether or not it was there.

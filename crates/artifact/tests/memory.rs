@@ -8,8 +8,9 @@ use common::Wait as _;
 use cydonia_artifact::kind::Kind;
 use cydonia_artifact::{
     article::properties::Properties,
+    board::Page,
     entry,
-    project::{Project as _, memory},
+    project::{Owner, Project as _, memory},
 };
 
 const BOARD: &str = r#"
@@ -65,7 +66,94 @@ fn a_seed_reads_like_the_files_it_came_from() {
     assert_eq!(articles[0].id, "1790089015001");
     assert_eq!(articles[0].title, "Rate limiting plan");
     assert_eq!(store.read_article("1790089015001").unwrap(), "## Why now\n");
-    assert_eq!(store.asset("1790089015001", "a.png").unwrap(), b"png");
+    assert_eq!(
+        store
+            .asset(&Owner::Article("1790089015001".into()), "a.png")
+            .wait()
+            .unwrap(),
+        b"png"
+    );
+}
+
+#[test]
+fn a_seed_holds_the_pictures_of_a_boards_pages_and_the_shared_ones() {
+    let store = memory::Project::seed([
+        (
+            "boards/1790266971002/board.toml",
+            b"name = \"Ops\"\n".as_slice(),
+        ),
+        (
+            "boards/1790266971002/assets/d.png",
+            b"description".as_slice(),
+        ),
+        (
+            "boards/1790266971002/cards/c1/content.md",
+            b"A card".as_slice(),
+        ),
+        (
+            "boards/1790266971002/cards/c1/assets/c.png",
+            b"card".as_slice(),
+        ),
+        ("assets/s.png", b"shared".as_slice()),
+    ]);
+    let asset = |owner: Owner, name: &str| store.asset(&owner, name).wait().unwrap();
+    let page = |page| Owner::Page {
+        board: "1790266971002".into(),
+        page,
+    };
+    assert_eq!(asset(page(Page::Description), "d.png"), b"description");
+    assert_eq!(asset(page(Page::Card("c1".into())), "c.png"), b"card");
+    assert_eq!(asset(Owner::Shared, "s.png"), b"shared");
+}
+
+#[test]
+fn assets_round_trip_for_every_owner_and_go_with_it() {
+    let store = memory::Project::new();
+    let mut board = store.create_board("Plans", "").wait().unwrap();
+    let column = board.add_column("TODO").id.clone();
+    let card = board.add_card(&column, "x".into()).unwrap().id.clone();
+    store.save_board(&mut board).wait().unwrap();
+    let article = store.create_article("").wait().unwrap();
+    let on_card = Owner::Page {
+        board: board.id.clone(),
+        page: Page::Card(card.clone()),
+    };
+    let owners = [
+        Owner::Article(article.id.clone()),
+        on_card.clone(),
+        Owner::Page {
+            board: board.id.clone(),
+            page: Page::Description,
+        },
+        Owner::Shared,
+    ];
+    for owner in &owners {
+        store.put_asset(owner, "a.png", b"png").wait().unwrap();
+        assert_eq!(store.asset(owner, "a.png").wait().unwrap(), b"png");
+        assert!(store.put_asset(owner, "../a.png", b"x").wait().is_err());
+        assert!(store.asset(owner, "b.png").wait().is_err());
+    }
+
+    let other = memory::Project::new();
+    let landing = other.create_board("Elsewhere", "").wait().unwrap();
+    store
+        .carry_card_files(&board.id, &card, &other, &landing.id, "c2")
+        .wait()
+        .unwrap();
+    let carried = Owner::Page {
+        board: landing.id.clone(),
+        page: Page::Card("c2".into()),
+    };
+    assert_eq!(other.asset(&carried, "a.png").wait().unwrap(), b"png");
+
+    board.remove_card(&card);
+    store.save_board(&mut board).wait().unwrap();
+    assert!(store.asset(&on_card, "a.png").wait().is_err());
+    store.remove_article(&article.id).wait().unwrap();
+    assert!(store.asset(&owners[0], "a.png").wait().is_err());
+    store.remove_board(&board.id).wait().unwrap();
+    assert!(store.asset(&owners[2], "a.png").wait().is_err());
+    assert_eq!(store.asset(&Owner::Shared, "a.png").wait().unwrap(), b"png");
 }
 
 #[test]
@@ -129,7 +217,12 @@ fn writes_land_and_removals_retire_numbers() {
 
     assert!(store.remove_board("nope").wait().is_err());
     assert!(store.read_article("nope").is_err());
-    assert!(store.put_asset(&board.id, "a.png", b"").wait().is_err());
+    assert!(
+        store
+            .put_asset(&Owner::Article(board.id.clone()), "a.png", b"")
+            .wait()
+            .is_err()
+    );
 }
 
 #[test]

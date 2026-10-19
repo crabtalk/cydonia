@@ -3,6 +3,7 @@
 
 #![allow(dead_code)]
 
+use futures::executor::block_on;
 use git::{Backend as _, Change, Local};
 use std::{
     path::PathBuf,
@@ -59,11 +60,11 @@ impl Repo {
     }
 
     pub fn files(&self) -> Vec<Change> {
-        Local.status(&self.0).unwrap().unwrap().files
+        block_on(Local.status(&self.0)).unwrap().unwrap().files
     }
 
     pub fn patch(&self, file: &Change) -> String {
-        Local.diff(&self.0, file).unwrap()
+        block_on(Local.diff(&self.0, file)).unwrap()
     }
 }
 

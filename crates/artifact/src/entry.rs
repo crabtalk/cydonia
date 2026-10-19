@@ -71,6 +71,29 @@ impl Registry {
             .optional()?)
     }
 
+    /// Every number issued and not retired, with what it is on, in number
+    /// order. A row whose kind this build does not know is skipped.
+    pub fn issued(&self) -> Result<Vec<(u64, Kind, String)>> {
+        let mut statement = self
+            .0
+            .prepare("SELECT number, kind, id FROM entries WHERE id IS NOT NULL ORDER BY number")?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)? as u64,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?;
+        let mut issued = Vec::new();
+        for row in rows {
+            let (number, kind, id) = row?;
+            if let Some(kind) = Kind::from_key(&kind) {
+                issued.push((number, kind, id));
+            }
+        }
+        Ok(issued)
+    }
+
     pub fn rename(&self, kind: Kind, old: &str, new: &str) -> Result<()> {
         self.0.execute(
             "UPDATE entries SET id = ?3 WHERE kind = ?1 AND id = ?2",

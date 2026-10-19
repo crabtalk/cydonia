@@ -1540,20 +1540,30 @@ impl BoardView {
         }
         let (page, scroll) = (opened.page.clone(), opened.scroll.clone());
         let workspace = self.workspace.read(cx);
-        let Some(text) = self
-            .located(cx)
-            .and_then(|(project, at)| workspace.board_in(project, at, cx))
+        let Some((project, at)) = self.located(cx) else {
+            return;
+        };
+        let Some(text) = workspace
+            .board_in(project, at, cx)
             .and_then(|board| board.page_text(&page))
             .map(str::to_owned)
         else {
             return;
         };
         let text_size = workspace.text_size;
+        let shelf = crate::model::media::Shelf {
+            store: workspace.projects[project].store(),
+            owner: artifact::project::Owner::Page {
+                board: self.board.id.clone(),
+                page: page.clone(),
+            },
+        };
         let artifact::location::Location::Local(root) = &self.board.project;
         let dir = artifact::project::fs::Project::new(root).page_dir(&self.board.id, &page);
         let document = cx.new(|cx| editor::Document::new(&text, cx));
         let (editor, pictures) = crate::view::kit::document::editor(
             &dir,
+            shelf,
             document,
             self.workspace.downgrade(),
             |editor| editor.with_text_size(text_size).with_scroll(scroll),

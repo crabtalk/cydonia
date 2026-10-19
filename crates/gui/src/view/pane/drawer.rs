@@ -625,7 +625,7 @@ impl Cydonia {
                 .collect()
         };
         self.workspace
-            .update(cx, |workspace, _| workspace.hold_pages(&held));
+            .update(cx, |workspace, cx| workspace.hold_pages(&held, cx));
     }
 
     /// Open the entry `reference` names in `on`'s drawer, or put the drawer

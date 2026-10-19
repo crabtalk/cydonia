@@ -27,7 +27,7 @@
 //! (`update/macos.rs`), the tarball on Linux (`update/linux.rs`), the installer
 //! on Windows (`update/windows.rs`).
 
-use crate::model::{settings, version::Version};
+use crate::model::version::Version;
 #[cfg(unix)]
 use anyhow::bail;
 use anyhow::{Context as _, Result};
@@ -626,17 +626,10 @@ pub fn spent(name: &str) -> bool {
     Version::of_staging(name).is_some_and(|version| !version.newer_than(&Version::running()))
 }
 
-/// The throwaway corner of the config directory [`crate::agent::cache_dir`]
-/// keeps the fetched catalog in. Two things of ours live under it: the images,
-/// and the point an image is mounted at while it is read.
-fn cache() -> Result<PathBuf> {
-    Ok(settings::dir()?.join("cache"))
-}
-
 /// Where an image waits. Nothing but images is kept here — [`sweep`] deletes
 /// what it finds and does not recognise.
 fn downloads() -> Result<PathBuf> {
-    Ok(cache()?.join("updates"))
+    Ok(artifact::backup::cache_dir()?.join("updates"))
 }
 
 /// [`Platform::swap_on_exit`] for unix, which `launch` starts the new copy

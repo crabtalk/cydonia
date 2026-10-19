@@ -5,7 +5,53 @@ fn shell() -> (Shell, mpsc::Receiver<Vec<u8>>) {
     let mut command = CommandBuilder::new("/bin/sh");
     command.arg("-i");
     command.env("ENV", "/dev/null");
-    Shell::open_command(Path::new("/private/tmp"), command).expect("open PTY")
+    command.cwd("/private/tmp");
+    Shell::open_command(command).expect("open PTY")
+}
+
+#[cfg(unix)]
+#[test]
+fn local_login_runs_a_login_shell_at_its_directory() {
+    let command = Login::Local(PathBuf::from("/private/tmp")).command();
+    assert_eq!(command.get_argv().last().unwrap(), "-l");
+    assert_eq!(command.get_cwd().unwrap(), "/private/tmp");
+}
+
+#[cfg(unix)]
+#[test]
+fn remote_login_runs_ssh_with_a_terminal_through_the_control_socket() {
+    let host = cupola::client::ssh::Host::new("me@box").unwrap().port(2222);
+    let control = Control::new(host, "/tmp/cupola/ssh.sock");
+    let login = Login::Remote {
+        control,
+        dir: PathBuf::from("/srv/my app"),
+    };
+    let command = login.command();
+    let argv: Vec<_> = command
+        .get_argv()
+        .iter()
+        .map(|arg| arg.to_str().unwrap())
+        .collect();
+    assert_eq!(
+        argv,
+        [
+            "ssh",
+            "-o",
+            "ControlMaster=no",
+            "-o",
+            "ControlPath=/tmp/cupola/ssh.sock",
+            "-p",
+            "2222",
+            "-o",
+            "LogLevel=ERROR",
+            "-t",
+            "me@box",
+            "cd && cd '/srv/my app' && exec \"$SHELL\" -l",
+        ]
+    );
+    assert_eq!(command.get_cwd(), None);
+    assert!(!login.local());
+    assert_eq!(login.directory(), Path::new("/srv/my app"));
 }
 
 fn collect(mut output: mpsc::Receiver<Vec<u8>>) -> channel::Receiver<Vec<u8>> {

@@ -10,14 +10,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// A `SELECT`'s answer: the column names once, then the rows.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Rows {
     pub columns: Vec<String>,
     pub rows: Vec<Vec<Value>>,
 }
 
 /// One window of a table, with everything a grid needs to draw it.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Page {
     pub key: String,
     pub name: String,
@@ -30,7 +30,7 @@ pub struct Page {
     pub rows: Vec<Row>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Row {
     pub rowid: i64,
     /// In `columns` order.
@@ -39,7 +39,7 @@ pub struct Row {
 
 /// One cell to write. A pasted block and a single edit are the same thing at
 /// different lengths, so there is one shape for both.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Edit {
     pub rowid: i64,
     pub column: String,

@@ -17,6 +17,7 @@
 //! file a bare name stands for there.
 
 use std::{
+    collections::BTreeMap,
     ffi::OsStr,
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -27,7 +28,14 @@ use std::{
 /// is one whose startup files are doing something that cannot be waited on at
 /// launch — the inherited PATH is the answer then, which is the answer an app
 /// without any of this has.
-const TIMEOUT: Duration = Duration::from_secs(5);
+pub const TIMEOUT: Duration = Duration::from_secs(5);
+
+/// What prints an environment as [`Environment::parse`] reads it: a NUL,
+/// then each `NAME=value` ended by a NUL.
+pub const DUMP: &str = r"printf '\0'; exec /usr/bin/env -0";
+
+/// What the login shell is run with to print its environment.
+pub const LOGIN: [&str; 4] = ["-l", "-i", "-c", DUMP];
 
 /// How often it is looked in on while it runs.
 const TICK: Duration = Duration::from_millis(20);
@@ -59,7 +67,10 @@ pub fn adopt() {
     let Some(found) = query(&shell) else {
         return;
     };
-    let merged = merge(&found, &std::env::var("PATH").unwrap_or_default());
+    let Some(found) = found.get("PATH") else {
+        return;
+    };
+    let merged = merge(found, &std::env::var("PATH").unwrap_or_default());
     // SAFETY: the doc comment above is the contract — this runs from `main`
     // before the app has a second thread.
     unsafe { std::env::set_var("PATH", merged) };
@@ -73,9 +84,9 @@ pub fn adopt() {
 /// from. fish holds `PATH` as a list and would hand back a space-separated
 /// line; the exported variable `env` prints is colon-separated in every shell
 /// there is.
-fn query(shell: &OsStr) -> Option<String> {
+fn query(shell: &OsStr) -> Option<Environment> {
     let mut child = Command::new(shell)
-        .args(["-l", "-i", "-c", "/usr/bin/env"])
+        .args(LOGIN)
         // An interactive shell offered a terminal on stdin would wait for one.
         .stdin(Stdio::null())
         // Whatever its startup files want to complain about is not ours to print.
@@ -98,15 +109,46 @@ fn query(shell: &OsStr) -> Option<String> {
     }
 
     let output = child.wait_with_output().ok()?;
-    parse(&String::from_utf8_lossy(&output.stdout)).map(str::to_owned)
+    Some(Environment::parse(&String::from_utf8_lossy(&output.stdout)))
 }
 
-/// The `PATH=` line of an `env` dump — the last one, because a startup file
-/// that prints a banner prints it before `env` ever runs.
-pub fn parse(env: &str) -> Option<&str> {
-    env.lines()
-        .rev()
-        .find_map(|line| line.strip_prefix("PATH="))
+/// The variables a [`DUMP`] sets.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Environment(BTreeMap<String, String>);
+
+impl Environment {
+    /// Each `NAME=value` after the first NUL of `dump` whose name is a POSIX
+    /// variable name; the last wins for a name set twice. What comes before
+    /// that NUL, such as a banner a startup file prints, is skipped, and a
+    /// dump without one sets nothing.
+    pub fn parse(dump: &str) -> Self {
+        let set = dump
+            .split('\0')
+            .skip(1)
+            .filter_map(|entry| entry.split_once('='))
+            .filter(|(name, _)| Self::is_name(name))
+            .map(|(name, value)| (name.to_owned(), value.to_owned()))
+            .collect();
+        Self(set)
+    }
+
+    pub fn get(&self, name: &str) -> Option<&str> {
+        self.0.get(name).map(String::as_str)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.0
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.as_str()))
+    }
+
+    fn is_name(name: &str) -> bool {
+        let mut bytes = name.bytes();
+        bytes
+            .next()
+            .is_some_and(|first| first == b'_' || first.is_ascii_alphabetic())
+            && bytes.all(|byte| byte == b'_' || byte.is_ascii_alphanumeric())
+    }
 }
 
 /// The shell's PATH, then anything the inherited one had that it did not.

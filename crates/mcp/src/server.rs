@@ -33,6 +33,29 @@ pub struct Server {
     writable: Arc<AtomicBool>,
 }
 
+/// What [`Server::message`] answers one message with.
+pub enum Reply {
+    /// The answer to a request.
+    Answer(Response),
+    /// Nothing, for a notification.
+    Nothing,
+    /// The answer to text that is not a request: a parse error with a null
+    /// id.
+    Unreadable(Response),
+}
+
+impl Reply {
+    /// The message to send back, none for [`Reply::Nothing`].
+    pub fn text(&self) -> Option<String> {
+        match self {
+            Self::Nothing => None,
+            Self::Answer(response) | Self::Unreadable(response) => {
+                serde_json::to_string(response).ok()
+            }
+        }
+    }
+}
+
 struct Switched {
     tools: &'static [Tool],
     resource: &'static str,
@@ -146,6 +169,21 @@ impl Server {
     /// is a protocol error rather than a courtesy.
     pub fn handle(&self, request: &Request, at: Option<&Path>) -> Option<Response> {
         self.handle_from(request, at, None)
+    }
+
+    /// [`Self::handle_from`] for one JSON-RPC message as a transport carries
+    /// it.
+    pub fn message(&self, text: &str, at: Option<&Path>, session: Option<&str>) -> Reply {
+        match serde_json::from_str::<Request>(text) {
+            Ok(request) => match self.handle_from(&request, at, session) {
+                Some(response) => Reply::Answer(response),
+                None => Reply::Nothing,
+            },
+            Err(error) => Reply::Unreadable(Response::fail(
+                Value::Null,
+                Error::parse(format!("not a JSON-RPC request: {error}")),
+            )),
+        }
     }
 
     /// [`Self::handle`] for a call made by the session filed under `session`.

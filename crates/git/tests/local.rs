@@ -5,6 +5,7 @@ extern crate cydonia_git as git;
 mod fixture;
 
 use fixture::Repo;
+use futures::executor::block_on;
 use git::{Area, Backend as _, Change, Local, Repository};
 use std::path::Path;
 
@@ -66,7 +67,9 @@ fn paths_are_literal_and_nested_sessions_resolve_the_root() {
     repo.write("*.txt", "only this\n");
     repo.write("other.txt", "not this\n");
     std::fs::create_dir(repo.0.join("nested")).unwrap();
-    let status = Local.status(&repo.0.join("nested")).unwrap().unwrap();
+    let status = block_on(Local.status(&repo.0.join("nested")))
+        .unwrap()
+        .unwrap();
     assert_eq!(
         status.root.canonicalize().unwrap(),
         repo.0.canonicalize().unwrap()
@@ -96,7 +99,7 @@ fn non_repository_clean_ignored_and_binary_states() {
     let plain = repo.0.join("plain");
     std::fs::create_dir(&plain).unwrap();
     std::fs::remove_dir_all(repo.0.join(".git")).unwrap();
-    assert!(Local.status(&plain).unwrap().is_none());
+    assert!(block_on(Local.status(&plain)).unwrap().is_none());
 }
 
 #[test]
@@ -113,14 +116,13 @@ fn linked_worktree_is_its_own_repository() {
         worktree.to_str().unwrap(),
     ]);
     std::fs::write(worktree.join("file"), "linked change\n").unwrap();
-    let status = Local.status(&worktree).unwrap().unwrap();
+    let status = block_on(Local.status(&worktree)).unwrap().unwrap();
     assert_eq!(
         status.root.canonicalize().unwrap(),
         worktree.canonicalize().unwrap()
     );
     assert!(
-        Local
-            .diff(&status.root, &status.files[0])
+        block_on(Local.diff(&status.root, &status.files[0]))
             .unwrap()
             .contains("+linked change")
     );
@@ -156,7 +158,7 @@ fn unusual_paths_and_symlinks_are_not_followed() {
         .find(|file| file.path == Path::new("link"))
         .unwrap();
     assert!(repo.patch(link).contains("+missing-target"));
-    assert_eq!(Local.sources(&repo.0, link).new, None);
+    assert_eq!(block_on(Local.sources(&repo.0, link)).new, None);
 }
 
 /// Skipped where the filesystem refuses a name that is not UTF-8.
@@ -247,13 +249,13 @@ fn sources_read_head_index_and_working_tree() {
     repo.write("file", "working\n");
     repo.write("untracked", "new\n");
     let files = repo.files();
-    let staged = Local.sources(&repo.0, &files[0]);
+    let staged = block_on(Local.sources(&repo.0, &files[0]));
     assert_eq!(staged.old.as_deref(), Some("head\n"));
     assert_eq!(staged.new.as_deref(), Some("index\n"));
-    let unstaged = Local.sources(&repo.0, &files[1]);
+    let unstaged = block_on(Local.sources(&repo.0, &files[1]));
     assert_eq!(unstaged.old.as_deref(), Some("index\n"));
     assert_eq!(unstaged.new.as_deref(), Some("working\n"));
-    let untracked = Local.sources(&repo.0, &files[2]);
+    let untracked = block_on(Local.sources(&repo.0, &files[2]));
     assert_eq!(untracked.old, None);
     assert_eq!(untracked.new.as_deref(), Some("new\n"));
 }

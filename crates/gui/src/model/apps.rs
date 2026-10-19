@@ -8,6 +8,10 @@ use anyhow::{Context as _, Result};
 use artifact::app::{Home as _, Installed};
 use bezel::gpui::{App, AppContext as _, Context, Entity, Task};
 use cargo::{Cargo, Stop};
+use futures::{
+    FutureExt as _,
+    future::{self, BoxFuture},
+};
 use std::{ops::Range, sync::Arc};
 
 pub use artifact::app::Origin;
@@ -235,21 +239,26 @@ impl Program {
 
 impl Program {
     /// Answer the app's call on its own tables.
-    pub fn table_call(&mut self, call: Call) -> Answer {
-        self.answer_table_call(call)
-            .unwrap_or_else(|error| Answer::Error(format!("{error:#}")))
+    pub fn table_call(&mut self, call: Call) -> BoxFuture<'static, Answer> {
+        let answered = match self.tables() {
+            Ok(data) => data.call(call),
+            Err(error) => future::ready(Err(error)).boxed(),
+        };
+        answered
+            .map(|answer| answer.unwrap_or_else(|error| Answer::Error(format!("{error:#}"))))
+            .boxed()
     }
 
-    fn answer_table_call(&mut self, call: Call) -> Result<Answer> {
-        let data = match &mut self.data {
+    /// The app's own tables, opened at the first call on them.
+    fn tables(&mut self) -> Result<&mut Data> {
+        let data = match self.data.take() {
             Some(data) => data,
             None => {
                 let manifest = self.manifest.as_ref().context("The app has no manifest")?;
-                let home = Home::App(manifest.home()?);
-                self.data.insert(Box::new(Here::open(&home)?))
+                Box::new(Here::open(&Home::App(manifest.home()?))?)
             }
         };
-        data.call(call)
+        Ok(self.data.insert(data))
     }
 }
 

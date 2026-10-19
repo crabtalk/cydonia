@@ -5,6 +5,7 @@ mod fixture;
 
 use cydonia_gui::model::language::Grammars as _;
 use fixture::Repo;
+use futures::executor::block_on;
 
 #[test]
 fn syntax_uses_head_index_and_working_versions_and_reuses_unchanged_previews() {
@@ -21,13 +22,13 @@ fn syntax_uses_head_index_and_working_versions_and_reuses_unchanged_previews() {
     repo.git(&["add", "file.rs"]);
     repo.write("file.rs", "fn main() {\n    let working = \"value\";\n}\n");
     let files = repo.files();
-    let staged = Preview::load(
+    let staged = block_on(Preview::load(
         &git,
         &repo.0,
         &files[0],
         repo.patch(&files[0]),
         Arc::default(),
-    );
+    ));
     let removed = staged
         .lines
         .iter()
@@ -39,7 +40,13 @@ fn syntax_uses_head_index_and_working_versions_and_reuses_unchanged_previews() {
             .iter()
             .any(|(_, kind)| *kind == HighlightKind::Comment)
     );
-    let unstaged = Preview::load(&git, &repo.0, &files[1], repo.patch(&files[1]), staged);
+    let unstaged = block_on(Preview::load(
+        &git,
+        &repo.0,
+        &files[1],
+        repo.patch(&files[1]),
+        staged,
+    ));
     let added = unstaged
         .lines
         .iter()
@@ -51,12 +58,12 @@ fn syntax_uses_head_index_and_working_versions_and_reuses_unchanged_previews() {
             .iter()
             .any(|(_, kind)| *kind == HighlightKind::String)
     );
-    let cached = Preview::load(
+    let cached = block_on(Preview::load(
         &git,
         &repo.0,
         &files[1],
         repo.patch(&files[1]),
         unstaged.clone(),
-    );
+    ));
     assert!(Arc::ptr_eq(&unstaged, &cached));
 }

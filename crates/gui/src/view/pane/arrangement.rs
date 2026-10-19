@@ -864,11 +864,18 @@ impl Cydonia {
                     })
                 }
                 New::Table => {
-                    let member = workspace.create_table().and_then(|ix| {
-                        let key = workspace.projects.get(project)?.tables.get(ix)?.key.clone();
-                        workspace.member_of(project, Showing::Table(key), cx)
-                    });
-                    Task::ready(member)
+                    let made = workspace.create_table(cx);
+                    cx.spawn(async move |workspace, cx| {
+                        let (project, ix) = made.await?;
+                        workspace
+                            .update(cx, |workspace, cx| {
+                                let key =
+                                    workspace.projects.get(project)?.tables.get(ix)?.key.clone();
+                                workspace.member_of(project, Showing::Table(key), cx)
+                            })
+                            .ok()
+                            .flatten()
+                    })
                 }
                 New::Board => Task::ready(None),
             }

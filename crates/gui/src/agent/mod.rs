@@ -20,10 +20,7 @@
 use crate::model::settings::{self, Agent};
 use bezel::ui::icons::Icon;
 use cydonia_acp::agents::{Distribution, Installed, registry};
-use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
-};
+use std::{collections::HashMap, path::Path};
 
 pub mod acp;
 pub mod context;
@@ -35,19 +32,13 @@ pub mod spawner;
 /// How many of an installer's last output lines are kept.
 pub const OUTPUT_KEEP: usize = 40;
 
-/// Where the fetched catalog and the icons beside it are kept — a cache under
-/// the config directory, not among the files a person edits.
-pub fn cache_dir() -> Option<PathBuf> {
-    settings::dir().ok().map(|dir| dir.join("cache"))
-}
-
 /// The registry's mark for each configured agent, by name.
 ///
 /// Blocking: this reaches the network on a cold cache. Call it off the UI
 /// thread. An empty map is the honest answer offline — every caller falls
 /// back to what it drew before.
 pub fn icons(configured: &[settings::Agent]) -> HashMap<String, Icon> {
-    let Some(cache) = cache_dir() else {
+    let Ok(cache) = artifact::backup::cache_dir() else {
         return HashMap::new();
     };
     let Some(catalog) = registry::catalog(&cache) else {
@@ -129,7 +120,7 @@ pub struct Listing {
 /// list arrives in one round trip rather than forty. [`prefetch_icons`] is
 /// what fills the gaps in.
 pub fn listings(configured: &[settings::Agent]) -> Vec<Listing> {
-    let (Some(cache), Ok(data)) = (cache_dir(), settings::data_dir()) else {
+    let (Ok(cache), Ok(data)) = (artifact::backup::cache_dir(), settings::data_dir()) else {
         return Vec::new();
     };
     let Some(catalog) = registry::catalog(&cache) else {
@@ -160,7 +151,7 @@ pub fn listings(configured: &[settings::Agent]) -> Vec<Listing> {
 /// slow on a cold cache — one request per agent — so it belongs behind a list
 /// that is already on screen.
 pub fn prefetch_icons() {
-    let Some(cache) = cache_dir() else {
+    let Ok(cache) = artifact::backup::cache_dir() else {
         return;
     };
     let Some(catalog) = registry::catalog(&cache) else {
@@ -186,17 +177,6 @@ pub fn record(held: &mut Vec<String>, line: String) {
     }
 }
 
-/// Put the agent on disk and name it in `settings.toml`. Blocking: this runs
-/// `npm`, or unpacks a release archive.
-///
-/// Both halves live here because only this function holds the registry entry,
-/// and the package inside it is what tells `settings` which hand-written
-/// `@latest` line this install supersedes.
-///
-/// `on_line` is handed each line the installer prints — `npm install <pkg>`,
-/// `downloaded 24 MB`, `unpacking` — which is the only account of a step that
-/// can run for a minute. It is called on whichever thread this is, so a caller
-/// on the background executor sends rather than paints.
 /// What an agent's install is agreed to, as a line that outlives a version.
 ///
 /// A package by name and a download by the host that serves it: those are what
@@ -228,15 +208,20 @@ fn archive_host(archive: &str) -> &str {
     }
 }
 
+/// Put the agent on disk and name it in `settings.toml`. Blocking: this runs
+/// `npm`, or unpacks a release archive.
+///
+/// Both halves live here because only this function holds the registry entry,
+/// and the package inside it is what tells `settings` which hand-written
+/// `@latest` line this install supersedes.
+///
+/// `on_line` is handed each line the installer prints — `npm install <pkg>`,
+/// `downloaded 24 MB`, `unpacking` — which is the only account of a step that
+/// can run for a minute. It is called on whichever thread this is, so a caller
+/// on the background executor sends rather than paints.
 pub fn install(agent: &registry::Agent, on_line: impl FnMut(&str)) -> anyhow::Result<()> {
     let installed = agent.install(&settings::data_dir()?, on_line)?;
-    let entry = Agent {
-        name: agent.name.clone(),
-        id: Some(agent.id.clone()),
-        command: installed.command,
-        args: installed.args,
-        env: installed.env,
-    };
+    let entry = Agent::installed(agent.name.clone(), installed);
     let package = match &agent.distribution {
         Distribution::Npm { package, .. } => Some(cydonia_acp::agents::package_name(package)),
         _ => None,

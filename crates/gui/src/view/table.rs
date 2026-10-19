@@ -100,12 +100,18 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) {
         self.select_project(project, cx);
-        let ix = self
+        let made = self
             .workspace
             .update(cx, |workspace, cx| workspace.new_table(cx));
-        if let Some(ix) = ix {
-            self.open_table(project, ix, window, cx);
-        }
+        cx.spawn_in(window, async move |this, cx| {
+            let Some((project, ix)) = made.await else {
+                return;
+            };
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.open_table(project, ix, window, cx)
+            });
+        })
+        .detach();
     }
 
     pub(crate) fn open_table(
@@ -344,19 +350,25 @@ impl TableView {
         self.drop_cell(cx);
     }
 
-    /// A row, and the caret in the first cell of it — an empty row you have to
-    /// go and click is two actions for one intent.
+    /// A row, and the caret in the first cell of it once it lands — an empty
+    /// row you have to go and click is two actions for one intent.
     fn add_row(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.commit_cell(cx);
         let Some(key) = self.key(cx) else {
             return;
         };
-        let rowid = self
+        let added = self
             .workspace
             .update(cx, |workspace, cx| workspace.add_row(&key, cx));
-        if let Some(rowid) = rowid {
-            self.edit_cell(Cell::Value { rowid, column: 0 }, window, cx);
-        }
+        cx.spawn_in(window, async move |this, cx| {
+            let Some(rowid) = added.await else {
+                return;
+            };
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.edit_cell(Cell::Value { rowid, column: 0 }, window, cx)
+            });
+        })
+        .detach();
     }
 
     fn delete_row(&mut self, rowid: i64, cx: &mut Context<Self>) {

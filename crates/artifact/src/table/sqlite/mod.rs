@@ -3,18 +3,22 @@
 //! SQLite's catalog is the registry — columns are read back out of `PRAGMA
 //! table_info`, so there is no second list of them. Reads go to a handle
 //! opened read-only.
+//!
+//! [`Sqlite`]'s own methods answer in place; through [`Tables`] the same calls
+//! answer with a reply that is ready at once.
 
 mod ddl;
 mod rows;
 mod sql;
 
 use super::{
-    ColType, Column, Home, Local, Table, Tables, quote,
+    ColType, Column, Home, Local, Reply, Table, Tables, quote,
     rows::{Edit, Page, Row, Rows},
 };
 use crate::kind::Kind;
 use crate::project::fs::{self, DATA as FILE};
 use anyhow::{Result, anyhow, bail};
+use futures::{FutureExt as _, future};
 use rusqlite::{Connection, OpenFlags, Row as SqlRow, types::ValueRef};
 use serde_json::{Map, Value};
 use std::{collections::HashSet, path::PathBuf, time::Duration};
@@ -113,14 +117,99 @@ impl Local for Sqlite {
 }
 
 impl Tables for Sqlite {
+    fn list(&self) -> Reply<Vec<Table>> {
+        ready(Sqlite::list(self))
+    }
+
+    fn archive(&mut self, key: &str, archived: bool) -> Reply<()> {
+        ready(Sqlite::archive(self, key, archived))
+    }
+
+    fn touch(&mut self, key: &str) -> Reply<()> {
+        ready(Sqlite::touch(self, key))
+    }
+
+    fn create(
+        &mut self,
+        name: &str,
+        key: Option<&str>,
+        columns: &[Column],
+        author: Option<&str>,
+    ) -> Reply<Table> {
+        ready(Sqlite::create(self, name, key, columns, author))
+    }
+
+    fn update(&mut self, table: &str, name: Option<&str>, key: Option<&str>) -> Reply<Table> {
+        ready(Sqlite::update(self, table, name, key))
+    }
+
+    fn remove(&mut self, table: &str) -> Reply<()> {
+        ready(Sqlite::remove(self, table))
+    }
+
+    fn write_column(
+        &mut self,
+        table: &str,
+        column: &str,
+        kind: Option<ColType>,
+        rename: Option<&str>,
+    ) -> Reply<Vec<Column>> {
+        ready(Sqlite::write_column(self, table, column, kind, rename))
+    }
+
+    fn read(
+        &self,
+        table: &str,
+        sort: Option<&str>,
+        desc: bool,
+        limit: i64,
+        offset: i64,
+    ) -> Reply<Page> {
+        ready(Sqlite::read(self, table, sort, desc, limit, offset))
+    }
+
+    fn write_cells(&mut self, table: &str, edits: &[Edit]) -> Reply<()> {
+        ready(Sqlite::write_cells(self, table, edits))
+    }
+
+    fn add_rows(&mut self, table: &str, count: i64) -> Reply<Vec<i64>> {
+        ready(Sqlite::add_rows(self, table, count))
+    }
+
+    fn insert(&mut self, table: &str, rows: &[Map<String, Value>]) -> Reply<Vec<i64>> {
+        ready(Sqlite::insert(self, table, rows))
+    }
+
+    fn delete_where(&mut self, table: &str, column: &str, value: &Value) -> Reply<()> {
+        ready(Sqlite::delete_where(self, table, column, value))
+    }
+
+    fn delete_rows(&mut self, table: &str, rowids: &[i64]) -> Reply<()> {
+        ready(Sqlite::delete_rows(self, table, rowids))
+    }
+
+    fn drop_column(&mut self, table: &str, column: &str) -> Reply<Vec<Column>> {
+        ready(Sqlite::drop_column(self, table, column))
+    }
+
+    fn query(&self, sql: &str) -> Reply<Rows> {
+        ready(Sqlite::query(self, sql))
+    }
+
+    fn write(&mut self, sql: &str) -> Reply<u64> {
+        ready(Sqlite::write(self, sql))
+    }
+}
+
+impl Sqlite {
     /// Every table with its columns and row count, in [`Sqlite::keys`]'s order.
-    fn list(&self) -> Result<Vec<Table>> {
+    pub fn list(&self) -> Result<Vec<Table>> {
         self.keys()?.iter().map(|key| self.table(key)).collect()
     }
 
     /// Put a table away, or bring it back. The rows stay exactly where they
     /// are — this is the sidebar's business and nothing else's.
-    fn archive(&mut self, key: &str, archived: bool) -> Result<()> {
+    pub fn archive(&mut self, key: &str, archived: bool) -> Result<()> {
         self.writer.execute(
             "UPDATE _tables SET archived = ?2 WHERE key = ?1",
             rusqlite::params![key, archived],
@@ -130,7 +219,7 @@ impl Tables for Sqlite {
 
     /// Mark a table written just now — the stamp [`Sqlite::keys`] orders on, so
     /// the one being worked in is the one on top.
-    fn touch(&mut self, key: &str) -> Result<()> {
+    pub fn touch(&mut self, key: &str) -> Result<()> {
         self.writer.execute(
             "UPDATE _tables SET updated_at = ?2 WHERE key = ?1",
             rusqlite::params![key, now()],
@@ -140,7 +229,7 @@ impl Tables for Sqlite {
 
     /// `key` overrides the identifier derived from the name — the one chance to
     /// choose it, since afterwards it is what every written query spells.
-    fn create(
+    pub fn create(
         &mut self,
         name: &str,
         key: Option<&str>,
@@ -191,7 +280,7 @@ impl Tables for Sqlite {
     ///
     /// The name upserts, so a table that reached the file without a name row
     /// (made outside these tools) can still be given one.
-    fn update(&mut self, table: &str, name: Option<&str>, key: Option<&str>) -> Result<Table> {
+    pub fn update(&mut self, table: &str, name: Option<&str>, key: Option<&str>) -> Result<Table> {
         let mut current = self.resolve(table)?;
 
         if let Some(wanted) = key.map(str::trim).filter(|key| !key.is_empty()) {
@@ -237,7 +326,7 @@ impl Tables for Sqlite {
     ///
     /// Not reachable from a tool, and that is deliberate: an agent fills a
     /// table in, the person decides whether it goes on existing.
-    fn remove(&mut self, table: &str) -> Result<()> {
+    pub fn remove(&mut self, table: &str) -> Result<()> {
         let key = self.resolve(table)?;
         let numbered = self.project().is_some();
         let tx = self.writer.transaction()?;
@@ -253,61 +342,6 @@ impl Tables for Sqlite {
         Ok(())
     }
 
-    fn write_column(
-        &mut self,
-        table: &str,
-        column: &str,
-        kind: Option<ColType>,
-        rename: Option<&str>,
-    ) -> Result<Vec<Column>> {
-        Sqlite::write_column(self, table, column, kind, rename)
-    }
-
-    fn read(
-        &self,
-        table: &str,
-        sort: Option<&str>,
-        desc: bool,
-        limit: i64,
-        offset: i64,
-    ) -> Result<Page> {
-        Sqlite::read(self, table, sort, desc, limit, offset)
-    }
-
-    fn write_cells(&mut self, table: &str, edits: &[Edit]) -> Result<()> {
-        Sqlite::write_cells(self, table, edits)
-    }
-
-    fn add_rows(&mut self, table: &str, count: i64) -> Result<Vec<i64>> {
-        Sqlite::add_rows(self, table, count)
-    }
-
-    fn insert(&mut self, table: &str, rows: &[Map<String, Value>]) -> Result<Vec<i64>> {
-        Sqlite::insert(self, table, rows)
-    }
-
-    fn delete_where(&mut self, table: &str, column: &str, value: &Value) -> Result<()> {
-        Sqlite::delete_where(self, table, column, value)
-    }
-
-    fn delete_rows(&mut self, table: &str, rowids: &[i64]) -> Result<()> {
-        Sqlite::delete_rows(self, table, rowids)
-    }
-
-    fn drop_column(&mut self, table: &str, column: &str) -> Result<Vec<Column>> {
-        Sqlite::drop_column(self, table, column)
-    }
-
-    fn query(&self, sql: &str) -> Result<Rows> {
-        Sqlite::query(self, sql)
-    }
-
-    fn write(&mut self, sql: &str) -> Result<u64> {
-        Sqlite::write(self, sql)
-    }
-}
-
-impl Sqlite {
     /// The project its tables are entries of. `None` for an app's own store.
     fn project(&self) -> Option<&PathBuf> {
         match &self.home {
@@ -511,6 +545,12 @@ fn slug(name: &str) -> String {
     } else {
         out.to_owned()
     }
+}
+
+/// A call's reply, answered at once: the store did the work when it was
+/// called.
+fn ready<T: Send + 'static>(answer: Result<T>) -> Reply<T> {
+    future::ready(answer).boxed()
 }
 
 /// Seconds since the epoch, as SQLite stores an integer.

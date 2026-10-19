@@ -2,13 +2,13 @@
 //! article — each opened in another application from a button over it: the
 //! remembered application, or a pick from the ones that open its kind.
 //!
-//! A picture on the web is fetched into [`Assets`] and opened from there. With
+//! A picture on the web is fetched onto a [`Shelf`] and opened from there. With
 //! an editor to relink, the document is pointed at the copy; without one it
 //! keeps pointing at the web. A picture on disk is watched once it is
 //! handed over, and repainted when the other application saves it.
 
 use super::external::{self, Application, Target};
-use crate::model::{settings::Opens, watch, workspace::Workspace};
+use crate::model::{media::Shelf, settings::Opens, watch, workspace::Workspace};
 use bezel::{
     gpui::{self, AnyElement, App, Context, Entity, Task, WeakEntity, prelude::*, px},
     theme::{ControlSize, Theme},
@@ -21,15 +21,6 @@ use std::{
     time::SystemTime,
 };
 
-/// Where a picture fetched off the web is kept.
-#[derive(Clone, PartialEq)]
-pub(crate) enum Assets {
-    /// The project's `.cydonia/assets/`, by the project's root.
-    Project(PathBuf),
-    /// A directory of its own, such as an article's `assets/`.
-    Dir(PathBuf),
-}
-
 /// Each picture on disk as gpui's asset cache last decoded it, by path. App
 /// wide, like that cache: a document drawn after a save finds the picture
 /// cached as it was before it.
@@ -41,7 +32,8 @@ impl gpui::Global for Loaded {}
 pub(crate) struct Pictures {
     /// The directory a relative picture path is joined onto.
     base: PathBuf,
-    assets: Assets,
+    /// Where a picture fetched off the web is filed.
+    shelf: Shelf,
     /// What went wrong opening the last picture, for the host to show.
     pub(crate) error: Option<String>,
     /// What opens a picture, by its lowercase extension. `None` while the
@@ -67,7 +59,7 @@ impl Pictures {
     /// Pictures are checked for a save every `workspace`'s watch delay.
     pub(crate) fn new(
         base: PathBuf,
-        assets: Assets,
+        shelf: Shelf,
         workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -87,7 +79,7 @@ impl Pictures {
         });
         Self {
             base,
-            assets,
+            shelf,
             error: None,
             apps: HashMap::new(),
             menu: popover::Popup::default(),
@@ -148,10 +140,10 @@ impl Pictures {
         self.editor = Some(editor);
     }
 
-    /// Point relative paths at `base` and fetches at `assets`.
-    pub(crate) fn place(&mut self, base: PathBuf, assets: Assets) {
+    /// Point relative paths at `base` and fetches at `shelf`.
+    pub(crate) fn place(&mut self, base: PathBuf, shelf: Shelf) {
         self.base = base;
-        self.assets = assets;
+        self.shelf = shelf;
     }
 
     /// The button over each picture, for an editor's or a preview's
@@ -203,7 +195,7 @@ impl Pictures {
     fn open_picture(&mut self, url: &str, target: Target, cx: &mut Context<Self>) {
         let url = url.to_owned();
         let base = self.base.clone();
-        let assets = self.assets.clone();
+        let shelf = self.shelf.clone();
         cx.spawn(async move |this, cx| {
             let opened = cx
                 .background_executor()
@@ -211,7 +203,7 @@ impl Pictures {
                     let url = url.clone();
                     async move {
                         let file = match url.contains("://") {
-                            true => fetch(&url, &assets)?,
+                            true => fetch(&url, &shelf).await?,
                             false => base.join(&url),
                         };
                         external::open(&file, &target)?;
@@ -253,28 +245,25 @@ fn stamp(path: &Path) -> Option<Stamp> {
     Some((meta.modified().ok()?, meta.len()))
 }
 
-/// Fetch the picture at `url` into `assets`, named for its bytes.
+/// Fetch the picture at `url` onto `shelf`, and answer where it is on this
+/// machine.
 #[cfg(feature = "desktop")]
-fn fetch(url: &str, assets: &Assets) -> anyhow::Result<PathBuf> {
+async fn fetch(url: &str, shelf: &Shelf) -> anyhow::Result<PathBuf> {
     use anyhow::Context as _;
-    use artifact::project::fs::Project;
 
-    let dir = match assets {
-        Assets::Project(root) => {
-            let project = Project::new(root);
-            project.init()?;
-            project.assets()
-        }
-        Assets::Dir(dir) => dir.clone(),
-    };
     let bytes = crate::model::media::download(url)?;
     let format = image::guess_format(&bytes)?;
     let extension = format.extensions_str().first().copied().unwrap_or("png");
-    crate::model::media::store(&dir, &bytes, extension).context("Could not save the picture")
+    let picture = crate::model::media::Picture::new(bytes, extension);
+    let (name, write) = shelf.put(&picture);
+    write.await.context("Could not save the picture")?;
+    shelf
+        .file(&name)
+        .context("The picture is not kept on this machine")
 }
 
 #[cfg(not(feature = "desktop"))]
-fn fetch(_: &str, _: &Assets) -> anyhow::Result<PathBuf> {
+async fn fetch(_: &str, _: &Shelf) -> anyhow::Result<PathBuf> {
     anyhow::bail!("Pictures on the web cannot be fetched here")
 }
 

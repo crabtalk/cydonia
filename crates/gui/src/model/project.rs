@@ -18,7 +18,8 @@ use artifact::board::Board;
 use artifact::kind::Kind;
 use artifact::location::Location;
 use artifact::project::Project as _;
-use bezel::gpui::{App, AppContext as _, Context, Entity};
+use bezel::gpui::{App, AppContext as _, Context, Entity, Task};
+use futures::future;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -98,7 +99,15 @@ pub struct Project {
     ///
     /// By key rather than one slot: a space can stand two tables side by
     /// side, and one page between them would draw the same rows in both.
+    ///
+    /// A page stays as it is until a newer read of it lands.
     pub pages: HashMap<String, Page>,
+    /// Reads issued on `data`, which numbers each one.
+    asked: u64,
+    /// The read `tables` was last taken from.
+    listed: u64,
+    /// The read each page in `pages` was taken from, by key.
+    paged: HashMap<String, u64>,
     /// Tables drawn somewhere other than the table pane — a drawer — by key.
     /// Their pages are read alongside the open table's.
     held: std::collections::BTreeSet<String>,
@@ -127,9 +136,11 @@ impl Project {
         })
     }
 
+    /// The project at `path`, its tables not yet read — see
+    /// [`Self::reload_tables`].
     pub fn new(path: PathBuf, cx: &mut App) -> Self {
         let store = store::open(&Location::Local(path.clone()));
-        let mut this = Self {
+        Self {
             boards: store
                 .boards()
                 .into_iter()
@@ -145,14 +156,15 @@ impl Project {
             tables: Vec::new(),
             table: None,
             pages: HashMap::new(),
+            asked: 0,
+            listed: 0,
+            paged: HashMap::new(),
             held: Default::default(),
             expanded: true,
             archive_open: false,
             label: None,
             watch: None,
-        };
-        this.reload_tables();
-        this
+        }
     }
 
     /// The board whose key is `key`, matched as a handle matches it.
@@ -173,10 +185,11 @@ impl Project {
     /// why the event itself is never read for more than where it landed.
     ///
     /// Answers whether anything a view holds *about* an entry moved: a card's
-    /// place on a board, a column's place in a table. Everything else is drawn off the model each frame and
+    /// place on a board. Everything else is drawn off the model each frame and
     /// nobody keeps a handle on it, so a re-read that only changed those has
     /// nothing to announce — and announcing it would drop the edit somebody has
-    /// open over the echo of their own save.
+    /// open over the echo of their own save. The tables are re-read by
+    /// [`Self::reload_tables`].
     pub fn reload(&mut self, cx: &mut Context<Workspace>) -> bool {
         // The store can appear long after the project was opened, and an agent
         // making one is exactly the case this watch is here for.
@@ -184,10 +197,7 @@ impl Project {
             self.data = self.store().tables();
         }
         self.reload_articles(cx);
-        let boards = self.reload_boards(cx);
-        let before = self.shape();
-        self.reload_tables();
-        boards || before != self.shape()
+        self.reload_boards(cx)
     }
 
     /// What the table pane addresses by position: which tables there are, and
@@ -268,9 +278,48 @@ impl Project {
         moved
     }
 
-    /// Re-read what tables exist. The store is the list — nothing here keeps a
-    /// second copy of it that a failed write could leave standing.
-    pub fn reload_tables(&mut self) {
+    /// Re-read what tables exist, and the pages on show. The store is the
+    /// list — nothing here keeps a second copy of it that a failed write could
+    /// leave standing. Answers, once both have landed, whether what the table
+    /// pane addresses by position moved — see [`Self::shape`].
+    pub fn reload_tables(&mut self, cx: &mut Context<Workspace>) -> Task<bool> {
+        let seq = self.ask();
+        let listed = self.data.as_ref().map(|data| data.list());
+        let pages = self.read_pages();
+        let path = self.path.clone();
+        cx.spawn(async move |workspace, cx| {
+            let tables = match listed {
+                Some(listed) => listed.await.unwrap_or_default(),
+                None => Vec::new(),
+            };
+            let pages = pages.await;
+            workspace
+                .update(cx, |workspace, cx| {
+                    let ix = workspace.project_at(&path)?;
+                    let open = &mut workspace.projects[ix];
+                    let before = open.shape();
+                    open.take_tables(seq, tables);
+                    open.take_pages(seq, pages);
+                    cx.notify();
+                    Some(before != open.shape())
+                })
+                .ok()
+                .flatten()
+                .unwrap_or(false)
+        })
+    }
+
+    /// Whether a list of the tables has landed since the project was opened.
+    pub fn tables_listed(&self) -> bool {
+        self.listed > 0
+    }
+
+    /// Take a list read with `seq`, unless a newer one has landed.
+    fn take_tables(&mut self, seq: u64, tables: Vec<Table>) {
+        if seq <= self.listed {
+            return;
+        }
+        self.listed = seq;
         // Held by key across the re-read, not by index: a table made or dropped
         // beside the open one shifts every index past it, and the pane would be
         // left showing whichever table slid into its place.
@@ -278,53 +327,99 @@ impl Project {
             .table
             .and_then(|ix| self.tables.get(ix))
             .map(|table| table.key.clone());
-        self.tables = self
-            .data
-            .as_ref()
-            .and_then(|data| data.list().ok())
-            .unwrap_or_default();
+        self.tables = tables;
         self.table = match open.and_then(|key| self.table_ix(&key)) {
             found @ Some(_) => found,
             None => self.table.filter(|ix| *ix < self.tables.len()),
         };
-        self.reload_page();
     }
 
-    /// Read the open table's rows.
     /// The page the open table is on.
     pub fn open_page(&self) -> Option<&Page> {
         let key = &self.tables.get(self.table?)?.key;
         self.pages.get(key)
     }
 
-    /// Read the rows for the open table and the held ones. Any other page is
-    /// dropped: a page is a window on a table nobody is looking at.
-    pub fn reload_page(&mut self) {
-        let wanted: Vec<String> = self
-            .table
+    /// Read the rows for the open table and the held ones.
+    pub fn reload_page(&mut self, cx: &mut Context<Workspace>) {
+        let seq = self.ask();
+        let pages = self.read_pages();
+        let path = self.path.clone();
+        cx.spawn(async move |workspace, cx| {
+            let pages = pages.await;
+            let _ = workspace.update(cx, |workspace, cx| {
+                if let Some(ix) = workspace.project_at(&path) {
+                    workspace.projects[ix].take_pages(seq, pages);
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// The tables whose pages are read: the open one and the held ones.
+    fn wanted_pages(&self) -> Vec<String> {
+        self.table
             .and_then(|ix| self.tables.get(ix))
             .map(|table| table.key.clone())
             .into_iter()
             .chain(self.held.iter().cloned())
-            .collect();
+            .collect()
+    }
+
+    /// Issue the reads of the wanted pages. Any other page is dropped: a page
+    /// is a window on a table nobody is looking at.
+    fn read_pages(&mut self) -> impl Future<Output = Vec<(String, anyhow::Result<Page>)>> + use<> {
+        let wanted = self.wanted_pages();
         self.pages.retain(|key, _| wanted.contains(key));
-        let Some(data) = self.data.as_ref() else {
-            self.pages.clear();
-            return;
+        self.paged.retain(|key, _| wanted.contains(key));
+        let reads: Vec<_> = match self.data.as_ref() {
+            Some(data) => wanted
+                .into_iter()
+                .map(|key| {
+                    let read = data.read(&key, None, false, PAGE, 0);
+                    async move { (key, read.await) }
+                })
+                .collect(),
+            None => {
+                self.pages.clear();
+                Vec::new()
+            }
         };
-        for key in wanted {
-            if let Ok(page) = data.read(&key, None, false, PAGE, 0) {
+        future::join_all(reads)
+    }
+
+    /// Take pages read with `seq`: each one still wanted, unless a newer read
+    /// of it has landed.
+    fn take_pages(&mut self, seq: u64, landed: Vec<(String, anyhow::Result<Page>)>) {
+        let wanted = self.wanted_pages();
+        for (key, page) in landed {
+            let Ok(page) = page else {
+                continue;
+            };
+            if wanted.contains(&key) && self.paged.get(&key).is_none_or(|at| *at < seq) {
+                self.paged.insert(key.clone(), seq);
                 self.pages.insert(key, page);
             }
         }
     }
 
+    /// Number the next read.
+    fn ask(&mut self) -> u64 {
+        self.asked += 1;
+        self.asked
+    }
+
     /// Hold the pages of these tables beside the open one's, read now when the
     /// set changes.
-    pub fn hold_pages(&mut self, held: std::collections::BTreeSet<String>) {
+    pub fn hold_pages(
+        &mut self,
+        held: std::collections::BTreeSet<String>,
+        cx: &mut Context<Workspace>,
+    ) {
         if self.held != held {
             self.held = held;
-            self.reload_page();
+            self.reload_page(cx);
         }
     }
 

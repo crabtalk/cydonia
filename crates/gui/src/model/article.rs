@@ -184,6 +184,14 @@ impl Article {
         self.saved = String::new();
     }
 
+    /// Where the pictures in its body are filed.
+    pub fn shelf(&self) -> crate::model::media::Shelf {
+        crate::model::media::Shelf {
+            store: self.store.clone(),
+            owner: artifact::project::Owner::Article(self.id.clone()),
+        }
+    }
+
     pub fn archive(&mut self, archived: bool, cx: &App) {
         self.archived = archived;
         self.save_properties(cx);

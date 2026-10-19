@@ -6,6 +6,10 @@
 //! which directory it is about on the call rather than by which port it arrived
 //! on. The settings window shows the address because knowing where a thing is
 //! listening is worth something, not because anybody has to type it.
+//!
+//! An agent on a remote host reaches the same server with no door: its
+//! messages arrive through cydonia-server's `mcp` service, answered by
+//! [`relayed`].
 
 use mcp::{Server, http::Door, tools};
 use std::path::Path;
@@ -17,6 +21,8 @@ use std::sync::{
 /// The door, while it is open. Dropping it closes the port, so shutting the
 /// door is emptying this and nothing else.
 static DOOR: OnceLock<Mutex<Option<Door>>> = OnceLock::new();
+
+static SERVER: OnceLock<Arc<Server>> = OnceLock::new();
 
 /// Whether an agent may change a project, shared with the server that answers
 /// them. A flag rather than a rebuild: the door hands out one URL, and moving
@@ -98,10 +104,23 @@ pub fn serve(open: bool) {
         true if door.is_some() => {}
         true => {
             *door = super::acp::runtime()
-                .block_on(mcp::http::open(Arc::new(server())))
+                .block_on(mcp::http::open(server().clone()))
                 .ok();
         }
     }
+}
+
+/// Answers one message relayed from an agent on a remote host. Blocking: a
+/// browser tool waits on the window.
+pub fn relayed(request: ::server::mcp::Request) -> Option<String> {
+    let binding = &request.binding;
+    server()
+        .message(
+            &request.message,
+            binding.project.as_deref(),
+            binding.session.as_deref(),
+        )
+        .text()
 }
 
 /// Where the tools are, while the door is open — for an agent about to be
@@ -126,10 +145,15 @@ pub fn session(record: &str) -> (&'static str, String) {
     (mcp::http::SESSION, record.to_owned())
 }
 
+/// The one server the door and [`relayed`] answer with, built on first use.
+fn server() -> &'static Arc<Server> {
+    SERVER.get_or_init(|| Arc::new(build()))
+}
+
 /// What is on it. Articles and boards; a tool set per surface as they arrive,
 /// and the rail the app holds them on — see [`mcp::rail`], which the workspace
 /// is what answers.
-fn server() -> Server {
+fn build() -> Server {
     Server::new()
         .mount(&tools::article::TOOLS)
         .mount(&tools::board::TOOLS)

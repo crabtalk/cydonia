@@ -1,0 +1,36 @@
+[package]
+name = "cydonia-server"
+description = "The headless server a cydonia client reaches on another machine, answering cydonia's Cupola services"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["remote", "server", "cydonia"]
+categories = ["development-tools"]
+
+[lib]
+name = "cydonia_server"
+
+[[bin]]
+name = "cydonia-server"
+path = "bin/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+artifact = { workspace = true, features = ["remote", "sqlite"] }
+blocking.workspace = true
+cupola.workspace = true
+cydonia-acp-agents = { workspace = true, features = ["install"] }
+futures.workspace = true
+git.workspace = true
+mcp.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+async-net.workspace = true
+mcp = { workspace = true, features = ["http"] }
+rusqlite.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread"] }

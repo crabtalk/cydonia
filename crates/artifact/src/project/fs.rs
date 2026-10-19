@@ -155,7 +155,7 @@ impl Project {
                     .map(|name| name.to_string_lossy().into_owned())
                     .unwrap_or_default();
                 let mut card = layout::parse_card(&id, &text, &properties);
-                card.version = Some(card_version(&text, &properties));
+                card.version = Some(card_version(&card));
                 touched = touched.max(document::touched(&path));
                 cards.push(card);
             }
@@ -249,6 +249,65 @@ impl Project {
         }
     }
 
+    /// The directory `owner`'s pictures are in, whether or not any have been
+    /// written. Refused for an article or a board that is not here.
+    pub fn asset_dir(&self, owner: &super::Owner) -> Result<PathBuf> {
+        match owner {
+            super::Owner::Article(id) => {
+                self.article_file(id)?;
+            }
+            super::Owner::Page { board, .. } => anyhow::ensure!(
+                self.board_dir(component(board)?).is_dir(),
+                "no board {board}"
+            ),
+            super::Owner::Shared => {}
+        }
+        self.asset_path(owner)
+    }
+
+    /// [`Project::asset_dir`], whether or not `owner` is here. Reads nothing
+    /// off the disk. Refused for a name that is not one path component.
+    pub fn asset_path(&self, owner: &super::Owner) -> Result<PathBuf> {
+        Ok(match owner {
+            super::Owner::Article(id) => article::assets(&article::content(
+                &article::dir(&self.root).join(component(id)?),
+            )),
+            super::Owner::Page { board, page } => {
+                if let board::Page::Card(card) = page {
+                    component(card)?;
+                }
+                document::assets(&document::content(&self.page_dir(component(board)?, page)))
+            }
+            super::Owner::Shared => self.assets(),
+        })
+    }
+
+    /// Where an entry of this id is, whether or not it is there: an article's
+    /// directory, a board's, or a session's file. Reads nothing off the disk.
+    /// `None` for a table, an app, and an id that is not one path component.
+    pub fn entry_path(&self, kind: Kind, id: &str) -> Option<PathBuf> {
+        let id = component(id).ok()?;
+        match kind {
+            Kind::Article => Some(article::dir(&self.root).join(id)),
+            Kind::Board => Some(self.board_dir(id)),
+            Kind::Session => Some(self.session_file(id)),
+            Kind::Table | Kind::App => None,
+        }
+    }
+
+    /// Whether `dir` is where a document of this project's is: an article's
+    /// folder, a board's, or a card's on one of its boards. Reads nothing off
+    /// the disk.
+    pub fn document_dir(&self, dir: &Path) -> bool {
+        let Some(parent) = dir.parent() else {
+            return false;
+        };
+        parent == article::dir(&self.root)
+            || parent == self.boards_dir()
+            || (parent.file_name().is_some_and(|name| name == layout::CARDS)
+                && parent.parent().and_then(Path::parent) == Some(self.boards_dir().as_path()))
+    }
+
     /// The directory a card is — see [`layout`].
     pub fn card_dir(&self, board: &str, card: &str) -> PathBuf {
         self.board_dir(board).join(layout::CARDS).join(card)
@@ -311,26 +370,21 @@ impl Project {
             let held = read_card_files(&path);
             let held_properties = held.as_ref().map_or("", |(_, properties)| properties);
             let properties = layout::card_properties(card, held_properties);
-            let written = card_version(&card.text, properties.as_deref().unwrap_or(""));
-            if card.version.as_deref() == Some(written.as_str()) {
+            if card.version.as_deref() == Some(card_version(card).as_str()) {
                 continue;
             }
             if let Some(seen) = &card.version
                 && held
                     .as_ref()
-                    .map(|(text, properties)| card_version(text, properties))
+                    .map(|(text, properties)| {
+                        card_version(&layout::parse_card(&card.id, text, properties))
+                    })
                     .as_ref()
                     != Some(seen)
             {
                 return Err(crate::error::Error::Stale.into());
             }
-            writes.push((
-                card.id.clone(),
-                path,
-                card.text.clone(),
-                properties,
-                written,
-            ));
+            writes.push((path, card.text.clone(), properties));
         }
         let described = document::content(&dir);
         let description_version = version(board.description.as_bytes());
@@ -346,7 +400,7 @@ impl Project {
         {
             return Err(crate::error::Error::Stale.into());
         }
-        for (_, path, text, properties, _) in &writes {
+        for (path, text, properties) in &writes {
             crate::fs::save(path, text)?;
             let beside = document::properties(path);
             match properties {
@@ -363,7 +417,6 @@ impl Project {
                 }
                 false => document::write(&described, &board.description)?,
             }
-            board.description_version = Some(description_version);
         }
         if ours {
             lock.set_len(0)?;
@@ -380,18 +433,26 @@ impl Project {
                     let _ = std::fs::remove_dir_all(cards_dir.join(gone));
                 }
             }
-            board.version = Some(structure_version);
         }
+        Self::stamp(board)?;
+        board.touched = stamp::now();
+        Ok(())
+    }
+
+    /// Gives `board` the versions this backend holds for it once a save of it
+    /// has landed: [`Board::version`], each card's and
+    /// [`Board::description_version`]. They are hashes of what the board
+    /// holds, and depend on nothing else.
+    pub fn stamp(board: &mut Board) -> Result<()> {
+        board.version = Some(version(layout::board_toml(board)?.as_bytes()));
         for card in board
             .columns
             .iter_mut()
             .flat_map(|column| &mut column.cards)
         {
-            if let Some((.., written)) = writes.iter().find(|(id, ..)| *id == card.id) {
-                card.version = Some(written.clone());
-            }
+            card.version = Some(card_version(card));
         }
-        board.touched = stamp::now();
+        board.description_version = Some(version(board.description.as_bytes()));
         Ok(())
     }
 
@@ -526,6 +587,14 @@ impl Project {
         return entry::Registry::open(&self.root)?.number(kind, id);
         #[cfg(not(feature = "sqlite"))]
         no_numbers(kind, id)
+    }
+
+    /// Every number issued here and not retired, with what it is on.
+    pub fn numbers(&self) -> Result<Vec<(u64, Kind, String)>> {
+        #[cfg(feature = "sqlite")]
+        return entry::Registry::open(&self.root)?.issued();
+        #[cfg(not(feature = "sqlite"))]
+        Ok(Vec::new())
     }
 
     fn retire_number(&self, kind: Kind, id: &str) -> Result<()> {
@@ -752,22 +821,32 @@ impl super::Project for Project {
         ready(removed())
     }
 
-    fn asset(&self, id: &str, name: &str) -> super::Result<Vec<u8>> {
-        let content = self.article_file(id)?;
-        Ok(std::fs::read(
-            article::assets(&content).join(component(name)?),
-        )?)
+    fn asset(
+        &self,
+        owner: &super::Owner,
+        name: &str,
+    ) -> impl Future<Output = super::Result<Vec<u8>>> + Send + use<> {
+        let read = || -> super::Result<Vec<u8>> {
+            Ok(std::fs::read(
+                self.asset_dir(owner)?.join(component(name)?),
+            )?)
+        };
+        ready(read())
     }
 
+    /// The shared directory is made as [`Project::init`] makes `.cydonia/`.
     fn put_asset(
         &self,
-        id: &str,
+        owner: &super::Owner,
         name: &str,
         bytes: &[u8],
     ) -> impl Future<Output = super::Result<()>> + Send + use<> {
         let put = || -> super::Result<()> {
-            let dir = article::assets(&self.article_file(id)?);
-            crate::fs::save(&dir.join(component(name)?), bytes)?;
+            let file = self.asset_dir(owner)?.join(component(name)?);
+            if *owner == super::Owner::Shared {
+                self.init()?;
+            }
+            crate::fs::save(&file, bytes)?;
             Ok(())
         };
         ready(put())
@@ -832,24 +911,16 @@ impl super::Project for Project {
 
     /// An article's directory, a board's or a session's file.
     fn place(&self, kind: Kind, id: &str) -> Option<PathBuf> {
-        let path = match kind {
-            Kind::Article => self.article_file(id).ok()?.parent()?.to_path_buf(),
-            Kind::Board => self.board_dir(component(id).ok()?),
-            Kind::Session => self.session_file(component(id).ok()?),
-            Kind::Table => return None,
-            Kind::App => return None,
+        let path = self.entry_path(kind, id)?;
+        let there = match kind {
+            Kind::Article => article::content(&path).is_file(),
+            _ => path.exists(),
         };
-        path.exists().then_some(path)
+        there.then_some(path)
     }
 
     fn files(&self, dir: &Path) -> bool {
-        let Some(parent) = dir.parent() else {
-            return false;
-        };
-        parent == article::dir(&self.root)
-            || parent == self.boards_dir()
-            || (parent.file_name().is_some_and(|name| name == layout::CARDS)
-                && parent.parent().and_then(Path::parent) == Some(self.boards_dir().as_path()))
+        self.document_dir(dir)
     }
 
     fn resolve(&self, kind: Kind, number: u64) -> super::Result<Option<String>> {
@@ -953,9 +1024,12 @@ fn read_card_files(content: &Path) -> Option<(String, String)> {
     Some((text, properties))
 }
 
-/// What a card's two files hold, as one version.
-fn card_version(text: &str, properties: &str) -> String {
-    version(format!("{text}\0{properties}").as_bytes())
+/// A card's version: its text and the properties cydonia writes for it.
+/// Keys of its `properties.toml` cydonia does not know about are not part of
+/// it.
+fn card_version(card: &board::Card) -> String {
+    let properties = layout::card_properties(card, "").unwrap_or_default();
+    version(format!("{}\0{properties}", card.text).as_bytes())
 }
 
 /// A board id no directory or flat file under `dir` is using.

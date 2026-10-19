@@ -586,9 +586,11 @@ impl Workspace {
         }
     }
 
-    /// Send a message with pictures. Each is kept in the project's assets and
-    /// written into the message as a line of its own, which is what the
-    /// transcript paints and what the prompt reads back out for the agent.
+    /// Send a message with pictures, once each is filed among the project's
+    /// shared pictures. Each is written into the message as a line of its
+    /// own naming its file on this machine, which is what the transcript
+    /// paints and what the prompt reads back out for the agent. A picture
+    /// that is not filed, or not on this machine, is let go.
     pub fn send_attached(
         &mut self,
         id: u64,
@@ -600,21 +602,35 @@ impl Workspace {
         let Some(ix) = self.project_of(id) else {
             return;
         };
-        let project = artifact::project::fs::Project::new(&self.projects[ix].path);
-        let mut parts = vec![text.trim_end().to_owned()];
-        if project.init().is_ok() {
-            let dir = project.assets();
+        let shelf = media::Shelf {
+            store: self.projects[ix].store(),
+            owner: artifact::project::Owner::Shared,
+        };
+        let filed: Vec<_> = attachments
+            .iter()
+            .filter_map(media::Attachment::picture)
+            .map(|picture| {
+                let (name, write) = shelf.put(&picture);
+                let file = shelf.file(&name);
+                async move { write.await.ok().and(file) }
+            })
+            .collect();
+        let text = text.trim_end().to_owned();
+        cx.spawn(async move |this, cx| {
+            let mut parts = vec![text];
             parts.extend(
-                attachments
-                    .iter()
-                    .filter_map(|attachment| media::keep_attachment(&dir, attachment))
+                futures::future::join_all(filed)
+                    .await
+                    .into_iter()
+                    .flatten()
                     .map(|path| media::line(&path)),
             );
-        }
-        parts.retain(|part| !part.is_empty());
-        if !parts.is_empty() {
-            self.send(id, parts.join("\n\n"), cx);
-        }
+            parts.retain(|part| !part.is_empty());
+            if !parts.is_empty() {
+                let _ = this.update(cx, |this, cx| this.send(id, parts.join("\n\n"), cx));
+            }
+        })
+        .detach();
     }
 
     /// Close the connection and keep the transcript. The row stays where it

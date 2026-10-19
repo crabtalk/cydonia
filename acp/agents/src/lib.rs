@@ -9,13 +9,9 @@
 //! ```no_run
 //! # fn main() -> anyhow::Result<()> {
 //! # let (cache_dir, data_dir) = (std::path::Path::new("cache"), std::path::Path::new("data"));
-//! let catalog = cydonia_acp_agents::registry::catalog(cache_dir).expect("a catalog");
-//! let agent = &catalog.agents[0];
-//!
-//! let installed = match cydonia_acp_agents::Installed::find(data_dir, &agent.id) {
-//!     Some(installed) => installed,
-//!     None => agent.install(data_dir, |line| println!("{line}"))?,
-//! };
+//! let installed = cydonia_acp_agents::Installed::resolve(cache_dir, data_dir, "claude-acp", |line| {
+//!     println!("{line}")
+//! })?;
 //!
 //! println!("{} {}", installed.command, installed.args.join(" "));
 //! # Ok(()) }

@@ -44,6 +44,12 @@ pub fn config_dir() -> Result<PathBuf> {
     Ok(home()?.join(".config").join("cydonia"))
 }
 
+/// The throwaway corner of the config directory: the fetched agent catalog,
+/// its icons, and the updater's images and the point one is mounted at.
+pub fn cache_dir() -> Result<PathBuf> {
+    Ok(config_dir()?.join("cache"))
+}
+
 /// The home every directory above hangs off — except under a test, where it is
 /// a directory of this process's own: a suite run against the real home
 /// replaces the project list of whoever ran it (user report).

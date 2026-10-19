@@ -3,6 +3,8 @@
 // No console window beside the app. Debug builds keep one for their output.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+use std::process::ExitCode;
+
 use anyhow::Result;
 use bezel::{gpui::App, gpui_platform};
 use gui::{
@@ -20,11 +22,17 @@ use gui::{
 /// identity says nothing posts under nothing.
 const BUNDLE_ID: &str = "sh.cydonia";
 
-fn main() -> Result<()> {
+fn main() -> Result<ExitCode> {
+    // ssh running this binary as its askpass program, to ask one of its
+    // prompts. Nothing else starts.
+    #[cfg(unix)]
+    if let Some(helper) = cupola::client::askpass::Helper::from_env() {
+        return Ok(helper.main());
+    }
     // A rollback's last step, run by the swap once the app has quit — see
     // `update::restore_mode`. Nothing else starts.
     if let Some(restored) = update::restore_mode() {
-        return restored;
+        return restored.map(|()| ExitCode::SUCCESS);
     }
     // First of all, and while this is still the only thread: it writes the
     // process environment, and everything downstream of it — an agent spawned
@@ -76,5 +84,5 @@ fn main() -> Result<()> {
         root::open(settings, state, cx).expect("failed to open window");
         cx.activate(true);
     });
-    Ok(())
+    Ok(ExitCode::SUCCESS)
 }

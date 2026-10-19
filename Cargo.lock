@@ -2269,6 +2269,7 @@ version = "0.2.3"
 dependencies = [
  "anyhow",
  "bezel",
+ "cydonia-cupola",
  "cydonia-gui",
  "embed-resource",
  "image",
@@ -2333,6 +2334,7 @@ version = "0.2.3"
 dependencies = [
  "anyhow",
  "cydonia-acp",
+ "cydonia-cupola",
  "cydonia-manifest",
  "dirs 6.0.0",
  "futures",
@@ -2376,8 +2378,12 @@ name = "cydonia-git"
 version = "0.2.3"
 dependencies = [
  "anyhow",
+ "blocking",
+ "cydonia-cupola",
+ "futures",
  "serde",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -2417,10 +2423,12 @@ dependencies = [
  "chrono",
  "cydonia-acp",
  "cydonia-artifact",
+ "cydonia-cupola",
  "cydonia-git",
  "cydonia-guest",
  "cydonia-mcp",
  "cydonia-prompts",
+ "cydonia-server",
  "dirs 6.0.0",
  "futures",
  "global-hotkey",
@@ -2437,6 +2445,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "tempfile",
  "tokio",
  "toml 0.8.23",
  "toml_edit 0.22.27",
@@ -2478,6 +2487,25 @@ version = "0.2.3"
 dependencies = [
  "serde",
  "serde_yaml_ng",
+]
+
+[[package]]
+name = "cydonia-server"
+version = "0.2.3"
+dependencies = [
+ "anyhow",
+ "async-net",
+ "blocking",
+ "cydonia-acp-agents",
+ "cydonia-artifact",
+ "cydonia-cupola",
+ "cydonia-git",
+ "cydonia-mcp",
+ "futures",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

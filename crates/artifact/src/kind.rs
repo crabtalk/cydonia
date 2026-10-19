@@ -34,6 +34,11 @@ impl Kind {
             Self::App => "app",
         }
     }
+
+    /// The kind whose [`Kind::key`] is `key`.
+    pub fn from_key(key: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|kind| kind.key() == key)
+    }
 }
 
 impl std::fmt::Display for Kind {

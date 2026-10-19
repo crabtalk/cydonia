@@ -6,8 +6,9 @@ use common::Wait as _;
 use common::Scratch;
 use cydonia_artifact::{
     article::properties::{CommentDisplay, Properties},
+    board::Page,
     kind::Kind,
-    project::Project as _,
+    project::{Owner, Project as _},
 };
 use std::fs;
 
@@ -60,15 +61,74 @@ fn assets_are_named_blobs() {
     let scratch = Scratch::new("project-assets");
     let store = scratch.store();
     let made = store.create_article("").wait().unwrap();
-    store.put_asset(&made.id, "a.png", b"png").wait().unwrap();
-    assert_eq!(store.asset(&made.id, "a.png").unwrap(), b"png");
+    let owner = Owner::Article(made.id.clone());
+    store.put_asset(&owner, "a.png", b"png").wait().unwrap();
+    assert_eq!(store.asset(&owner, "a.png").wait().unwrap(), b"png");
     assert!(
         store
-            .put_asset(&made.id, "../escape.png", b"x")
+            .put_asset(&owner, "../escape.png", b"x")
             .wait()
             .is_err()
     );
-    assert!(store.asset(&made.id, "..").is_err());
+    assert!(store.asset(&owner, "..").wait().is_err());
+}
+
+#[test]
+fn a_boards_pages_and_the_shared_assets_are_where_their_documents_are() {
+    let scratch = Scratch::new("project-page-assets");
+    let store = scratch.store();
+    let mut board = store.create_board("Plans", "").wait().unwrap();
+    let column = board.add_column("TODO").id.clone();
+    let card = board.add_card(&column, "x".into()).unwrap().id.clone();
+    store.save_board(&mut board).wait().unwrap();
+    let dir = scratch.path().join(".cydonia/boards").join(&board.id);
+    let placed = [
+        (
+            Owner::Page {
+                board: board.id.clone(),
+                page: Page::Card(card.clone()),
+            },
+            dir.join("cards").join(&card).join("assets/a.png"),
+        ),
+        (
+            Owner::Page {
+                board: board.id.clone(),
+                page: Page::Description,
+            },
+            dir.join("assets/a.png"),
+        ),
+        (Owner::Shared, scratch.path().join(".cydonia/assets/a.png")),
+    ];
+    for (owner, file) in &placed {
+        store.put_asset(owner, "a.png", b"png").wait().unwrap();
+        assert_eq!(fs::read(file).unwrap(), b"png");
+        assert_eq!(store.asset(owner, "a.png").wait().unwrap(), b"png");
+        assert!(store.put_asset(owner, "..", b"x").wait().is_err());
+    }
+    let elsewhere = Owner::Page {
+        board: "nope".into(),
+        page: Page::Description,
+    };
+    assert!(store.put_asset(&elsewhere, "a.png", b"png").wait().is_err());
+    let escape = Owner::Page {
+        board: board.id.clone(),
+        page: Page::Card("../..".into()),
+    };
+    assert!(store.put_asset(&escape, "a.png", b"png").wait().is_err());
+}
+
+#[test]
+fn the_first_shared_asset_makes_cydonia_ignored() {
+    let scratch = Scratch::new("project-shared-assets");
+    let store = scratch.store();
+    store
+        .put_asset(&Owner::Shared, "a.png", b"png")
+        .wait()
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(scratch.path().join(".cydonia/.gitignore")).unwrap(),
+        "*\n"
+    );
 }
 
 #[test]

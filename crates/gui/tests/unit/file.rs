@@ -26,16 +26,26 @@ impl Drop for Temp {
     }
 }
 
+fn read_here(path: &Path) -> anyhow::Result<String> {
+    let files = Backend::open(&Location::from(path));
+    futures::executor::block_on(read_text(&files, path))
+}
+
+fn write_here(path: &Path, saved: &str, source: &str, overwrite: bool) -> anyhow::Result<()> {
+    let files = Backend::open(&Location::from(path));
+    futures::executor::block_on(write_text(&files, path, saved, source, overwrite))
+}
+
 #[test]
 fn saves_refuse_to_overwrite_external_edits_or_deleted_files() {
     let file = Temp::new();
     std::fs::write(&file.0, "agent edit").unwrap();
-    assert!(write_text(&file.0, "original\r\n", "user edit", false).is_err());
-    assert_eq!(read_text(&file.0).unwrap(), "agent edit");
-    write_text(&file.0, "original\r\n", "user edit", true).unwrap();
-    assert_eq!(read_text(&file.0).unwrap(), "user edit");
+    assert!(write_here(&file.0, "original\r\n", "user edit", false).is_err());
+    assert_eq!(read_here(&file.0).unwrap(), "agent edit");
+    write_here(&file.0, "original\r\n", "user edit", true).unwrap();
+    assert_eq!(read_here(&file.0).unwrap(), "user edit");
     std::fs::remove_file(&file.0).unwrap();
-    assert!(write_text(&file.0, "user edit", "new", false).is_err());
+    assert!(write_here(&file.0, "user edit", "new", false).is_err());
     assert!(!file.0.exists());
 }
 
@@ -44,7 +54,7 @@ fn text_loading_rejects_binary_invalid_utf8_and_large_files() {
     let file = Temp::new();
     for bytes in [vec![0], vec![255], vec![b'a'; LIMIT as usize + 1]] {
         std::fs::write(&file.0, bytes).unwrap();
-        assert!(read_text(&file.0).is_err());
+        assert!(read_here(&file.0).is_err());
     }
 }
 
@@ -67,18 +77,39 @@ fn clean_buffers_reload_but_dirty_buffers_keep_local_edits(cx: &mut gpui::TestAp
 }
 
 #[gpui::test]
-fn saving_preserves_crlf_and_clears_dirty_state(cx: &mut gpui::TestAppContext) {
+async fn saving_preserves_crlf_and_clears_dirty_state(cx: &mut gpui::TestAppContext) {
     let file = Temp::new();
     let view = cx.new(|cx| FileView::new(file.0.clone(), WeakEntity::new_invalid(), cx));
-    view.update(cx, |view, cx| {
+    let saved = view
+        .update(cx, |view, cx| {
+            view.receive(Ok("original\r\n".into()), cx);
+            assert!(!view.dirty(cx));
+            view.field
+                .update(cx, |field, cx| field.set_content("edited\n", cx));
+            view.save(false, cx)
+        })
+        .await;
+    assert!(saved);
+    view.read_with(cx, |view, cx| assert!(!view.dirty(cx)));
+    assert_eq!(read_here(&file.0).unwrap(), "edited\r\n");
+}
+
+#[gpui::test]
+async fn saves_land_in_the_order_they_were_asked_for(cx: &mut gpui::TestAppContext) {
+    let file = Temp::new();
+    let view = cx.new(|cx| FileView::new(file.0.clone(), WeakEntity::new_invalid(), cx));
+    let (first, second) = view.update(cx, |view, cx| {
         view.receive(Ok("original\r\n".into()), cx);
-        assert!(!view.dirty(cx));
         view.field
-            .update(cx, |field, cx| field.set_content("edited\n", cx));
-        assert!(view.save(false, cx));
-        assert!(!view.dirty(cx));
-        assert_eq!(read_text(&file.0).unwrap(), "edited\r\n");
+            .update(cx, |field, cx| field.set_content("first\n", cx));
+        let first = view.save(false, cx);
+        view.field
+            .update(cx, |field, cx| field.set_content("second\n", cx));
+        (first, view.save(false, cx))
     });
+    assert!(first.await);
+    assert!(second.await);
+    assert_eq!(read_here(&file.0).unwrap(), "second\r\n");
 }
 
 #[test]

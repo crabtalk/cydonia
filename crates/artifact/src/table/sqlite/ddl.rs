@@ -11,7 +11,7 @@ impl Sqlite {
     /// `column` names the column to act on. It does not exist yet → it is
     /// added, and `kind` says what it holds. It does exist → `rename` moves its
     /// name and `kind` changes its type; either, or both.
-    pub(super) fn write_column(
+    pub fn write_column(
         &mut self,
         table: &str,
         column: &str,

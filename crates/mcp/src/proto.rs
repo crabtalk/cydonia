@@ -19,6 +19,7 @@ pub const VERSION: &str = "2025-06-18";
 
 const JSONRPC: &str = "2.0";
 
+pub const PARSE_ERROR: i64 = -32700;
 pub const INVALID_REQUEST: i64 = -32600;
 pub const METHOD_NOT_FOUND: i64 = -32601;
 pub const INVALID_PARAMS: i64 = -32602;
@@ -92,5 +93,9 @@ impl Error {
 
     pub fn invalid_params(message: impl Into<String>) -> Self {
         Self::new(INVALID_PARAMS, message)
+    }
+
+    pub fn parse(message: impl Into<String>) -> Self {
+        Self::new(PARSE_ERROR, message)
     }
 }

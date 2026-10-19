@@ -2,10 +2,11 @@
 
 use crate::model::language::{Grammars as _, Installable as _};
 use crate::model::{
-    disk::{Files as _, Here},
+    disk::{Backend, Contents, Files},
     typography,
     workspace::Workspace,
 };
+use artifact::location::Location;
 use bezel::{
     gpui::{
         self, Context, Entity, Focusable, Render, Subscription, Task, WeakEntity, Window, div,
@@ -15,6 +16,7 @@ use bezel::{
     ui::input::{Edit, FieldEvent, Granularity, Shape, TextField, drag_selection},
     ui::widgets::{ButtonStyle, Buttons as _, Controls as _},
 };
+use futures::{FutureExt as _, future::Shared};
 use markdown::AppExt as _;
 use std::{
     cell::Cell,
@@ -36,12 +38,9 @@ gpui::actions!(
     [Save, IncreaseTextSize, DecreaseTextSize, ResetTextSize]
 );
 
-pub(crate) fn read_text(path: &Path) -> anyhow::Result<String> {
-    let bytes = Here::read(path, LIMIT)?;
-    anyhow::ensure!(
-        bytes.len() as u64 <= LIMIT,
-        "Files larger than 256 KiB must be opened externally"
-    );
+pub(crate) async fn read_text(files: &impl Files, path: &Path) -> anyhow::Result<String> {
+    let Contents { bytes, cut } = files.read(path, LIMIT).await?;
+    anyhow::ensure!(!cut, "Files larger than 256 KiB must be opened externally");
     anyhow::ensure!(
         !bytes.contains(&0),
         "Binary files must be opened externally"
@@ -49,36 +48,21 @@ pub(crate) fn read_text(path: &Path) -> anyhow::Result<String> {
     Ok(String::from_utf8(bytes)?)
 }
 
-pub(crate) fn write_text(
+pub(crate) async fn write_text(
+    files: &impl Files,
     path: &Path,
     saved: &str,
     source: &str,
     overwrite: bool,
 ) -> anyhow::Result<()> {
-    if !overwrite {
-        anyhow::ensure!(
-            read_text(path)? == saved,
-            "File changed on disk. Reload or overwrite to continue."
-        );
-    }
     anyhow::ensure!(
         source.len() as u64 <= LIMIT,
         "Files larger than 256 KiB must be edited externally"
     );
-    Ok(Here::replace(
-        path,
-        source.as_bytes(),
-        || match overwrite {
-            true => Ok(()),
-            false => match read_text(path) {
-                Ok(text) if text == saved => Ok(()),
-                Ok(_) => Err(std::io::Error::other(
-                    "File changed on disk. Reload or overwrite to continue.",
-                )),
-                Err(err) => Err(std::io::Error::other(format!("{err:#}"))),
-            },
-        },
-    )?)
+    let unchanged = (!overwrite).then(|| saved.as_bytes().to_vec());
+    Ok(files
+        .replace(path, source.as_bytes().to_vec(), unchanged)
+        .await?)
 }
 
 fn normalized(source: &str) -> String {
@@ -99,10 +83,15 @@ pub struct FileView {
     pub root: PathBuf,
     focus: gpui::FocusHandle,
     pub path: PathBuf,
+    files: Backend,
     pub field: Entity<TextField>,
     saved: String,
     ready: bool,
     loading: bool,
+    /// Saves asked for and not yet answered.
+    saving: usize,
+    /// The last save asked for. The next one starts once it is answered.
+    last_save: Shared<Task<bool>>,
     pub error: Option<String>,
     opening_external: bool,
     external_menu: external::Menu,
@@ -160,18 +149,18 @@ impl FileView {
         });
         let poll = cx.spawn(async move |this, cx| {
             loop {
-                let Ok((path, saved)) =
-                    this.update(cx, |this, _| (this.path.clone(), this.saved.clone()))
-                else {
+                let Ok((files, path, saved)) = this.update(cx, |this, _| {
+                    (this.files.clone(), this.path.clone(), this.saved.clone())
+                }) else {
                     return;
                 };
                 let result = cx
                     .background_executor()
-                    .spawn(async move { read_text(&path) })
+                    .spawn(async move { read_text(&files, &path).await })
                     .await;
                 if this
                     .update(cx, |this, cx| {
-                        if this.saved == saved {
+                        if this.saved == saved && this.saving == 0 {
                             this.receive(result, cx);
                         }
                     })
@@ -201,10 +190,11 @@ impl FileView {
             }
         });
         let root = path.parent().unwrap_or(Path::new("/")).to_path_buf();
+        let files = Backend::open(&Location::from(root.as_path()));
         let pictures = cx.new(|cx| {
             pictures::Pictures::new(
                 root.clone(),
-                pictures::Assets::Project(root.clone()),
+                crate::model::media::Shelf::shared(&root),
                 workspace,
                 cx,
             )
@@ -222,10 +212,13 @@ impl FileView {
             focus: cx.focus_handle(),
             language: crate::model::language::Here::of(&path),
             path,
+            files,
             field,
             saved: String::new(),
             ready: false,
             loading: true,
+            saving: 0,
+            last_save: Task::ready(true).shared(),
             error: None,
             opening_external: false,
             external_menu: external::Menu::default(),
@@ -335,29 +328,67 @@ impl FileView {
         self.ready && self.field.read(cx).content().as_ref() != normalized(&self.saved)
     }
 
-    pub fn save(&mut self, overwrite: bool, cx: &mut Context<Self>) -> bool {
+    /// Write the buffer as it is now. Answers whether the file holds it.
+    /// Saves land in the order they were asked for, each one checked against
+    /// what the one before it left.
+    pub fn save(&mut self, overwrite: bool, cx: &mut Context<Self>) -> Task<bool> {
         if !self.ready {
-            return false;
+            return Task::ready(false);
         }
-        let source = if self.dirty(cx) {
-            line_endings(self.field.read(cx).content(), &self.saved)
-        } else {
-            self.saved.clone()
-        };
-        match write_text(&self.path, &self.saved, &source, overwrite) {
+        let content = self.field.read(cx).content().to_string();
+        let before = self.last_save.clone();
+        self.saving += 1;
+        let save = cx
+            .spawn(async move |this, cx| {
+                before.await;
+                let Ok((files, path, saved)) = this.update(cx, |this, _| {
+                    (this.files.clone(), this.path.clone(), this.saved.clone())
+                }) else {
+                    return false;
+                };
+                let source = match content == normalized(&saved) {
+                    true => saved.clone(),
+                    false => line_endings(&content, &saved),
+                };
+                let written = source.clone();
+                let result = cx
+                    .background_executor()
+                    .spawn(
+                        async move { write_text(&files, &path, &saved, &written, overwrite).await },
+                    )
+                    .await;
+                this.update(cx, |this, cx| {
+                    this.saving -= 1;
+                    this.saved(source, result, cx)
+                })
+                .unwrap_or(false)
+            })
+            .shared();
+        self.last_save = save.clone();
+        cx.spawn(async move |_, _| save.await)
+    }
+
+    /// Take the answer to a save of `source`.
+    fn saved(
+        &mut self,
+        source: String,
+        result: anyhow::Result<()>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let done = match result {
             Ok(()) => {
                 self.saved = source;
                 self.changed = false;
                 self.error = None;
-                cx.notify();
                 true
             }
             Err(error) => {
                 self.error = Some(error.to_string());
-                cx.notify();
                 false
             }
-        }
+        };
+        cx.notify();
+        done
     }
 
     /// The language name where this build names the file and cannot paint it.
@@ -575,11 +606,14 @@ impl FileView {
                         .cursor_pointer()
                         .child("Save •")
                         .on_click(cx.listener(|this, _, _, cx| {
-                            this.save(false, cx);
+                            this.save(false, cx).detach();
                         })),
                 )
             });
-        let bar = bar.child(self.external_button(cx));
+        let bar = match self.files.local() {
+            true => bar.child(self.external_button(cx)),
+            false => bar,
+        };
         bar.into_any_element()
     }
 
@@ -594,13 +628,23 @@ impl FileView {
             target,
             external::Target::Application(_) | external::Target::Default
         );
-        if self.opening_external || (opens_file && self.dirty(cx) && !self.save(false, cx)) {
+        if self.opening_external {
             return;
         }
+        let saved = (opens_file && self.dirty(cx)).then(|| self.save(false, cx));
         self.opening_external = true;
         self.external_error = None;
         let path = self.path.clone();
         cx.spawn(async move |this, cx| {
+            if let Some(saved) = saved
+                && !saved.await
+            {
+                let _ = this.update(cx, |this, cx| {
+                    this.opening_external = false;
+                    cx.notify();
+                });
+                return;
+            }
             let result = cx
                 .background_executor()
                 .spawn(async move { external::open(&path, &target) })
@@ -618,18 +662,28 @@ impl FileView {
     }
 
     fn reload(&mut self, cx: &mut Context<Self>) {
-        match read_text(&self.path) {
-            Ok(source) => {
-                self.field
-                    .update(cx, |field, cx| field.set_content(source.clone(), cx));
-                self.saved = source;
-                self.ready = true;
-                self.changed = false;
-                self.error = None;
-            }
-            Err(error) => self.error = Some(error.to_string()),
-        }
-        cx.notify();
+        let (files, path) = (self.files.clone(), self.path.clone());
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { read_text(&files, &path).await })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok(source) => {
+                        this.field
+                            .update(cx, |field, cx| field.set_content(source.clone(), cx));
+                        this.saved = source;
+                        this.ready = true;
+                        this.changed = false;
+                        this.error = None;
+                    }
+                    Err(error) => this.error = Some(error.to_string()),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 }
 
@@ -813,9 +867,9 @@ impl Render for FileView {
                 .parent()
                 .map(Path::to_path_buf)
                 .unwrap_or_default();
-            let assets = pictures::Assets::Project(self.root.clone());
+            let shelf = crate::model::media::Shelf::shared(&self.root);
             self.pictures
-                .update(cx, |pictures, _| pictures.place(base, assets));
+                .update(cx, |pictures, _| pictures.place(base, shelf));
         }
         let overlay = preview_doc.is_some().then(|| self.picture_overlay.clone());
         let doc = preview_doc.unwrap_or_default();
@@ -867,7 +921,7 @@ impl Render for FileView {
                     }))
             })
             .on_action(cx.listener(|this, _: &Save, _, cx| {
-                this.save(false, cx);
+                this.save(false, cx).detach();
             }))
             .children(external_notice)
             .when_some(notice, |panel, notice| {
@@ -895,7 +949,7 @@ impl Render for FileView {
                                             .cursor_pointer()
                                             .child("Overwrite")
                                             .on_click(cx.listener(|this, _, _, cx| {
-                                                this.save(true, cx);
+                                                this.save(true, cx).detach();
                                             })),
                                     )
                                 }),

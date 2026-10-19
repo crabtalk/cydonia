@@ -3,27 +3,26 @@
 //! dropped ones land in its `assets/`, and mentions are on.
 
 use crate::{
-    model::workspace::Workspace,
-    view::component::file::pictures::{Assets, Pictures},
+    model::{media::Shelf, workspace::Workspace},
+    view::component::file::pictures::Pictures,
 };
 use bezel::gpui::{App, AppContext as _, Entity, WeakEntity};
 use editor::{Document, Editor};
 use std::path::Path;
 
-/// An editor over `document`, the one in `dir`, and the pictures beside it.
-/// `configure` sets what differs between hosts — text size, scroll.
-/// The pictures must be held as long as the editor is.
+/// An editor over `document`, the one in `dir`, and the pictures beside it,
+/// which file a picture fetched off the web on `shelf`. `configure` sets what
+/// differs between hosts — text size, scroll. The pictures must be held as
+/// long as the editor is.
 pub(crate) fn editor(
     dir: &Path,
+    shelf: Shelf,
     document: Entity<Document>,
     workspace: WeakEntity<Workspace>,
     configure: impl FnOnce(Editor) -> Editor,
     cx: &mut App,
 ) -> (Entity<Editor>, Entity<Pictures>) {
-    let pictures = cx.new(|cx| {
-        let assets = artifact::document::assets(&artifact::document::content(dir));
-        Pictures::new(dir.to_path_buf(), Assets::Dir(assets), workspace, cx)
-    });
+    let pictures = cx.new(|cx| Pictures::new(dir.to_path_buf(), shelf, workspace, cx));
     let overlay = Pictures::overlay(&pictures);
     let editor = cx.new(|cx| {
         configure(

@@ -17,7 +17,7 @@ impl Sqlite {
     /// `sort` names a column to order by, and is checked against the table's
     /// real columns before it reaches the statement — the one place a caller's
     /// string would otherwise be spliced into SQL unquoted.
-    pub(super) fn read(
+    pub fn read(
         &self,
         table: &str,
         sort: Option<&str>,
@@ -86,7 +86,7 @@ impl Sqlite {
     /// Write cells. One transaction, so a pasted block lands whole or not at
     /// all — a half-applied paste is worse than a rejected one, because there
     /// is nothing on screen saying which half.
-    pub(super) fn write_cells(&mut self, table: &str, edits: &[Edit]) -> Result<()> {
+    pub fn write_cells(&mut self, table: &str, edits: &[Edit]) -> Result<()> {
         if edits.is_empty() {
             return Ok(());
         }
@@ -112,7 +112,7 @@ impl Sqlite {
     }
 
     /// Append empty rows, answering with their ids in the order they were made.
-    pub(super) fn add_rows(&mut self, table: &str, count: i64) -> Result<Vec<i64>> {
+    pub fn add_rows(&mut self, table: &str, count: i64) -> Result<Vec<i64>> {
         let key = self.resolve(table)?;
         let sql = format!("INSERT INTO {} DEFAULT VALUES", sqlite::quote(&key));
         let tx = self.writer.transaction()?;
@@ -127,7 +127,7 @@ impl Sqlite {
 
     /// Append rows, each by column name, in one transaction, answering with
     /// their ids in order. A column the table does not have fails the lot.
-    pub(super) fn insert(&mut self, table: &str, rows: &[Map<String, Value>]) -> Result<Vec<i64>> {
+    pub fn insert(&mut self, table: &str, rows: &[Map<String, Value>]) -> Result<Vec<i64>> {
         let key = self.resolve(table)?;
         let columns = sqlite::columns_of(&self.writer, &key)?;
         for row in rows {
@@ -166,7 +166,7 @@ impl Sqlite {
     }
 
     /// Take away the rows whose `column` holds `value`.
-    pub(super) fn delete_where(&mut self, table: &str, column: &str, value: &Value) -> Result<()> {
+    pub fn delete_where(&mut self, table: &str, column: &str, value: &Value) -> Result<()> {
         let key = self.resolve(table)?;
         let columns = sqlite::columns_of(&self.writer, &key)?;
         let Some(col) = columns.iter().find(|col| col.name == column) else {
@@ -183,7 +183,7 @@ impl Sqlite {
         Ok(())
     }
 
-    pub(super) fn delete_rows(&mut self, table: &str, rowids: &[i64]) -> Result<()> {
+    pub fn delete_rows(&mut self, table: &str, rowids: &[i64]) -> Result<()> {
         if rowids.is_empty() {
             return Ok(());
         }
@@ -201,7 +201,7 @@ impl Sqlite {
 
     /// Take a column away. Not reachable from a tool — the shape is the
     /// person's, same line the table itself sits on.
-    pub(super) fn drop_column(&mut self, table: &str, column: &str) -> Result<Vec<Column>> {
+    pub fn drop_column(&mut self, table: &str, column: &str) -> Result<Vec<Column>> {
         let key = self.resolve(table)?;
         let columns = sqlite::columns_of(&self.writer, &key)?;
         let Some(col) = columns.iter().find(|col| col.name == column) else {

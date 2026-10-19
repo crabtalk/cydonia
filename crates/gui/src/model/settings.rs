@@ -1013,6 +1013,21 @@ impl Agent {
     }
 }
 
+#[cfg(feature = "desktop")]
+impl Agent {
+    /// The entry that runs `installed` under `name`. The command is a path on
+    /// the machine that holds the install.
+    pub fn installed(name: String, installed: cydonia_acp::agents::Installed) -> Self {
+        Self {
+            name,
+            id: Some(installed.id),
+            command: installed.command,
+            args: installed.args,
+            env: installed.env,
+        }
+    }
+}
+
 impl Settings {
     /// What becomes of a pasted picture — see [`crate::model::media`].
     pub fn pasting(&self) -> crate::model::media::Pasting {

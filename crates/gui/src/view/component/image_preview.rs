@@ -1,8 +1,5 @@
 //! Shared image-preview frame and controls.
-use crate::{
-    model::workspace::Workspace,
-    view::component::file::pictures::{Assets, Pictures},
-};
+use crate::{model::workspace::Workspace, view::component::file::pictures::Pictures};
 use bezel::{
     gpui::{
         self, AnyElement, Context, CursorStyle, Empty, Entity, MouseButton, ObjectFit, Pixels,
@@ -98,8 +95,8 @@ pub(crate) struct Preview {
 }
 
 impl Preview {
-    /// `cwd` is where a picture fetched off the web to open elsewhere is
-    /// kept, under its `.cydonia/assets/`.
+    /// `cwd` is the project whose shared pictures a picture fetched off the
+    /// web to open elsewhere is filed among.
     pub(crate) fn new(
         images: Vec<gpui::ImageSource>,
         cwd: &Path,
@@ -109,7 +106,7 @@ impl Preview {
         let pictures = cx.new(|cx| {
             Pictures::new(
                 cwd.to_path_buf(),
-                Assets::Project(cwd.to_path_buf()),
+                crate::model::media::Shelf::shared(cwd),
                 workspace,
                 cx,
             )

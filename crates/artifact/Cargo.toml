@@ -18,9 +18,15 @@ default = ["sqlite"]
 sqlite = ["dep:rusqlite"]
 # Importing a cover: decoding a picture and resampling it to `cover::WIDTH`.
 pictures = ["dep:image"]
+# The `artifact` and `tables` Cupola services (`project::service`,
+# `table::service`), and what a client holds over them (`project::remote`,
+# `table::remote`).
+remote = ["dep:cupola"]
 
 [dependencies]
 anyhow.workspace = true
+cupola = { workspace = true, optional = true }
+futures.workspace = true
 notify.workspace = true
 pulldown-cmark.workspace = true
 regex.workspace = true
@@ -39,5 +45,3 @@ toml_edit.workspace = true
 url.workspace = true
 web-time.workspace = true
 
-[dev-dependencies]
-futures.workspace = true

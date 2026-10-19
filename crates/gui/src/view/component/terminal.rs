@@ -20,11 +20,14 @@ use bezel::{
         tooltip::Tooltip,
     },
 };
+#[cfg(unix)]
+use cupola::client::ssh::Control;
+use cupola::shell::Script;
 use futures::{SinkExt, StreamExt, channel::mpsc};
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::{
     io::{Read, Write},
-    path::Path,
+    path::{Path, PathBuf},
     sync::mpsc as channel,
     time::Duration,
 };
@@ -65,25 +68,13 @@ fn caret_override(cx: &App) -> Option<CursorStyle> {
     })
 }
 
-/// Paths as a shell reads them: each single-quoted where it needs to be,
-/// joined by spaces, with a trailing space so the next word starts clean.
+/// Paths as a shell reads them, with a trailing space so the next word
+/// starts clean.
 fn shell_words(paths: &ExternalPaths) -> String {
-    let mut out = String::new();
-    for path in paths.paths() {
-        let path = path.to_string_lossy();
-        let plain = !path.is_empty()
-            && path
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || "/._-+,:@%=".contains(c));
-        if plain {
-            out.push_str(&path);
-        } else {
-            out.push('\'');
-            out.push_str(&path.replace('\'', "'\\''"));
-            out.push('\'');
-        }
-        out.push(' ');
-    }
+    let mut words = Script::new();
+    words.words(paths.paths());
+    let mut out = words.to_string_lossy();
+    out.push(' ');
     out
 }
 
@@ -139,8 +130,73 @@ pub fn keystroke_bytes(
     )
 }
 
+/// What a terminal's PTY runs.
+#[derive(Clone, Debug)]
+pub enum Login {
+    /// The user's login shell on this machine, at a local directory.
+    Local(PathBuf),
+    /// The remote user's login shell through a host's ControlMaster, at a
+    /// directory on that host. The PTY's own process is the local `ssh`.
+    #[cfg(unix)]
+    Remote { control: Control, dir: PathBuf },
+}
+
+impl Login {
+    /// Where the shell starts, on whichever machine runs it.
+    fn directory(&self) -> PathBuf {
+        match self {
+            Self::Local(dir) => dir.canonicalize().unwrap_or_else(|_| dir.clone()),
+            #[cfg(unix)]
+            Self::Remote { dir, .. } => dir.clone(),
+        }
+    }
+
+    fn command(&self) -> CommandBuilder {
+        match self {
+            Self::Local(dir) => {
+                let shell = std::env::var_os("SHELL").filter(|s| !s.is_empty());
+                // `$SHELL` is unset on Windows unless something like Git Bash
+                // put it there, and `-l` is a unix shell's flag.
+                #[cfg(windows)]
+                let mut command =
+                    CommandBuilder::new(shell.unwrap_or_else(|| "powershell.exe".into()));
+                #[cfg(not(windows))]
+                let mut command = {
+                    let mut command =
+                        CommandBuilder::new(shell.unwrap_or_else(|| "/bin/zsh".into()));
+                    command.arg("-l");
+                    command
+                };
+                command.cwd(dir);
+                command
+            }
+            #[cfg(unix)]
+            Self::Remote { control, dir } => {
+                let ssh = control.login_shell(dir);
+                let mut argv = vec![ssh.get_program().to_os_string()];
+                argv.extend(ssh.get_args().map(ToOwned::to_owned));
+                let mut command = CommandBuilder::from_argv(argv);
+                for (key, value) in ssh.get_envs() {
+                    match value {
+                        Some(value) => command.env(key, value),
+                        None => command.env_remove(key),
+                    }
+                }
+                command
+            }
+        }
+    }
+
+    /// Whether the PTY's process directory is the shell's.
+    fn local(&self) -> bool {
+        matches!(self, Self::Local(_))
+    }
+}
+
 /// Dropping the panel's owner terminates the shell; a waiter reaps it off-thread.
 struct Shell {
+    /// The process whose directory is the shell's; none when the shell runs
+    /// on another machine.
     pid: Option<u32>,
     master: Box<dyn MasterPty + Send>,
     input: channel::Sender<Vec<u8>>,
@@ -157,28 +213,20 @@ impl Shell {
     /// Unit tests get no shell: its reader thread would wake the pump from
     /// outside gpui's test scheduler, which fails the test as nondeterministic.
     #[cfg(test)]
-    fn open(_: &Path) -> anyhow::Result<(Self, mpsc::Receiver<Vec<u8>>)> {
+    fn open(_: &Login) -> anyhow::Result<(Self, mpsc::Receiver<Vec<u8>>)> {
         anyhow::bail!("no shell under test")
     }
 
     #[cfg(not(test))]
-    fn open(cwd: &Path) -> anyhow::Result<(Self, mpsc::Receiver<Vec<u8>>)> {
-        let shell = std::env::var_os("SHELL").filter(|s| !s.is_empty());
-        // `$SHELL` is unset on Windows unless something like Git Bash put it
-        // there, and `-l` is a unix shell's flag.
-        #[cfg(windows)]
-        let command = CommandBuilder::new(shell.unwrap_or_else(|| "powershell.exe".into()));
-        #[cfg(not(windows))]
-        let command = {
-            let mut command = CommandBuilder::new(shell.unwrap_or_else(|| "/bin/zsh".into()));
-            command.arg("-l");
-            command
-        };
-        Self::open_command(cwd, command)
+    fn open(login: &Login) -> anyhow::Result<(Self, mpsc::Receiver<Vec<u8>>)> {
+        let (mut shell, output) = Self::open_command(login.command())?;
+        if !login.local() {
+            shell.pid = None;
+        }
+        Ok((shell, output))
     }
 
     fn open_command(
-        cwd: &Path,
         mut command: CommandBuilder,
     ) -> anyhow::Result<(Self, mpsc::Receiver<Vec<u8>>)> {
         let pair = native_pty_system().openpty(PtySize {
@@ -189,7 +237,6 @@ impl Shell {
         })?;
         let mut reader = pair.master.try_clone_reader()?;
         let mut writer = pair.master.take_writer()?;
-        command.cwd(cwd);
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
         // What a program reads to know which terminal it is talking to.
@@ -335,9 +382,9 @@ pub struct Terminal {
 }
 
 impl Terminal {
-    pub fn new(cwd: &Path, cx: &mut Context<Self>) -> Self {
+    pub fn new(login: Login, cx: &mut Context<Self>) -> Self {
         let mut this = Self {
-            directory: cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf()),
+            directory: login.directory(),
             emulator: Emulator::new(80, 24),
             images: Images::new(),
             shell: None,
@@ -357,7 +404,7 @@ impl Terminal {
             blink: None,
             _pump: None,
         };
-        match Shell::open(cwd) {
+        match Shell::open(&login) {
             Ok((shell, mut output)) => {
                 this.shell = Some(shell);
                 this._pump = Some(cx.spawn(async move |this, cx| {
@@ -1047,7 +1094,7 @@ impl TerminalPanel {
                 .map(|cwd| cwd.canonicalize().unwrap_or(cwd))
                 .unwrap_or_else(|| self.cwd.clone()),
         };
-        let terminal = cx.new(|cx| Terminal::new(&cwd, cx));
+        let terminal = cx.new(|cx| Terminal::new(Login::Local(cwd), cx));
         let exit = cx.subscribe_in(&terminal, window, move |this, _, _: &Exited, window, cx| {
             this.close(id, window, cx);
         });

@@ -2,7 +2,7 @@
 //! `wasm32-unknown-unknown` and driven through `Runner`.
 
 use cydonia_gui::{
-    data::{Calls as _, Here, Home, Local as _, Tables as _},
+    data::{Calls as _, Here, Home, Local as _},
     model::apps::{Answer, Call, Command, Event, Node, Runner as _, Runtime},
 };
 use guest::wire;
@@ -233,8 +233,7 @@ fn settle_with(
             };
             let answer = match call {
                 Call::Fetch(request) => fetch(&request),
-                call => data
-                    .call(call)
+                call => futures::executor::block_on(data.call(call))
                     .unwrap_or_else(|error| Answer::Error(format!("{error:#}"))),
             };
             commands.extend(app.update(&Event::Answer { call: id, answer }).unwrap());
@@ -302,23 +301,23 @@ fn an_app_finds_the_table_it_made_on_its_next_run() {
 fn an_insert_naming_a_missing_column_writes_nothing() {
     let scratch = Scratch::new("insert");
     let mut data = Here::open(&Home::App(scratch.0.join("app"))).unwrap();
-    data.call(Call::CreateTable {
+    futures::executor::block_on(data.call(Call::CreateTable {
         name: "Notes".into(),
         columns: vec![wire::Column {
             name: "text".into(),
             kind: wire::ColType::Text,
         }],
-    })
+    }))
     .unwrap();
     let good = serde_json::json!({ "text": "kept" });
     let bad = serde_json::json!({ "missing": 1 });
-    let answer = data.call(Call::Insert {
+    let answer = futures::executor::block_on(data.call(Call::Insert {
         table: "notes".into(),
         rows: vec![
             good.as_object().unwrap().clone(),
             bad.as_object().unwrap().clone(),
         ],
-    });
+    }));
     assert!(answer.is_err());
     assert_eq!(data.list().unwrap()[0].rows, 0);
 }

@@ -11,7 +11,7 @@
 use crate::{
     agent::{
         mcp, serve,
-        spawner::{self, Handle, Spec},
+        spawner::{self, Handle, Spawner, Spec},
     },
     model::{
         media,
@@ -171,6 +171,17 @@ impl Session {
     /// load (stale id, agent restart) falls back to a new session.
     pub async fn spawn(entry: &settings::Agent, launch: Launch, tx: Sender) -> Result<Self> {
         let spawner = spawner::open(&launch.cwd);
+        Self::spawn_on(&*spawner, entry, launch, tx).await
+    }
+
+    /// [`Session::spawn`] on `spawner`'s host, `launch`'s directory a path
+    /// there.
+    pub async fn spawn_on(
+        spawner: &dyn Spawner,
+        entry: &settings::Agent,
+        launch: Launch,
+        tx: Sender,
+    ) -> Result<Self> {
         let mut env = entry.env.clone();
         // HTTP clients can inherit a system proxy that does not exempt IP
         // loopback addresses. Our MCP server must be reached directly. Merge
@@ -193,13 +204,15 @@ impl Session {
         // would not resolve. It reaches the transcript as the execution it is
         // — see [`Event::Stderr`]. `CYDONIA_DEBUG`, which already redirects
         // the protocol tap, still echoes the lines where a developer looks.
+        let spec = Spec {
+            program: &entry.command,
+            args: &entry.args,
+            env: &env,
+            cwd: &launch.cwd,
+        };
         let process = spawner
-            .spawn(&Spec {
-                program: &entry.command,
-                args: &entry.args,
-                env: &env,
-                cwd: &launch.cwd,
-            })
+            .spawn(&spec)
+            .await
             .map_err(|e| anyhow!("failed to start {}: {e}", entry.command))?;
 
         let configured = mcp::servers();
@@ -723,6 +736,32 @@ fn acp_mcp_servers(
         )
         .collect();
     (servers, available)
+}
+
+/// Cydonia's own server for an agent on a remote host, as a stdio server
+/// there: `program`, the absolute path of cydonia-server on that host, run as
+/// [`server::Command::Mcp`] bound to `cwd`, a directory there, and to the
+/// session filed under `record`.
+pub fn remote_mcp_server(
+    program: &std::path::Path,
+    cwd: &std::path::Path,
+    record: Option<&str>,
+) -> McpServer {
+    let binding = server::mcp::Binding {
+        project: Some(cwd.to_owned()),
+        session: record.map(str::to_owned),
+    };
+    McpServer::Stdio(McpServerStdio {
+        name: SERVER.to_owned(),
+        command: program.to_owned(),
+        args: server::Command::Mcp(binding)
+            .args()
+            .iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect(),
+        env: Vec::new(),
+        meta: None,
+    })
 }
 
 /// Try each advertised auth method in order. Non-interactive methods

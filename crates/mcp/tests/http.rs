@@ -36,6 +36,15 @@ fn a_notification_is_accepted_and_not_answered() {
     assert!(answer.starts_with("HTTP/1.1 202"), "{answer}");
 }
 
+#[test]
+fn text_that_is_no_request_is_refused_with_a_parse_error() {
+    let (_scratch, _runtime, url) = door("unreadable");
+    let answer = send(&url, "not json", &[]);
+    assert!(answer.starts_with("HTTP/1.1 400"), "{answer}");
+    assert!(answer.contains("-32700"), "{answer}");
+    assert!(answer.contains(r#""id":null"#), "{answer}");
+}
+
 /// A call names its own project, and the door holds none.
 #[test]
 fn a_call_reaches_the_directory_it_names() {

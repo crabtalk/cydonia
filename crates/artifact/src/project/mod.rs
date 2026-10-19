@@ -9,20 +9,26 @@
 //! Everything is named by id. The paths that cross this trait are on the host
 //! the backend keeps its files on: [`Project::place`] and [`Project::files`].
 //!
-//! Reads answer at once. A write answers with a future: the write is issued
-//! at the call, in call order, and the future resolves when the backend has
-//! made it. Dropping the future does not take the write back.
+//! Reads answer at once, but for [`Project::asset`], a fetch answered with a
+//! future. A write answers with a future: the write is issued at the call, in
+//! call order, and the future resolves when the backend has made it. Dropping
+//! the future does not take the write back.
 
 pub mod fs;
 pub mod layout;
 pub mod memory;
+#[cfg(feature = "remote")]
+pub mod remote;
+#[cfg(feature = "remote")]
+pub mod service;
 
 use crate::kind::Kind;
 use crate::{
     article::{Article, comments::Comments, properties::Properties},
-    board::Board,
+    board::{Board, Page},
     session::record::Record,
 };
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 /// What a [`Project`] answers a write or a lookup with.
@@ -35,6 +41,18 @@ pub struct Watching {
     /// is when the caller asks again.
     pub settled: bool,
     _guard: Box<dyn Send>,
+}
+
+/// Whose pictures an asset is filed among.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Owner {
+    /// An article's, by its id.
+    Article(String),
+    /// A page of a board: one of its cards, or its description.
+    Page { board: String, page: Page },
+    /// The project's own: what a session's messages carry, and the pictures
+    /// in articles written before each held its own.
+    Shared,
 }
 
 impl Watching {
@@ -144,13 +162,21 @@ pub trait Project {
     /// number.
     fn remove_article(&self, id: &str) -> impl Future<Output = Result<()>> + Send + use<Self>;
 
-    /// One of the pictures in an article's body, by the name it was filed
-    /// under.
-    fn asset(&self, id: &str, name: &str) -> Result<Vec<u8>>;
+    // ── assets ───────────────────────────────────────────────────────
 
+    /// One of `owner`'s pictures, by the name it was filed under.
+    fn asset(
+        &self,
+        owner: &Owner,
+        name: &str,
+    ) -> impl Future<Output = Result<Vec<u8>>> + Send + use<Self>;
+
+    /// File a picture among `owner`'s, over any of the same name. Refused for
+    /// an article or a board that is not here, and for a name that is not
+    /// one path component.
     fn put_asset(
         &self,
-        id: &str,
+        owner: &Owner,
         name: &str,
         bytes: &[u8],
     ) -> impl Future<Output = Result<()>> + Send + use<Self>;

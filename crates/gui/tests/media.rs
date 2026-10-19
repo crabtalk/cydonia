@@ -1,8 +1,13 @@
 //! Pictures a message carries: kept by their bytes, written as a line, read
 //! back out, and scaled for the agent.
 
+use artifact::project::{Owner, Project as _, memory};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use cydonia_gui::model::media::{LONG_EDGE, attached, encode, line, store};
+use cydonia_gui::model::{
+    media::{LONG_EDGE, Picture, Shelf, attached, encode, line},
+    store::Store,
+};
+use futures::executor::block_on;
 use std::path::PathBuf;
 
 fn scratch(name: &str) -> PathBuf {
@@ -26,15 +31,26 @@ fn a_url_is_not_attached() {
     assert!(attached("![](https://example.com/a.png)\n\nplain words").is_empty());
 }
 
-/// The same bytes kept twice are the one file.
+/// The same bytes are filed under the one name, and other bytes under
+/// another.
 #[test]
-fn the_same_bytes_are_one_file() {
-    let dir = scratch("store");
-    let first = store(&dir, b"picture", "png").expect("kept");
-    let second = store(&dir, b"picture", "png").expect("kept again");
-    assert_eq!(first, second);
-    assert_eq!(std::fs::read_dir(&dir).expect("the directory").count(), 1);
-    let _ = std::fs::remove_dir_all(&dir);
+fn a_picture_is_filed_under_its_bytes() {
+    let store = std::sync::Arc::new(memory::Project::new());
+    let shelf = Shelf {
+        store: Store::Memory(store.clone()),
+        owner: Owner::Shared,
+    };
+    let (first, write) = shelf.put(&Picture::new(b"picture".to_vec(), "PNG"));
+    block_on(write).expect("filed");
+    let (again, write) = shelf.put(&Picture::new(b"picture".to_vec(), "png"));
+    block_on(write).expect("filed again");
+    assert_eq!(first, again);
+    assert!(first.starts_with("media-") && first.ends_with(".png"));
+    assert_ne!(Picture::new(b"other".to_vec(), "png").name(), first);
+    assert_eq!(
+        block_on(store.asset(&Owner::Shared, &first)).expect("held"),
+        b"picture"
+    );
 }
 
 /// A picture past the long edge is scaled down on the way to the agent.

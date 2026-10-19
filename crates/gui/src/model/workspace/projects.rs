@@ -74,6 +74,7 @@ impl Workspace {
         }
         self.projects.push(Project::new(path, cx));
         let ix = self.projects.len() - 1;
+        self.list_tables(ix, cx);
         self.restore_sessions(ix, cx);
         self.watch_project(ix, cx);
         self.select_project(ix, cx);
@@ -221,7 +222,7 @@ impl Workspace {
             }
             Kind::Table => {
                 project.table = at;
-                project.reload_page();
+                project.reload_page(cx);
             }
             Kind::App => {}
         }
@@ -348,11 +349,24 @@ impl Workspace {
         if self.projects[ix].reload(cx) {
             cx.emit(Reloaded);
         }
+        let tables = self.projects[ix].reload_tables(cx);
         self.prune_archived(cx);
         // An entry deleted from under a space leaves a member naming a
         // number nothing answers to.
         self.prune_spaces(cx);
         cx.notify();
+        // A table archived or dropped is known only once the tables land.
+        cx.spawn(async move |workspace, cx| {
+            let moved = tables.await;
+            let _ = workspace.update(cx, |workspace, cx| {
+                if moved {
+                    cx.emit(Reloaded);
+                }
+                workspace.prune_archived(cx);
+                workspace.prune_spaces(cx);
+            });
+        })
+        .detach();
     }
 
     /// Re-read every open project: the backstop under the watch.
@@ -364,12 +378,20 @@ impl Workspace {
     /// watch, and all of them are corrected here.
     pub fn reload_projects(&mut self, cx: &mut Context<Self>) {
         let mut moved = false;
+        let mut tables = Vec::new();
         for ix in 0..self.projects.len() {
             moved |= self.projects[ix].reload(cx);
+            tables.push(self.projects[ix].reload_tables(cx));
         }
         if moved {
             cx.emit(Reloaded);
         }
         cx.notify();
+        cx.spawn(async move |workspace, cx| {
+            if futures::future::join_all(tables).await.contains(&true) {
+                let _ = workspace.update(cx, |_, cx| cx.emit(Reloaded));
+            }
+        })
+        .detach();
     }
 }

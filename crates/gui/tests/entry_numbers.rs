@@ -29,20 +29,18 @@ fn app_and_agent_catalog_share_article_and_table_numbers(cx: &mut gpui::TestAppC
     let mut data = store::open(&Location::from(scratch.0.as_path()))
         .make_tables()
         .unwrap();
-    let table = data
-        .create(
-            "Notes",
-            None,
-            &[Column {
-                name: "text".into(),
-                kind: ColType::Text,
-            }],
-            None,
-        )
-        .unwrap();
+    let table = futures::executor::block_on(data.create(
+        "Notes",
+        None,
+        &[Column {
+            name: "text".into(),
+            kind: ColType::Text,
+        }],
+        None,
+    ))
+    .unwrap();
     assert_ne!(article.number, table.number);
-    data.write("INSERT INTO notes (text) VALUES ('hello')")
-        .unwrap();
+    futures::executor::block_on(data.write("INSERT INTO notes (text) VALUES ('hello')")).unwrap();
     let catalog = entry::list(&scratch.0).unwrap();
     let found = catalog
         .iter()

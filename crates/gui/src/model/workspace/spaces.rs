@@ -574,6 +574,13 @@ impl Workspace {
         }
         live.extend(self.apps.iter().map(|held| Member::app(held.id.clone())));
         let open: Vec<Location> = self.projects.iter().map(Project::location).collect();
+        // A table is not missing from a project whose tables have not landed.
+        let unlisted: Vec<Location> = self
+            .projects
+            .iter()
+            .filter(|open| !open.tables_listed())
+            .map(Project::location)
+            .collect();
         for space in &mut self.spaces {
             let gone: Vec<Member> = space
                 .entries()
@@ -583,6 +590,10 @@ impl Workspace {
                         .project()
                         .is_none_or(|project| open.iter().any(|at| at == project))
                         && !live.contains(member)
+                        && !(member.kind() == Kind::Table
+                            && member
+                                .project()
+                                .is_some_and(|project| unlisted.contains(project)))
                 })
                 .collect();
             if !gone.is_empty() && space.prune(&gone) {
@@ -788,7 +799,7 @@ impl Workspace {
             Showing::Table(key) => {
                 if let Some(ix) = open.table_ix(key) {
                     open.table = Some(ix);
-                    open.reload_page();
+                    open.reload_page(cx);
                 }
             }
         }

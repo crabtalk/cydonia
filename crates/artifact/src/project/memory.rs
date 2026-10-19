@@ -14,13 +14,12 @@ use crate::{
         comments::Comments,
         properties::{self, Properties},
     },
-    board::{Board, key},
+    board::{Board, Page, key},
     id,
-    project::layout,
+    project::{Owner, fs::component, layout},
     session::record::Record,
     stamp,
 };
-use anyhow::anyhow;
 use std::{
     cmp::Reverse,
     collections::{BTreeMap, HashMap, HashSet},
@@ -38,10 +37,15 @@ pub struct Project(Mutex<State>);
 #[derive(Default)]
 struct State {
     boards: BTreeMap<String, Board>,
-    /// How many times each board has been written, which is its version.
-    writes: HashMap<String, u64>,
+    /// Each board's version, `0` for one never saved.
+    versions: HashMap<String, String>,
+    /// How many saves of a board have been made here: what the next one's
+    /// version is spelled from.
+    saves: u64,
     sessions: BTreeMap<String, Record>,
     articles: BTreeMap<String, Held>,
+    /// Each owner's pictures, by name.
+    assets: HashMap<Owner, BTreeMap<String, Vec<u8>>>,
     /// `(kind, id)` to the number issued to it.
     numbers: HashMap<(Kind, String), u64>,
     /// Every number issued, with the id it is on, or `None` once retired.
@@ -56,7 +60,6 @@ struct Held {
     properties: String,
     /// Its comments, held against `markdown`.
     comments: Comments,
-    assets: BTreeMap<String, Vec<u8>>,
     touched: u128,
 }
 
@@ -98,6 +101,21 @@ impl Project {
                     ["boards", id, "content.md"] => {
                         dirs.entry((*id).to_owned()).or_default().2 = text();
                     }
+                    ["boards", id, "assets", name] => {
+                        let owner = Owner::Page {
+                            board: (*id).to_owned(),
+                            page: Page::Description,
+                        };
+                        state.hold_asset(owner, name, bytes);
+                    }
+                    ["boards", id, "cards", card, "assets", name] => {
+                        let owner = Owner::Page {
+                            board: (*id).to_owned(),
+                            page: Page::Card((*card).to_owned()),
+                        };
+                        state.hold_asset(owner, name, bytes);
+                    }
+                    ["assets", name] => state.hold_asset(Owner::Shared, name, bytes),
                     [
                         "boards",
                         id,
@@ -143,12 +161,7 @@ impl Project {
                             .properties = text();
                     }
                     ["articles", article, "assets", name] => {
-                        state
-                            .articles
-                            .entry((*article).to_owned())
-                            .or_default()
-                            .assets
-                            .insert((*name).to_owned(), bytes.to_vec());
+                        state.hold_asset(Owner::Article((*article).to_owned()), name, bytes);
                     }
                     _ => {}
                 }
@@ -192,6 +205,55 @@ impl Project {
         this
     }
 
+    /// Holds `board` as another backend made it: its number, version and the
+    /// time it was written are kept as they are.
+    pub fn hold_board(&self, board: Board) {
+        let mut state = self.state();
+        if let Some(number) = board.number {
+            state.hold_number(Kind::Board, &board.id, number);
+        }
+        match &board.version {
+            Some(version) => state.versions.insert(board.id.clone(), version.clone()),
+            None => state.versions.remove(&board.id),
+        };
+        state.boards.insert(board.id.clone(), board);
+    }
+
+    /// Holds `record` as another backend made it, its number kept.
+    pub fn hold_session(&self, record: Record) {
+        let mut state = self.state();
+        if let Some(number) = record.number {
+            state.hold_number(Kind::Session, &record.id, number);
+        }
+        state.sessions.insert(record.id.clone(), record);
+    }
+
+    /// Holds an article as another backend made it: `article`'s number and
+    /// the time it was touched are kept, and its title, archived flag and
+    /// labels are `properties`'.
+    pub fn hold_article(
+        &self,
+        article: &Article,
+        markdown: String,
+        properties: &Properties,
+        comments: Comments,
+    ) {
+        let mut state = self.state();
+        if let Some(number) = article.number {
+            state.hold_number(Kind::Article, &article.id, number);
+        }
+        let held = state.articles.entry(article.id.clone()).or_default();
+        held.markdown = markdown;
+        held.properties = properties::apply("", properties).unwrap_or_default();
+        held.comments = comments;
+        held.touched = article.touched;
+    }
+
+    /// Holds `number` as issued elsewhere to `id`.
+    pub fn hold_number(&self, kind: Kind, id: &str, number: u64) {
+        self.state().hold_number(kind, id, number);
+    }
+
     fn state(&self) -> MutexGuard<'_, State> {
         self.0
             .lock()
@@ -212,11 +274,16 @@ impl State {
     }
 
     fn version(&self, board: &str) -> String {
-        self.writes
+        self.versions
             .get(board)
-            .copied()
-            .unwrap_or_default()
-            .to_string()
+            .cloned()
+            .unwrap_or_else(|| "0".to_owned())
+    }
+
+    /// `number` on `id`, issued elsewhere.
+    fn hold_number(&mut self, kind: Kind, id: &str, number: u64) {
+        self.numbers.insert((kind, id.to_owned()), number);
+        self.issued.insert(number, (kind, Some(id.to_owned())));
     }
 
     fn retire(&mut self, kind: Kind, id: &str) {
@@ -225,6 +292,32 @@ impl State {
         {
             entry.1 = None;
         }
+    }
+
+    fn hold_asset(&mut self, owner: Owner, name: &str, bytes: &[u8]) {
+        self.assets
+            .entry(owner)
+            .or_default()
+            .insert(name.to_owned(), bytes.to_vec());
+    }
+
+    /// Whether what `owner` names is here.
+    fn holds(&self, owner: &Owner) -> super::Result<()> {
+        match owner {
+            Owner::Article(id) if !self.articles.contains_key(id) => Err(not_found("article", id)),
+            Owner::Page { board, .. } if !self.boards.contains_key(board) => {
+                Err(not_found("board", board))
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// Drop the pictures of every page of `board` that `keep` turns away.
+    fn drop_pages(&mut self, board: &str, keep: impl Fn(&Page) -> bool) {
+        self.assets.retain(|owner, _| match owner {
+            Owner::Page { board: on, page } => on != board || keep(page),
+            _ => true,
+        });
     }
 
     fn article(&mut self, id: &str) -> super::Result<&mut Held> {
@@ -309,9 +402,29 @@ impl super::Project for Project {
         {
             return ready(Err(crate::error::Error::Stale));
         }
-        *state.writes.entry(board.id.clone()).or_default() += 1;
+        let kept: HashSet<&str> = board
+            .columns
+            .iter()
+            .flat_map(|column| &column.cards)
+            .map(|card| card.id.as_str())
+            .collect();
+        let gone: HashSet<String> = state
+            .boards
+            .get(&board.id)
+            .into_iter()
+            .flat_map(|held| held.columns.iter().flat_map(|column| &column.cards))
+            .map(|card| card.id.clone())
+            .filter(|id| !kept.contains(id.as_str()))
+            .collect();
+        state.drop_pages(&board.id, |page| match page {
+            Page::Card(card) => !gone.contains(card),
+            Page::Description => true,
+        });
+        state.saves += 1;
+        let version = state.saves.to_string();
+        state.versions.insert(board.id.clone(), version.clone());
         board.touched = stamp::now();
-        board.version = Some(state.version(&board.id));
+        board.version = Some(version);
         state.boards.insert(board.id.clone(), board.clone());
         ready(Ok(()))
     }
@@ -321,6 +434,7 @@ impl super::Project for Project {
         if state.boards.remove(id).is_none() {
             return ready(Err(not_found("board", id)));
         }
+        state.drop_pages(id, |_| false);
         state.retire(Kind::Board, id);
         ready(Ok(()))
     }
@@ -460,33 +574,62 @@ impl super::Project for Project {
         if state.articles.remove(id).is_none() {
             return ready(Err(not_found("article", id)));
         }
+        state.assets.remove(&Owner::Article(id.to_owned()));
         state.retire(Kind::Article, id);
         ready(Ok(()))
     }
 
-    fn asset(&self, id: &str, name: &str) -> super::Result<Vec<u8>> {
-        let mut state = self.state();
-        state
-            .article(id)?
-            .assets
-            .get(name)
-            .cloned()
-            .ok_or_else(|| not_found("asset", name))
+    fn asset(
+        &self,
+        owner: &Owner,
+        name: &str,
+    ) -> impl Future<Output = super::Result<Vec<u8>>> + Send + use<> {
+        let state = self.state();
+        ready(state.holds(owner).and_then(|()| {
+            state
+                .assets
+                .get(owner)
+                .and_then(|held| held.get(name))
+                .cloned()
+                .ok_or_else(|| not_found("asset", name))
+        }))
     }
 
     fn put_asset(
         &self,
-        id: &str,
+        owner: &Owner,
         name: &str,
         bytes: &[u8],
     ) -> impl Future<Output = super::Result<()>> + Send + use<> {
-        if name.is_empty() || name.contains(['/', '\\']) || name == "." || name == ".." {
-            return ready(Err(anyhow!("{name:?} is not a name").into()));
-        }
         let mut state = self.state();
-        ready(state.article(id).map(|held| {
-            held.assets.insert(name.to_owned(), bytes.to_vec());
-        }))
+        let put = component(name)
+            .map_err(Error::from)
+            .and_then(|name| state.holds(owner).map(|()| name));
+        ready(put.map(|name| state.hold_asset(owner.clone(), name, bytes)))
+    }
+
+    /// A card's pictures are its files here.
+    fn carry_card_files(
+        &self,
+        board: &str,
+        card: &str,
+        to: &Self,
+        to_board: &str,
+        to_card: &str,
+    ) -> impl Future<Output = super::Result<()>> + Send + use<> {
+        let from = Owner::Page {
+            board: board.to_owned(),
+            page: Page::Card(card.to_owned()),
+        };
+        let held = self.state().assets.get(&from).cloned();
+        if let Some(held) = held {
+            let landing = Owner::Page {
+                board: to_board.to_owned(),
+                page: Page::Card(to_card.to_owned()),
+            };
+            to.state().assets.entry(landing).or_default().extend(held);
+        }
+        ready(Ok(()))
     }
 
     fn number(

@@ -103,14 +103,60 @@ fn dirty_tab_close_requires_a_decision_and_keeps_failed_saves(cx: &mut gpui::Tes
             assert_eq!(panel.closing, Some(id));
             assert_eq!(panel.strip.len(), 1);
             std::fs::write(&path, "agent edit").unwrap();
-            assert!(!file.update(cx, |file, cx| file.save(false, cx)));
+            panel.save_and_close(id, window, cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .update(cx, |panel, window, cx| {
             assert_eq!(std::fs::read_to_string(&path).unwrap(), "agent edit");
             assert_eq!(panel.strip.len(), 1);
+            let id = panel.strip.active().copied().unwrap();
             panel.closing = None;
+            let Content::File(file) = &panel.ordered().next().unwrap().1.content else {
+                panic!()
+            };
             assert!(file.read(cx).dirty(cx));
             panel.close(id, window, cx);
             panel.remove(id, cx);
             assert!(panel.strip.is_empty());
+        })
+        .unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[gpui::test]
+fn save_and_close_closes_once_the_save_landed(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| Theme::install(Appearance::Dark, cx));
+    let path = std::env::temp_dir().join(format!(
+        "cydonia-panel-save-close-{}.txt",
+        std::process::id()
+    ));
+    std::fs::write(&path, "original").unwrap();
+    let window = cx.add_window(|_, cx| Panel::new(std::env::temp_dir(), cx));
+    window
+        .update(cx, |panel, window, cx| {
+            panel.open_file(path.clone(), cx);
+            let id = panel.strip.active().copied().unwrap();
+            let Content::File(file) = &panel.ordered().next().unwrap().1.content else {
+                panic!()
+            };
+            file.clone().update(cx, |file, cx| {
+                file.receive(Ok("original".into()), cx);
+                file.field
+                    .update(cx, |field, cx| field.set_content("saved", cx));
+            });
+            panel.close(id, window, cx);
+            panel.save_and_close(id, window, cx);
+            assert_eq!(panel.strip.len(), 1, "open while the save is in flight");
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .update(cx, |panel, _, _| {
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), "saved");
+            assert!(panel.strip.is_empty());
+            assert_eq!(panel.closing, None);
         })
         .unwrap();
     let _ = std::fs::remove_file(path);

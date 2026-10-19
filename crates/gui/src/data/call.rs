@@ -1,26 +1,32 @@
 //! An app's calls on the store, in the shapes `cydonia-guest` reads.
 
-use super::{ColType, Column, Table, Tables};
-use anyhow::{Result, bail};
+use super::{ColType, Column, Reply, Table, Tables};
+use anyhow::anyhow;
+use futures::{FutureExt as _, TryFutureExt as _, future};
 use guest::wire::{self, Answer, Call};
 
 /// [`Tables`] as an app calls them.
 pub trait Calls {
     /// Do an app's call. A call that writes touches the table it wrote.
-    fn call(&mut self, call: Call) -> Result<Answer>;
+    fn call(&mut self, call: Call) -> Reply<Answer>;
 }
 
 impl<T: Tables + ?Sized> Calls for T {
-    fn call(&mut self, call: Call) -> Result<Answer> {
-        Ok(match call {
-            Call::Tables => Answer::Tables(self.list()?.iter().map(Wire::wire).collect()),
-            Call::Query { sql } => {
-                let rows = self.query(&sql)?;
-                Answer::Rows(wire::Rows {
-                    columns: rows.columns,
-                    rows: rows.rows,
+    fn call(&mut self, call: Call) -> Reply<Answer> {
+        match call {
+            Call::Tables => self
+                .list()
+                .map_ok(|tables| Answer::Tables(tables.iter().map(Wire::wire).collect()))
+                .boxed(),
+            Call::Query { sql } => self
+                .query(&sql)
+                .map_ok(|rows| {
+                    Answer::Rows(wire::Rows {
+                        columns: rows.columns,
+                        rows: rows.rows,
+                    })
                 })
-            }
+                .boxed(),
             Call::CreateTable { name, columns } => {
                 let columns: Vec<Column> = columns
                     .into_iter()
@@ -29,24 +35,40 @@ impl<T: Tables + ?Sized> Calls for T {
                         kind: column.kind.wire(),
                     })
                     .collect();
-                Answer::Table(self.create(&name, None, &columns, None)?.wire())
+                self.create(&name, None, &columns, None)
+                    .map_ok(|table| Answer::Table(table.wire()))
+                    .boxed()
             }
             Call::Insert { table, rows } => {
-                let ids = self.insert(&table, &rows)?;
-                let _ = self.touch(&table);
-                Answer::Ids(ids)
+                let inserted = self.insert(&table, &rows);
+                let touched = self.touch(&table);
+                async move {
+                    let ids = inserted.await?;
+                    let _ = touched.await;
+                    Ok(Answer::Ids(ids))
+                }
+                .boxed()
             }
             Call::Delete {
                 table,
                 column,
                 value,
             } => {
-                self.delete_where(&table, &column, &value)?;
-                let _ = self.touch(&table);
-                Answer::Done
+                let deleted = self.delete_where(&table, &column, &value);
+                let touched = self.touch(&table);
+                async move {
+                    deleted.await?;
+                    let _ = touched.await;
+                    Ok(Answer::Done)
+                }
+                .boxed()
             }
-            Call::Fetch(request) => bail!("{} is a fetch, not a call on tables", request.url),
-        })
+            Call::Fetch(request) => future::ready(Err(anyhow!(
+                "{} is a fetch, not a call on tables",
+                request.url
+            )))
+            .boxed(),
+        }
     }
 }
 
