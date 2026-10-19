@@ -1,0 +1,30 @@
+[package]
+name = "cydonia-cupola"
+description = "Envelopes between a client and a server over one byte stream, extended by services"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["remote", "rpc", "ssh", "cydonia"]
+categories = ["network-programming"]
+
+[dependencies]
+anyhow.workspace = true
+async-io.workspace = true
+async-process.workspace = true
+blocking.workspace = true
+futures.workspace = true
+postcard.workspace = true
+serde.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+async-net.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }

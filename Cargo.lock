@@ -2353,6 +2353,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "cydonia-cupola"
+version = "0.2.3"
+dependencies = [
+ "anyhow",
+ "async-io",
+ "async-net",
+ "async-process",
+ "blocking",
+ "futures",
+ "postcard",
+ "serde",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "toml 0.8.23",
+]
+
+[[package]]
 name = "cydonia-git"
 version = "0.2.3"
 dependencies = [
