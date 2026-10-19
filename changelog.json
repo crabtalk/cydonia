@@ -2,7 +2,6 @@
   {
     "version": "0.2.3",
     "date": "2026-10-18",
-    "nightly": true,
     "summary": "Find entries by their labels from the search palette and @, and fixes to floating tabs, the formatting bar, selections and the Settings window.",
     "new": [
       "Find articles, boards and sessions by their labels in the search palette and @, without typing l: first"

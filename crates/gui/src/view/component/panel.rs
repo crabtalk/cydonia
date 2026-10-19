@@ -823,9 +823,16 @@ impl Render for Panel {
             .child(
                 crate::view::window::root::band()
                     .gap(px(6.))
+                    // Floating, the band is inside the panel's card, and starts
+                    // the way it ends: a button's glyph `EDGE` in.
+                    .when(floating, |band| {
+                        band.pl(px(crate::view::window::root::BUTTON_EDGE))
+                    })
                     // At the window's top right while it is up, but floating.
                     .when(right, |band| band.pr_0())
-                    .child(
+                    // No strip with no tabs: an empty one would still take the
+                    // band's gap.
+                    .children((!self.strip.is_empty()).then(|| {
                         self.reorder
                             .bar(
                                 "panel-tabs",
@@ -918,8 +925,8 @@ impl Render for Panel {
                             .on_reorder(cx.listener(|this, moved: &tabs::Move, _, cx| {
                                 this.strip.reorder(moved.from, moved.to);
                                 cx.notify();
-                            })),
-                    )
+                            }))
+                    }))
                     .child(
                         div()
                             .relative()
