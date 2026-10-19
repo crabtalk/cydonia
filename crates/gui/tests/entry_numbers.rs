@@ -1,7 +1,7 @@
-use artifact::{entry, kind::Kind};
+use artifact::{entry, kind::Kind, location::Location};
 use cydonia_gui::{
-    data::{ColType, Column, Data, Home},
-    model::article,
+    data::{ColType, Column},
+    model::{article, store},
 };
 
 struct Scratch(std::path::PathBuf);
@@ -22,37 +22,13 @@ impl Drop for Scratch {
     }
 }
 
-#[test]
-fn table_reference_survives_key_changes_and_is_retired_on_delete() {
-    let scratch = Scratch::new("table");
-    let mut data = Data::open(&Home::Project(scratch.0.clone())).unwrap();
-    let columns = [Column {
-        name: "text".into(),
-        kind: ColType::Text,
-    }];
-    let first = data.create("Notes", Some("notes"), &columns, None).unwrap();
-    let reference = format!("#{}", first.number.unwrap());
-    let renamed = data
-        .update(&reference, Some("Final"), Some("final_notes"))
-        .unwrap();
-    assert_eq!(first.number, renamed.number);
-    drop(data);
-    let mut data = Data::open(&Home::Project(scratch.0.clone())).unwrap();
-    assert_eq!(data.list().unwrap()[0].number, first.number);
-    assert!(data.read(&reference, None, false, 200, 0).is_ok());
-    data.remove(&reference).unwrap();
-    let replacement = data
-        .create("Final", Some("final_notes"), &columns, None)
-        .unwrap();
-    assert_ne!(replacement.number, first.number);
-    assert!(data.read(&reference, None, false, 200, 0).is_err());
-}
-
-#[test]
-fn app_and_agent_catalog_share_article_and_table_numbers() {
+#[gpui::test]
+fn app_and_agent_catalog_share_article_and_table_numbers(cx: &mut gpui::TestAppContext) {
     let scratch = Scratch::new("catalog");
-    let article = article::create(&scratch.0).unwrap();
-    let mut data = Data::open(&Home::Project(scratch.0.clone())).unwrap();
+    let article = futures::executor::block_on(article::create(&scratch.0)).unwrap();
+    let mut data = store::open(&Location::from(scratch.0.as_path()))
+        .make_tables()
+        .unwrap();
     let table = data
         .create(
             "Notes",
@@ -80,6 +56,7 @@ fn app_and_agent_catalog_share_article_and_table_numbers() {
     assert_eq!(Some(found.number), table.number);
     let content = entry::read(&scratch.0, found).unwrap();
     assert_eq!(content["rows"][0][0], "hello");
-    article.remove();
+    cx.update(|cx| article.remove(cx));
+    cx.run_until_parked();
     assert_eq!(entry::list(&scratch.0).unwrap().len(), 1);
 }

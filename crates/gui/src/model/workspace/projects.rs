@@ -9,8 +9,8 @@ use artifact::kind::Kind;
 
 impl Workspace {
     /// The projects on the rail, in the order the sidebar lists them.
-    pub(super) fn paths(&self) -> Vec<PathBuf> {
-        self.projects.iter().map(|open| open.path.clone()).collect()
+    pub(super) fn locations(&self) -> Vec<Location> {
+        self.projects.iter().map(Project::location).collect()
     }
 
     /// Take what the tools ask of the rail — see [`mcp::rail`], where the other
@@ -25,14 +25,16 @@ impl Workspace {
         rail::install(move |change| {
             let _ = asked.unbounded_send(change);
         });
-        rail::set_open(self.paths());
+        rail::set_open(self.locations());
         rail::set_agents(self.rail_agents());
         cx.spawn(async move |workspace, cx| {
             while let Some(change) = asks.next().await {
                 let held = workspace
                     .update(cx, |workspace, cx| match change {
-                        Change::Open(path) => workspace.open_project_at(path, cx),
-                        Change::Close(path) => workspace.close_project_at(&path, cx),
+                        Change::Open(Location::Local(path)) => workspace.open_project_at(path, cx),
+                        Change::Close(Location::Local(path)) => {
+                            workspace.close_project_at(&path, cx)
+                        }
                         Change::Send { session, message } => {
                             workspace.send_to_record(&session, message, cx)
                         }
@@ -193,7 +195,7 @@ impl Workspace {
         let Some(entry) = self
             .projects
             .get(ix)
-            .and_then(|open| self.last.get(&open.path))
+            .and_then(|open| self.last.get(&open.location()))
         else {
             return;
         };
@@ -242,13 +244,13 @@ impl Workspace {
     /// entry, and this is how the view learns which one of the four it was.
     pub fn landing(&self) -> Option<Kind> {
         let open = self.active_project()?;
-        self.last.get(&open.path).map(|entry| entry.kind)
+        self.last.get(&open.location()).map(|entry| entry.kind)
     }
 
     /// The active project, and the entry it was last showing.
     pub fn landed(&self) -> Option<(&Path, &state::Entry)> {
         let open = self.active_project()?;
-        Some((&open.path, self.last.get(&open.path)?))
+        Some((&open.path, self.last.get(&open.location())?))
     }
 
     /// Remember the entry a project is now showing, so the next launch lands on
@@ -280,8 +282,7 @@ impl Workspace {
         let Some(open) = self.projects.get(project) else {
             return;
         };
-        self.last
-            .insert(open.path.clone(), state::Entry { kind, id });
+        self.last.insert(open.location(), state::Entry { kind, id });
         self.prune_archived(cx);
         self.save();
     }

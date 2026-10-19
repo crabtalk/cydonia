@@ -56,7 +56,7 @@ fn open(
 ) {
     let scratch = Scratch::new(name);
     let store = fs::Project::new(&scratch.0);
-    let mut board = store.create_board("Work", "DEV").unwrap();
+    let mut board = futures::executor::block_on(store.create_board("Work", "DEV")).unwrap();
     let column = board.add_column("Todo").id.clone();
     let cards = vec![
         board
@@ -70,9 +70,9 @@ fn open(
             .id
             .clone(),
     ];
-    store.save_board(&mut board).unwrap();
+    futures::executor::block_on(store.save_board(&mut board)).unwrap();
     let member = Entry {
-        project: scratch.0.clone(),
+        project: scratch.0.clone().into(),
         kind: Kind::Board,
         id: board.id.clone(),
     };
@@ -302,7 +302,7 @@ fn save_preserves_agent_metadata_and_rejects_conflicting_text(cx: &mut TestAppCo
     let mut board = store.board(&member.id).unwrap();
     board.set_card_busy(&cards[0], true);
     board.card_mut(&cards[0]).unwrap().session = Some("agent-session".into());
-    store.save_board(&mut board).unwrap();
+    futures::executor::block_on(store.save_board(&mut board)).unwrap();
     type_card(&root, "Mine", &mut cx);
     let saved = store.board(&member.id).unwrap();
     assert_eq!(saved.card(&cards[0]).unwrap().text.trim_end(), "Mine");
@@ -314,7 +314,7 @@ fn save_preserves_agent_metadata_and_rejects_conflicting_text(cx: &mut TestAppCo
 
     let mut board = store.board(&member.id).unwrap();
     board.rewrite_card(&cards[0], "Agent rewrite");
-    store.save_board(&mut board).unwrap();
+    futures::executor::block_on(store.save_board(&mut board)).unwrap();
     type_card(&root, "New draft", &mut cx);
     assert!(cx.update(|_, cx| view(&root, cx).read(cx).draft().unwrap().error.is_some()));
     assert_eq!(draft_text(&root, &mut cx), "New draft");
@@ -377,7 +377,7 @@ fn a_removed_card_keeps_its_text_accessible(cx: &mut TestAppContext) {
     let store = fs::Project::new(&scratch.0);
     let mut board = store.board(&member.id).unwrap();
     board.remove_card(&cards[0]);
-    store.save_board(&mut board).unwrap();
+    futures::executor::block_on(store.save_board(&mut board)).unwrap();
     type_card(&root, "Keep this text", &mut cx);
     assert!(cx.debug_bounds("drawer").is_some());
     assert_eq!(draft_text(&root, &mut cx), "Keep this text");
@@ -768,7 +768,7 @@ fn list_rows_open_drawer_and_group_controls_stay_independent(cx: &mut TestAppCon
     let store = fs::Project::new(&scratch.0);
     let mut board = store.board(&member.id).unwrap();
     board.view = View::List;
-    store.save_board(&mut board).unwrap();
+    futures::executor::block_on(store.save_board(&mut board)).unwrap();
     cx.update(|window, cx| {
         root.update(cx, |root, cx| {
             root.close_drawer(None, window, cx);
@@ -972,7 +972,7 @@ fn list_cards_drop_into_a_collapsed_group_without_unfolding(cx: &mut TestAppCont
                         board.add_card(&target, "Already here".into());
                     }
                     board.columns[1].collapsed = true;
-                    store.save_board(board).unwrap();
+                    futures::executor::block_on(store.save_board(board)).unwrap();
                     target
                 });
                 cx.notify();

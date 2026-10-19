@@ -91,7 +91,7 @@ fn long_session_renders_nearby_turns_and_navigates_without_losing_selection(
         assert_eq!(view.state.list.state.logical_scroll_top().item_ix, 300);
     });
     workspace.update(&mut visual, |workspace, cx| {
-        workspace.with_session(1, cx, |chat| {
+        workspace.with_session(1, cx, |chat, _| {
             chat.items.push(ChatItem::Agent("More output".into()))
         })
     });

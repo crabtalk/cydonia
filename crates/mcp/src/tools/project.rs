@@ -7,10 +7,12 @@ use crate::{
 };
 use artifact::error::{Act, Error};
 use artifact::kind::Kind;
+use artifact::location::Location;
 use artifact::{
     project::{Project as _, fs},
     reference::Within,
 };
+use futures::executor::block_on;
 use serde_json::json;
 use std::path::{Path, PathBuf};
 
@@ -113,12 +115,12 @@ fn open(args: Args<'_>) -> Outcome {
     // What the app itself does with a project already on the rail — see
     // `Workspace::open_project`. Said plainly, because "opened" would have a
     // model believe it had just made something.
-    let did = match (made, rail::is_open(&path)) {
+    let did = match (made, rail::is_open(&Location::from(path.as_path()))) {
         (true, _) => "made and opened",
         (false, true) => "brought forward",
         (false, false) => "opened",
     };
-    rail::ask(Change::Open(path.clone()))?;
+    rail::ask(Change::Open(path.clone().into()))?;
     Ok(
         Answer::said(format!("{did} {}", path.display())).with(json!({
             "path": path,
@@ -134,7 +136,7 @@ fn close(args: Args<'_>) -> Outcome {
     let mut shutting: Vec<PathBuf> = Vec::new();
     for named in args.list(PATHS)? {
         let path = settled(whole(&args, named)?);
-        if !rail::is_open(&path) {
+        if !rail::is_open(&Location::from(path.as_path())) {
             return Err(Trouble::Refused(match held() {
                 None => format!(
                     "{} is not open, and neither is anything else",
@@ -147,7 +149,7 @@ fn close(args: Args<'_>) -> Outcome {
     }
     let mut shut: Vec<String> = Vec::new();
     for path in &shutting {
-        rail::ask(Change::Close(path.clone()))?;
+        rail::ask(Change::Close(path.clone().into()))?;
         shut.push(path.display().to_string());
     }
     Ok(Answer::said(format!("closed {}", shut.join(", "))).with(json!({ "paths": shutting })))
@@ -238,25 +240,25 @@ fn label_entry(args: Args<'_>) -> Outcome {
         Kind::Article => {
             let mut properties = store.properties(&entry.id);
             properties.labels = labels.clone();
-            store
-                .save_properties(&entry.id, &properties)
-                .map_err(refused)?;
+            block_on(store.save_properties(&entry.id, &properties)).map_err(refused)?;
         }
         Kind::Board => {
             let mut board = store.board(&entry.id).ok_or_else(gone)?;
             board.labels = labels.clone();
-            store.save_board(&mut board).map_err(refused)?;
+            block_on(store.save_board(&mut board)).map_err(refused)?;
         }
         // An open project's sessions are the app's to write: a file written
         // under it would be overwritten by the app's next save.
-        Kind::Session if rail::is_open(&project) => rail::ask(Change::Label {
-            session: entry.id.clone(),
-            labels: labels.clone(),
-        })?,
+        Kind::Session if rail::is_open(&Location::from(project.as_path())) => {
+            rail::ask(Change::Label {
+                session: entry.id.clone(),
+                labels: labels.clone(),
+            })?
+        }
         Kind::Session => {
             let mut record = store.session(&entry.id).ok_or_else(gone)?;
             record.labels = labels.clone();
-            store.save_session(&record).map_err(refused)?;
+            block_on(store.save_session(&record)).map_err(refused)?;
         }
         kind => {
             return Err(Trouble::Refused(format!(

@@ -12,6 +12,7 @@
 //! knock carries nothing: the answer to any of them is the same re-read.
 
 use crate::model::{store, workspace::Workspace};
+use artifact::location::Location;
 use artifact::project::Project as _;
 use bezel::gpui::{Context, Task};
 use futures::{StreamExt as _, channel::mpsc};
@@ -56,7 +57,8 @@ impl Watch {
                 let knock = move || {
                     let _ = tx.unbounded_send(());
                 };
-                let Some(watching) = store::open(&root).watch(knock) else {
+                let Some(watching) = store::open(&Location::from(root.as_path())).watch(knock)
+                else {
                     // No watcher this backend will give us, and no event
                     // coming to say otherwise. Watching nothing beats spinning.
                     return;

@@ -4,7 +4,7 @@
 //! the words again. Context a front end adds goes on a line of its own after
 //! these.
 
-use crate::kind::Kind;
+use crate::{kind::Kind, location::Location};
 use std::path::PathBuf;
 
 #[derive(Debug, thiserror::Error)]
@@ -27,11 +27,11 @@ pub enum Error {
 
     /// `path` is not among the projects cydonia has open, which are `open`.
     #[error("{}", closed(path, open))]
-    ProjectClosed { path: PathBuf, open: Vec<PathBuf> },
+    ProjectClosed { path: PathBuf, open: Vec<Location> },
 
     /// No project cydonia has open goes by `name`.
     #[error("{}", unnamed(name, open))]
-    NoProjectNamed { name: String, open: Vec<PathBuf> },
+    NoProjectNamed { name: String, open: Vec<Location> },
 
     #[error("a key needs at least one letter or digit")]
     KeyEmpty,
@@ -124,14 +124,14 @@ impl Error {
     }
 }
 
-fn listed(open: &[PathBuf]) -> String {
+fn listed(open: &[Location]) -> String {
     open.iter()
-        .map(|path| path.display().to_string())
+        .map(Location::to_string)
         .collect::<Vec<_>>()
         .join(", ")
 }
 
-fn closed(path: &std::path::Path, open: &[PathBuf]) -> String {
+fn closed(path: &std::path::Path, open: &[Location]) -> String {
     match open.is_empty() {
         true => format!(
             "cydonia has no project open, so {} is not one to work in",
@@ -145,7 +145,7 @@ fn closed(path: &std::path::Path, open: &[PathBuf]) -> String {
     }
 }
 
-fn unnamed(name: &str, open: &[PathBuf]) -> String {
+fn unnamed(name: &str, open: &[Location]) -> String {
     match open.is_empty() {
         true => format!("no open project is named {name}, and cydonia has none open"),
         false => format!(

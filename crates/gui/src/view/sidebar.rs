@@ -22,6 +22,7 @@ use crate::view::{
     window::{reach::InWindow, root::Cydonia},
 };
 use artifact::kind::Kind;
+use artifact::project::Project as _;
 use artifact::space::Member;
 use bezel::ui::scroll as scrollbars;
 use bezel::{
@@ -133,6 +134,13 @@ impl Listed {
     }
 }
 
+/// Where a carried row lands: a member now, or one once the backend has filed
+/// the session it names.
+pub(crate) enum Landed {
+    Here(Member),
+    Filing(Task<Option<Member>>),
+}
+
 /// One line of the sidebar. An address, not content: the label behind it is
 /// read when the row is built, which the list only does for the rows on
 /// screen.
@@ -226,7 +234,7 @@ impl Row {
             Member::Entry(entry) => {
                 let (_, showing) = workspace.showing_of(member, cx)?;
                 Some(Row::Entry {
-                    project: entry.project.clone(),
+                    project: entry.project.root().to_path_buf(),
                     showing,
                 })
             }
@@ -242,9 +250,9 @@ impl Row {
     /// there is nothing to put in one until this runs. Minting it at the drop
     /// rather than at the drag keeps a gesture that went nowhere from leaving
     /// a session behind on disk.
-    pub(crate) fn landed(&self, workspace: &Entity<Workspace>, cx: &mut App) -> Option<Member> {
+    pub(crate) fn landed(&self, workspace: &Entity<Workspace>, cx: &mut App) -> Option<Landed> {
         if let Some(member) = self.member(workspace.read(cx), cx) {
-            return Some(member);
+            return Some(Landed::Here(member));
         }
         let Row::Entry {
             project,
@@ -253,11 +261,23 @@ impl Row {
         else {
             return None;
         };
-        let id = *id;
-        workspace.update(cx, |workspace, cx| {
-            workspace.retain_session(id, cx)?;
-            workspace.member_of(workspace.project_at(project)?, Showing::Session(id), cx)
-        })
+        let (id, project) = (*id, project.clone());
+        let named = move |workspace: &Workspace, cx: &App| {
+            workspace.member_of(workspace.project_at(&project)?, Showing::Session(id), cx)
+        };
+        let retained = workspace.update(cx, |workspace, cx| workspace.retain_session(id, cx));
+        if let Some(member) = named(workspace.read(cx), cx) {
+            retained.detach();
+            return Some(Landed::Here(member));
+        }
+        let workspace = workspace.downgrade();
+        Some(Landed::Filing(cx.spawn(async move |cx| {
+            retained.await?;
+            workspace
+                .read_with(cx, |workspace, cx| named(workspace, cx))
+                .ok()
+                .flatten()
+        })))
     }
 
     /// What the row is called.

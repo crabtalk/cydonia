@@ -1,21 +1,23 @@
-//! The database behind [`Data`], in SQLite.
+//! [`Tables`] in SQLite, in a `data.db` at a [`Home`].
+//!
+//! SQLite's catalog is the registry — columns are read back out of `PRAGMA
+//! table_info`, so there is no second list of them. Reads go to a handle
+//! opened read-only.
 
-use super::{FILE, Home};
-use anyhow::{Result, anyhow, bail};
-use artifact::kind::Kind;
-use artifact::project::fs;
-use rusqlite::{Connection, OpenFlags, Row as SqlRow, types::ValueRef};
-use serde_json::Value;
-use std::{collections::HashSet, path::PathBuf, time::Duration};
-
-#[path = "ddl.rs"]
 mod ddl;
-#[path = "rows.rs"]
 mod rows;
-#[path = "sql.rs"]
 mod sql;
 
-use super::{ColType, Column, Edit, Page, Row, Rows, Table};
+use super::{
+    ColType, Column, Home, Local, Table, Tables, quote,
+    rows::{Edit, Page, Row, Rows},
+};
+use crate::kind::Kind;
+use crate::project::fs::{self, DATA as FILE};
+use anyhow::{Result, anyhow, bail};
+use rusqlite::{Connection, OpenFlags, Row as SqlRow, types::ValueRef};
+use serde_json::{Map, Value};
+use std::{collections::HashSet, path::PathBuf, time::Duration};
 
 const BUSY: Duration = Duration::from_secs(5);
 
@@ -30,7 +32,7 @@ const DDL: &str = "CREATE TABLE IF NOT EXISTS _tables (
     author     TEXT
 )";
 
-pub struct Data {
+pub struct Sqlite {
     home: Home,
     writer: Connection,
     /// Opened `SQLITE_OPEN_READ_ONLY`, and that is the point: a `SELECT` an
@@ -40,14 +42,14 @@ pub struct Data {
     reader: Connection,
 }
 
-impl Data {
+impl Local for Sqlite {
     /// Open the store at `home`: the writer, and a read-only handle beside
     /// it.
     ///
     /// Order is load-bearing. The reader cannot create the file, and on a WAL
     /// database it needs the shared-memory sidecar an open writer has already
     /// made — so opening it first fails on a store nobody has written yet.
-    pub fn open(home: &Home) -> Result<Self> {
+    fn open(home: &Home) -> Result<Self> {
         let path = match home {
             Home::Project(project) => fs::Project::new(project).init()?.join(FILE),
             Home::App(dir) => {
@@ -62,7 +64,7 @@ impl Data {
         writer.execute_batch(DDL)?;
         // Table key changes and their numeric references commit together.
         if let Home::Project(project) = home {
-            artifact::entry::Registry::open(project)?;
+            crate::entry::Registry::open(project)?;
             writer.execute(
                 "ATTACH DATABASE ?1 AS entry_registry",
                 [fs::Project::new(project)
@@ -97,8 +99,8 @@ impl Data {
     }
 
     /// The store as it already is, or nothing. Browsing a project must not
-    /// write a database into it — [`Data::open`] is what creates one.
-    pub fn attach(home: &Home) -> Option<Self> {
+    /// write a database into it — [`Sqlite::open`] is what creates one.
+    fn attach(home: &Home) -> Option<Self> {
         let path = match home {
             Home::Project(project) => fs::Project::new(project).cydonia().join(FILE),
             Home::App(dir) => dir.join(FILE),
@@ -108,23 +110,17 @@ impl Data {
             false => None,
         }
     }
+}
 
-    /// The project its tables are entries of. `None` for an app's own store.
-    fn project(&self) -> Option<&PathBuf> {
-        match &self.home {
-            Home::Project(project) => Some(project),
-            Home::App(_) => None,
-        }
-    }
-
-    /// Every table with its columns and row count, in [`Data::keys`]'s order.
-    pub fn list(&self) -> Result<Vec<Table>> {
+impl Tables for Sqlite {
+    /// Every table with its columns and row count, in [`Sqlite::keys`]'s order.
+    fn list(&self) -> Result<Vec<Table>> {
         self.keys()?.iter().map(|key| self.table(key)).collect()
     }
 
     /// Put a table away, or bring it back. The rows stay exactly where they
     /// are — this is the sidebar's business and nothing else's.
-    pub fn archive(&mut self, key: &str, archived: bool) -> Result<()> {
+    fn archive(&mut self, key: &str, archived: bool) -> Result<()> {
         self.writer.execute(
             "UPDATE _tables SET archived = ?2 WHERE key = ?1",
             rusqlite::params![key, archived],
@@ -132,9 +128,9 @@ impl Data {
         Ok(())
     }
 
-    /// Mark a table written just now — the stamp [`Data::keys`] orders on, so
+    /// Mark a table written just now — the stamp [`Sqlite::keys`] orders on, so
     /// the one being worked in is the one on top.
-    pub fn touch(&mut self, key: &str) -> Result<()> {
+    fn touch(&mut self, key: &str) -> Result<()> {
         self.writer.execute(
             "UPDATE _tables SET updated_at = ?2 WHERE key = ?1",
             rusqlite::params![key, now()],
@@ -142,77 +138,9 @@ impl Data {
         Ok(())
     }
 
-    /// One table by its key, built from the catalog outward rather than from
-    /// `_tables`: the data is what exists, and a table whose name row went
-    /// missing must still list — under its key — instead of vanishing from a
-    /// surface that is supposed to show everything in the file.
-    fn table(&self, key: &str) -> Result<Table> {
-        let meta = self
-            .reader
-            .query_row(
-                "SELECT name, created_at, updated_at, archived, author FROM _tables \
-                 WHERE key = ?1",
-                [key],
-                |row| {
-                    Ok((
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get::<_, Option<bool>>(3)?,
-                        row.get(4)?,
-                    ))
-                },
-            )
-            .ok();
-        let (name, created_at, updated_at, archived, author) = meta.unwrap_or_else(|| {
-            (
-                key.to_owned(),
-                0i64,
-                None::<i64>,
-                None::<bool>,
-                None::<String>,
-            )
-        });
-        Ok(Table {
-            number: self
-                .project()
-                .and_then(|project| artifact::entry::number(project, Kind::Table, key).ok()),
-            columns: columns_of(&self.reader, key)?,
-            rows: self.reader.query_row(
-                &format!("SELECT count(*) FROM {}", quote(key)),
-                [],
-                |row| row.get(0),
-            )?,
-            key: key.to_owned(),
-            name,
-            created_at,
-            updated_at,
-            archived: archived.unwrap_or_default(),
-            author,
-        })
-    }
-
-    /// The tables in the file — everything SQLite holds that is not its own
-    /// bookkeeping or ours — last touched first, which is how an article and a
-    /// board are listed. The catalog is still what says a table exists: one
-    /// with no `_tables` row has no age to sort on and goes last, under its
-    /// key.
-    fn keys(&self) -> Result<Vec<String>> {
-        let mut stmt = self.reader.prepare(
-            "SELECT m.name FROM sqlite_master m \
-             LEFT JOIN _tables t ON t.key = m.name \
-             WHERE m.type = 'table' AND m.name NOT LIKE 'sqlite_%' AND m.name <> '_tables' \
-             ORDER BY COALESCE(t.updated_at, t.created_at, 0) DESC, m.name",
-        )?;
-        let keys = stmt
-            .query_map([], |row| row.get(0))?
-            .collect::<rusqlite::Result<Vec<String>>>()?;
-        Ok(keys)
-    }
-
     /// `key` overrides the identifier derived from the name — the one chance to
     /// choose it, since afterwards it is what every written query spells.
-    pub fn create(
+    fn create(
         &mut self,
         name: &str,
         key: Option<&str>,
@@ -263,7 +191,7 @@ impl Data {
     ///
     /// The name upserts, so a table that reached the file without a name row
     /// (made outside these tools) can still be given one.
-    pub fn update(&mut self, table: &str, name: Option<&str>, key: Option<&str>) -> Result<Table> {
+    fn update(&mut self, table: &str, name: Option<&str>, key: Option<&str>) -> Result<Table> {
         let mut current = self.resolve(table)?;
 
         if let Some(wanted) = key.map(str::trim).filter(|key| !key.is_empty()) {
@@ -309,7 +237,7 @@ impl Data {
     ///
     /// Not reachable from a tool, and that is deliberate: an agent fills a
     /// table in, the person decides whether it goes on existing.
-    pub fn remove(&mut self, table: &str) -> Result<()> {
+    fn remove(&mut self, table: &str) -> Result<()> {
         let key = self.resolve(table)?;
         let numbered = self.project().is_some();
         let tx = self.writer.transaction()?;
@@ -325,6 +253,137 @@ impl Data {
         Ok(())
     }
 
+    fn write_column(
+        &mut self,
+        table: &str,
+        column: &str,
+        kind: Option<ColType>,
+        rename: Option<&str>,
+    ) -> Result<Vec<Column>> {
+        Sqlite::write_column(self, table, column, kind, rename)
+    }
+
+    fn read(
+        &self,
+        table: &str,
+        sort: Option<&str>,
+        desc: bool,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Page> {
+        Sqlite::read(self, table, sort, desc, limit, offset)
+    }
+
+    fn write_cells(&mut self, table: &str, edits: &[Edit]) -> Result<()> {
+        Sqlite::write_cells(self, table, edits)
+    }
+
+    fn add_rows(&mut self, table: &str, count: i64) -> Result<Vec<i64>> {
+        Sqlite::add_rows(self, table, count)
+    }
+
+    fn insert(&mut self, table: &str, rows: &[Map<String, Value>]) -> Result<Vec<i64>> {
+        Sqlite::insert(self, table, rows)
+    }
+
+    fn delete_where(&mut self, table: &str, column: &str, value: &Value) -> Result<()> {
+        Sqlite::delete_where(self, table, column, value)
+    }
+
+    fn delete_rows(&mut self, table: &str, rowids: &[i64]) -> Result<()> {
+        Sqlite::delete_rows(self, table, rowids)
+    }
+
+    fn drop_column(&mut self, table: &str, column: &str) -> Result<Vec<Column>> {
+        Sqlite::drop_column(self, table, column)
+    }
+
+    fn query(&self, sql: &str) -> Result<Rows> {
+        Sqlite::query(self, sql)
+    }
+
+    fn write(&mut self, sql: &str) -> Result<u64> {
+        Sqlite::write(self, sql)
+    }
+}
+
+impl Sqlite {
+    /// The project its tables are entries of. `None` for an app's own store.
+    fn project(&self) -> Option<&PathBuf> {
+        match &self.home {
+            Home::Project(project) => Some(project),
+            Home::App(_) => None,
+        }
+    }
+
+    /// One table by its key, built from the catalog outward rather than from
+    /// `_tables`: the data is what exists, and a table whose name row went
+    /// missing must still list — under its key — instead of vanishing from a
+    /// surface that is supposed to show everything in the file.
+    fn table(&self, key: &str) -> Result<Table> {
+        let meta = self
+            .reader
+            .query_row(
+                "SELECT name, created_at, updated_at, archived, author FROM _tables \
+                 WHERE key = ?1",
+                [key],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get::<_, Option<bool>>(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .ok();
+        let (name, created_at, updated_at, archived, author) = meta.unwrap_or_else(|| {
+            (
+                key.to_owned(),
+                0i64,
+                None::<i64>,
+                None::<bool>,
+                None::<String>,
+            )
+        });
+        Ok(Table {
+            number: self
+                .project()
+                .and_then(|project| crate::entry::number(project, Kind::Table, key).ok()),
+            columns: columns_of(&self.reader, key)?,
+            rows: self.reader.query_row(
+                &format!("SELECT count(*) FROM {}", quote(key)),
+                [],
+                |row| row.get(0),
+            )?,
+            key: key.to_owned(),
+            name,
+            created_at,
+            updated_at,
+            archived: archived.unwrap_or_default(),
+            author,
+        })
+    }
+
+    /// The tables in the file — everything SQLite holds that is not its own
+    /// bookkeeping or ours — last touched first, which is how an article and a
+    /// board are listed. The catalog is still what says a table exists: one
+    /// with no `_tables` row has no age to sort on and goes last, under its
+    /// key.
+    fn keys(&self) -> Result<Vec<String>> {
+        let mut stmt = self.reader.prepare(
+            "SELECT m.name FROM sqlite_master m \
+             LEFT JOIN _tables t ON t.key = m.name \
+             WHERE m.type = 'table' AND m.name NOT LIKE 'sqlite_%' AND m.name <> '_tables' \
+             ORDER BY COALESCE(t.updated_at, t.created_at, 0) DESC, m.name",
+        )?;
+        let keys = stmt
+            .query_map([], |row| row.get(0))?
+            .collect::<rusqlite::Result<Vec<String>>>()?;
+        Ok(keys)
+    }
+
     /// A table by its key or its display name, answering with the key. Both are
     /// accepted because the key is what a query carries and the name is what a
     /// person says.
@@ -332,16 +391,16 @@ impl Data {
         let ident = ident.trim();
         let resolved;
         let ident = if let Some(project) = self.project()
-            && let Some(artifact::reference::Reference {
+            && let Some(crate::reference::Reference {
                 project: None,
                 target:
-                    artifact::reference::Target::Entry {
+                    crate::reference::Target::Entry {
                         number,
                         within: None,
                     },
-            }) = artifact::reference::parse(ident)
+            }) = crate::reference::parse(ident)
         {
-            resolved = artifact::entry::Registry::open(project)?
+            resolved = crate::entry::Registry::open(project)?
                 .resolve(Kind::Table, number)?
                 .ok_or_else(|| anyhow!("no table {ident}"))?;
             resolved.as_str()
@@ -389,7 +448,7 @@ impl Data {
 
 /// The columns of one table, straight out of the catalog: name and declared
 /// type, in the order the table declares them.
-pub(crate) fn columns_of(conn: &Connection, key: &str) -> Result<Vec<Column>> {
+fn columns_of(conn: &Connection, key: &str) -> Result<Vec<Column>> {
     let mut stmt = conn.prepare(&format!("PRAGMA table_info({})", quote(key)))?;
     let columns = stmt
         .query_map([], |row| {
@@ -405,7 +464,7 @@ pub(crate) fn columns_of(conn: &Connection, key: &str) -> Result<Vec<Column>> {
 /// One cell as JSON, by what SQLite actually stored rather than by what the
 /// column was declared — a `NUMERIC` column holds whichever of the two the
 /// value converted to, and the reader wants the value.
-pub(crate) fn value(row: &SqlRow, i: usize) -> Value {
+fn value(row: &SqlRow, i: usize) -> Value {
     match row.get_ref(i) {
         Ok(ValueRef::Integer(n)) => Value::from(n),
         Ok(ValueRef::Real(f)) => Value::from(f),
@@ -419,7 +478,7 @@ pub(crate) fn value(row: &SqlRow, i: usize) -> Value {
 /// Bind a JSON value as whatever SQLite should store. The column's affinity
 /// converts from here, so a number typed into a text column and a date typed
 /// into a number one both land the way the declaration says.
-pub(crate) fn bind(v: &Value) -> rusqlite::types::Value {
+fn bind(v: &Value) -> rusqlite::types::Value {
     use rusqlite::types::Value as Sql;
     match v {
         Value::Bool(b) => Sql::Integer(i64::from(*b)),
@@ -432,10 +491,6 @@ pub(crate) fn bind(v: &Value) -> rusqlite::types::Value {
         _ => Sql::Null,
     }
 }
-
-/// An identifier as SQL will accept it whatever it contains, which is what lets
-/// a column keep the header the person typed.
-pub(crate) use artifact::table::quote;
 
 /// A SQL identifier from a display name. Lossy on purpose — it is a handle, not
 /// a translation, and a name that reduces to nothing (any name in a non-Latin
@@ -460,5 +515,5 @@ fn slug(name: &str) -> String {
 
 /// Seconds since the epoch, as SQLite stores an integer.
 fn now() -> i64 {
-    artifact::stamp::seconds() as i64
+    crate::stamp::seconds() as i64
 }

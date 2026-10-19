@@ -2,6 +2,7 @@
 //! ever changed by something with a name.
 
 mod common;
+use common::Wait as _;
 
 use common::Scratch;
 use cydonia_artifact::{
@@ -289,6 +290,7 @@ fn a_board_is_made_with_the_key_it_is_given() {
     let board = scratch
         .store()
         .create_board("Roadmap", "back")
+        .wait()
         .expect("made");
 
     assert_eq!(board.name, "Roadmap");
@@ -300,8 +302,16 @@ fn a_board_is_made_with_the_key_it_is_given() {
 #[test]
 fn boards_in_a_project_take_different_keys() {
     let scratch = Scratch::new("board-keys");
-    let one = scratch.store().create_board("Roadmap", "").expect("made");
-    let two = scratch.store().create_board("Roadmap", "").expect("made");
+    let one = scratch
+        .store()
+        .create_board("Roadmap", "")
+        .wait()
+        .expect("made");
+    let two = scratch
+        .store()
+        .create_board("Roadmap", "")
+        .wait()
+        .expect("made");
 
     assert!(!one.key.is_empty());
     assert_ne!(one.key, two.key);

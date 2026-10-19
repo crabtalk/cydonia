@@ -25,6 +25,7 @@ chrono = "0.4"
 dirs = "6"
 editor = { version = "0.2.17", package = "bezel-editor" }
 futures = "0.3"
+git = { version = "0.2.0", path = "crates/git", package = "cydonia-git" }
 guest = { version = "0.2.0", path = "crates/guest", package = "cydonia-guest" }
 guest-macros = { version = "0.2.0", path = "crates/guest-macros", package = "cydonia-guest-macros" }
 gui = { version = "0.2.0", path = "crates/gui", package = "cydonia-gui", default-features = false }

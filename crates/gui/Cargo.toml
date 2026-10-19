@@ -24,6 +24,7 @@ chrono.workspace = true
 dirs.workspace = true
 editor.workspace = true
 futures.workspace = true
+git.workspace = true
 global-hotkey = { workspace = true, optional = true }
 image.workspace = true
 lru.workspace = true

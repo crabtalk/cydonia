@@ -2,7 +2,7 @@
 //! `wasm32-unknown-unknown` and driven through `Runner`.
 
 use cydonia_gui::{
-    data::{Data, Home},
+    data::{Calls as _, Here, Home, Local as _, Tables as _},
     model::apps::{Answer, Call, Command, Event, Node, Runner as _, Runtime},
 };
 use guest::wire;
@@ -222,7 +222,7 @@ impl Drop for Scratch {
 /// `fetch`, and the calls those answers lead to, until it makes none.
 fn settle_with(
     app: &mut Runtime,
-    data: &mut Data,
+    data: &mut Here,
     mut commands: Vec<Command>,
     fetch: &dyn Fn(&wire::Request) -> Answer,
 ) {
@@ -243,7 +243,7 @@ fn settle_with(
 }
 
 /// [`settle_with`] for an app that fetches nothing.
-fn settle(app: &mut Runtime, data: &mut Data, commands: Vec<Command>) {
+fn settle(app: &mut Runtime, data: &mut Here, commands: Vec<Command>) {
     settle_with(app, data, commands, &|request| {
         Answer::Error(format!("{} was not expected", request.url))
     });
@@ -252,7 +252,7 @@ fn settle(app: &mut Runtime, data: &mut Data, commands: Vec<Command>) {
 #[test]
 fn an_app_makes_writes_and_reads_a_table_of_its_own() {
     let scratch = Scratch::new("notes");
-    let mut data = Data::open(&Home::App(scratch.0.join("app"))).unwrap();
+    let mut data = Here::open(&Home::App(scratch.0.join("app"))).unwrap();
     let (mut app, commands) = Runtime::start(&example("notes")).unwrap();
     assert!(matches!(
         commands.as_slice(),
@@ -290,7 +290,7 @@ fn an_app_makes_writes_and_reads_a_table_of_its_own() {
 #[test]
 fn an_app_finds_the_table_it_made_on_its_next_run() {
     let scratch = Scratch::new("rerun");
-    let mut data = Data::open(&Home::App(scratch.0.join("app"))).unwrap();
+    let mut data = Here::open(&Home::App(scratch.0.join("app"))).unwrap();
     for _ in 0..2 {
         let (mut app, commands) = Runtime::start(&example("notes")).unwrap();
         settle(&mut app, &mut data, commands);
@@ -301,7 +301,7 @@ fn an_app_finds_the_table_it_made_on_its_next_run() {
 #[test]
 fn an_insert_naming_a_missing_column_writes_nothing() {
     let scratch = Scratch::new("insert");
-    let mut data = Data::open(&Home::App(scratch.0.join("app"))).unwrap();
+    let mut data = Here::open(&Home::App(scratch.0.join("app"))).unwrap();
     data.call(Call::CreateTable {
         name: "Notes".into(),
         columns: vec![wire::Column {
@@ -565,7 +565,7 @@ fn labels(nodes: &[Node]) -> Vec<String> {
 #[test]
 fn yc_refreshes_a_batch_into_its_tables_and_lists_it() {
     let scratch = Scratch::new("yc");
-    let mut data = Data::open(&Home::App(scratch.0.join("app"))).unwrap();
+    let mut data = Here::open(&Home::App(scratch.0.join("app"))).unwrap();
     let (mut app, commands) = Runtime::start(&yc()).unwrap();
     settle_with(&mut app, &mut data, commands, &yc_fetch);
     let keys: Vec<String> = data

@@ -9,7 +9,10 @@
 //!   write loops with `tokio::spawn`, and gpui's executor is smol's.
 
 use crate::{
-    agent::{mcp, serve},
+    agent::{
+        mcp, serve,
+        spawner::{self, Handle, Spec},
+    },
     model::{
         media,
         session_preferences::{self, Choices},
@@ -30,19 +33,13 @@ use cydonia_acp::{
         StopReason, WriteTextFileRequest, WriteTextFileResponse,
     },
 };
-use std::process::Stdio;
-
-/// `CREATE_NO_WINDOW` from the Win32 process creation flags.
-#[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 use std::{
     path::PathBuf,
     sync::{Arc, OnceLock},
     time::Duration,
 };
 use tokio::{
-    io::{AsyncBufReadExt, BufReader},
-    process::{Child, ChildStderr, Command},
+    io::{AsyncBufReadExt, AsyncRead, BufReader},
     runtime::Runtime,
     sync::{Mutex, mpsc, oneshot},
 };
@@ -129,7 +126,7 @@ pub struct Session {
     conn: Option<AgentConn>,
     tx: mpsc::UnboundedSender<Event>,
     /// The agent process. Held in an `Option` for the same reason as `conn`.
-    child: Option<Child>,
+    child: Option<Box<dyn Handle>>,
     pub session_id: SessionId,
     pub init: InitializeResponse,
     pub response: NewSessionResponse,
@@ -173,28 +170,22 @@ impl Session {
     /// replays that session's history instead of starting fresh; a failed
     /// load (stale id, agent restart) falls back to a new session.
     pub async fn spawn(entry: &settings::Agent, launch: Launch, tx: Sender) -> Result<Self> {
-        let mut command = Command::new(super::path::program(&entry.command));
-        command.args(&entry.args).envs(&entry.env);
-        // A console program started from a GUI process opens a console window
-        // of its own on Windows.
-        #[cfg(windows)]
-        command.creation_flags(CREATE_NO_WINDOW);
+        let spawner = spawner::open(&launch.cwd);
+        let mut env = entry.env.clone();
         // HTTP clients can inherit a system proxy that does not exempt IP
         // loopback addresses. Our MCP server must be reached directly. Merge
         // both spellings because agents differ in which one they honor.
-        let bypass = loopback_bypass(["NO_PROXY", "no_proxy"].map(|key| {
-            entry
-                .env
-                .get(key)
-                .cloned()
-                .or_else(|| std::env::var(key).ok())
-        }));
-        command.env("NO_PROXY", &bypass).env("no_proxy", &bypass);
-        // An agent's diagnostics are not this app's to print. cydonia-acp leaves the
-        // choice to the caller — "a TUI usually wants it captured and a CLI
-        // usually does not" — and a desktop app that inherits them sprays a
-        // node SDK's teardown chatter over whichever terminal happened to
-        // launch it, about a shutdown the user asked for.
+        let bypass = loopback_bypass(
+            ["NO_PROXY", "no_proxy"]
+                .map(|key| entry.env.get(key).cloned().or_else(|| spawner.var(key))),
+        );
+        for key in ["NO_PROXY", "no_proxy"] {
+            env.insert(key.to_owned(), bypass.clone());
+        }
+        // An agent's diagnostics are not this app's to print. A desktop app
+        // that inherits them sprays a node SDK's teardown chatter over
+        // whichever terminal happened to launch it, about a shutdown the user
+        // asked for.
         //
         // Captured rather than discarded, though, because it is the only
         // account of a process that dies without ever speaking protocol: the
@@ -202,23 +193,32 @@ impl Session {
         // would not resolve. It reaches the transcript as the execution it is
         // — see [`Event::Stderr`]. `CYDONIA_DEBUG`, which already redirects
         // the protocol tap, still echoes the lines where a developer looks.
-        command.stderr(Stdio::piped());
+        let process = spawner
+            .spawn(&Spec {
+                program: &entry.command,
+                args: &entry.args,
+                env: &env,
+                cwd: &launch.cwd,
+            })
+            .map_err(|e| anyhow!("failed to start {}: {e}", entry.command))?;
 
         let configured = mcp::servers();
 
-        let (conn, mut child) =
-            cydonia_acp::spawn(&mut command, Arc::new(Frontend(tx.clone())), debug_tap())
-                .map_err(|e| anyhow!("failed to start {}: {}", entry.command, error_text(&e)))?;
-        if let Some(stderr) = child.stderr.take() {
-            runtime().spawn(drain(stderr, tx.clone()));
-        }
+        let conn = cydonia_acp::connect_on(
+            BufReader::new(process.stdout),
+            process.stdin,
+            Arc::new(Frontend(tx.clone())),
+            debug_tap(),
+        );
+        runtime().spawn(drain(process.stderr, tx.clone()));
+        let child = process.handle;
 
         Self::open(conn, child, tx, launch, configured).await
     }
 
     async fn open(
         conn: AgentConn,
-        child: Child,
+        child: Box<dyn Handle>,
         tx: mpsc::UnboundedSender<Event>,
         launch: Launch,
         configured: Vec<mcp::McpServer>,
@@ -606,7 +606,7 @@ impl Client for Frontend {
 
 /// Take the agent down: the connection first, then the process behind it.
 ///
-/// `cydonia_acp::spawn` sets `kill_on_drop`, so letting the child field drop on its own
+/// A [`Handle`] kills its process when dropped, so letting the child field drop on its own
 /// is an immediate SIGKILL — mid-request, if the agent was answering one.
 /// [`crate::model::session::ChatSession::close`] sends `session/cancel` ahead
 /// of this, and the pause here is what gives that notification time to be read.
@@ -623,7 +623,7 @@ impl Drop for Session {
         };
         drop(conn);
         runtime().spawn(async move {
-            let _ = tokio::time::timeout(SHUTDOWN_GRACE, child.wait()).await;
+            let _ = tokio::time::timeout(SHUTDOWN_GRACE, child.ended()).await;
         });
     }
 }
@@ -755,7 +755,7 @@ async fn authenticate(conn: &AgentConn, init: &InitializeResponse) -> Result<()>
 /// Ends when the pipe closes, which a dead process is what does — so this
 /// task is also what lets the channel close behind a launch that failed, and
 /// the caller stop waiting on it.
-async fn drain(stderr: ChildStderr, tx: Sender) {
+async fn drain(stderr: impl AsyncRead + Unpin, tx: Sender) {
     let echo = std::env::var_os(DEBUG).is_some();
     let mut lines = BufReader::new(stderr).lines();
     while let Ok(Some(line)) = lines.next_line().await {

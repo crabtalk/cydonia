@@ -9,6 +9,7 @@
 use crate::model::state::State;
 use crate::model::{settings, state};
 use artifact::kind::Kind;
+use artifact::location::Location;
 use artifact::project::fs;
 use std::{
     io::{self, Write as _},
@@ -111,8 +112,8 @@ pub fn seed(state: &mut State) {
     // Straight into the first article rather than the front door: a project
     // with something to read in it that opens on `Nothing open` reads as an
     // empty one.
-    state.last.insert(root.clone(), landing());
-    state.projects.insert(0, root);
+    state.last.insert(Location::Local(root.clone()), landing());
+    state.projects.insert(0, Location::Local(root));
     state.active = 0;
 }
 

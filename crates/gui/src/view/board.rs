@@ -34,8 +34,8 @@ use bezel::ui::scroll as scrollbars;
 use bezel::{
     gpui::{
         self, AnyElement, App, ClipboardItem, Context, Div, Entity, EntityId, Focusable as _,
-        FontWeight, KeyBinding, Pixels, ScrollHandle, SharedString, Stateful, WeakEntity, Window,
-        actions, div, prelude::*, px,
+        FontWeight, KeyBinding, Pixels, ScrollHandle, SharedString, Stateful, Task, WeakEntity,
+        Window, actions, div, prelude::*, px,
     },
     theme::{TextStyle, Theme, Typeset},
     ui::{
@@ -1191,7 +1191,7 @@ impl Cydonia {
         self.commit(cx);
         let (board, card) = (board.to_owned(), card.to_owned());
         self.workspace.update(cx, |workspace, cx| {
-            workspace.remove_card(&board, &card, cx);
+            workspace.remove_card(&board, &card, cx).detach();
         });
         cx.notify();
     }
@@ -1317,7 +1317,7 @@ impl Cydonia {
                         Some((
                             board.handle_of(card),
                             card.text.clone(),
-                            Tags::of(card, &member.project, self.workspace.read(cx), cx),
+                            Tags::of(card, member.project.root(), self.workspace.read(cx), cx),
                             card_working(card, chat, &self.card_marks),
                         ))
                     })
@@ -1433,7 +1433,7 @@ impl BoardView {
     /// Where the board is listed, as `(project, index)`, while it is open.
     fn located(&self, cx: &App) -> Option<(usize, usize)> {
         let workspace = self.workspace.read(cx);
-        let project = workspace.project_at(&self.board.project)?;
+        let project = workspace.project_at(self.board.project.root())?;
         let at = workspace.projects[project].board_ix(&self.board.id)?;
         Some((project, at))
     }
@@ -1457,7 +1457,7 @@ impl BoardView {
             .iter()
             .flat_map(|column| &column.cards)
         {
-            for other in workspace.blocking_boards(&self.board.project, card, cx) {
+            for other in workspace.blocking_boards(self.board.project.root(), card, cx) {
                 if !watched.contains(other) {
                     watched.push(other.clone());
                 }
@@ -1549,8 +1549,8 @@ impl BoardView {
             return;
         };
         let text_size = workspace.text_size;
-        let dir = artifact::project::fs::Project::new(&self.board.project)
-            .page_dir(&self.board.id, &page);
+        let artifact::location::Location::Local(root) = &self.board.project;
+        let dir = artifact::project::fs::Project::new(root).page_dir(&self.board.id, &page);
         let document = cx.new(|cx| editor::Document::new(&text, cx));
         let (editor, pictures) = crate::view::kit::document::editor(
             &dir,
@@ -1599,11 +1599,44 @@ impl BoardView {
         let text = editor.read(cx).source();
         let board = self.board.clone();
         let result = match text == shown {
-            true => Ok(()),
-            false => self.workspace.update(cx, |workspace, cx| {
-                workspace.save_page_draft(&board, page, &base, &text, cx)
-            }),
+            true => Ok(None),
+            false => self
+                .workspace
+                .update(cx, |workspace, cx| {
+                    workspace.save_page_draft(&board, page, &base, &text, cx)
+                })
+                .map(Some),
         };
+        let (result, saving) = match result {
+            Ok(saving) => (Ok(()), saving),
+            Err(error) => (Err(error), None),
+        };
+        self.page_saved(page, text, result, cx);
+        if let Some(saving) = saving {
+            let page = page.clone();
+            cx.spawn(async move |this, cx| {
+                if let Err(error) = saving.await {
+                    let _ = this.update(cx, |this, cx| {
+                        if let Some(draft) = this.draft_mut(&page) {
+                            draft.error = Some(error);
+                        }
+                        cx.notify();
+                    });
+                }
+            })
+            .detach();
+        }
+    }
+
+    /// Take what a save of the page's editor answered at once: the text it
+    /// sent, or why it sent nothing.
+    fn page_saved(
+        &mut self,
+        page: &Page,
+        text: String,
+        result: Result<(), String>,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(draft) = self.draft_mut(page) {
             match result {
                 Ok(()) => {
@@ -1839,22 +1872,24 @@ impl BoardView {
         let id = self.board.id.clone();
         self.workspace.update(cx, |workspace, cx| match &at {
             Editing::Card(card) if text.is_empty() => {
-                workspace.remove_card(&id, card, cx);
+                workspace.remove_card(&id, card, cx).detach();
             }
             _ => {
-                workspace.write_board(&id, cx, |board| match &at {
-                    Editing::New(place, column) => {
-                        if !text.is_empty() {
-                            match place {
-                                Place::Top => board.prepend_card(column, text.clone()),
-                                Place::End => board.add_card(column, text.clone()),
-                            };
+                workspace
+                    .write_board(&id, cx, move |board| match &at {
+                        Editing::New(place, column) => {
+                            if !text.is_empty() {
+                                match place {
+                                    Place::Top => board.prepend_card(column, text.clone()),
+                                    Place::End => board.add_card(column, text.clone()),
+                                };
+                            }
                         }
-                    }
-                    Editing::Card(id) => {
-                        board.rewrite_card(id, &text);
-                    }
-                });
+                        Editing::Card(id) => {
+                            board.rewrite_card(id, &text);
+                        }
+                    })
+                    .detach();
             }
         });
         cx.notify();
@@ -2101,13 +2136,17 @@ impl BoardView {
                 self.workspace.update(cx, |workspace, cx| {
                     match from == at {
                         true => {
-                            workspace.move_card_within(at, &card, &column, before.as_deref(), cx);
+                            workspace
+                                .move_card_within(at, &card, &column, before.as_deref(), cx)
+                                .detach();
                         }
                         // A card that came off another board arrives under a
                         // handle of this one's, at the end of the lane it was
                         // dropped on: it is a new card here.
                         false => {
-                            workspace.carry_card(from, at, &card, Some(&column), cx);
+                            workspace
+                                .carry_card(from, at, &card, Some(&column), cx)
+                                .detach();
                         }
                     }
                     cx.notify();
@@ -2121,9 +2160,12 @@ impl BoardView {
     fn move_card_to(&mut self, board: &str, card: &str, column: &str, cx: &mut Context<Self>) {
         self.commit_edit(cx);
         self.workspace.update(cx, |workspace, cx| {
-            workspace.write_board(board, cx, |board| {
-                board.move_card_before(card, column, None)
-            });
+            let (card, column) = (card.to_owned(), column.to_owned());
+            workspace
+                .write_board(board, cx, move |board| {
+                    board.move_card_before(&card, &column, None)
+                })
+                .detach();
         });
         cx.notify();
     }
@@ -2133,12 +2175,26 @@ impl BoardView {
     fn new_column(&mut self, board: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.commit_edit(cx);
         let board = board.to_owned();
-        let id = self
+        let made = self
             .workspace
             .update(cx, |workspace, cx| workspace.new_column(&board, cx));
-        if let Some(id) = id {
-            self.start_rename(id, window, cx);
-        }
+        self.rename_when_made(made, window, cx);
+    }
+
+    /// Open the lane `made` answers straight into its name, once it is saved.
+    fn rename_when_made(
+        &mut self,
+        made: Task<Option<String>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.spawn_in(window, async move |this, cx| {
+            let Some(id) = made.await else {
+                return;
+            };
+            let _ = this.update_in(cx, |this, window, cx| this.start_rename(id, window, cx));
+        })
+        .detach();
     }
 
     /// A lane beside the one the menu is on, opened straight into its name —
@@ -2153,12 +2209,10 @@ impl BoardView {
     ) {
         self.commit_edit(cx);
         let (board, id) = (board.to_owned(), id.to_owned());
-        let minted = self.workspace.update(cx, |workspace, cx| {
+        let made = self.workspace.update(cx, |workspace, cx| {
             workspace.new_column_beside(&board, &id, after, cx)
         });
-        if let Some(minted) = minted {
-            self.start_rename(minted, window, cx);
-        }
+        self.rename_when_made(made, window, cx);
     }
 
     /// The card's markdown, as it was written. The source and not what the lane
@@ -2972,7 +3026,7 @@ impl BoardView {
             .as_ref()
             .is_some_and(|query| card_matches(card, handle.as_deref(), query.text()));
         let text = card.text.clone();
-        let tags = Tags::of(card, &self.board.project, self.workspace.read(cx), cx);
+        let tags = Tags::of(card, self.board.project.root(), self.workspace.read(cx), cx);
         let busy = card.busy;
         let on_board = self
             .workspace
@@ -3559,7 +3613,7 @@ impl BoardView {
             .as_ref()
             .is_some_and(|query| card_matches(card, handle.as_deref(), query.text()));
         let text = card.text.clone();
-        let tags = Tags::of(card, &self.board.project, self.workspace.read(cx), cx);
+        let tags = Tags::of(card, self.board.project.root(), self.workspace.read(cx), cx);
         let busy = card.busy;
         let on_board = self
             .workspace

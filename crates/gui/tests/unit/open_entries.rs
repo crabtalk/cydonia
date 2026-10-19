@@ -49,14 +49,22 @@ fn opening_an_entry_outside_the_space_lands_on_it(cx: &mut gpui::TestAppContext)
     });
 
     window
-        .update(cx, |root, window, cx| {
-            let (a, b) = root.workspace.update(cx, |workspace, cx| {
+        .update(cx, |root, _, cx| {
+            root.workspace.update(cx, |workspace, cx| {
                 workspace.open_project(scratch.project("one"), cx);
                 // Newest first, so the third made is board 0 and the first
                 // made is board 2.
-                workspace.new_board(0, "First".into(), "ONE", cx).ok();
-                workspace.new_board(0, "Second".into(), "TWO", cx).ok();
-                workspace.new_board(0, "Third".into(), "THR", cx).ok();
+                workspace.new_board(0, "First".into(), "ONE", cx).detach();
+                workspace.new_board(0, "Second".into(), "TWO", cx).detach();
+                workspace.new_board(0, "Third".into(), "THR", cx).detach();
+            });
+        })
+        .unwrap();
+    cx.executor().allow_parking();
+    cx.run_until_parked();
+    window
+        .update(cx, |root, window, cx| {
+            let (a, b) = root.workspace.update(cx, |workspace, _| {
                 (
                     workspace.board_member(0, 0).expect("a member"),
                     workspace.board_member(0, 1).expect("a member"),
@@ -110,11 +118,19 @@ fn making_an_entry_inside_a_space_lands_on_it(cx: &mut gpui::TestAppContext) {
     });
 
     window
-        .update(cx, |root, window, cx| {
-            let (a, b) = root.workspace.update(cx, |workspace, cx| {
+        .update(cx, |root, _, cx| {
+            root.workspace.update(cx, |workspace, cx| {
                 workspace.open_project(scratch.project("one"), cx);
-                workspace.new_board(0, "First".into(), "ONE", cx).ok();
-                workspace.new_board(0, "Second".into(), "TWO", cx).ok();
+                workspace.new_board(0, "First".into(), "ONE", cx).detach();
+                workspace.new_board(0, "Second".into(), "TWO", cx).detach();
+            });
+        })
+        .unwrap();
+    cx.executor().allow_parking();
+    cx.run_until_parked();
+    window
+        .update(cx, |root, window, cx| {
+            let (a, b) = root.workspace.update(cx, |workspace, _| {
                 (
                     workspace.board_member(0, 0).expect("a member"),
                     workspace.board_member(0, 1).expect("a member"),
@@ -127,7 +143,12 @@ fn making_an_entry_inside_a_space_lands_on_it(cx: &mut gpui::TestAppContext) {
             root.focus_pane(&b, window, cx);
 
             root.new_article(0, window, cx);
-
+        })
+        .unwrap();
+    // The article lands once the backend has made it.
+    cx.run_until_parked();
+    window
+        .update(cx, |root, window, cx| {
             assert!(
                 root.workspace.read(cx).active_space().is_none(),
                 "the space is left"
@@ -151,8 +172,8 @@ fn starting_a_session_inside_a_space_lands_on_it(cx: &mut gpui::TestAppContext) 
     });
 
     window
-        .update(cx, |root, window, cx| {
-            let (a, b) = root.workspace.update(cx, |workspace, cx| {
+        .update(cx, |root, _, cx| {
+            root.workspace.update(cx, |workspace, cx| {
                 workspace.settings.features.sessions = true;
                 workspace.settings.agents = vec![crate::model::settings::Agent {
                     name: "test".into(),
@@ -162,8 +183,16 @@ fn starting_a_session_inside_a_space_lands_on_it(cx: &mut gpui::TestAppContext) 
                     env: Default::default(),
                 }];
                 workspace.open_project(scratch.project("one"), cx);
-                workspace.new_board(0, "First".into(), "ONE", cx).ok();
-                workspace.new_board(0, "Second".into(), "TWO", cx).ok();
+                workspace.new_board(0, "First".into(), "ONE", cx).detach();
+                workspace.new_board(0, "Second".into(), "TWO", cx).detach();
+            });
+        })
+        .unwrap();
+    cx.executor().allow_parking();
+    cx.run_until_parked();
+    window
+        .update(cx, |root, window, cx| {
+            let (a, b) = root.workspace.update(cx, |workspace, _| {
                 (
                     workspace.board_member(0, 0).expect("a member"),
                     workspace.board_member(0, 1).expect("a member"),
@@ -206,13 +235,21 @@ fn opening_an_entry_a_space_holds_enters_the_space(cx: &mut gpui::TestAppContext
     });
 
     window
+        .update(cx, |root, _, cx| {
+            root.workspace.update(cx, |workspace, cx| {
+                workspace.open_project(scratch.project("one"), cx);
+                workspace.new_board(0, "First".into(), "ONE", cx).detach();
+                workspace.new_board(0, "Second".into(), "TWO", cx).detach();
+                workspace.new_board(0, "Third".into(), "THR", cx).detach();
+            });
+        })
+        .unwrap();
+    cx.executor().allow_parking();
+    cx.run_until_parked();
+    window
         .update(cx, |root, window, cx| {
             // Newest first, so the third made is board 0 and the first is 2.
-            let (a, b) = root.workspace.update(cx, |workspace, cx| {
-                workspace.open_project(scratch.project("one"), cx);
-                workspace.new_board(0, "First".into(), "ONE", cx).ok();
-                workspace.new_board(0, "Second".into(), "TWO", cx).ok();
-                workspace.new_board(0, "Third".into(), "THR", cx).ok();
+            let (a, b) = root.workspace.update(cx, |workspace, _| {
                 (
                     workspace.board_member(0, 0).expect("a member"),
                     workspace.board_member(0, 1).expect("a member"),
@@ -274,11 +311,19 @@ fn syncing_the_composers_leaves_the_focus_where_it_was(cx: &mut gpui::TestAppCon
     let window =
         cx.add_window(|window, cx| Cydonia::new(settings, state::State::default(), window, cx));
 
+    window
+        .update(cx, |root, _, cx| {
+            root.workspace.update(cx, |workspace, cx| {
+                workspace.open_project(scratch.project("one"), cx);
+                workspace.new_board(0, "First".into(), "ONE", cx).detach();
+            });
+        })
+        .unwrap();
+    cx.executor().allow_parking();
+    cx.run_until_parked();
     let board = window
         .update(cx, |root, window, cx| {
             let (board, session) = root.workspace.update(cx, |workspace, cx| {
-                workspace.open_project(scratch.project("one"), cx);
-                workspace.new_board(0, "First".into(), "ONE", cx).ok();
                 let board = workspace.board_member(0, 0).expect("a member");
 
                 let path = workspace.projects[0].path.clone();
@@ -337,6 +382,72 @@ fn syncing_the_composers_leaves_the_focus_where_it_was(cx: &mut gpui::TestAppCon
                 Some(&board),
                 "and still on the board after the sync"
             );
+        })
+        .unwrap();
+}
+
+/// A session dropped into a pane in the tick it was opened in, before the
+/// backend has minted its id, lands there once it has.
+#[gpui::test]
+fn a_session_dropped_before_its_id_lands_is_placed_once_it_does(cx: &mut gpui::TestAppContext) {
+    use crate::model::workspace::Showing;
+    use crate::view::sidebar::{Dragged, Row};
+    use bezel::ui::docking;
+    let scratch = Scratch::new("drop-unfiled");
+    cx.update(|cx| Theme::install(bezel::theme::Appearance::Light, cx));
+    let mut settings = Settings::default();
+    settings.features.sessions = true;
+    let window =
+        cx.add_window(|window, cx| Cydonia::new(settings, state::State::default(), window, cx));
+    let path = scratch.project("one");
+
+    window
+        .update(cx, |root, _, cx| {
+            root.workspace.update(cx, |workspace, cx| {
+                workspace.open_project(path.clone(), cx);
+                workspace.new_board(0, "First".into(), "ONE", cx).detach();
+            });
+        })
+        .unwrap();
+    cx.executor().allow_parking();
+    cx.run_until_parked();
+    let (board, id) = window
+        .update(cx, |root, window, cx| {
+            let (board, id) = root.workspace.update(cx, |workspace, cx| {
+                let board = workspace.board_member(0, 0).expect("a member");
+                let agent = crate::model::settings::Agent {
+                    name: "test".into(),
+                    id: None,
+                    command: String::new(),
+                    args: Vec::new(),
+                    env: Default::default(),
+                };
+                let id = workspace.new_session(agent, None, cx).expect("a session");
+                (board, id)
+            });
+            let event = docking::Drop {
+                item: Dragged::Row(Row::Entry {
+                    project: path.clone(),
+                    showing: Showing::Session(id),
+                }),
+                pane: board.clone(),
+                zone: docking::Zone::Right,
+            };
+            assert!(
+                root.dock_drop(&event, window, cx).is_none(),
+                "nothing to place before the id lands"
+            );
+            (board, id)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .update(cx, |root, _, cx| {
+            let workspace = root.workspace.read(cx);
+            let session = workspace.member_of_session(id, cx).expect("filed");
+            let space = workspace.active_space().expect("arranged");
+            assert!(space.contains(&board), "beside the board");
+            assert!(space.contains(&session), "with the session in its pane");
         })
         .unwrap();
 }

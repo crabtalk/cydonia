@@ -120,7 +120,7 @@ pub fn catalog(store: &impl Project) -> Result<Vec<Entry>> {
     let mut entries = Vec::new();
     for board in store.boards() {
         entries.push(Entry {
-            number: store.number(Kind::Board, &board.id)?,
+            number: numbered(board.number, Kind::Board, &board.id)?,
             title: board.label().to_owned(),
             kind: Kind::Board,
             id: board.id,
@@ -131,7 +131,7 @@ pub fn catalog(store: &impl Project) -> Result<Vec<Entry>> {
     }
     for article in store.articles() {
         entries.push(Entry {
-            number: store.number(Kind::Article, &article.id)?,
+            number: numbered(article.number, Kind::Article, &article.id)?,
             kind: Kind::Article,
             id: article.id,
             title: article.title,
@@ -141,12 +141,13 @@ pub fn catalog(store: &impl Project) -> Result<Vec<Entry>> {
         });
     }
     for session in store.sessions() {
-        let article = match &session.article {
-            Some(article) => Some(store.number(Kind::Article, article)?),
-            None => None,
-        };
+        let article = session
+            .article
+            .as_deref()
+            .and_then(|article| store.article(article))
+            .and_then(|article| article.number);
         entries.push(Entry {
-            number: store.number(Kind::Session, &session.id)?,
+            number: numbered(session.number, Kind::Session, &session.id)?,
             kind: Kind::Session,
             title: session.label().to_owned(),
             id: session.id,
@@ -156,6 +157,11 @@ pub fn catalog(store: &impl Project) -> Result<Vec<Entry>> {
         });
     }
     Ok(entries)
+}
+
+/// The number a read handed an entry, or why there is none.
+fn numbered(number: Option<u64>, kind: Kind, id: &str) -> Result<u64> {
+    number.ok_or_else(|| anyhow::anyhow!("no number for {kind} {id}"))
 }
 
 /// One of [`catalog`]'s entries as a client reads it. `None` for a kind the
@@ -198,7 +204,7 @@ pub fn list(project: &Path) -> Result<Vec<Entry>> {
                 )
                 .unwrap_or_else(|_| (id.clone(), false));
             entries.push(Entry {
-                number: store.number(Kind::Table, &id)?,
+                number: number(project, Kind::Table, &id)?,
                 kind: Kind::Table,
                 id,
                 title,

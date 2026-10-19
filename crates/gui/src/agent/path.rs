@@ -2,7 +2,7 @@
 //!
 //! Agents are named by command rather than by path — `npx`, or an installed
 //! shim whose first line is `#!/usr/bin/env node` — and
-//! [`super::acp::Session::spawn`] execs that name against this process's
+//! [`super::spawner::Local`] execs that name against this process's
 //! environment. Started from a terminal that environment is the shell's and
 //! every one of them resolves. Started from Finder, the Dock, or `open`,
 //! launchd hands the app `/usr/bin:/bin:/usr/sbin:/sbin` and nothing else: no
@@ -125,15 +125,14 @@ pub fn merge(shell: &str, inherited: &str) -> String {
 }
 
 /// The program to spawn for `command`. On Windows a bare name is looked up on
-/// `PATH` under each `PATHEXT` extension, so `npx` finds `npx.cmd`; elsewhere,
+/// `path` under each `PATHEXT` extension, so `npx` finds `npx.cmd`; elsewhere,
 /// and when nothing matches, `command` is returned as given.
-pub fn program(command: &str) -> PathBuf {
+pub fn program(command: &str, path: &OsStr) -> PathBuf {
     if !cfg!(windows) {
         return PathBuf::from(command);
     }
-    let path = std::env::var_os("PATH").unwrap_or_default();
     let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into());
-    resolve(command, &path, &pathext, |candidate| candidate.is_file())
+    resolve(command, path, &pathext, |candidate| candidate.is_file())
         .unwrap_or_else(|| PathBuf::from(command))
 }
 

@@ -158,8 +158,22 @@ impl NewBoard {
         let made = self.workspace.update(cx, |workspace, cx| {
             workspace.new_board(project, name, &key, cx)
         });
+        cx.spawn_in(window, async move |this, cx| {
+            let made = made.await;
+            let _ = this.update_in(cx, |this, window, cx| this.made(made, window, cx));
+        })
+        .detach();
+    }
+
+    /// Open the board the backend made, or stay open saying why it made none.
+    fn made(
+        &mut self,
+        made: Result<(usize, usize), String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         match made {
-            Ok(ix) => {
+            Ok((project, ix)) => {
                 let member = self.workspace.read(cx).board_member(project, ix);
                 let into = self.into.clone();
                 let _ = self.root.update(cx, |root, cx| match into.zip(member) {

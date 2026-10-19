@@ -9,6 +9,7 @@ use crate::model::session_preferences::{self, OfferCache};
 use artifact::kind::Kind;
 use artifact::project::Project as _;
 use bezel::gpui::Entity;
+use futures::future::Shared;
 
 /// One pick on an article's composer before its session exists, which changes
 /// the article's default. The agent is its index in `settings.agents`.
@@ -37,9 +38,25 @@ impl Workspace {
 
     /// The link to turns `from..=to` of a session, from 1, filing the session
     /// first so it has the number the link names.
-    pub fn turn_link(&mut self, id: u64, from: usize, to: usize, cx: &mut App) -> Option<String> {
-        self.mint_record(id, cx)?;
-        self.session(id, cx)?.turn_link(from, to)
+    pub fn turn_link(
+        &mut self,
+        id: u64,
+        from: usize,
+        to: usize,
+        cx: &mut Context<Self>,
+    ) -> Task<Option<String>> {
+        let Some(minted) = self.mint_record(id, cx) else {
+            return Task::ready(None);
+        };
+        cx.spawn(async move |workspace, cx| {
+            minted.await?;
+            workspace
+                .read_with(cx, |workspace, cx| {
+                    workspace.session(id, cx)?.turn_link(from, to)
+                })
+                .ok()
+                .flatten()
+        })
     }
 
     /// How a session is written as a reference, `project#43`: its project's
@@ -96,13 +113,27 @@ impl Workspace {
         self.member_of(self.project_of(id)?, super::Showing::Session(id), cx)
     }
 
+    /// Put [`Self::turn_link`] on the clipboard once it has one.
+    pub fn copy_turn_link(&mut self, id: u64, from: usize, to: usize, cx: &mut Context<Self>) {
+        let link = self.turn_link(id, from, to, cx);
+        cx.spawn(async move |_, cx| {
+            if let Some(link) = link.await {
+                cx.update(|cx| cx.write_to_clipboard(bezel::gpui::ClipboardItem::new_string(link)));
+            }
+        })
+        .detach();
+    }
+
     /// Give a session the name that keeps, minting its file if it has none —
     /// what anything pointing at a session from outside the process needs, and
-    /// a session has no file until its first turn is written.
-    pub fn retain_session(&mut self, id: u64, cx: &mut Context<Self>) -> Option<String> {
-        let record = self.update_session(id, cx, ChatSession::retain_panel)??;
+    /// a session has no file until its first turn is written. Answers the
+    /// name once the backend has minted it.
+    pub fn retain_session(&mut self, id: u64, cx: &mut Context<Self>) -> Task<Option<String>> {
+        let Some(retained) = self.update_session(id, cx, ChatSession::retain_panel) else {
+            return Task::ready(None);
+        };
         cx.notify();
-        Some(record)
+        retained
     }
 
     /// Keep the session in front on disk, and remember it as its project's
@@ -111,30 +142,62 @@ impl Workspace {
     /// Called from [`Cydonia::save_panel_layout`], which is the only thing
     /// that runs often enough to catch a quit: nothing else writes a session's
     /// record between the one that opened it and the one that closes it.
-    pub fn retain_active_session(&mut self, id: u64, cx: &mut Context<Self>) -> Option<String> {
-        let ix = self.project_of(id)?;
-        let record = self.retain_session(id, cx)?;
-        self.note_landing(ix, Kind::Session, record.clone(), cx);
-        cx.notify();
-        Some(record)
+    pub fn retain_active_session(
+        &mut self,
+        id: u64,
+        cx: &mut Context<Self>,
+    ) -> Task<Option<String>> {
+        let retained = self.retain_session(id, cx);
+        let filed = self.session(id, cx).and_then(|chat| chat.record.clone());
+        if let (Some(record), Some(ix)) = (filed, self.project_of(id)) {
+            self.note_landing(ix, Kind::Session, record, cx);
+            cx.notify();
+            return retained;
+        }
+        cx.spawn(async move |workspace, cx| {
+            let record = retained.await?;
+            workspace
+                .update(cx, |workspace, cx| {
+                    let ix = workspace.project_of(id)?;
+                    workspace.note_landing(ix, Kind::Session, record.clone(), cx);
+                    cx.notify();
+                    Some(record)
+                })
+                .ok()
+                .flatten()
+        })
     }
 
+    /// Fork `source` before turn `before`, once `source` is filed: the fork
+    /// names it. Answers the fork.
     pub fn fork_session(
         &mut self,
         source: u64,
         before: usize,
         cx: &mut Context<Self>,
-    ) -> Option<u64> {
+    ) -> Task<Option<u64>> {
         if !self.settings.features.sessions {
-            return None;
+            return Task::ready(None);
         }
+        let Some(minted) = self.mint_record(source, cx) else {
+            return Task::ready(None);
+        };
+        cx.spawn(async move |workspace, cx| {
+            minted.await?;
+            workspace
+                .update(cx, |workspace, cx| workspace.fork_filed(source, before, cx))
+                .ok()
+                .flatten()
+        })
+    }
+
+    fn fork_filed(&mut self, source: u64, before: usize, cx: &mut Context<Self>) -> Option<u64> {
         let ix = self.project_of(source)?;
-        self.mint_record(source, cx)?;
         let id = self.next_id;
-        let mut fork = self.session(source, cx)?.fork_at(id, before)?;
+        let fork = self.session(source, cx)?.fork_at(id, before)?;
         self.next_id += 1;
-        fork.flush();
         let fork = HeldSession::new(fork, cx);
+        fork.chat.update(cx, |chat, cx| chat.flush(cx));
         self.projects[ix].sessions.push(fork);
         self.select_session(id, cx);
         Some(id)
@@ -164,14 +227,14 @@ impl Workspace {
                 .timer(std::time::Duration::from_millis(500))
                 .await;
             let _ = workspace.update(cx, |workspace, cx| {
-                workspace.with_session(id, cx, |chat| {
-                    chat.flush();
+                workspace.with_session(id, cx, |chat, cx| {
+                    chat.flush(cx);
                     chat.draft_save = None;
                 });
                 workspace.prune_archived(cx);
             });
         });
-        self.with_session(id, cx, |chat| {
+        self.with_session(id, cx, |chat, _| {
             chat.draft = draft;
             chat.draft_save = Some(save);
         });
@@ -309,7 +372,7 @@ impl Workspace {
             if chat.idle() && chat.resumable() {
                 chat.resume(cx);
             }
-            chat.send(content);
+            chat.send(content, cx);
             Some(chat.filed().map(str::to_owned))
         });
         let Some(record) = record else {
@@ -559,24 +622,24 @@ impl Workspace {
     /// Put a session away, or bring it back. Closing tears the agent down and
     /// keeps the transcript; opening it again is what reconnects.
     pub fn archive_session(&mut self, id: u64, archived: bool, cx: &mut Context<Self>) {
-        self.with_session(id, cx, |chat| match archived {
-            true => chat.close(),
+        self.with_session(id, cx, |chat, cx| match archived {
+            true => chat.close(cx),
             false => {
                 if !chat.load_history() {
                     return;
                 }
                 chat.closed = false;
-                chat.flush();
+                chat.flush(cx);
             }
         });
         self.prune_archived(cx);
     }
 
     pub fn rename_session(&mut self, id: u64, name: String, cx: &mut Context<Self>) {
-        self.with_session(id, cx, |chat| {
+        self.with_session(id, cx, |chat, cx| {
             let name = name.trim();
             chat.name = (!name.is_empty()).then(|| name.to_owned());
-            chat.flush();
+            chat.flush(cx);
         });
         self.prune_archived(cx);
     }
@@ -587,12 +650,12 @@ impl Workspace {
         let Some(id) = self.session_by_record(record, cx).map(|chat| chat.id) else {
             return;
         };
-        self.with_session(id, cx, |chat| {
+        self.with_session(id, cx, |chat, cx| {
             match chat.name {
                 Some(_) => chat.name = Some(title),
                 None => chat.title = title,
             }
-            chat.flush();
+            chat.flush(cx);
         });
     }
 
@@ -603,7 +666,8 @@ impl Workspace {
         // Closing a session is what deletes it: leaving the file would put
         // the row back on the next launch.
         if let Some(record) = project.session(id, cx).and_then(|chat| chat.record.clone()) {
-            let _ = project.store().remove_session(&record);
+            cx.background_spawn(project.store().remove_session(&record))
+                .detach();
             let _ = session_preferences::forget_session(&project.path, &record);
         }
         project.sessions.retain(|held| held.id != id);
@@ -654,9 +718,9 @@ impl Workspace {
     }
 
     /// The id a session is filed under, minted if it has none — what a
-    /// card sent to it writes down.
-    pub fn mint_record(&self, id: u64, cx: &mut App) -> Option<String> {
-        self.update_session(id, cx, |chat| chat.mint_record().map(str::to_owned))?
+    /// card sent to it writes down. See [`ChatSession::mint_record`].
+    pub fn mint_record(&self, id: u64, cx: &mut App) -> Option<Shared<Task<Option<String>>>> {
+        self.update_session(id, cx, ChatSession::mint_record)
     }
 
     /// Run `f` on the session, where it still exists, without telling the
@@ -665,18 +729,23 @@ impl Workspace {
         &self,
         id: u64,
         cx: &mut App,
-        f: impl FnOnce(&mut ChatSession) -> T,
+        f: impl FnOnce(&mut ChatSession, &mut Context<ChatSession>) -> T,
     ) -> Option<T> {
         let chat = self.session_entity(id)?.clone();
-        Some(chat.update(cx, |chat, _| f(chat)))
+        Some(chat.update(cx, f))
     }
 
     /// Run `f` on the session, where it still exists, and tell the views
     /// drawing it.
-    pub fn with_session(&self, id: u64, cx: &mut App, f: impl FnOnce(&mut ChatSession)) {
+    pub fn with_session(
+        &self,
+        id: u64,
+        cx: &mut App,
+        f: impl FnOnce(&mut ChatSession, &mut Context<ChatSession>),
+    ) {
         if let Some(chat) = self.session_entity(id).cloned() {
             chat.update(cx, |chat, cx| {
-                f(chat);
+                f(chat, cx);
                 cx.notify();
             });
         }

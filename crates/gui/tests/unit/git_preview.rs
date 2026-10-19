@@ -6,8 +6,10 @@ fn preview(patch: &str, old: &str, new: &str) -> Preview {
     Preview::build(
         Path::new("file.rs"),
         patch.into(),
-        Some(old.into()),
-        Some(new.into()),
+        Sources {
+            old: Some(old.into()),
+            new: Some(new.into()),
+        },
     )
 }
 
@@ -209,8 +211,10 @@ fn unknown_languages_keep_readable_code_and_line_numbers() {
     let preview = Preview::build(
         Path::new("file.unknown"),
         "@@ -0,0 +1 @@\n+some text\n".into(),
-        None,
-        Some("some text\n".into()),
+        Sources {
+            old: None,
+            new: Some("some text\n".into()),
+        },
     );
     assert_eq!(preview.lines[1].new, Some(1));
     assert_eq!(preview.lines[1].text, "some text");

@@ -2,6 +2,7 @@
 //! by the article they are under, and carried or removed with it.
 
 mod common;
+use common::Wait as _;
 
 use common::Scratch;
 use cydonia_artifact::kind::Kind;
@@ -12,14 +13,14 @@ use cydonia_artifact::{
 };
 
 fn under(store: &fs::Project, article: &str) -> String {
-    let id = store.create_session().unwrap();
+    let id = store.create_session().wait().unwrap();
     let record: Record = serde_json::from_value(serde_json::json!({
         "id": id, "article": article, "agent": "claude",
         "title": "", "name": null, "updated": 1,
         "items": [{"User": "what is this?"}, {"Agent": "a word"}]
     }))
     .unwrap();
-    store.save_session(&record).unwrap();
+    store.save_session(&record).wait().unwrap();
     id
 }
 
@@ -27,7 +28,7 @@ fn under(store: &fs::Project, article: &str) -> String {
 fn a_session_under_an_article_is_filed_and_listed_with_it() {
     let scratch = Scratch::new("article-sessions-filed");
     let store = scratch.store();
-    let made = store.create_article("# Notes").unwrap();
+    let made = store.create_article("# Notes").wait().unwrap();
     let id = under(&store, &made.id);
 
     assert!(
@@ -58,15 +59,15 @@ fn an_article_moving_takes_its_sessions() {
         Scratch::new("article-sessions-from"),
         Scratch::new("article-sessions-to"),
     );
-    let made = from.store().create_article("# Notes").unwrap();
+    let made = from.store().create_article("# Notes").wait().unwrap();
     let id = under(&from.store(), &made.id);
-    let elsewhere = from.store().create_session().unwrap();
+    let elsewhere = from.store().create_session().wait().unwrap();
     let other: Record = serde_json::from_value(serde_json::json!({
         "id": elsewhere, "agent": "claude", "title": "", "name": null,
         "updated": 1, "items": [{"User": "unrelated"}]
     }))
     .unwrap();
-    from.store().save_session(&other).unwrap();
+    from.store().save_session(&other).wait().unwrap();
 
     let content = article::content(&article::dir(from.path()).join(&made.id));
     let arrived = article::move_to(&content, to.path()).unwrap();
@@ -86,8 +87,8 @@ fn an_article_moving_takes_its_sessions() {
 fn removing_an_article_removes_its_sessions() {
     let scratch = Scratch::new("article-sessions-removed");
     let store = scratch.store();
-    let made = store.create_article("# Notes").unwrap();
+    let made = store.create_article("# Notes").wait().unwrap();
     let id = under(&store, &made.id);
-    store.remove_article(&made.id).unwrap();
+    store.remove_article(&made.id).wait().unwrap();
     assert!(store.session(&id).is_none());
 }

@@ -1,0 +1,18 @@
+[package]
+name = "cydonia-git"
+description = "The git requests cydonia asks of a repository, and the backend that runs git where the files are"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["git", "cydonia"]
+categories = ["development-tools"]
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

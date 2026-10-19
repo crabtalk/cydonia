@@ -1,4 +1,5 @@
 mod common;
+use common::Wait as _;
 
 use common::Scratch;
 use cydonia_artifact::{
@@ -89,19 +90,20 @@ fn disk_finds_articles_boards_and_sessions_without_writing() {
     let store = scratch.store();
     store
         .create_article("# Notes\nthe \"quoted\" word\n")
+        .wait()
         .unwrap();
-    let mut board = store.create_board("Work", "").unwrap();
+    let mut board = store.create_board("Work", "").wait().unwrap();
     let todo = board.add_column("Todo").id.clone();
     board.add_card(&todo, "find the \"quoted\" card".into());
-    store.save_board(&mut board).unwrap();
+    store.save_board(&mut board).wait().unwrap();
     let mut session = record();
-    session.id = store.create_session().unwrap();
+    session.id = store.create_session().wait().unwrap();
     session
         .items
         .push(cydonia_artifact::session::chat::ChatItem::User(
             "a \"quoted\" ask".into(),
         ));
-    store.save_session(&session).unwrap();
+    store.save_session(&session).wait().unwrap();
     let before: Board = store.board(&board.id).unwrap();
 
     let query = Query::literal("\"quoted\"").unwrap();

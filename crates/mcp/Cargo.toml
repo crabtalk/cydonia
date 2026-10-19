@@ -12,6 +12,7 @@ categories = ["development-tools"]
 
 [dependencies]
 anyhow.workspace = true
+futures.workspace = true
 artifact = { workspace = true, features = ["pictures"] }
 axum = { workspace = true, optional = true }
 serde.workspace = true

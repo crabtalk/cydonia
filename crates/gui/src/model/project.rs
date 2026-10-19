@@ -5,7 +5,7 @@
 //! is spawned with as its `cwd`, and what [`crate::model::state`] persists.
 
 use crate::{
-    data::{Data, Home, Page, Table},
+    data::{Data, Page, Table},
     model::{
         article::{self, Article},
         session::ChatSession,
@@ -16,6 +16,7 @@ use crate::{
 };
 use artifact::board::Board;
 use artifact::kind::Kind;
+use artifact::location::Location;
 use artifact::project::Project as _;
 use bezel::gpui::{App, AppContext as _, Context, Entity};
 use std::{
@@ -127,14 +128,15 @@ impl Project {
     }
 
     pub fn new(path: PathBuf, cx: &mut App) -> Self {
+        let store = store::open(&Location::Local(path.clone()));
         let mut this = Self {
-            boards: store::open(&path)
+            boards: store
                 .boards()
                 .into_iter()
                 .map(|board| HeldBoard::new(board, cx))
                 .collect(),
             articles: article::list(&path),
-            data: Data::attach(&Home::Project(path.clone())),
+            data: store.tables(),
             path,
             sessions: Vec::new(),
             active: None,
@@ -179,7 +181,7 @@ impl Project {
         // The store can appear long after the project was opened, and an agent
         // making one is exactly the case this watch is here for.
         if self.data.is_none() {
-            self.data = Data::attach(&Home::Project(self.path.clone()));
+            self.data = self.store().tables();
         }
         self.reload_articles(cx);
         let boards = self.reload_boards(cx);
@@ -326,9 +328,13 @@ impl Project {
         }
     }
 
+    pub fn location(&self) -> Location {
+        Location::Local(self.path.clone())
+    }
+
     /// Where this project's work is kept — see [`store::open`].
     pub fn store(&self) -> Store {
-        store::open(&self.path)
+        store::open(&self.location())
     }
 
     /// The tab's label: the directory's own name, or the whole path when it

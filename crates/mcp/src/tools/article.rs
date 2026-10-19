@@ -29,6 +29,7 @@ use artifact::{
     search::{self, Block, Query},
     stamp,
 };
+use futures::executor::block_on;
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
@@ -520,23 +521,20 @@ fn add(args: Args<'_>) -> Outcome {
     let title = args.text(TITLE)?;
     let text = args.text(MARKDOWN)?;
     let store = fs::Project::new(project);
-    let made = store
-        .create_article(text)
+    let made = block_on(store.create_article(text))
         .map_err(|e| Error::failed("the article", Act::Written, e))?;
     let titled = Properties {
         title: title.to_owned(),
         ..Properties::default()
     };
-    store
-        .save_properties(&made.id, &titled)
+    block_on(store.save_properties(&made.id, &titled))
         .map_err(|e| Error::failed("the article", Act::Named, e))?;
     let id = made.id;
     let content = store
         .article_file(&id)
         .map_err(|e| Trouble::Refused(e.to_string()))?;
-    let number = store
-        .number(Kind::Article, &id)
-        .map_err(|e| Trouble::Refused(e.to_string()))?;
+    let number =
+        block_on(store.number(Kind::Article, &id)).map_err(|e| Trouble::Refused(e.to_string()))?;
     Ok(
         Answer::said(format!("#{number} {title} written")).with(json!({
             "id": id,
@@ -612,8 +610,7 @@ fn rewrite(args: Args<'_>) -> Outcome {
     let project = root(&args)?;
     let found = locate(project, args.text(ARTICLE)?)?;
     let text = args.text(MARKDOWN_NOW)?;
-    fs::Project::new(project)
-        .write_article(&found.id, text)
+    block_on(fs::Project::new(project).write_article(&found.id, text))
         .map_err(|e| Error::failed(found.label(), Act::Written, e))?;
     Ok(Answer::said(format!("{} rewritten", found.label())))
 }
@@ -643,8 +640,7 @@ fn edit(args: Args<'_>) -> Outcome {
         )));
     }
     let edited = text.replacen(old, new, count);
-    fs::Project::new(project)
-        .write_article(&found.id, &edited)
+    block_on(fs::Project::new(project).write_article(&found.id, &edited))
         .map_err(|e| Error::failed(found.label(), Act::Written, e))?;
     Ok(
         Answer::said(format!("{} edited: {count} replacement(s)", found.label()))
@@ -693,8 +689,7 @@ fn comment(args: Args<'_>) -> Outcome {
         note.to_owned(),
         session::turn_link(&args),
     ));
-    store
-        .save_comments(&found.id, &held)
+    block_on(store.save_comments(&found.id, &held))
         .map_err(|e| Error::failed(found.label(), Act::Written, e))?;
     Ok(Answer::said(format!("{} has a new comment", found.label()))
         .with(json!({ "id": found.id, "comment": id })))
@@ -723,8 +718,7 @@ fn comment_reply(args: Args<'_>) -> Outcome {
         text: answer.to_owned(),
         turn: session::turn_link(&args),
     });
-    store
-        .save_comments(&found.id, &held)
+    block_on(store.save_comments(&found.id, &held))
         .map_err(|e| Error::failed(found.label(), Act::Written, e))?;
     Ok(
         Answer::said(format!("{} has an answer on note {id}", found.label()))
@@ -739,8 +733,7 @@ fn rename(args: Args<'_>) -> Outcome {
     let store = fs::Project::new(project);
     let mut held = store.properties(&found.id);
     held.title = title.to_owned();
-    store
-        .save_properties(&found.id, &held)
+    block_on(store.save_properties(&found.id, &held))
         .map_err(|e| Error::failed(found.label(), Act::Renamed, e))?;
     Ok(Answer::said(format!("{} is now {title}", found.label())))
 }
@@ -755,8 +748,7 @@ fn archive(args: Args<'_>) -> Outcome {
         let store = fs::Project::new(root);
         let mut held = store.properties(&found.id);
         held.archived = archived;
-        store
-            .save_properties(&found.id, &held)
+        block_on(store.save_properties(&found.id, &held))
             .map_err(|e| Error::failed(found.label(), Act::Written, e))?;
         said.push(found.label().to_owned());
     }
@@ -780,8 +772,7 @@ fn remove(args: Args<'_>) -> Outcome {
     }
     let mut gone: Vec<String> = Vec::new();
     for article in &found {
-        fs::Project::new(root)
-            .remove_article(&article.id)
+        block_on(fs::Project::new(root).remove_article(&article.id))
             .map_err(|e| Error::failed(article.label(), Act::Deleted, e))?;
         gone.push(article.label().to_owned());
     }
@@ -878,7 +869,7 @@ fn articles(project: &Path) -> Vec<Held> {
         .into_iter()
         .filter_map(|found| {
             Some(Held {
-                number: store.number(Kind::Article, &found.id).ok(),
+                number: block_on(store.number(Kind::Article, &found.id)).ok(),
                 content: store.article_file(&found.id).ok()?,
                 id: found.id,
                 title: found.title,

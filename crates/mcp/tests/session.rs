@@ -1,6 +1,7 @@
 //! Sending a prompt to another session through the rail.
 
 mod common;
+use common::Wait as _;
 
 use artifact::kind::Kind;
 use common::{Rail, Scratch, refused, said};
@@ -14,10 +15,10 @@ fn a_session_is_sent_to_by_its_reference() {
     let server = scratch.server();
     let rail = Rail;
     let store = scratch.store();
-    let record = store.create_session().unwrap();
+    let record = store.create_session().wait().unwrap();
     let filed: artifact::session::record::Record =
         serde_json::from_value(json!({"id": record, "agent": "claude", "title": "t", "name": null, "updated": 0, "items": []})).unwrap();
-    store.save_session(&filed).unwrap();
+    store.save_session(&filed).wait().unwrap();
     let number = artifact::entry::number(scratch.path(), Kind::Session, &record).unwrap();
 
     said(server.call(
@@ -109,7 +110,7 @@ fn no_session_starts_one_on_the_named_agent() {
 fn filed(scratch: &Scratch, said: &[(&str, &str)]) -> String {
     use artifact::project::Project as _;
     let store = scratch.store();
-    let record = store.create_session().unwrap();
+    let record = store.create_session().wait().unwrap();
     let items: Vec<_> = said
         .iter()
         .flat_map(|(asked, answered)| [json!({ "User": asked }), json!({ "Agent": answered })])
@@ -119,7 +120,7 @@ fn filed(scratch: &Scratch, said: &[(&str, &str)]) -> String {
         "updated": 0, "items": items,
     }))
     .unwrap();
-    store.save_session(&filed).unwrap();
+    store.save_session(&filed).wait().unwrap();
     format!(
         "#{}",
         artifact::entry::number(scratch.path(), Kind::Session, &record).unwrap()
@@ -275,13 +276,13 @@ fn a_message_from_a_session_is_signed_with_its_turn() {
 fn titled(scratch: &Scratch, title: &str, name: Option<&str>) -> String {
     use artifact::project::Project as _;
     let store = scratch.store();
-    let record = store.create_session().unwrap();
+    let record = store.create_session().wait().unwrap();
     let filed: artifact::session::record::Record = serde_json::from_value(json!({
         "id": record, "agent": "claude", "title": title, "name": name,
         "updated": 0, "items": [],
     }))
     .unwrap();
-    store.save_session(&filed).unwrap();
+    store.save_session(&filed).wait().unwrap();
     record
 }
 

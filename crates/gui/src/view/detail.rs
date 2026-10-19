@@ -285,7 +285,7 @@ impl Cydonia {
             return space
                 .panes()
                 .into_iter()
-                .find_map(|pane| pane.project().map(Path::to_path_buf));
+                .find_map(|pane| pane.project().map(|project| project.root().to_path_buf()));
         }
         if self.showing(cx) == Some(Kind::Session)
             && let Some(chat) = workspace.active_session(cx)
@@ -430,7 +430,7 @@ impl Cydonia {
                         self.submit(id, text.clone(), attachments.clone(), cx)
                     }
                     ComposerEvent::Cancel => self.workspace.update(cx, |workspace, cx| {
-                        workspace.with_session(id, cx, |chat| chat.cancel())
+                        workspace.with_session(id, cx, |chat, _| chat.cancel())
                     }),
                     ComposerEvent::Reconnect => self
                         .workspace

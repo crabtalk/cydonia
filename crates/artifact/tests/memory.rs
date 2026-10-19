@@ -1,6 +1,10 @@
 //! The in-memory backend: seeded from a `.cydonia/` layout, and answering the
 //! trait the way the filesystem backend does.
 
+mod common;
+
+use common::Wait as _;
+
 use cydonia_artifact::kind::Kind;
 use cydonia_artifact::{
     article::properties::Properties,
@@ -91,38 +95,47 @@ fn properties_round_trip_and_clear() {
         comments: None,
         labels: vec!["research".into()],
     };
-    store.save_properties("1790089015001", &wanted).unwrap();
+    store
+        .save_properties("1790089015001", &wanted)
+        .wait()
+        .unwrap();
     assert_eq!(store.properties("1790089015001"), wanted);
     let cleared = Properties::default();
-    store.save_properties("1790089015001", &cleared).unwrap();
+    store
+        .save_properties("1790089015001", &cleared)
+        .wait()
+        .unwrap();
     assert_eq!(store.properties("1790089015001"), cleared);
 }
 
 #[test]
 fn writes_land_and_removals_retire_numbers() {
     let store = memory::Project::new();
-    let mut board = store.create_board("Plans", "").unwrap();
+    let mut board = store.create_board("Plans", "").wait().unwrap();
     board.name = "Plans, renamed".into();
-    store.save_board(&mut board).unwrap();
+    store.save_board(&mut board).wait().unwrap();
     assert_eq!(store.board(&board.id).unwrap().name, "Plans, renamed");
 
-    let article = store.create_article("x").unwrap();
-    store.write_article(&article.id, "y").unwrap();
+    let article = store.create_article("x").wait().unwrap();
+    store.write_article(&article.id, "y").wait().unwrap();
     assert_eq!(store.read_article(&article.id).unwrap(), "y");
-    let number = store.number(Kind::Article, &article.id).unwrap();
-    store.remove_article(&article.id).unwrap();
+    let number = store.number(Kind::Article, &article.id).wait().unwrap();
+    store.remove_article(&article.id).wait().unwrap();
     assert_eq!(store.resolve(Kind::Article, number).unwrap(), None);
-    assert_ne!(store.number(Kind::Article, &article.id).unwrap(), number);
+    assert_ne!(
+        store.number(Kind::Article, &article.id).wait().unwrap(),
+        number
+    );
 
-    assert!(store.remove_board("nope").is_err());
+    assert!(store.remove_board("nope").wait().is_err());
     assert!(store.read_article("nope").is_err());
-    assert!(store.put_asset(&board.id, "a.png", b"").is_err());
+    assert!(store.put_asset(&board.id, "a.png", b"").wait().is_err());
 }
 
 #[test]
 fn a_number_resolves_only_under_its_own_kind() {
     let store = memory::Project::new();
-    let number = store.number(Kind::Board, "a").unwrap();
+    let number = store.number(Kind::Board, "a").wait().unwrap();
     assert_eq!(
         store.resolve(Kind::Board, number).unwrap().as_deref(),
         Some("a")

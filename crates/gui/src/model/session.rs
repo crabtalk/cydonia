@@ -25,6 +25,7 @@ use crate::model::{
 #[cfg(feature = "desktop")]
 use anyhow::anyhow;
 use artifact::kind::Kind;
+use artifact::location::Location;
 use artifact::project::Project as _;
 #[cfg(feature = "desktop")]
 use artifact::session::chat::ToolStatus;
@@ -33,7 +34,7 @@ use artifact::session::{
     record::{ForkOrigin, Record},
 };
 use bezel::agent::orbs::engine::Frame;
-use bezel::gpui::{App, Context, Task};
+use bezel::gpui::{App, AppContext as _, Context, Task};
 #[cfg(feature = "desktop")]
 use cydonia_acp::proto::{
     ContentBlock, MaybeUndefined, PlanEntryStatus, RequestPermissionRequest,
@@ -42,6 +43,7 @@ use cydonia_acp::proto::{
 use cydonia_acp::proto::{
     PermissionOptionKind, SessionConfigOption, SessionConfigOptionValue, SessionModeState,
 };
+use futures::{FutureExt as _, future::Shared};
 use std::{
     cell::RefCell,
     collections::{BTreeMap, VecDeque},
@@ -199,6 +201,10 @@ pub struct ChatSession {
     /// before anything is written — see [`Self::filed`] for one that is on
     /// disk.
     pub record: Option<String>,
+    /// The mint of [`Self::record`] while the backend has not answered it.
+    filing: Option<Shared<Task<Option<String>>>>,
+    /// [`Self::mint_record`] while the backend has not answered it.
+    minting: Option<Shared<Task<Option<String>>>>,
     /// Whether [`Self::record`] has a file behind it.
     written: bool,
     /// Whether the user archived it. Typing into it clears this.
@@ -241,7 +247,7 @@ impl ChatSession {
 
     /// Where this session is filed — its project's backend.
     fn store(&self) -> Store {
-        store::open(&self.cwd)
+        store::open(&Location::from(self.cwd.as_path()))
     }
 
     /// Open a session on `entry`. `seed` is its first prompt, sent as soon as
@@ -266,26 +272,17 @@ impl ChatSession {
         preferences: Choices,
         cx: &mut Context<Self>,
     ) -> Self {
-        let record = store::open(&cwd).create_session().ok();
         #[cfg(feature = "desktop")]
-        let (pump, connection) = (
-            pump(
-                &entry,
-                Launch {
-                    choices: preferences.clone(),
-                    record: record.clone(),
-                    ..Launch::new(cwd.clone())
-                },
-                cx,
-            ),
+        let (launch, connection) = (
+            Launch {
+                choices: preferences.clone(),
+                ..Launch::new(cwd.clone())
+            },
             Connection::Connecting,
         );
         #[cfg(not(feature = "desktop"))]
-        let (pump, connection) = {
-            let _ = cx;
-            (Task::ready(()), Connection::Idle)
-        };
-        Self {
+        let connection = Connection::Idle;
+        let mut chat = Self {
             id,
             entry,
             cwd,
@@ -310,7 +307,9 @@ impl ChatSession {
             name: None,
             updated: SystemTime::now(),
             agent_session: None,
-            record,
+            record: None,
+            filing: None,
+            minting: None,
             written: false,
             number: None,
             closed: false,
@@ -323,8 +322,15 @@ impl ChatSession {
             queue: seed.into_iter().collect(),
             mark: Rc::default(),
             epoch: 0,
-            _pump: pump,
+            _pump: Task::ready(()),
+        };
+        #[cfg(feature = "desktop")]
+        {
+            chat._pump = chat.launch(launch, cx);
         }
+        #[cfg(not(feature = "desktop"))]
+        drop(chat.file(cx));
+        chat
     }
 
     /// [`Self::connect`] under the article `article` — see
@@ -374,6 +380,8 @@ impl ChatSession {
             updated,
             agent_session: record.session,
             record: Some(record.id),
+            filing: None,
+            minting: None,
             written: true,
             number: record.number,
             closed: record.closed,
@@ -513,22 +521,71 @@ impl ChatSession {
         Some(chat)
     }
 
-    /// The id this session is filed under, minted now if it has none.
+    /// The id this session is filed under, minted if it has none. Answers
+    /// once the backend has, with `None` for a mint it refused.
+    fn file(&mut self, cx: &mut Context<Self>) -> Shared<Task<Option<String>>> {
+        if let Some(id) = &self.record {
+            return Task::ready(Some(id.clone())).shared();
+        }
+        if let Some(filing) = &self.filing {
+            return filing.clone();
+        }
+        let made = self.store().create_session();
+        let filing = cx
+            .spawn(async move |this, cx| {
+                let id = made.await.ok();
+                this.update(cx, |chat, _| {
+                    chat.filing = None;
+                    if chat.record.is_none() {
+                        chat.record = id;
+                    }
+                    chat.record.clone()
+                })
+                .ok()
+                .flatten()
+            })
+            .shared();
+        self.filing = Some(filing.clone());
+        filing
+    }
+
+    /// The id this session is filed under, and the number it is referred to
+    /// by, each made if it has none. Answers the id once the backend has
+    /// answered both.
     ///
     /// A card sent to a session writes the session down on the click that sent
     /// it, and until then a session that has said nothing has no id to be
     /// written down.
-    pub fn mint_record(&mut self) -> Option<&str> {
-        if self.record.is_none() {
-            self.record = self.store().create_session().ok();
+    pub fn mint_record(&mut self, cx: &mut Context<Self>) -> Shared<Task<Option<String>>> {
+        if let (Some(id), Some(_)) = (&self.record, self.number) {
+            return Task::ready(Some(id.clone())).shared();
         }
-        if self.number.is_none() {
-            self.number = self
-                .record
-                .as_deref()
-                .and_then(|id| self.store().number(Kind::Session, id).ok());
+        if let Some(minting) = &self.minting {
+            return minting.clone();
         }
-        self.record.as_deref()
+        let filing = self.file(cx);
+        let store = self.store();
+        let minting = cx
+            .spawn(async move |this, cx| {
+                let id = filing.await;
+                let numbered = this.read_with(cx, |chat, _| chat.number.is_some()).ok()?;
+                let number = match (&id, numbered) {
+                    (Some(id), false) => store.number(Kind::Session, id).await.ok(),
+                    _ => None,
+                };
+                this.update(cx, |chat, cx| {
+                    chat.minting = None;
+                    if chat.number.is_none() && number.is_some() {
+                        chat.number = number;
+                        cx.notify();
+                    }
+                })
+                .ok()?;
+                id
+            })
+            .shared();
+        self.minting = Some(minting.clone());
+        minting
     }
 
     /// The id this session is filed under, once there is a file under it.
@@ -567,38 +624,54 @@ impl ChatSession {
         self.tool_started = BTreeMap::new();
         self.connection = Connection::Idle;
         self._pump = Task::ready(());
-        self.flush();
+        self.flush(cx);
         self.resume(cx);
         Some(text)
     }
 
-    /// Give a session with panel tabs a stable identity, even before its first prompt.
-    pub(crate) fn retain_panel(&mut self) -> Option<String> {
+    /// Give a session with panel tabs a stable identity, even before its first
+    /// prompt. Answers the id it is filed under once the backend has minted
+    /// it.
+    pub(crate) fn retain_panel(&mut self, cx: &mut Context<Self>) -> Task<Option<String>> {
         if !self.load_history() {
-            return None;
+            return Task::ready(None);
         }
-        self.mint_record()?;
-        let _ = self.store().save_session(&self.to_record());
-        self.written = true;
-        self.save_preferences();
-        self.record.clone()
+        self.write_filed(cx)
     }
 
     /// Save a conversation after its first prompt or fork.
-    pub fn flush(&mut self) {
+    pub fn flush(&mut self, cx: &mut Context<Self>) {
         if !self.load_history() {
             return;
         }
         if self.unsaid() && self.fork.is_none() {
             return;
         }
-        let store = self.store();
-        self.mint_record();
-        if self.record.is_some() {
-            let _ = store.save_session(&self.to_record());
-            self.written = true;
-            self.save_preferences();
+        self.write_filed(cx).detach();
+    }
+
+    /// Write the record, at once where it has an id and once one is minted
+    /// where it has none. Answers the id.
+    fn write_filed(&mut self, cx: &mut Context<Self>) -> Task<Option<String>> {
+        let minted = self.mint_record(cx);
+        let filed = self.record.is_some();
+        if filed {
+            self.write_record(cx);
         }
+        cx.spawn(async move |this, cx| {
+            let id = minted.await?;
+            if !filed {
+                this.update(cx, |chat, cx| chat.write_record(cx)).ok()?;
+            }
+            Some(id)
+        })
+    }
+
+    fn write_record(&mut self, cx: &App) {
+        cx.background_spawn(self.store().save_session(&self.to_record()))
+            .detach();
+        self.written = true;
+        self.save_preferences();
     }
 
     /// Point the session at an agent again, replaying the conversation the
@@ -615,33 +688,53 @@ impl ChatSession {
             if self.closed || !self.load_history() {
                 return;
             }
-            if self.record.is_none() {
-                self.record = self.store().create_session().ok();
-            }
-            self._pump = pump(
-                &self.entry,
-                Launch {
-                    previous: self.agent_session.clone(),
-                    history: (self.fork.is_some() || self.replay.is_some()).then(|| {
-                        let end = self.replay.unwrap_or(usize::MAX).min(self.items.len());
-                        acp::history(&self.items[..end])
-                    }),
-                    history_pending: self.replay.is_some(),
-                    choices: self.preferences.clone(),
-                    record: self.record.clone(),
-                    ..Launch::new(self.cwd.clone())
-                },
-                cx,
-            );
+            let launch = Launch {
+                previous: self.agent_session.clone(),
+                history: (self.fork.is_some() || self.replay.is_some()).then(|| {
+                    let end = self.replay.unwrap_or(usize::MAX).min(self.items.len());
+                    acp::history(&self.items[..end])
+                }),
+                history_pending: self.replay.is_some(),
+                choices: self.preferences.clone(),
+                ..Launch::new(self.cwd.clone())
+            };
+            self._pump = self.launch(launch, cx);
             self.connection = Connection::Connecting;
             self.last_activity = Instant::now();
             self.closed = false;
         }
     }
 
+    /// Start the agent on `launch`, filed under this session's id — minted
+    /// first where it has none.
+    #[cfg(feature = "desktop")]
+    fn launch(&mut self, launch: Launch, cx: &mut Context<Self>) -> Task<()> {
+        let entry = self.entry.clone();
+        if let Some(record) = self.record.clone() {
+            return pump(
+                &entry,
+                Launch {
+                    record: Some(record),
+                    ..launch
+                },
+                cx,
+            );
+        }
+        let filing = self.file(cx);
+        cx.spawn(async move |this, cx| {
+            let record = filing.await;
+            let Ok(pumping) =
+                this.update(cx, |_, cx| pump(&entry, Launch { record, ..launch }, cx))
+            else {
+                return;
+            };
+            pumping.await;
+        })
+    }
+
     /// Close the connection and keep the transcript. Dropping the [`Session`]
     /// is what tears the agent process down — see its `Drop`.
-    pub fn close(&mut self) {
+    pub fn close(&mut self, cx: &mut Context<Self>) {
         // Before the connection goes, not after: an agent whose stdin closes
         // half way through answering has a request it can never finish, and
         // says so on the way out.
@@ -651,7 +744,7 @@ impl ChatSession {
         self.streaming = false;
         self.closed = true;
         self.queue.clear();
-        self.flush();
+        self.flush(cx);
     }
 
     /// How long the turn in flight has been running.
@@ -700,34 +793,50 @@ impl ChatSession {
 
     /// Send now, or queue it for whenever there is an agent to send it to —
     /// a turn in flight, or a connection still being made.
-    pub fn send(&mut self, content: String) {
+    pub fn send(&mut self, content: String, cx: &mut Context<Self>) {
         if self.closed {
             return;
         }
         self.updated = SystemTime::now();
         // No agent to wait for: the stand-in answers at once.
         #[cfg(not(feature = "desktop"))]
-        self.prompt(content);
+        self.prompt(content, cx);
         #[cfg(feature = "desktop")]
         if self.streaming || !self.live() {
             self.queue.push_back(content);
-            self.flush();
+            self.flush(cx);
         } else {
-            self.prompt(content);
+            self.prompt(content, cx);
         }
     }
 
     /// Send the next queued prompt, if there is one and nothing is in flight.
-    pub fn drain(&mut self) {
+    pub fn drain(&mut self, cx: &mut Context<Self>) {
         if self.closed || self.streaming {
             return;
         }
         if let Some(next) = self.queue.pop_front() {
-            self.prompt(next);
+            self.prompt(next, cx);
         }
     }
 
-    fn prompt(&mut self, content: String) {
+    /// Send `content` once this session has the id and the number the agent
+    /// is told it by.
+    fn prompt(&mut self, content: String, cx: &mut Context<Self>) {
+        #[cfg(feature = "desktop")]
+        if self.record.is_none() || self.number.is_none() {
+            let minted = self.mint_record(cx);
+            cx.spawn(async move |this, cx| {
+                minted.await;
+                let _ = this.update(cx, |chat, cx| chat.deliver(content, cx));
+            })
+            .detach();
+            return;
+        }
+        self.deliver(content, cx);
+    }
+
+    fn deliver(&mut self, content: String, cx: &mut Context<Self>) {
         #[cfg(not(feature = "desktop"))]
         {
             let turn = self
@@ -740,19 +849,23 @@ impl ChatSession {
             self.items.push(ChatItem::User(content));
             self.items
                 .push(ChatItem::Agent(STAND_IN[turn % STAND_IN.len()].to_owned()));
-            self.flush();
+            self.flush(cx);
         }
         #[cfg(feature = "desktop")]
         {
-            self.mint_record();
             let Connection::Live(session) = &self.connection else {
                 self.queue.push_front(content);
                 return;
             };
+            if self.streaming {
+                self.queue.push_front(content);
+                return;
+            }
             let article = self
                 .article
                 .as_deref()
-                .and_then(|id| self.store().number(Kind::Article, id).ok());
+                .and_then(|id| self.store().article(id))
+                .and_then(|article| article.number);
             session.prompt(&content, self.number, article);
             self.last_activity = Instant::now();
             self.turn_started = Some(self.last_activity);
@@ -767,7 +880,7 @@ impl ChatSession {
             self.streaming = true;
             // Before the answer, not just after it: what you said is not the
             // agent's to lose if the turn never finishes.
-            self.flush();
+            self.flush(cx);
         }
     }
 
@@ -908,13 +1021,13 @@ impl ChatSession {
     }
 
     #[cfg(feature = "desktop")]
-    fn apply(&mut self, event: Event) {
+    fn apply(&mut self, event: Event, cx: &mut Context<Self>) {
         if self.closed {
             return;
         }
         self.last_activity = Instant::now();
         match event {
-            Event::Update(update) => self.apply_update(update),
+            Event::Update(update) => self.apply_update(update, cx),
             Event::Permission(request, reply) => self.open_permission(request, reply),
             Event::Stderr(line) => self.stderr(line),
             Event::TurnDone(result) => {
@@ -940,21 +1053,21 @@ impl ChatSession {
                         self.notice(true, &format!("turn failed: {}", acp::error_text(&e)));
                     }
                 }
-                self.flush();
-                self.drain();
+                self.flush(cx);
+                self.drain(cx);
             }
             Event::Closed => {
                 self.connection = Connection::Lost;
                 self.streaming = false;
                 self.fail_running_tools();
                 self.notice(true, "agent connection lost");
-                self.flush();
+                self.flush(cx);
             }
         }
     }
 
     #[cfg(feature = "desktop")]
-    fn apply_update(&mut self, update: SessionUpdate) {
+    fn apply_update(&mut self, update: SessionUpdate, cx: &mut Context<Self>) {
         match update {
             SessionUpdate::AgentMessageChunk(chunk) => {
                 self.finish_thinking();
@@ -1036,7 +1149,7 @@ impl ChatSession {
                 // settled it, so no later flush is sure to carry it.
                 if title != self.title {
                     self.title = title;
-                    self.flush();
+                    self.flush(cx);
                 }
             }
             SessionUpdate::AvailableCommandsUpdate(cmds) => {
@@ -1334,8 +1447,8 @@ fn pump(entry: &settings::Agent, launch: Launch, cx: &mut Context<ChatSession>) 
                 }
                 // Whatever was typed while it had no agent goes now, and the
                 // agent's own id is written down for a later launch to load.
-                chat.drain();
-                chat.flush();
+                chat.drain(cx);
+                chat.flush(cx);
                 cx.notify();
             })
             .is_err()
@@ -1351,13 +1464,12 @@ fn pump(entry: &settings::Agent, launch: Launch, cx: &mut Context<ChatSession>) 
             let streaming = this.update(cx, |chat, cx| {
                 let was_streaming = chat.streaming;
                 for event in batch {
-                    chat.apply(event);
+                    chat.apply(event, cx);
                 }
                 cx.notify();
-                // The turn's end, as the only place that can see it: `apply`
-                // takes no app to speak to, and a session read from outside
-                // cannot tell a turn that has just stopped from one that was
-                // never running.
+                // The turn's end, as the only place that sees the whole batch:
+                // a session read from outside cannot tell a turn that has just
+                // stopped from one that was never running.
                 if was_streaming && !chat.streaming {
                     let notify = references::current(cx)
                         .is_some_and(|workspace| workspace.read(cx).settings.notify_turns);

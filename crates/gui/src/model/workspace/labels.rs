@@ -40,18 +40,19 @@ impl Workspace {
             return;
         }
         match showing {
-            Showing::Session(id) => self.with_session(*id, cx, |chat| {
+            Showing::Session(id) => self.with_session(*id, cx, |chat, cx| {
                 chat.labels = labels;
-                chat.flush();
+                chat.flush(cx);
             }),
             Showing::Article(id) => {
                 let open = &mut self.projects[project];
                 if let Some(ix) = open.article_ix(id) {
-                    open.articles[ix].set_labels(labels);
+                    open.articles[ix].set_labels(labels, cx);
                 }
             }
             Showing::Board(id) => {
-                self.with_board(id, cx, |board| board.labels = labels.clone());
+                self.with_board(id, cx, move |board| board.labels = labels.clone())
+                    .detach();
             }
             Showing::Table(_) => return,
         }

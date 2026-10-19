@@ -163,13 +163,14 @@ fn unsent_fork_reimports_after_loading_and_missing_agent_state_uses_saved_histor
     });
 }
 
-#[test]
-fn an_empty_fork_is_saved_with_its_draft_before_any_prompt() {
+#[gpui::test]
+fn an_empty_fork_is_saved_with_its_draft_before_any_prompt(cx: &mut gpui::TestAppContext) {
     use artifact::{
         project::{Project as _, fs::Project},
         session::record::Record,
     };
     use cydonia_gui::model::session::ChatSession;
+    use gpui::AppContext as _;
     let path = std::env::temp_dir().join(format!(
         "cydonia-fork-{}-{}",
         std::process::id(),
@@ -182,8 +183,10 @@ fn an_empty_fork_is_saved_with_its_draft_before_any_prompt() {
     }))
     .unwrap();
     let source = ChatSession::restore(1, path.clone(), agent(), record);
-    let mut fork = source.fork_at(2, 0).unwrap();
-    fork.flush();
+    let fork = cx.new(|_| source.fork_at(2, 0).unwrap());
+    fork.update(cx, |fork, cx| fork.flush(cx));
+    // A fork has no id until the backend mints one.
+    cx.run_until_parked();
     let records = Project::new(&path).sessions();
     assert_eq!(records.len(), 1);
     let saved = records.into_iter().next().unwrap();

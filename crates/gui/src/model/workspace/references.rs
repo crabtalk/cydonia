@@ -88,7 +88,7 @@ impl Workspace {
         let Some(project) = self.named_project(reference.project, None) else {
             return Err(Error::NoProjectNamed {
                 name: reference.project.unwrap_or_default().to_owned(),
-                open: self.projects.iter().map(|open| open.path.clone()).collect(),
+                open: self.projects.iter().map(Project::location).collect(),
             }
             .to_string());
         };

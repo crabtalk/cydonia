@@ -14,7 +14,7 @@
 //! The tree nests: children are a `Vec`, so a third pane alongside two others
 //! joins their split rather than nesting inside one of them.
 
-use crate::{id, kind::Kind, stamp};
+use crate::{id, kind::Kind, location::Location, stamp};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
@@ -728,9 +728,9 @@ pub enum Member {
 /// One entry of a project: which project it is in, and which of that
 /// project's things it is.
 ///
-/// The project by its path, because a space spans them — it is kept beside
-/// the app's own config rather than inside any one project, and absolute paths
-/// are what it can name from there. That is also why a space does not travel
+/// The project by its [`Location`], because a space spans them — it is kept
+/// beside the app's own config rather than inside any one project, and
+/// absolute paths are what it can name from there. That is also why a space does not travel
 /// with a repository: these paths are this machine's.
 ///
 /// By `id` rather than by the `#number` [`crate::entry`] gives out: numbers are
@@ -739,7 +739,7 @@ pub enum Member {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(from = "Written")]
 pub struct Entry {
-    pub project: std::path::PathBuf,
+    pub project: Location,
     pub kind: Kind,
     pub id: String,
 }
@@ -748,7 +748,7 @@ pub struct Entry {
 /// [`crate::article::stored_id`].
 #[derive(Deserialize)]
 struct Written {
-    project: std::path::PathBuf,
+    project: Location,
     kind: Kind,
     id: String,
 }
@@ -766,7 +766,7 @@ impl From<Written> for Entry {
 
 impl Member {
     /// An entry of the project at `project`.
-    pub fn new(project: impl Into<std::path::PathBuf>, kind: Kind, id: impl Into<String>) -> Self {
+    pub fn new(project: impl Into<Location>, kind: Kind, id: impl Into<String>) -> Self {
         Self::Entry(Entry {
             project: project.into(),
             kind,
@@ -796,8 +796,8 @@ impl Member {
     }
 
     /// The project an entry is in. `None` for an app.
-    pub fn project(&self) -> Option<&std::path::Path> {
-        self.entry().map(|entry| entry.project.as_path())
+    pub fn project(&self) -> Option<&Location> {
+        self.entry().map(|entry| &entry.project)
     }
 
     pub fn kind(&self) -> Kind {

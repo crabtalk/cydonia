@@ -457,12 +457,18 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) {
         self.select_project(project, cx);
-        let ix = self
+        let made = self
             .workspace
             .update(cx, |workspace, cx| workspace.new_article(cx));
-        if let Some(ix) = ix {
-            self.open_article(project, ix, window, cx);
-        }
+        cx.spawn_in(window, async move |this, cx| {
+            let Some((project, ix)) = made.await else {
+                return;
+            };
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.open_article(project, ix, window, cx)
+            });
+        })
+        .detach();
     }
 
     /// Show the article and put the caret in it — the pane is a document and
@@ -731,7 +737,7 @@ impl ArticleView {
     /// Where the article is listed, as `(project, index)`, while it is open.
     fn located(&self, cx: &App) -> Option<(usize, usize)> {
         let workspace = self.workspace.read(cx);
-        let project = workspace.project_at(&self.article.project)?;
+        let project = workspace.project_at(self.article.project.root())?;
         let at = workspace.projects[project].article_ix(&self.article.id)?;
         Some((project, at))
     }

@@ -7,6 +7,7 @@
 use cydonia_artifact::project;
 use std::{
     fs,
+    future::Future,
     path::{Path, PathBuf},
 };
 
@@ -30,6 +31,15 @@ impl Scratch {
         project::fs::Project::new(&self.0)
     }
 }
+
+/// A write's answer, waited for on the calling thread.
+pub trait Wait: Future + Sized {
+    fn wait(self) -> Self::Output {
+        futures::executor::block_on(self)
+    }
+}
+
+impl<F: Future> Wait for F {}
 
 impl Drop for Scratch {
     fn drop(&mut self) {

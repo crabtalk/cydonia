@@ -4,7 +4,7 @@
 // what one of them leaves alone is not dead.
 #![allow(dead_code)]
 
-use artifact::project;
+use artifact::{location::Location, project};
 use cydonia_mcp::{
     Server,
     rail::{self, Change},
@@ -13,11 +13,21 @@ use cydonia_mcp::{
 };
 use std::{
     fs,
+    future::Future,
     path::{Path, PathBuf},
     sync::Mutex,
 };
 
 pub struct Scratch(PathBuf);
+
+/// A write's answer, waited for on the calling thread.
+pub trait Wait: Future + Sized {
+    fn wait(self) -> Self::Output {
+        futures::executor::block_on(self)
+    }
+}
+
+impl<F: Future> Wait for F {}
 
 impl Scratch {
     pub fn new(name: &str) -> Self {
@@ -39,7 +49,7 @@ impl Scratch {
     /// Put a board in it, the way the app's own store does.
     pub fn store_create(&self, name: &str, key: &str) -> Option<artifact::board::Board> {
         use artifact::project::Project as _;
-        self.store().create_board(name, key).ok()
+        self.store().create_board(name, key).wait().ok()
     }
 
     /// A server with every tool set on it — the same call the app makes, and
@@ -88,7 +98,7 @@ impl Rail {
     /// Install the recorder, and say what the app is holding.
     pub fn holding(open: &[&Path]) -> Self {
         rail::install(|change| ASKED.lock().unwrap().push(change));
-        rail::set_open(open.iter().map(PathBuf::from).collect());
+        rail::set_open(open.iter().map(|path| Location::from(*path)).collect());
         Self
     }
 
@@ -96,8 +106,9 @@ impl Rail {
     pub fn also(path: &Path) {
         rail::install(|change| ASKED.lock().unwrap().push(change));
         let mut open = rail::open();
-        if !open.iter().any(|held| held == path) {
-            open.push(path.to_path_buf());
+        let path = Location::from(path);
+        if !open.contains(&path) {
+            open.push(path);
         }
         rail::set_open(open);
     }

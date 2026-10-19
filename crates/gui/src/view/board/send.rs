@@ -123,7 +123,7 @@ impl BoardView {
             .filter(|card| {
                 !card.busy
                     && workspace
-                        .blocking_boards(&self.board.project, card, cx)
+                        .blocking_boards(self.board.project.root(), card, cx)
                         .next()
                         .is_none()
             })
@@ -156,7 +156,7 @@ impl BoardView {
                 )
             };
             let recent = workspace
-                .project_at(&this.board.project)
+                .project_at(this.board.project.root())
                 .and_then(|ix| workspace.projects.get(ix))
                 .map(|project| {
                     project
@@ -200,9 +200,10 @@ impl BoardView {
                     id
                 }
                 To::New(at) => {
-                    let (Some(ix), Some(agent)) =
-                        (workspace.project_at(&project), workspace.agent_at(at, cx))
-                    else {
+                    let (Some(ix), Some(agent)) = (
+                        workspace.project_at(project.root()),
+                        workspace.agent_at(at, cx),
+                    ) else {
                         return;
                     };
                     let Some(id) = workspace.new_session_in(ix, agent, Some(text), true, cx) else {
@@ -211,14 +212,24 @@ impl BoardView {
                     id
                 }
             };
-            let Some(record) = workspace.mint_record(id, cx) else {
+            let Some(minted) = workspace.mint_record(id, cx) else {
                 return;
             };
-            workspace.write_board(&on, cx, |board| {
-                for card in &cards {
-                    board.hold_card(card, record.clone());
-                }
-            });
+            cx.spawn(async move |workspace, cx| {
+                let Some(record) = minted.await else {
+                    return;
+                };
+                let _ = workspace.update(cx, |workspace, cx| {
+                    workspace
+                        .write_board(&on, cx, move |board| {
+                            for card in &cards {
+                                board.hold_card(card, record.clone());
+                            }
+                        })
+                        .detach();
+                });
+            })
+            .detach();
         });
         cx.notify();
     }
@@ -227,7 +238,7 @@ impl BoardView {
     /// Nothing where none of them has a handle to link.
     fn sent_text(&self, on: &str, sent: &Sent, cards: &[String], cx: &App) -> Option<String> {
         let board = self.workspace.read(cx).board_at(on, cx)?;
-        let name = reference::project_name(&self.board.project)?;
+        let name = reference::project_name(self.board.project.root())?;
         let chips: Vec<String> = cards
             .iter()
             .filter_map(|id| {

@@ -3,7 +3,7 @@
 //! holding one running instance of it through [`Runner`]. An app belongs to no
 //! project.
 
-use crate::data::{Data, Home};
+use crate::data::{Calls as _, Data, Here, Home, Local as _};
 use anyhow::{Context as _, Result};
 use artifact::app::{Home as _, Installed};
 use bezel::gpui::{App, AppContext as _, Context, Entity, Task};
@@ -246,7 +246,7 @@ impl Program {
             None => {
                 let manifest = self.manifest.as_ref().context("The app has no manifest")?;
                 let home = Home::App(manifest.home()?);
-                self.data.insert(Data::open(&home)?)
+                self.data.insert(Box::new(Here::open(&home)?))
             }
         };
         data.call(call)

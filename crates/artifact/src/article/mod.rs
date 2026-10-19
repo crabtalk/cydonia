@@ -45,6 +45,8 @@ pub struct Article {
     /// What names this article. The directory it is in, for the filesystem
     /// backend — the document moves within it and the name does not.
     pub id: String,
+    #[serde(skip)]
+    pub number: Option<u64>,
     pub title: String,
     #[serde(default)]
     pub archived: bool,
@@ -151,13 +153,13 @@ fn carry_sessions(id: &str, from: &Path, landed: &str, to: &Path) -> std::io::Re
             continue;
         }
         let old = record.id.clone();
-        let fresh = target.create_session().map_err(failed)?;
+        let fresh = target.mint_session().map_err(failed)?;
         if target.session(&old).is_some() {
             record.id = fresh;
         }
         record.article = Some(landed.to_owned());
-        target.save_session(&record).map_err(failed)?;
-        let _ = source.remove_session(&old);
+        target.write_session(&record).map_err(failed)?;
+        let _ = source.remove_session_file(&old);
     }
     Ok(())
 }
@@ -180,7 +182,7 @@ pub fn remove(content: &Path) -> std::io::Result<()> {
         let store = fs::Project::new(project);
         for record in store.sessions() {
             if record.article.as_deref() == Some(id.as_str()) {
-                let _ = store.remove_session(&record.id);
+                let _ = store.remove_session_file(&record.id);
             }
         }
     }

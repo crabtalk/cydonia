@@ -2,6 +2,7 @@
 //! the disk the app reads.
 
 mod common;
+use common::Wait as _;
 
 use common::{Scratch, invalid, refused, said, structured};
 use serde_json::json;
@@ -583,13 +584,13 @@ fn an_article_names_its_sessions() {
     assert_eq!(none["sessions"], json!([]));
 
     let store = artifact::project::fs::Project::new(scratch.path());
-    let filed = store.create_session().unwrap();
+    let filed = store.create_session().wait().unwrap();
     let record: artifact::session::record::Record = serde_json::from_value(json!({
         "id": filed, "article": id, "agent": "claude", "title": "", "name": null,
         "updated": 1, "items": [{"User": "why?"}]
     }))
     .unwrap();
-    store.save_session(&record).unwrap();
+    store.save_session(&record).wait().unwrap();
 
     let read = structured(server.call(
         "article_read",

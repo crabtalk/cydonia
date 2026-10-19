@@ -29,6 +29,7 @@ pub mod fs;
 pub mod id;
 pub mod kind;
 pub mod label;
+pub mod location;
 pub mod project;
 pub mod reference;
 pub mod search;

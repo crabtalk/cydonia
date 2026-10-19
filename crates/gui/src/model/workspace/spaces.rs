@@ -15,6 +15,7 @@ use super::*;
 use crate::model::spaces::{Shelf, Store as _};
 use artifact::{
     kind::Kind,
+    location::Location,
     space::{Entry, Member, Side, Space},
 };
 
@@ -160,7 +161,7 @@ impl Workspace {
         let wanted: Vec<PathBuf> = space
             .entries()
             .into_iter()
-            .filter_map(|member| member.project().map(Path::to_path_buf))
+            .filter_map(|member| member.project()?.local().map(Path::to_path_buf))
             .filter(|path| !self.projects.iter().any(|open| open.path == *path))
             .filter(|path| path.is_dir())
             .collect();
@@ -461,7 +462,7 @@ impl Workspace {
         let Some(open) = self
             .projects
             .iter()
-            .find(|open| Some(open.path.as_path()) == member.project())
+            .find(|open| member.project().and_then(Location::local) == Some(open.path.as_path()))
         else {
             return false;
         };
@@ -547,24 +548,32 @@ impl Workspace {
     pub fn prune_spaces(&mut self, cx: &mut Context<Self>) {
         let mut live: Vec<Member> = Vec::new();
         for open in &self.projects {
-            let path = open.path.clone();
+            let location = open.location();
             for chat in open.chats(cx) {
                 if let Some(record) = chat.record.clone() {
-                    live.push(Member::new(path.clone(), Kind::Session, record));
+                    live.push(Member::new(location.clone(), Kind::Session, record));
                 }
             }
             for board in &open.boards {
-                live.push(Member::new(path.clone(), Kind::Board, board.id.clone()));
+                live.push(Member::new(location.clone(), Kind::Board, board.id.clone()));
             }
             for article in &open.articles {
-                live.push(Member::new(path.clone(), Kind::Article, article.id.clone()));
+                live.push(Member::new(
+                    location.clone(),
+                    Kind::Article,
+                    article.id.clone(),
+                ));
             }
             for table in &open.tables {
-                live.push(Member::new(path.clone(), Kind::Table, table.key.clone()));
+                live.push(Member::new(
+                    location.clone(),
+                    Kind::Table,
+                    table.key.clone(),
+                ));
             }
         }
         live.extend(self.apps.iter().map(|held| Member::app(held.id.clone())));
-        let open: Vec<PathBuf> = self.projects.iter().map(|open| open.path.clone()).collect();
+        let open: Vec<Location> = self.projects.iter().map(Project::location).collect();
         for space in &mut self.spaces {
             let gone: Vec<Member> = space
                 .entries()
@@ -587,10 +596,9 @@ impl Workspace {
     /// whose project is shut, or which has gone since the space named it —
     /// that draws as an empty pane rather than a panic.
     pub fn showing_of(&self, member: &Member, cx: &App) -> Option<(usize, Showing)> {
-        let at = self
-            .projects
-            .iter()
-            .position(|open| Some(open.path.as_path()) == member.project())?;
+        let at = self.projects.iter().position(|open| {
+            member.project().and_then(Location::local) == Some(open.path.as_path())
+        })?;
         let open = self.projects.get(at)?;
         let showing = open.stored(member.kind(), member.id(), cx)?;
         Some((at, showing))
@@ -607,14 +615,14 @@ impl Workspace {
         };
         let open = self.projects.get(project)?;
         let record = open.session(id, cx)?.filed()?.to_owned();
-        Some(Member::new(open.path.clone(), Kind::Session, record))
+        Some(Member::new(open.location(), Kind::Session, record))
     }
 
     /// [`Self::member_of`] for a board, an article or a table, whose id is
     /// its file. Nothing for a session.
     fn filed_member(&self, project: usize, showing: Showing) -> Option<Entry> {
         let open = self.projects.get(project)?;
-        let project = open.path.clone();
+        let project = open.location();
         let (kind, id) = match showing {
             Showing::Session(_) => return None,
             Showing::Board(id) => {

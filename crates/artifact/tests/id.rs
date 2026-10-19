@@ -4,13 +4,18 @@ use cydonia_artifact::{project::Project as _, session::record::Record};
 use std::fs;
 
 mod common;
+use common::Wait as _;
 
 use common::Scratch;
 
 #[test]
 fn a_new_board_is_named_when_it_is_made() {
     let scratch = Scratch::new("board-new");
-    let board = scratch.store().create_board("Roadmap", "").expect("made");
+    let board = scratch
+        .store()
+        .create_board("Roadmap", "")
+        .wait()
+        .expect("made");
     assert!(!board.id.is_empty());
     assert_eq!(scratch.store().boards()[0].id, board.id);
 }
@@ -58,9 +63,9 @@ fn reading_a_settled_board_leaves_the_file_alone() {
 fn sessions_made_together_are_named_apart() {
     let scratch = Scratch::new("session-pair");
     let store = scratch.store();
-    let one = store.create_session().expect("minted");
-    store.save_session(&record(&one)).unwrap();
-    let two = store.create_session().expect("minted");
+    let one = store.create_session().wait().expect("minted");
+    store.save_session(&record(&one)).wait().unwrap();
+    let two = store.create_session().wait().expect("minted");
 
     assert_ne!(one, two);
     assert_eq!(store.sessions().len(), 1, "only the written one is filed");

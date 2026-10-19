@@ -17,7 +17,7 @@ use crate::model::{
     store::{self, Store},
     workspace::Workspace,
 };
-use artifact::kind::Kind;
+use artifact::location::Location;
 use artifact::project::Project as _;
 use artifact::{
     article as layout,
@@ -136,7 +136,7 @@ impl Article {
     fn new(project: &Path, store: Store, held: layout::Article) -> Self {
         let properties = store.properties(&held.id);
         Self {
-            number: store.number(Kind::Article, &held.id).ok(),
+            number: held.number,
             path: layout::content(&layout::dir(project).join(&held.id)),
             cover: held.cover.as_ref().and_then(file_url::to_path),
             title: properties.title,
@@ -184,22 +184,28 @@ impl Article {
         self.saved = String::new();
     }
 
-    pub fn archive(&mut self, archived: bool) {
+    pub fn archive(&mut self, archived: bool, cx: &App) {
         self.archived = archived;
-        let _ = self.store.save_properties(&self.id, &self.properties());
+        self.save_properties(cx);
     }
 
     /// Give the article exactly these labels.
-    pub fn set_labels(&mut self, labels: Vec<String>) {
+    pub fn set_labels(&mut self, labels: Vec<String>, cx: &App) {
         self.labels = labels;
-        let _ = self.store.save_properties(&self.id, &self.properties());
+        self.save_properties(cx);
+    }
+
+    /// Write the properties back. A failed write is not reported.
+    fn save_properties(&self, cx: &App) {
+        cx.background_spawn(self.store.save_properties(&self.id, &self.properties()))
+            .detach();
     }
 
     /// Set the page across the pane, or back in the column. `None` hands it
     /// back to the reader's default and takes the key out of the file.
-    pub fn set_full_width(&mut self, wide: Option<bool>) {
+    pub fn set_full_width(&mut self, wide: Option<bool>, cx: &App) {
         self.full_width = wide;
-        let _ = self.store.save_properties(&self.id, &self.properties());
+        self.save_properties(cx);
     }
 
     /// How wide this page is actually drawn, against the app's own default.
@@ -210,9 +216,9 @@ impl Article {
 
     /// Set how the margin shows its comments. `None` hands it back to the
     /// reader's default and takes the key out of the file.
-    pub fn set_comment_display(&mut self, display: Option<CommentDisplay>) {
+    pub fn set_comment_display(&mut self, display: Option<CommentDisplay>, cx: &App) {
         self.comment_display = display;
-        let _ = self.store.save_properties(&self.id, &self.properties());
+        self.save_properties(cx);
     }
 
     /// How this page's margin shows its comments, against the app's own
@@ -307,7 +313,7 @@ impl Article {
 
     /// Write the comments beside `text`, the markdown on disk, with any filed
     /// there since they were read. Answers whether any were.
-    fn save_comments(&mut self, text: &str) -> bool {
+    fn save_comments(&mut self, text: &str, cx: &App) -> bool {
         let mut file = self.store.comments(&self.id);
         file.carry(None, text);
         let answered = self.filed_by_agent(&file);
@@ -330,7 +336,8 @@ impl Article {
         if let Some(id) = answered {
             self.active_comment = Some(id);
         }
-        let _ = self.store.save_comments(&self.id, &self.comments);
+        cx.background_spawn(self.store.save_comments(&self.id, &self.comments))
+            .detach();
         any || answered.is_some()
     }
 
@@ -446,7 +453,7 @@ impl Article {
         }
         self.comments.stamp(&placed);
         self.comments.carry(Some(&placed), source);
-        if self.save_comments(source) {
+        if self.save_comments(source, cx) {
             self.place_comments_over(source, cx);
         }
     }
@@ -498,7 +505,7 @@ impl Article {
         if resolved && self.active_comment == Some(id) {
             self.active_comment = None;
         }
-        match self.save_comments(&self.saved.clone()) {
+        match self.save_comments(&self.saved.clone(), cx) {
             true => self.place_comments(cx),
             false => self.restate_comments(cx),
         }
@@ -514,7 +521,7 @@ impl Article {
             text: question,
             turn: None,
         });
-        self.save_comments(&self.saved.clone());
+        self.save_comments(&self.saved.clone(), cx);
         self.restate_comments(cx);
     }
 
@@ -523,7 +530,7 @@ impl Article {
         if self.active_comment == Some(id) {
             self.active_comment = None;
         }
-        self.save_comments(&self.saved.clone());
+        self.save_comments(&self.saved.clone(), cx);
         self.place_comments(cx);
     }
 
@@ -533,7 +540,7 @@ impl Article {
     /// Each surface writes its own file, so typing in the body never touches
     /// the properties and naming the page never touches the markdown. Answers
     /// whether the title moved, which is what the caller repaints on.
-    pub fn write(&mut self, cx: &mut App) -> bool {
+    pub fn write(&mut self, cx: &mut Context<Workspace>) -> bool {
         let renamed = match &self.field {
             Some(field) => {
                 let title = field.read(cx).content().to_string();
@@ -541,7 +548,7 @@ impl Article {
                 if moved {
                     self.title = title;
                     self.touched = artifact::stamp::now();
-                    let _ = self.store.save_properties(&self.id, &self.properties());
+                    self.save_properties(cx);
                 }
                 moved
             }
@@ -549,23 +556,43 @@ impl Article {
         };
         if let Some(document) = &self.document {
             let source = document.read(cx).source();
-            if self.saved != source && self.store.write_article(&self.id, &source).is_ok() {
-                self.write_comments(&source, cx);
-                self.saved = source;
-                self.forget_disk();
-                self.touched = artifact::stamp::now();
-                // The buffer is the file again, whatever landed under it while
-                // it was not — typing on is the third answer to the notice, and
-                // it is the one most people will give.
-                self.stale = false;
+            if self.saved != source {
+                let written = self.store.write_article(&self.id, &source);
+                let path = self.path.clone();
+                cx.spawn(async move |workspace, cx| {
+                    if written.await.is_err() {
+                        return;
+                    }
+                    let _ = workspace.update(cx, |workspace, cx| {
+                        if let Some(article) = workspace.article_at_mut(&path)
+                            && article.wrote(source, cx)
+                        {
+                            cx.notify();
+                        }
+                    });
+                })
+                .detach();
             }
         }
         renamed
     }
 
+    /// Take `source` as what is on disk, once its write has landed: the
+    /// comments go beside it. Answers whether the stale notice came down.
+    fn wrote(&mut self, source: String, cx: &mut App) -> bool {
+        self.write_comments(&source, cx);
+        self.saved = source;
+        self.forget_disk();
+        self.touched = artifact::stamp::now();
+        // The buffer is the file again, whatever landed under it while it was
+        // not — typing on is the third answer to the notice, and it is the
+        // one most people will give.
+        std::mem::take(&mut self.stale)
+    }
+
     /// Keep the buffer and write it over what landed on disk — the pane's other
     /// way out of the notice. The same write a keystroke makes, said out loud.
-    pub fn keep(&mut self, cx: &mut App) {
+    pub fn keep(&mut self, cx: &mut Context<Workspace>) {
         self.write(cx);
         self.stale = false;
     }
@@ -641,7 +668,8 @@ impl Article {
         held.carry(Some(&old), &self.saved);
         self.comments = held;
         self.know_comments();
-        let _ = self.store.save_comments(&self.id, &self.comments);
+        cx.background_spawn(self.store.save_comments(&self.id, &self.comments))
+            .detach();
         self.place_comments(cx);
         self.stale = false;
     }
@@ -701,8 +729,9 @@ impl Article {
     }
 
     /// All of it: document, properties, cover and assets, and its number.
-    pub fn remove(&self) {
-        let _ = self.store.remove_article(&self.id);
+    pub fn remove(&self, cx: &App) {
+        cx.background_spawn(self.store.remove_article(&self.id))
+            .detach();
     }
 
     /// Put a cover on the document, or take it off: `Some` brings that image
@@ -760,6 +789,7 @@ impl From<&Article> for layout::Article {
             id: article.id.clone(),
             title: article.title.clone(),
             archived: article.archived,
+            number: article.number,
             touched: article.touched,
             created: article.created,
             cover: article.cover.as_deref().and_then(file_url::from_path),
@@ -771,7 +801,7 @@ impl From<&Article> for layout::Article {
 /// This project's articles, most recently touched first.
 pub fn list(project: &Path) -> Vec<Article> {
     migrate(project);
-    let store = store::open(project);
+    let store = store::open(&Location::from(project));
     store
         .articles()
         .into_iter()
@@ -779,11 +809,15 @@ pub fn list(project: &Path) -> Vec<Article> {
         .collect()
 }
 
-/// A new, empty document.
-pub fn create(project: &Path) -> Option<Article> {
-    let store = store::open(project);
-    let held = store.create_article("").ok()?;
-    Some(Article::new(project, store, held))
+/// A new, empty document, once the backend has made it.
+pub fn create(project: &Path) -> impl Future<Output = Option<Article>> + use<> {
+    let project = project.to_owned();
+    let store = store::open(&Location::from(project.as_path()));
+    let made = store.create_article("");
+    async move {
+        let held = made.await.ok()?;
+        Some(Article::new(&project, store, held))
+    }
 }
 
 /// Articles used to sit loose in `.cydonia/` as `foo.md` beside `foo.cover-N.svg`,

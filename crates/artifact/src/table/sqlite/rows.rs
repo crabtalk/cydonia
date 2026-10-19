@@ -5,19 +5,19 @@
 //! deletion, with no surrogate key column to hide from the person and no
 //! position index that means something different the moment the order changes.
 
-use super::{self as data, Data, Edit, Page, Row};
+use super::{self as sqlite, Edit, Page, Row, Sqlite};
+use crate::table::Column;
 use anyhow::{Result, bail};
-use artifact::table::Column;
 use rusqlite::params_from_iter;
 use serde_json::{Map, Value};
 
-impl Data {
+impl Sqlite {
     /// Read a window of rows.
     ///
     /// `sort` names a column to order by, and is checked against the table's
     /// real columns before it reaches the statement — the one place a caller's
     /// string would otherwise be spliced into SQL unquoted.
-    pub fn read(
+    pub(super) fn read(
         &self,
         table: &str,
         sort: Option<&str>,
@@ -26,7 +26,7 @@ impl Data {
         offset: i64,
     ) -> Result<Page> {
         let key = self.resolve(table)?;
-        let columns = data::columns_of(&self.reader, &key)?;
+        let columns = sqlite::columns_of(&self.reader, &key)?;
         let name = self
             .reader
             .query_row("SELECT name FROM _tables WHERE key = ?1", [&key], |row| {
@@ -36,7 +36,7 @@ impl Data {
 
         let selected = columns
             .iter()
-            .map(|col| data::quote(&col.name))
+            .map(|col| sqlite::quote(&col.name))
             .collect::<Vec<_>>()
             .join(", ");
         let projection = match columns.is_empty() {
@@ -49,7 +49,7 @@ impl Data {
         let order = match sort.and_then(|s| columns.iter().find(|col| col.name == s)) {
             Some(col) => format!(
                 " ORDER BY ({0} IS NULL OR {0} = '') , {0} {1}",
-                data::quote(&col.name),
+                sqlite::quote(&col.name),
                 if desc { "DESC" } else { "ASC" }
             ),
             None => String::new(),
@@ -58,20 +58,20 @@ impl Data {
         let count = columns.len();
         let mut stmt = self.reader.prepare(&format!(
             "SELECT {projection} FROM {}{order} LIMIT ?1 OFFSET ?2",
-            data::quote(&key)
+            sqlite::quote(&key)
         ))?;
         let rows = stmt
             .query_map([limit, offset], |row| {
                 Ok(Row {
                     rowid: row.get(0)?,
-                    cells: (1..=count).map(|i| data::value(row, i)).collect(),
+                    cells: (1..=count).map(|i| sqlite::value(row, i)).collect(),
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
         Ok(Page {
             total: self.reader.query_row(
-                &format!("SELECT count(*) FROM {}", data::quote(&key)),
+                &format!("SELECT count(*) FROM {}", sqlite::quote(&key)),
                 [],
                 |row| row.get(0),
             )?,
@@ -86,12 +86,12 @@ impl Data {
     /// Write cells. One transaction, so a pasted block lands whole or not at
     /// all — a half-applied paste is worse than a rejected one, because there
     /// is nothing on screen saying which half.
-    pub fn write_cells(&mut self, table: &str, edits: &[Edit]) -> Result<()> {
+    pub(super) fn write_cells(&mut self, table: &str, edits: &[Edit]) -> Result<()> {
         if edits.is_empty() {
             return Ok(());
         }
         let key = self.resolve(table)?;
-        let columns = data::columns_of(&self.writer, &key)?;
+        let columns = sqlite::columns_of(&self.writer, &key)?;
         for edit in edits {
             if !columns.iter().any(|col| col.name == edit.column) {
                 bail!("no column {} on {key}", edit.column);
@@ -102,19 +102,19 @@ impl Data {
             tx.execute(
                 &format!(
                     "UPDATE {} SET {} = ?1 WHERE rowid = ?2",
-                    data::quote(&key),
-                    data::quote(&edit.column)
+                    sqlite::quote(&key),
+                    sqlite::quote(&edit.column)
                 ),
-                rusqlite::params![data::bind(&edit.value), edit.rowid],
+                rusqlite::params![sqlite::bind(&edit.value), edit.rowid],
             )?;
         }
         Ok(tx.commit()?)
     }
 
     /// Append empty rows, answering with their ids in the order they were made.
-    pub fn add_rows(&mut self, table: &str, count: i64) -> Result<Vec<i64>> {
+    pub(super) fn add_rows(&mut self, table: &str, count: i64) -> Result<Vec<i64>> {
         let key = self.resolve(table)?;
-        let sql = format!("INSERT INTO {} DEFAULT VALUES", data::quote(&key));
+        let sql = format!("INSERT INTO {} DEFAULT VALUES", sqlite::quote(&key));
         let tx = self.writer.transaction()?;
         let mut ids = Vec::new();
         for _ in 0..count.max(0) {
@@ -127,9 +127,9 @@ impl Data {
 
     /// Append rows, each by column name, in one transaction, answering with
     /// their ids in order. A column the table does not have fails the lot.
-    pub fn insert(&mut self, table: &str, rows: &[Map<String, Value>]) -> Result<Vec<i64>> {
+    pub(super) fn insert(&mut self, table: &str, rows: &[Map<String, Value>]) -> Result<Vec<i64>> {
         let key = self.resolve(table)?;
-        let columns = data::columns_of(&self.writer, &key)?;
+        let columns = sqlite::columns_of(&self.writer, &key)?;
         for row in rows {
             if let Some(name) = row
                 .keys()
@@ -143,20 +143,20 @@ impl Data {
         for row in rows {
             match row.is_empty() {
                 true => tx.execute(
-                    &format!("INSERT INTO {} DEFAULT VALUES", data::quote(&key)),
+                    &format!("INSERT INTO {} DEFAULT VALUES", sqlite::quote(&key)),
                     [],
                 )?,
                 false => tx.execute(
                     &format!(
                         "INSERT INTO {} ({}) VALUES ({})",
-                        data::quote(&key),
+                        sqlite::quote(&key),
                         row.keys()
-                            .map(|name| data::quote(name))
+                            .map(|name| sqlite::quote(name))
                             .collect::<Vec<_>>()
                             .join(", "),
                         vec!["?"; row.len()].join(", ")
                     ),
-                    params_from_iter(row.values().map(data::bind)),
+                    params_from_iter(row.values().map(sqlite::bind)),
                 )?,
             };
             ids.push(tx.last_insert_rowid());
@@ -166,24 +166,24 @@ impl Data {
     }
 
     /// Take away the rows whose `column` holds `value`.
-    pub fn delete_where(&mut self, table: &str, column: &str, value: &Value) -> Result<()> {
+    pub(super) fn delete_where(&mut self, table: &str, column: &str, value: &Value) -> Result<()> {
         let key = self.resolve(table)?;
-        let columns = data::columns_of(&self.writer, &key)?;
+        let columns = sqlite::columns_of(&self.writer, &key)?;
         let Some(col) = columns.iter().find(|col| col.name == column) else {
             bail!("no column {column} on {key}");
         };
         self.writer.execute(
             &format!(
                 "DELETE FROM {} WHERE {} IS ?1",
-                data::quote(&key),
-                data::quote(&col.name)
+                sqlite::quote(&key),
+                sqlite::quote(&col.name)
             ),
-            [data::bind(value)],
+            [sqlite::bind(value)],
         )?;
         Ok(())
     }
 
-    pub fn delete_rows(&mut self, table: &str, rowids: &[i64]) -> Result<()> {
+    pub(super) fn delete_rows(&mut self, table: &str, rowids: &[i64]) -> Result<()> {
         if rowids.is_empty() {
             return Ok(());
         }
@@ -192,7 +192,7 @@ impl Data {
         self.writer.execute(
             &format!(
                 "DELETE FROM {} WHERE rowid IN ({places})",
-                data::quote(&key)
+                sqlite::quote(&key)
             ),
             params_from_iter(rowids),
         )?;
@@ -201,9 +201,9 @@ impl Data {
 
     /// Take a column away. Not reachable from a tool — the shape is the
     /// person's, same line the table itself sits on.
-    pub fn drop_column(&mut self, table: &str, column: &str) -> Result<Vec<Column>> {
+    pub(super) fn drop_column(&mut self, table: &str, column: &str) -> Result<Vec<Column>> {
         let key = self.resolve(table)?;
-        let columns = data::columns_of(&self.writer, &key)?;
+        let columns = sqlite::columns_of(&self.writer, &key)?;
         let Some(col) = columns.iter().find(|col| col.name == column) else {
             bail!("no column {column} on {key}");
         };
@@ -212,9 +212,9 @@ impl Data {
         }
         self.writer.execute_batch(&format!(
             "ALTER TABLE {} DROP COLUMN {}",
-            data::quote(&key),
-            data::quote(&col.name)
+            sqlite::quote(&key),
+            sqlite::quote(&col.name)
         ))?;
-        data::columns_of(&self.writer, &key)
+        sqlite::columns_of(&self.writer, &key)
     }
 }

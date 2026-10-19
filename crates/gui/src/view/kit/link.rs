@@ -36,7 +36,7 @@ use crate::{
         window::root::Cydonia,
     },
 };
-use artifact::{kind::Kind, reference::Span};
+use artifact::{kind::Kind, project::Project as _, reference::Span};
 use bezel::{
     gpui::{
         self, AnyElement, App, Context, MouseButton, SharedString, Window, div, prelude::*, px,

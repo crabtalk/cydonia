@@ -1,13 +1,11 @@
 //! Map patch lines to syntax tokens from complete source snapshots.
 
-use super::{Area, Change, PATCH_LIMIT, command, output};
+use super::{Backend, Change, Sources};
 use crate::model::language;
 use crate::model::language::Grammars as _;
 use bezel::theme::HighlightKind;
 use std::{
     collections::HashSet,
-    ffi::OsString,
-    io::Read as _,
     ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
@@ -40,30 +38,31 @@ pub struct Preview {
     pub patch: String,
     pub lines: Vec<Line>,
     path: PathBuf,
-    old: Option<String>,
-    new: Option<String>,
+    sources: Sources,
 }
 
 impl Preview {
     pub fn plain(patch: String) -> Arc<Self> {
-        Arc::new(Self::build(Path::new(""), patch, None, None))
+        Arc::new(Self::build(Path::new(""), patch, Sources::default()))
     }
 
     /// Reuse highlighting only when the patch and both source snapshots match.
-    pub fn load(root: &Path, file: &Change, patch: String, previous: Arc<Self>) -> Arc<Self> {
-        let (old, new) = if language::Here::of(&file.path).is_some() {
-            versions(root, file)
+    pub fn load(
+        git: &dyn Backend,
+        root: &Path,
+        file: &Change,
+        patch: String,
+        previous: Arc<Self>,
+    ) -> Arc<Self> {
+        let sources = if language::Here::of(&file.path).is_some() {
+            git.sources(root, file)
         } else {
-            (None, None)
+            Sources::default()
         };
-        if previous.path == file.path
-            && previous.patch == patch
-            && previous.old == old
-            && previous.new == new
-        {
+        if previous.path == file.path && previous.patch == patch && previous.sources == sources {
             return previous;
         }
-        Arc::new(Self::build(&file.path, patch, old, new))
+        Arc::new(Self::build(&file.path, patch, sources))
     }
 
     /// Hide headers and folded hunks without changing the copyable patch.
@@ -126,16 +125,15 @@ impl Preview {
         }
     }
 
-    fn build(path: &Path, patch: String, old: Option<String>, new: Option<String>) -> Self {
-        let before = old.as_deref().map(|text| Source::new(text, path));
-        let after = new.as_deref().map(|text| Source::new(text, path));
+    fn build(path: &Path, patch: String, sources: Sources) -> Self {
+        let before = sources.old.as_deref().map(|text| Source::new(text, path));
+        let after = sources.new.as_deref().map(|text| Source::new(text, path));
         let lines = lines(&patch, before.as_ref(), after.as_ref());
         Self {
             patch,
             lines,
             path: path.to_owned(),
-            old,
-            new,
+            sources,
         }
     }
 }
@@ -167,43 +165,6 @@ impl Line {
             ]
             .iter()
             .any(|prefix| self.text.starts_with(prefix))
-    }
-}
-
-fn versions(root: &Path, file: &Change) -> (Option<String>, Option<String>) {
-    let blob = |revision: &str, path: &Path| {
-        let mut spec = OsString::from(revision);
-        spec.push(path);
-        let mut git = command(root);
-        git.args(["cat-file", "blob"]).arg(spec);
-        let (exit, bytes, truncated) = output(git).ok()?;
-        (exit.success() && !truncated && !bytes.contains(&0))
-            .then(|| String::from_utf8(bytes).ok())
-            .flatten()
-    };
-    let working = || {
-        let path = root.join(&file.path);
-        // Symlink patches show a target path, not the target's source code.
-        if !std::fs::symlink_metadata(&path).ok()?.is_file() {
-            return None;
-        }
-        let mut bytes = Vec::new();
-        std::fs::File::open(path)
-            .ok()?
-            .take(PATCH_LIMIT + 1)
-            .read_to_end(&mut bytes)
-            .ok()?;
-        (bytes.len() as u64 <= PATCH_LIMIT && !bytes.contains(&0))
-            .then(|| String::from_utf8(bytes).ok())
-            .flatten()
-    };
-    match file.area {
-        Area::Staged => (
-            blob("HEAD:", file.original.as_deref().unwrap_or(&file.path)),
-            blob(":", &file.path),
-        ),
-        Area::Unstaged => (blob(":", &file.path), working()),
-        Area::Untracked => (None, working()),
     }
 }
 

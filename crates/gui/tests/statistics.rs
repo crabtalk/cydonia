@@ -17,32 +17,31 @@ fn activity_comes_from_the_project_files() {
     let noon = chrono::Local
         .with_ymd_and_hms(2026, 10, 5, 12, 0, 0)
         .unwrap();
-    let id = store.create_session().unwrap();
-    store
-        .save_session(&Record {
-            number: None,
-            id,
-            agent: "Claude Agent".into(),
-            agent_id: Some("claude-acp".into()),
-            session: None,
-            title: "t".into(),
-            name: None,
-            updated: 0,
-            closed: false,
-            labels: Vec::new(),
-            fork: None,
-            article: None,
-            replay: None,
-            draft: String::new(),
-            items: Vec::new(),
-            sent_at: [(0, noon.timestamp() as u64)].into(),
-        })
-        .unwrap();
-    let mut board = store.create_board("Work", "WORK").unwrap();
+    let id = futures::executor::block_on(store.create_session()).unwrap();
+    futures::executor::block_on(store.save_session(&Record {
+        number: None,
+        id,
+        agent: "Claude Agent".into(),
+        agent_id: Some("claude-acp".into()),
+        session: None,
+        title: "t".into(),
+        name: None,
+        updated: 0,
+        closed: false,
+        labels: Vec::new(),
+        fork: None,
+        article: None,
+        replay: None,
+        draft: String::new(),
+        items: Vec::new(),
+        sent_at: [(0, noon.timestamp() as u64)].into(),
+    }))
+    .unwrap();
+    let mut board = futures::executor::block_on(store.create_board("Work", "WORK")).unwrap();
     let column = board.add_column("Todo").id.clone();
     board.add_card(&column, "new".into());
     board.columns[0].cards[0].id = noon.timestamp_millis().to_string();
-    store.save_board(&mut board).unwrap();
+    futures::executor::block_on(store.save_board(&mut board)).unwrap();
 
     let logs = Logs {
         claude: None,

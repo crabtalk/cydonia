@@ -132,7 +132,8 @@ impl Band {
                 .on_click(move |_, _, cx| {
                     let option_id = option_id.clone();
                     workspace.update(cx, |workspace, cx| {
-                        workspace.with_session(id, cx, |chat| chat.respond_permission(option_id));
+                        workspace
+                            .with_session(id, cx, |chat, _| chat.respond_permission(option_id));
                     });
                 })
         };
@@ -164,8 +165,9 @@ impl Band {
                         )
                         .on_click(move |_, _, cx| {
                             always.update(cx, |workspace, cx| {
-                                workspace
-                                    .with_session(id, cx, |chat| chat.toggle_permission_always());
+                                workspace.with_session(id, cx, |chat, _| {
+                                    chat.toggle_permission_always()
+                                });
                             });
                         })
                 }))
@@ -443,12 +445,10 @@ impl Tab {
                         let view = view.read(cx);
                         Some((view.session, view.selected_turn(cx)? + 1))
                     });
-                    let link = turn.and_then(|(id, turn)| {
-                        this.workspace
-                            .update(cx, |workspace, cx| workspace.turn_link(id, turn, turn, cx))
-                    });
-                    if let Some(link) = link {
-                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(link));
+                    if let Some((id, turn)) = turn {
+                        this.workspace.update(cx, |workspace, cx| {
+                            workspace.copy_turn_link(id, turn, turn, cx)
+                        });
                     }
                     this.clear_transcript_selection(cx);
                 },
@@ -511,7 +511,7 @@ impl Tab {
             if workspace.active_id() != Some(id) {
                 return;
             }
-            workspace.with_session(id, cx, |chat| {
+            workspace.with_session(id, cx, |chat, _| {
                 if chat.queue.get(ix).is_some_and(|queued| queued == expected) {
                     text = chat.queue.remove(ix);
                 }

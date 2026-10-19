@@ -2,16 +2,16 @@
 //! by which arguments arrive — and because the shape is the thing the display
 //! reads back, so every path to it has to be the same path.
 
-use super::{self as data, ColType, Column, Data};
+use super::{self as sqlite, ColType, Column, Sqlite};
 use anyhow::{Result, bail};
 
-impl Data {
+impl Sqlite {
     /// Add a column, rename one, or change its type.
     ///
     /// `column` names the column to act on. It does not exist yet → it is
     /// added, and `kind` says what it holds. It does exist → `rename` moves its
     /// name and `kind` changes its type; either, or both.
-    pub fn write_column(
+    pub(super) fn write_column(
         &mut self,
         table: &str,
         column: &str,
@@ -23,7 +23,7 @@ impl Data {
         if column.is_empty() {
             bail!("a column needs a name");
         }
-        let existing = data::columns_of(&self.writer, &key)?;
+        let existing = sqlite::columns_of(&self.writer, &key)?;
         let at = existing
             .iter()
             .position(|col| col.name.eq_ignore_ascii_case(column));
@@ -37,11 +37,11 @@ impl Data {
             }
             self.writer.execute_batch(&format!(
                 "ALTER TABLE {} ADD COLUMN {} {}",
-                data::quote(&key),
-                data::quote(column),
+                sqlite::quote(&key),
+                sqlite::quote(column),
                 kind.sql()
             ))?;
-            return data::columns_of(&self.writer, &key);
+            return sqlite::columns_of(&self.writer, &key);
         };
 
         if let Some(new) = rename.map(str::trim) {
@@ -57,18 +57,18 @@ impl Data {
             }
             self.writer.execute_batch(&format!(
                 "ALTER TABLE {} RENAME COLUMN {} TO {}",
-                data::quote(&key),
-                data::quote(&existing[at].name),
-                data::quote(new)
+                sqlite::quote(&key),
+                sqlite::quote(&existing[at].name),
+                sqlite::quote(new)
             ))?;
         }
 
         if let Some(kind) = kind.filter(|kind| *kind != existing[at].kind) {
-            let mut next = data::columns_of(&self.writer, &key)?;
+            let mut next = sqlite::columns_of(&self.writer, &key)?;
             next[at].kind = kind;
             self.rebuild(&key, &next)?;
         }
-        data::columns_of(&self.writer, &key)
+        sqlite::columns_of(&self.writer, &key)
     }
 
     /// Retype by rebuilding the table around the new declaration, which is the
@@ -85,29 +85,29 @@ impl Data {
         let tmp = format!("{key}_rebuilding");
         let defs = columns
             .iter()
-            .map(|col| format!("{} {}", data::quote(&col.name), col.kind.sql()))
+            .map(|col| format!("{} {}", sqlite::quote(&col.name), col.kind.sql()))
             .collect::<Vec<_>>()
             .join(", ");
         let names = columns
             .iter()
-            .map(|col| data::quote(&col.name))
+            .map(|col| sqlite::quote(&col.name))
             .collect::<Vec<_>>()
             .join(", ");
 
         let tx = self.writer.transaction()?;
         for stmt in [
-            format!("DROP TABLE IF EXISTS {}", data::quote(&tmp)),
-            format!("CREATE TABLE {} ({defs})", data::quote(&tmp)),
+            format!("DROP TABLE IF EXISTS {}", sqlite::quote(&tmp)),
+            format!("CREATE TABLE {} ({defs})", sqlite::quote(&tmp)),
             format!(
                 "INSERT INTO {} ({names}) SELECT {names} FROM {}",
-                data::quote(&tmp),
-                data::quote(key)
+                sqlite::quote(&tmp),
+                sqlite::quote(key)
             ),
-            format!("DROP TABLE {}", data::quote(key)),
+            format!("DROP TABLE {}", sqlite::quote(key)),
             format!(
                 "ALTER TABLE {} RENAME TO {}",
-                data::quote(&tmp),
-                data::quote(key)
+                sqlite::quote(&tmp),
+                sqlite::quote(key)
             ),
         ] {
             tx.execute_batch(&stmt)?;

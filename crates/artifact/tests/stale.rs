@@ -2,6 +2,7 @@
 //! every backend, and a fresh read saves.
 
 mod common;
+use common::Wait as _;
 
 use common::Scratch;
 use cydonia_artifact::{
@@ -10,34 +11,34 @@ use cydonia_artifact::{
 };
 
 fn two_writers(store: &impl Project) {
-    let made = store.create_board("Plans", "PLAN").unwrap();
+    let made = store.create_board("Plans", "PLAN").wait().unwrap();
     let mut first = store.board(&made.id).unwrap();
     let mut second = store.board(&made.id).unwrap();
 
     first.name = "First".into();
-    store.save_board(&mut first).unwrap();
+    store.save_board(&mut first).wait().unwrap();
 
     second.name = "Second".into();
-    let refused = store.save_board(&mut second).unwrap_err();
+    let refused = store.save_board(&mut second).wait().unwrap_err();
     assert!(matches!(refused, Error::Stale), "{refused}");
     assert_eq!(store.board(&made.id).unwrap().name, "First");
 
     let mut fresh = store.board(&made.id).unwrap();
     fresh.name = "Second".into();
-    store.save_board(&mut fresh).unwrap();
+    store.save_board(&mut fresh).wait().unwrap();
     assert_eq!(store.board(&made.id).unwrap().name, "Second");
 
     // The copy that saved carries the version it wrote, so it saves again.
     fresh.name = "Third".into();
-    store.save_board(&mut fresh).unwrap();
+    store.save_board(&mut fresh).wait().unwrap();
 }
 
 fn gone(store: &impl Project) {
-    let made = store.create_board("Plans", "PLAN").unwrap();
+    let made = store.create_board("Plans", "PLAN").wait().unwrap();
     let mut held = store.board(&made.id).unwrap();
-    store.remove_board(&made.id).unwrap();
+    store.remove_board(&made.id).wait().unwrap();
     assert!(matches!(
-        store.save_board(&mut held).unwrap_err(),
+        store.save_board(&mut held).wait().unwrap_err(),
         Error::Stale
     ));
     assert!(store.board(&made.id).is_none());
@@ -71,7 +72,7 @@ fn memory_refuses_to_resurrect_a_removed_board() {
 fn a_hand_edit_makes_a_held_copy_stale() {
     let scratch = Scratch::new("stale-hand");
     let store = scratch.store();
-    let made = store.create_board("Plans", "PLAN").unwrap();
+    let made = store.create_board("Plans", "PLAN").wait().unwrap();
     let mut held = store.board(&made.id).unwrap();
     let file = scratch
         .path()
@@ -82,7 +83,7 @@ fn a_hand_edit_makes_a_held_copy_stale() {
     std::fs::write(&file, text.replace("Plans", "Edited")).unwrap();
     held.name = "Mine".into();
     assert!(matches!(
-        store.save_board(&mut held).unwrap_err(),
+        store.save_board(&mut held).wait().unwrap_err(),
         Error::Stale
     ));
     assert_eq!(store.board(&made.id).unwrap().name, "Edited");
@@ -94,12 +95,12 @@ fn a_hand_edit_makes_a_held_copy_stale() {
 fn files_refuse_a_stale_description() {
     let scratch = Scratch::new("stale-fs-description");
     let store = scratch.store();
-    let made = store.create_board("Plans", "PLAN").unwrap();
+    let made = store.create_board("Plans", "PLAN").wait().unwrap();
     let mut first = store.board(&made.id).unwrap();
     let mut second = store.board(&made.id).unwrap();
 
     first.description = "Tag cards busy.".into();
-    store.save_board(&mut first).unwrap();
+    store.save_board(&mut first).wait().unwrap();
     let file = store.board_dir(&made.id).join("content.md");
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "Tag cards busy.");
     assert_eq!(
@@ -108,11 +109,11 @@ fn files_refuse_a_stale_description() {
     );
 
     second.description = "Something else.".into();
-    let refused = store.save_board(&mut second).unwrap_err();
+    let refused = store.save_board(&mut second).wait().unwrap_err();
     assert!(matches!(refused, Error::Stale), "{refused}");
 
     first.description = String::new();
-    store.save_board(&mut first).unwrap();
+    store.save_board(&mut first).wait().unwrap();
     assert!(!file.exists());
     assert_eq!(store.board(&made.id).unwrap().description, "");
 }

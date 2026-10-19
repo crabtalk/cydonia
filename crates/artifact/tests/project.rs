@@ -1,6 +1,7 @@
 //! Articles and numbers through the backend trait, over the filesystem backend.
 
 mod common;
+use common::Wait as _;
 
 use common::Scratch;
 use cydonia_artifact::{
@@ -14,9 +15,12 @@ use std::fs;
 fn an_article_round_trips_by_id() {
     let scratch = Scratch::new("project-article");
     let store = scratch.store();
-    let made = store.create_article("# Plan\n").unwrap();
+    let made = store.create_article("# Plan\n").wait().unwrap();
     assert_eq!(store.read_article(&made.id).unwrap(), "# Plan\n");
-    store.write_article(&made.id, "# Plan\n\nMore.\n").unwrap();
+    store
+        .write_article(&made.id, "# Plan\n\nMore.\n")
+        .wait()
+        .unwrap();
     assert_eq!(store.read_article(&made.id).unwrap(), "# Plan\n\nMore.\n");
     let listed = store.articles();
     assert_eq!(listed.len(), 1);
@@ -27,7 +31,7 @@ fn an_article_round_trips_by_id() {
 fn properties_save_keeps_unknown_keys() {
     let scratch = Scratch::new("project-properties");
     let store = scratch.store();
-    let made = store.create_article("").unwrap();
+    let made = store.create_article("").wait().unwrap();
     let file = scratch
         .path()
         .join(".cydonia/articles")
@@ -41,7 +45,7 @@ fn properties_save_keeps_unknown_keys() {
         comments: Some(CommentDisplay::Minimal),
         labels: vec!["q3".into(), "research".into()],
     };
-    store.save_properties(&made.id, &wanted).unwrap();
+    store.save_properties(&made.id, &wanted).wait().unwrap();
     assert_eq!(store.properties(&made.id), wanted);
     assert!(
         fs::read_to_string(&file)
@@ -55,10 +59,15 @@ fn properties_save_keeps_unknown_keys() {
 fn assets_are_named_blobs() {
     let scratch = Scratch::new("project-assets");
     let store = scratch.store();
-    let made = store.create_article("").unwrap();
-    store.put_asset(&made.id, "a.png", b"png").unwrap();
+    let made = store.create_article("").wait().unwrap();
+    store.put_asset(&made.id, "a.png", b"png").wait().unwrap();
     assert_eq!(store.asset(&made.id, "a.png").unwrap(), b"png");
-    assert!(store.put_asset(&made.id, "../escape.png", b"x").is_err());
+    assert!(
+        store
+            .put_asset(&made.id, "../escape.png", b"x")
+            .wait()
+            .is_err()
+    );
     assert!(store.asset(&made.id, "..").is_err());
 }
 
@@ -67,7 +76,7 @@ fn a_missing_article_is_an_error() {
     let scratch = Scratch::new("project-missing");
     let store = scratch.store();
     assert!(store.read_article("1").is_err());
-    assert!(store.write_article("1", "x").is_err());
+    assert!(store.write_article("1", "x").wait().is_err());
     assert!(store.read_article("../boards").is_err());
     assert_eq!(store.properties("1"), Properties::default());
 }
@@ -76,13 +85,13 @@ fn a_missing_article_is_an_error() {
 fn removing_an_article_retires_its_number() {
     let scratch = Scratch::new("project-remove");
     let store = scratch.store();
-    let made = store.create_article("").unwrap();
-    let number = store.number(Kind::Article, &made.id).unwrap();
+    let made = store.create_article("").wait().unwrap();
+    let number = store.number(Kind::Article, &made.id).wait().unwrap();
     assert_eq!(
         store.resolve(Kind::Article, number).unwrap().as_deref(),
         Some(made.id.as_str())
     );
-    store.remove_article(&made.id).unwrap();
+    store.remove_article(&made.id).wait().unwrap();
     assert!(store.articles().is_empty());
     assert_eq!(store.resolve(Kind::Article, number).unwrap(), None);
 }
@@ -91,26 +100,26 @@ fn removing_an_article_retires_its_number() {
 fn a_retired_number_is_not_reissued() {
     let scratch = Scratch::new("project-retire");
     let store = scratch.store();
-    let first = store.number(Kind::Board, "a").unwrap();
-    store.retire(Kind::Board, "a").unwrap();
-    assert_ne!(store.number(Kind::Board, "a").unwrap(), first);
+    let first = store.number(Kind::Board, "a").wait().unwrap();
+    store.retire(Kind::Board, "a").wait().unwrap();
+    assert_ne!(store.number(Kind::Board, "a").wait().unwrap(), first);
 }
 
 #[test]
 fn removing_what_is_not_there_is_an_error() {
     let scratch = Scratch::new("project-absent");
     let store = scratch.store();
-    assert!(store.remove_board("nope").is_err());
-    assert!(store.remove_session("nope").is_err());
-    assert!(store.remove_article("nope").is_err());
+    assert!(store.remove_board("nope").wait().is_err());
+    assert!(store.remove_session("nope").wait().is_err());
+    assert!(store.remove_article("nope").wait().is_err());
 }
 
 #[test]
 fn place_is_an_articles_directory_and_a_boards_directory() {
     let scratch = Scratch::new("project-place");
     let store = scratch.store();
-    let article = store.create_article("# Plan\n").unwrap();
-    let board = store.create_board("Road", "").unwrap();
+    let article = store.create_article("# Plan\n").wait().unwrap();
+    let board = store.create_board("Road", "").wait().unwrap();
     let cydonia = scratch.path().join(".cydonia");
     assert_eq!(
         store.place(Kind::Article, &article.id),
@@ -142,8 +151,8 @@ fn files_is_an_articles_a_boards_and_a_cards_folder() {
 fn an_entry_was_created_at_the_stamp_it_is_named_for() {
     let scratch = Scratch::new("project-created");
     let store = scratch.store();
-    let article = store.create_article("").unwrap();
-    let board = store.create_board("Plans", "").unwrap();
+    let article = store.create_article("").wait().unwrap();
+    let board = store.create_board("Plans", "").wait().unwrap();
     assert_eq!(article.created, article.id.parse().ok());
     assert_eq!(store.articles()[0].created, article.id.parse().ok());
     assert_eq!(

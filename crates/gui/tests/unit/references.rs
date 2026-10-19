@@ -2,7 +2,7 @@
 //! the card a handle names, and the entry a number names.
 
 use super::{Part, card, entry, passage};
-use crate::data::{ColType, Column, Data};
+use crate::data::{ColType, Column, Local as _, Tables as _};
 use crate::model::{article::Disk, project::Project, workspace::Showing};
 use artifact::kind::Kind;
 use artifact::project::{Project as _, fs};
@@ -55,11 +55,11 @@ fn a_handle_names_its_card_on_the_keyed_board(cx: &mut gpui::TestAppContext) {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let store = fs::Project::new(&dir);
-        let mut board = store.create_board("Work", "DEV").unwrap();
+        let mut board = futures::executor::block_on(store.create_board("Work", "DEV")).unwrap();
         let column = board.add_column("Todo").id.clone();
         board.add_card(&column, "First".into()).unwrap();
         let second = board.add_card(&column, "Second".into()).unwrap().clone();
-        store.save_board(&mut board).unwrap();
+        futures::executor::block_on(store.save_board(&mut board)).unwrap();
         let handle = second.handle.unwrap();
         let project = Project::new(dir.clone(), cx);
 
@@ -86,7 +86,7 @@ fn a_number_names_a_table(cx: &mut gpui::TestAppContext) {
             name: "Name".to_owned(),
             kind: ColType::Text,
         };
-        let key = Data::open(&crate::data::Home::Project(dir.clone()))
+        let key = crate::data::Here::open(&crate::data::Home::Project(dir.clone()))
             .unwrap()
             .create("Prices", None, &[column], None)
             .unwrap()

@@ -2335,6 +2335,7 @@ dependencies = [
  "cydonia-acp",
  "cydonia-manifest",
  "dirs 6.0.0",
+ "futures",
  "image",
  "notify",
  "pulldown-cmark",
@@ -2349,6 +2350,15 @@ dependencies = [
  "toml_edit 0.22.27",
  "url",
  "web-time",
+]
+
+[[package]]
+name = "cydonia-git"
+version = "0.2.3"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2388,6 +2398,7 @@ dependencies = [
  "chrono",
  "cydonia-acp",
  "cydonia-artifact",
+ "cydonia-git",
  "cydonia-guest",
  "cydonia-mcp",
  "cydonia-prompts",
@@ -2434,6 +2445,7 @@ dependencies = [
  "axum",
  "cydonia-artifact",
  "cydonia-prompts",
+ "futures",
  "image",
  "regex",
  "serde",

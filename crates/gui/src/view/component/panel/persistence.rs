@@ -238,7 +238,8 @@ impl Cydonia {
             && let Some(id) = self.workspace.read(cx).active_id()
         {
             self.workspace
-                .update(cx, |workspace, cx| workspace.retain_active_session(id, cx));
+                .update(cx, |workspace, cx| workspace.retain_active_session(id, cx))
+                .detach();
         }
         // What the directory in front is at has not been written back to the
         // map yet — `follow_changes` only does that on the way out of one.

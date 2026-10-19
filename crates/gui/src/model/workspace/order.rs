@@ -35,10 +35,10 @@ impl Workspace {
     /// those above the arrangement rather than below it: a new entry that
     /// appeared under the fold would be one nobody saw arrive.
     pub fn rank_of(&self, project: usize, showing: Showing, cx: &App) -> Option<usize> {
-        let path = &self.projects.get(project)?.path;
+        let location = self.projects.get(project)?.location();
         let entry = self.entry_of(project, showing, cx)?;
         self.order
-            .get(path)?
+            .get(&location)?
             .iter()
             .position(|held| held.kind == entry.kind && held.id == entry.id)
     }
@@ -47,10 +47,10 @@ impl Workspace {
     /// pinned. What puts the pinned rows above the rest, in an order of their
     /// own.
     pub fn pin_rank(&self, project: usize, showing: Showing, cx: &App) -> Option<usize> {
-        let path = &self.projects.get(project)?.path;
+        let location = self.projects.get(project)?.location();
         let entry = self.entry_of(project, showing, cx)?;
         self.pinned
-            .get(path)?
+            .get(&location)?
             .iter()
             .position(|held| held.kind == entry.kind && held.id == entry.id)
     }
@@ -72,7 +72,7 @@ impl Workspace {
         let Some(open) = self.projects.get(project) else {
             return;
         };
-        let held = self.pinned.entry(open.path.clone()).or_default();
+        let held = self.pinned.entry(open.location()).or_default();
         held.retain(|pin| !(pin.kind == entry.kind && pin.id == entry.id));
         if on {
             held.push(entry);
@@ -90,7 +90,7 @@ impl Workspace {
         let Some(open) = self.projects.get(project) else {
             return;
         };
-        if let Some(held) = self.pinned.get_mut(&open.path) {
+        if let Some(held) = self.pinned.get_mut(&open.location()) {
             held.retain(|pin| !(pin.kind == entry.kind && pin.id == entry.id));
         }
         self.save();
@@ -104,7 +104,7 @@ impl Workspace {
         let Some(open) = self.projects.get(project) else {
             return;
         };
-        self.order.insert(open.path.clone(), order);
+        self.order.insert(open.location(), order);
         self.save();
         cx.notify();
     }
@@ -113,7 +113,7 @@ impl Workspace {
     pub fn sort_of(&self, project: usize) -> state::Sort {
         self.projects
             .get(project)
-            .and_then(|open| self.sort.get(&open.path))
+            .and_then(|open| self.sort.get(&open.location()))
             .copied()
             .unwrap_or_default()
     }
@@ -125,7 +125,7 @@ impl Workspace {
         let Some(open) = self.projects.get(project) else {
             return;
         };
-        self.sort.insert(open.path.clone(), sort);
+        self.sort.insert(open.location(), sort);
         self.save();
         cx.notify();
     }
@@ -140,7 +140,7 @@ impl Workspace {
         let Some(open) = self.projects.get(project) else {
             return;
         };
-        self.pinned.insert(open.path.clone(), pinned);
+        self.pinned.insert(open.location(), pinned);
         self.save();
         cx.notify();
     }

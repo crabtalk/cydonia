@@ -24,6 +24,7 @@ use crate::{
         },
     },
 };
+use artifact::location::Location;
 use artifact::space::Member;
 use bezel::{
     gpui::{
@@ -238,7 +239,7 @@ impl Pane {
             .read(cx)
             .projects
             .iter()
-            .find(|open| Some(open.path.as_path()) == tab.project())
+            .find(|open| tab.project().and_then(Location::local) == Some(open.path.as_path()))
             .map(|open| open.name())
             .unwrap_or_default();
         // The pane in front *and* the tab in front of that pane: a background

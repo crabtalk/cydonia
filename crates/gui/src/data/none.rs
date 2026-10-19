@@ -1,53 +1,47 @@
-//! No database. [`Data`] has no values: [`Data::attach`] finds none, so a
-//! project's `Option<Data>` is always empty and nothing here can be called.
+//! No database. [`Absent`] has no values: [`Absent::attach`] finds none and
+//! [`Absent::open`] fails, so nothing here can be called.
 
-use super::{ColType, Column, Edit, Home, Page, Rows, Table};
+use super::{ColType, Column, Edit, Home, Local, Page, Rows, Table, Tables};
 use anyhow::{Result, bail};
 
-pub enum Data {}
+pub enum Absent {}
 
-impl Data {
-    pub fn open(home: &Home) -> Result<Self> {
-        let _ = home;
+impl Local for Absent {
+    fn open(_: &Home) -> Result<Self> {
         bail!("There are no tables in this build")
     }
 
-    pub fn attach(home: &Home) -> Option<Self> {
-        let _ = home;
+    fn attach(_: &Home) -> Option<Self> {
         None
     }
+}
 
-    pub fn list(&self) -> Result<Vec<Table>> {
+impl Tables for Absent {
+    fn list(&self) -> Result<Vec<Table>> {
         match *self {}
     }
 
-    pub fn archive(&mut self, _: &str, _: bool) -> Result<()> {
+    fn archive(&mut self, _: &str, _: bool) -> Result<()> {
         match *self {}
     }
 
-    pub fn touch(&mut self, _: &str) -> Result<()> {
+    fn touch(&mut self, _: &str) -> Result<()> {
         match *self {}
     }
 
-    pub fn create(
-        &mut self,
-        _: &str,
-        _: Option<&str>,
-        _: &[Column],
-        _: Option<&str>,
-    ) -> Result<Table> {
+    fn create(&mut self, _: &str, _: Option<&str>, _: &[Column], _: Option<&str>) -> Result<Table> {
         match *self {}
     }
 
-    pub fn update(&mut self, _: &str, _: Option<&str>, _: Option<&str>) -> Result<Table> {
+    fn update(&mut self, _: &str, _: Option<&str>, _: Option<&str>) -> Result<Table> {
         match *self {}
     }
 
-    pub fn remove(&mut self, _: &str) -> Result<()> {
+    fn remove(&mut self, _: &str) -> Result<()> {
         match *self {}
     }
 
-    pub fn write_column(
+    fn write_column(
         &mut self,
         _: &str,
         _: &str,
@@ -57,19 +51,19 @@ impl Data {
         match *self {}
     }
 
-    pub fn read(&self, _: &str, _: Option<&str>, _: bool, _: i64, _: i64) -> Result<Page> {
+    fn read(&self, _: &str, _: Option<&str>, _: bool, _: i64, _: i64) -> Result<Page> {
         match *self {}
     }
 
-    pub fn write_cells(&mut self, _: &str, _: &[Edit]) -> Result<()> {
+    fn write_cells(&mut self, _: &str, _: &[Edit]) -> Result<()> {
         match *self {}
     }
 
-    pub fn add_rows(&mut self, _: &str, _: i64) -> Result<Vec<i64>> {
+    fn add_rows(&mut self, _: &str, _: i64) -> Result<Vec<i64>> {
         match *self {}
     }
 
-    pub fn insert(
+    fn insert(
         &mut self,
         _: &str,
         _: &[serde_json::Map<String, serde_json::Value>],
@@ -77,23 +71,23 @@ impl Data {
         match *self {}
     }
 
-    pub fn delete_where(&mut self, _: &str, _: &str, _: &serde_json::Value) -> Result<()> {
+    fn delete_where(&mut self, _: &str, _: &str, _: &serde_json::Value) -> Result<()> {
         match *self {}
     }
 
-    pub fn delete_rows(&mut self, _: &str, _: &[i64]) -> Result<()> {
+    fn delete_rows(&mut self, _: &str, _: &[i64]) -> Result<()> {
         match *self {}
     }
 
-    pub fn drop_column(&mut self, _: &str, _: &str) -> Result<Vec<Column>> {
+    fn drop_column(&mut self, _: &str, _: &str) -> Result<Vec<Column>> {
         match *self {}
     }
 
-    pub fn query(&self, _: &str) -> Result<Rows> {
+    fn query(&self, _: &str) -> Result<Rows> {
         match *self {}
     }
 
-    pub fn write(&mut self, _: &str) -> Result<u64> {
+    fn write(&mut self, _: &str) -> Result<u64> {
         match *self {}
     }
 }

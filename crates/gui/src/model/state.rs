@@ -10,7 +10,7 @@
 //! the move.
 
 use crate::model::{settings, version::Version};
-use artifact::kind::Kind;
+use artifact::{kind::Kind, location::Location};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf};
 
@@ -60,22 +60,22 @@ impl From<Written> for Entry {
 #[serde(default)]
 pub struct State {
     #[serde(default)]
-    pub projects: Vec<PathBuf>,
+    pub projects: Vec<Location>,
     #[serde(default)]
     pub active: usize,
     /// Projects whose sidebar children are hidden.
     #[serde(default)]
-    pub collapsed: Vec<PathBuf>,
+    pub collapsed: Vec<Location>,
     /// The release whose What's New was last shown. `None` in a file written
     /// before this field.
     #[serde(default)]
     pub release: Option<Version>,
-    /// What each project was last showing, by project path. Last in the struct
-    /// because a map renders as TOML tables, and a bare key after one of those
-    /// belongs to it.
+    /// What each project was last showing, by project location. Last in the
+    /// struct because a map renders as TOML tables, and a bare key after one
+    /// of those belongs to it.
     #[serde(default)]
-    pub last: BTreeMap<PathBuf, Entry>,
-    /// The order a project's entries are listed in, by project path — see
+    pub last: BTreeMap<Location, Entry>,
+    /// The order a project's entries are listed in, by project location — see
     /// [`crate::model::workspace`]'s `order`.
     ///
     /// An entry the list does not name is one made since it was last written,
@@ -84,16 +84,16 @@ pub struct State {
     /// one a branch may bring back, and a stale name costs a lookup that
     /// already has to miss.
     #[serde(default)]
-    pub order: BTreeMap<PathBuf, Vec<Entry>>,
-    /// The entries held at the top of each project's list, by project path.
-    /// A list rather than a flag on [`Entry`]: pins are ordered among
-    /// themselves, and `last` has no use for one.
+    pub order: BTreeMap<Location, Vec<Entry>>,
+    /// The entries held at the top of each project's list, by project
+    /// location. A list rather than a flag on [`Entry`]: pins are ordered
+    /// among themselves, and `last` has no use for one.
     #[serde(default)]
-    pub pinned: BTreeMap<PathBuf, Vec<Entry>>,
-    /// What each project's list is ordered by, by project path. A project this
-    /// does not name is sorted [`Sort::Manual`].
+    pub pinned: BTreeMap<Location, Vec<Entry>>,
+    /// What each project's list is ordered by, by project location. A project
+    /// this does not name is sorted [`Sort::Manual`].
     #[serde(default)]
-    pub sort: BTreeMap<PathBuf, Sort>,
+    pub sort: BTreeMap<Location, Sort>,
     /// The space the window was showing when it last closed, by its id — see
     /// [`crate::model::spaces`]. Nothing where it was on a single entry, and
     /// an id whose file has since gone lands on one too.
@@ -163,13 +163,15 @@ pub fn restore() -> State {
     let first = path().is_none_or(|path| !path.exists());
     let stored: State = settings::read_toml(path());
     let active = stored.projects.get(stored.active).cloned();
-    let projects: Vec<PathBuf> = stored
+    let projects: Vec<Location> = stored
         .projects
         .into_iter()
-        .filter(|path| path.is_dir())
+        .filter(|location| match location {
+            Location::Local(path) => path.is_dir(),
+        })
         .collect();
     let active = active
-        .and_then(|path| projects.iter().position(|open| *open == path))
+        .and_then(|location| projects.iter().position(|open| *open == location))
         .unwrap_or(0);
     State {
         projects,

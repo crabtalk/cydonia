@@ -18,9 +18,10 @@ fn workspace_search_keeps_results_beyond_the_palette_limit(cx: &mut gpui::TestAp
     std::fs::create_dir_all(&root).unwrap();
     let store = fs::Project::new(&root);
     for ix in 0..crate::view::modals::palette::SHOWN + 1 {
-        store
-            .create_article(&format!("# Note {ix}\n\nretry request\n\nlater retry"))
-            .unwrap();
+        futures::executor::block_on(
+            store.create_article(&format!("# Note {ix}\n\nretry request\n\nlater retry")),
+        )
+        .unwrap();
     }
     let found = search_all(
         std::slice::from_ref(&root),

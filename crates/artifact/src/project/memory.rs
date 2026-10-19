@@ -24,6 +24,7 @@ use anyhow::anyhow;
 use std::{
     cmp::Reverse,
     collections::{BTreeMap, HashMap, HashSet},
+    future::ready,
     sync::{Mutex, MutexGuard},
 };
 
@@ -232,17 +233,21 @@ impl State {
             .ok_or_else(|| not_found("article", id))
     }
 
-    fn describe(&self, id: &str, held: &Held) -> Article {
+    /// An article as it is held, its number issued if it has none.
+    fn describe(&mut self, id: &str) -> Option<Article> {
+        let number = self.number(Kind::Article, id);
+        let held = self.articles.get(id)?;
         let properties = properties::parse(&held.properties);
-        Article {
+        Some(Article {
             id: id.to_owned(),
+            number: Some(number),
             title: properties.title,
             archived: properties.archived,
             touched: held.touched,
             created: stamp::named(id),
             cover: None,
             labels: properties.labels,
-        }
+        })
     }
 }
 
@@ -272,7 +277,11 @@ impl super::Project for Project {
         Some(board)
     }
 
-    fn create_board(&self, name: &str, key: &str) -> super::Result<Board> {
+    fn create_board(
+        &self,
+        name: &str,
+        key: &str,
+    ) -> impl Future<Output = super::Result<Board>> + Send + use<> {
         let mut state = self.state();
         let mut board = Board::new(id::mint(), name);
         board.created = stamp::named(&board.id);
@@ -287,31 +296,33 @@ impl super::Project for Project {
         board.number = Some(state.number(Kind::Board, &board.id));
         board.version = Some(state.version(&board.id));
         state.boards.insert(board.id.clone(), board.clone());
-        Ok(board)
+        ready(Ok(board))
     }
 
-    fn save_board(&self, board: &mut Board) -> super::Result<()> {
+    fn save_board(
+        &self,
+        board: &mut Board,
+    ) -> impl Future<Output = super::Result<()>> + Send + use<> {
         let mut state = self.state();
         if let Some(seen) = &board.version
             && (!state.boards.contains_key(&board.id) || *seen != state.version(&board.id))
         {
-            return Err(crate::error::Error::Stale);
+            return ready(Err(crate::error::Error::Stale));
         }
         *state.writes.entry(board.id.clone()).or_default() += 1;
         board.touched = stamp::now();
         board.version = Some(state.version(&board.id));
         state.boards.insert(board.id.clone(), board.clone());
-        Ok(())
+        ready(Ok(()))
     }
 
-    fn remove_board(&self, id: &str) -> super::Result<()> {
+    fn remove_board(&self, id: &str) -> impl Future<Output = super::Result<()>> + Send + use<> {
         let mut state = self.state();
-        state
-            .boards
-            .remove(id)
-            .ok_or_else(|| not_found("board", id))?;
+        if state.boards.remove(id).is_none() {
+            return ready(Err(not_found("board", id)));
+        }
         state.retire(Kind::Board, id);
-        Ok(())
+        ready(Ok(()))
     }
 
     fn sessions(&self) -> Vec<Record> {
@@ -337,44 +348,45 @@ impl super::Project for Project {
         Some(record)
     }
 
-    fn create_session(&self) -> super::Result<String> {
-        Ok(stamp::fresh().to_string())
+    fn create_session(&self) -> impl Future<Output = super::Result<String>> + Send + use<> {
+        ready(Ok(stamp::fresh().to_string()))
     }
 
-    fn save_session(&self, record: &Record) -> super::Result<()> {
+    fn save_session(
+        &self,
+        record: &Record,
+    ) -> impl Future<Output = super::Result<()>> + Send + use<> {
         self.state()
             .sessions
             .insert(record.id.clone(), record.clone());
-        Ok(())
+        ready(Ok(()))
     }
 
-    fn remove_session(&self, id: &str) -> super::Result<()> {
+    fn remove_session(&self, id: &str) -> impl Future<Output = super::Result<()>> + Send + use<> {
         let mut state = self.state();
-        state
-            .sessions
-            .remove(id)
-            .ok_or_else(|| not_found("session", id))?;
+        if state.sessions.remove(id).is_none() {
+            return ready(Err(not_found("session", id)));
+        }
         state.retire(Kind::Session, id);
-        Ok(())
+        ready(Ok(()))
     }
 
     fn articles(&self) -> Vec<Article> {
-        let state = self.state();
-        let mut found: Vec<Article> = state
-            .articles
-            .iter()
-            .map(|(id, held)| state.describe(id, held))
-            .collect();
+        let mut state = self.state();
+        let ids: Vec<String> = state.articles.keys().cloned().collect();
+        let mut found: Vec<Article> = ids.iter().filter_map(|id| state.describe(id)).collect();
         found.sort_by_key(|article| Reverse(article.touched));
         found
     }
 
     fn article(&self, id: &str) -> Option<Article> {
-        let state = self.state();
-        state.articles.get(id).map(|held| state.describe(id, held))
+        self.state().describe(id)
     }
 
-    fn create_article(&self, markdown: &str) -> super::Result<Article> {
+    fn create_article(
+        &self,
+        markdown: &str,
+    ) -> impl Future<Output = super::Result<Article>> + Send + use<> {
         let mut state = self.state();
         let id = stamp::free(stamp::now(), |id| state.articles.contains_key(id));
         let held = Held {
@@ -382,22 +394,25 @@ impl super::Project for Project {
             touched: stamp::now(),
             ..Held::default()
         };
-        let article = state.describe(&id, &held);
-        state.articles.insert(id, held);
-        Ok(article)
+        state.articles.insert(id.clone(), held);
+        ready(state.describe(&id).ok_or_else(|| not_found("article", &id)))
     }
 
     fn read_article(&self, id: &str) -> super::Result<String> {
         Ok(self.state().article(id)?.markdown.clone())
     }
 
-    fn write_article(&self, id: &str, markdown: &str) -> super::Result<()> {
+    fn write_article(
+        &self,
+        id: &str,
+        markdown: &str,
+    ) -> impl Future<Output = super::Result<()>> + Send + use<> {
         let mut state = self.state();
-        let held = state.article(id)?;
-        held.comments.remap(&held.markdown, markdown);
-        held.markdown = markdown.to_owned();
-        held.touched = stamp::now();
-        Ok(())
+        ready(state.article(id).map(|held| {
+            held.comments.remap(&held.markdown, markdown);
+            held.markdown = markdown.to_owned();
+            held.touched = stamp::now();
+        }))
     }
 
     fn comments(&self, id: &str) -> Comments {
@@ -408,12 +423,16 @@ impl super::Project for Project {
             .unwrap_or_default()
     }
 
-    fn save_comments(&self, id: &str, comments: &Comments) -> super::Result<()> {
+    fn save_comments(
+        &self,
+        id: &str,
+        comments: &Comments,
+    ) -> impl Future<Output = super::Result<()>> + Send + use<> {
         let mut state = self.state();
-        let held = state.article(id)?;
-        held.comments = comments.clone();
-        held.comments.stamp(&held.markdown);
-        Ok(())
+        ready(state.article(id).map(|held| {
+            held.comments = comments.clone();
+            held.comments.stamp(&held.markdown);
+        }))
     }
 
     fn properties(&self, id: &str) -> Properties {
@@ -424,22 +443,25 @@ impl super::Project for Project {
             .unwrap_or_default()
     }
 
-    fn save_properties(&self, id: &str, properties: &Properties) -> super::Result<()> {
+    fn save_properties(
+        &self,
+        id: &str,
+        properties: &Properties,
+    ) -> impl Future<Output = super::Result<()>> + Send + use<> {
         let mut state = self.state();
-        let held = state.article(id)?;
-        held.properties = properties::apply(&held.properties, properties).unwrap_or_default();
-        held.touched = stamp::now();
-        Ok(())
+        ready(state.article(id).map(|held| {
+            held.properties = properties::apply(&held.properties, properties).unwrap_or_default();
+            held.touched = stamp::now();
+        }))
     }
 
-    fn remove_article(&self, id: &str) -> super::Result<()> {
+    fn remove_article(&self, id: &str) -> impl Future<Output = super::Result<()>> + Send + use<> {
         let mut state = self.state();
-        state
-            .articles
-            .remove(id)
-            .ok_or_else(|| not_found("article", id))?;
+        if state.articles.remove(id).is_none() {
+            return ready(Err(not_found("article", id)));
+        }
         state.retire(Kind::Article, id);
-        Ok(())
+        ready(Ok(()))
     }
 
     fn asset(&self, id: &str, name: &str) -> super::Result<Vec<u8>> {
@@ -452,20 +474,27 @@ impl super::Project for Project {
             .ok_or_else(|| not_found("asset", name))
     }
 
-    fn put_asset(&self, id: &str, name: &str, bytes: &[u8]) -> super::Result<()> {
+    fn put_asset(
+        &self,
+        id: &str,
+        name: &str,
+        bytes: &[u8],
+    ) -> impl Future<Output = super::Result<()>> + Send + use<> {
         if name.is_empty() || name.contains(['/', '\\']) || name == "." || name == ".." {
-            return Err(anyhow!("{name:?} is not a name").into());
+            return ready(Err(anyhow!("{name:?} is not a name").into()));
         }
         let mut state = self.state();
-        state
-            .article(id)?
-            .assets
-            .insert(name.to_owned(), bytes.to_vec());
-        Ok(())
+        ready(state.article(id).map(|held| {
+            held.assets.insert(name.to_owned(), bytes.to_vec());
+        }))
     }
 
-    fn number(&self, kind: Kind, id: &str) -> super::Result<u64> {
-        Ok(self.state().number(kind, id))
+    fn number(
+        &self,
+        kind: Kind,
+        id: &str,
+    ) -> impl Future<Output = super::Result<u64>> + Send + use<> {
+        ready(Ok(self.state().number(kind, id)))
     }
 
     fn resolve(&self, kind: Kind, number: u64) -> super::Result<Option<String>> {
@@ -477,9 +506,13 @@ impl super::Project for Project {
             .and_then(|(_, id)| id.clone()))
     }
 
-    fn retire(&self, kind: Kind, id: &str) -> super::Result<()> {
+    fn retire(
+        &self,
+        kind: Kind,
+        id: &str,
+    ) -> impl Future<Output = super::Result<()>> + Send + use<> {
         self.state().retire(kind, id);
-        Ok(())
+        ready(Ok(()))
     }
 }
 

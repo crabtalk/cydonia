@@ -53,10 +53,12 @@ fn three_boards(
     let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));
     workspace.update(cx, |workspace, cx| {
         workspace.open_project(scratch.project("one"), cx);
-        workspace.new_board(0, "First".into(), "ONE", cx).ok();
-        workspace.new_board(0, "Second".into(), "TWO", cx).ok();
-        workspace.new_board(0, "Third".into(), "THR", cx).ok();
+        workspace.new_board(0, "First".into(), "ONE", cx).detach();
+        workspace.new_board(0, "Second".into(), "TWO", cx).detach();
+        workspace.new_board(0, "Third".into(), "THR", cx).detach();
     });
+    cx.executor().allow_parking();
+    cx.run_until_parked();
     workspace
 }
 
@@ -100,8 +102,11 @@ fn a_new_entry_has_no_rank(cx: &mut gpui::TestAppContext) {
             })
             .collect();
         workspace.set_order(0, held, cx);
-        workspace.new_board(0, "Fourth".into(), "FOU", cx).ok();
-
+        workspace.new_board(0, "Fourth".into(), "FOU", cx).detach();
+    });
+    cx.executor().allow_parking();
+    cx.run_until_parked();
+    workspace.update(cx, |workspace, cx| {
         let fresh = (0..4)
             .find(|ix| workspace.rank_of(0, board(workspace, *ix), cx).is_none())
             .expect("the new one is unranked");
@@ -134,7 +139,10 @@ fn the_order_survives_a_relaunch(cx: &mut gpui::TestAppContext) {
     });
 
     let restored = state::restore();
-    let held = restored.order.get(&path).expect("written down");
+    let held = restored
+        .order
+        .get(&path.clone().into())
+        .expect("written down");
     assert_eq!(held.len(), 3, "every entry, not just the one that moved");
 
     // And read back into a workspace that never saw the drag.
@@ -226,7 +234,7 @@ fn pins_survive_a_relaunch(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         restored
             .pinned
-            .get(&scratch.project("one"))
+            .get(&scratch.project("one").into())
             .map(Vec::len)
             .unwrap_or_default(),
         1
@@ -287,6 +295,13 @@ fn the_sort_is_per_project_and_survives_a_relaunch(cx: &mut gpui::TestAppContext
     });
 
     let restored = state::restore();
-    assert_eq!(restored.sort.get(&one), Some(&state::Sort::Touched));
-    assert_eq!(restored.sort.get(&two), None, "never set, never written");
+    assert_eq!(
+        restored.sort.get(&one.clone().into()),
+        Some(&state::Sort::Touched)
+    );
+    assert_eq!(
+        restored.sort.get(&two.clone().into()),
+        None,
+        "never set, never written"
+    );
 }

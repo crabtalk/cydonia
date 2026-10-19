@@ -1,4 +1,5 @@
 mod common;
+use common::Wait as _;
 
 use common::Scratch;
 use cydonia_artifact::kind::Kind;
@@ -100,7 +101,7 @@ fn archived_sessions_are_discoverable_and_readable() {
         entry::read(scratch.path(), session).unwrap()["agent"],
         "codex"
     );
-    scratch.store().remove_session("old").unwrap();
+    scratch.store().remove_session("old").wait().unwrap();
     assert!(entry::list(scratch.path()).unwrap().is_empty());
     assert_eq!(
         Registry::open(scratch.path())

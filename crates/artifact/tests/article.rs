@@ -17,6 +17,7 @@ use url::Url;
 fn article(cover: Option<&str>) -> Article {
     Article {
         id: "1757000000000".into(),
+        number: None,
         title: "Roadmap".into(),
         archived: false,
         touched: 1_757_000_000_000,

@@ -1,7 +1,7 @@
 //! Session Git changes panel with background polling while visible.
 
 use crate::model::git::{
-    self, Change, Repository,
+    self, Backend, Change, Repository,
     preview::{Kind, Preview},
 };
 use bezel::ui::scroll as scrollbars;
@@ -24,6 +24,7 @@ impl gpui::EventEmitter<OpenFile> for Changes {}
 
 pub struct Changes {
     pub cwd: PathBuf,
+    git: Arc<dyn Backend>,
     repository: Option<Repository>,
     selected: Option<Change>,
     preview: Arc<Preview>,
@@ -61,6 +62,7 @@ impl Changes {
             }
         });
         let mut this = Self {
+            git: git::open(&cwd),
             cwd,
             repository: None,
             selected: None,
@@ -86,6 +88,7 @@ impl Changes {
 
     fn refresh(&mut self, cx: &mut Context<Self>) {
         let cwd = self.cwd.clone();
+        let git = self.git.clone();
         let selected = self.selected.clone();
         let previous = self.preview.clone();
         self.loading = true;
@@ -93,7 +96,7 @@ impl Changes {
             let result = cx
                 .background_executor()
                 .spawn(async move {
-                    let repository = git::status(&cwd)?;
+                    let repository = git.status(&cwd)?;
                     let selected = repository.as_ref().and_then(|repo| {
                         selected
                             .and_then(|selected| {
@@ -107,8 +110,8 @@ impl Changes {
                             .or_else(|| repo.files.first().cloned())
                     });
                     let preview = match (&repository, &selected) {
-                        (Some(repo), Some(file)) => match git::diff(&repo.root, file) {
-                            Ok(patch) => Preview::load(&repo.root, file, patch, previous),
+                        (Some(repo), Some(file)) => match git.diff(&repo.root, file) {
+                            Ok(patch) => Preview::load(&*git, &repo.root, file, patch, previous),
                             Err(error) => Preview::plain(format!("Could not read diff: {error}")),
                         },
                         _ => Arc::default(),

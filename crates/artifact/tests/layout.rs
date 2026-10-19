@@ -1,4 +1,5 @@
 mod common;
+use common::Wait as _;
 
 use common::Scratch;
 use cydonia_artifact::{board, error::Error, project::Project as _};
@@ -7,11 +8,11 @@ use std::fs;
 /// A board and its column, with two cards on it.
 fn board_with_two(scratch: &Scratch) -> (String, String, String) {
     let store = scratch.store();
-    let mut made = store.create_board("Work", "WORK").unwrap();
+    let mut made = store.create_board("Work", "WORK").wait().unwrap();
     let column = made.add_column("Todo").id.clone();
     let one = made.add_card(&column, "one".into()).unwrap().id.clone();
     let two = made.add_card(&column, "two".into()).unwrap().id.clone();
-    store.save_board(&mut made).unwrap();
+    store.save_board(&mut made).wait().unwrap();
     (made.id, one, two)
 }
 
@@ -53,9 +54,9 @@ fn edits_to_different_cards_do_not_clash() {
     let mut first = store.board(&id).unwrap();
     let mut second = store.board(&id).unwrap();
     first.card_mut(&one).unwrap().session = Some("s1".into());
-    store.save_board(&mut first).unwrap();
+    store.save_board(&mut first).wait().unwrap();
     second.set_card_busy(&two, true);
-    store.save_board(&mut second).unwrap();
+    store.save_board(&mut second).wait().unwrap();
 
     let now = store.board(&id).unwrap();
     assert_eq!(now.card(&one).unwrap().session.as_deref(), Some("s1"));
@@ -70,10 +71,10 @@ fn edits_to_the_same_card_are_stale() {
     let mut first = store.board(&id).unwrap();
     let mut second = store.board(&id).unwrap();
     first.card_mut(&one).unwrap().session = Some("s1".into());
-    store.save_board(&mut first).unwrap();
+    store.save_board(&mut first).wait().unwrap();
     second.set_card_busy(&one, true);
     assert!(matches!(
-        store.save_board(&mut second).unwrap_err(),
+        store.save_board(&mut second).wait().unwrap_err(),
         Error::Stale
     ));
 }
@@ -87,9 +88,9 @@ fn a_card_edit_survives_a_reorder_elsewhere_but_not_its_removal() {
     let mut editor = store.board(&id).unwrap();
     let column = mover.columns[0].id.clone();
     mover.move_card_before(&two, &column, Some(&one));
-    store.save_board(&mut mover).unwrap();
+    store.save_board(&mut mover).wait().unwrap();
     editor.card_mut(&one).unwrap().session = Some("s1".into());
-    store.save_board(&mut editor).unwrap();
+    store.save_board(&mut editor).wait().unwrap();
     let now = store.board(&id).unwrap();
     assert_eq!(now.columns[0].cards[0].id, two);
     assert_eq!(now.card(&one).unwrap().session.as_deref(), Some("s1"));
@@ -97,7 +98,7 @@ fn a_card_edit_survives_a_reorder_elsewhere_but_not_its_removal() {
     let mut remover = store.board(&id).unwrap();
     let mut late = store.board(&id).unwrap();
     remover.remove_card(&one);
-    store.save_board(&mut remover).unwrap();
+    store.save_board(&mut remover).wait().unwrap();
     let file = scratch
         .path()
         .join(".cydonia/boards")
@@ -107,7 +108,7 @@ fn a_card_edit_survives_a_reorder_elsewhere_but_not_its_removal() {
     assert!(!file.exists());
     late.set_card_busy(&one, true);
     assert!(matches!(
-        store.save_board(&mut late).unwrap_err(),
+        store.save_board(&mut late).wait().unwrap_err(),
         Error::Stale
     ));
 }
@@ -118,11 +119,11 @@ fn a_moved_card_keeps_its_id() {
     let (id, one, _) = board_with_two(&scratch);
     let store = scratch.store();
     let mut from = store.board(&id).unwrap();
-    let mut to = store.create_board("Plan", "PLAN").unwrap();
+    let mut to = store.create_board("Plan", "PLAN").wait().unwrap();
     to.add_column("Todo");
     board::carry_card(&mut from, &mut to, &one, None).unwrap();
-    store.save_board(&mut to).unwrap();
-    store.save_board(&mut from).unwrap();
+    store.save_board(&mut to).wait().unwrap();
+    store.save_board(&mut from).wait().unwrap();
     assert!(store.board(&to.id).unwrap().card(&one).is_some());
     assert!(store.board(&id).unwrap().card(&one).is_none());
 }
@@ -169,14 +170,15 @@ fn a_carried_card_takes_its_pictures() {
     fs::write(assets.join("pic.png"), b"png").unwrap();
 
     let mut from = store.board(&id).unwrap();
-    let mut to = store.create_board("Plan", "PLAN").unwrap();
+    let mut to = store.create_board("Plan", "PLAN").wait().unwrap();
     to.add_column("Todo");
     let landed = board::carry_card(&mut from, &mut to, &one, None).unwrap();
     store
         .carry_card_files(&id, &one, &store, &to.id, &landed.id)
+        .wait()
         .unwrap();
-    store.save_board(&mut to).unwrap();
-    store.save_board(&mut from).unwrap();
+    store.save_board(&mut to).wait().unwrap();
+    store.save_board(&mut from).wait().unwrap();
     assert_eq!(
         fs::read(store.card_dir(&to.id, &landed.id).join("assets/pic.png")).unwrap(),
         b"png"
@@ -194,7 +196,7 @@ fn a_card_keeps_properties_cydonia_does_not_know() {
     fs::write(&properties, format!("{held}owner = \"ana\"\n")).unwrap();
     let mut board = store.board(&id).unwrap();
     board.set_card_busy(&one, true);
-    store.save_board(&mut board).unwrap();
+    store.save_board(&mut board).wait().unwrap();
     let now = fs::read_to_string(&properties).unwrap();
     assert!(now.contains("owner = \"ana\""));
     assert!(now.contains("status = \"busy\""));
@@ -210,7 +212,7 @@ fn a_card_keeps_its_session_and_blockers_on_disk() {
     let card = board.card_mut(&one).unwrap();
     card.blocked_by = vec!["WORK-2".into(), "foo#DEV-3".into()];
     card.blocks = vec!["bar#OPS-1".into()];
-    store.save_board(&mut board).unwrap();
+    store.save_board(&mut board).wait().unwrap();
 
     let now = store.board(&id).unwrap();
     let card = now.card(&one).unwrap();
@@ -233,7 +235,7 @@ fn a_status_other_than_busy_reads_as_none_and_is_dropped() {
     let mut board = store.board(&id).unwrap();
     assert!(!board.card(&one).unwrap().busy);
     board.card_mut(&one).unwrap().session = Some("s1".into());
-    store.save_board(&mut board).unwrap();
+    store.save_board(&mut board).wait().unwrap();
     assert!(!fs::read_to_string(&properties).unwrap().contains("status"));
 }
 

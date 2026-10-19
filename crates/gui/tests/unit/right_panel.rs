@@ -83,12 +83,18 @@ fn an_article_and_a_board_in_one_project_share_its_panel(cx: &mut gpui::TestAppC
     });
 
     window
-        .update(cx, |root, window, cx| {
+        .update(cx, |root, _, cx| {
             root.workspace.update(cx, |workspace, cx| {
                 workspace.open_project(path.clone(), cx);
-                workspace.new_article(cx);
-                workspace.new_board(0, "First".into(), "ONE", cx).ok();
+                workspace.new_article(cx).detach();
+                workspace.new_board(0, "First".into(), "ONE", cx).detach();
             });
+        })
+        .unwrap();
+    cx.executor().allow_parking();
+    cx.run_until_parked();
+    window
+        .update(cx, |root, window, cx| {
             root.workspace
                 .update(cx, |workspace, cx| workspace.open_article(0, 0, cx));
             root.leaf()
@@ -139,11 +145,17 @@ fn a_second_project_gets_a_panel_of_its_own(cx: &mut gpui::TestAppContext) {
     });
 
     window
-        .update(cx, |root, window, cx| {
+        .update(cx, |root, _, cx| {
             root.workspace.update(cx, |workspace, cx| {
                 workspace.open_project(one.clone(), cx);
-                workspace.new_article(cx);
+                workspace.new_article(cx).detach();
             });
+        })
+        .unwrap();
+    cx.executor().allow_parking();
+    cx.run_until_parked();
+    let first = window
+        .update(cx, |root, window, cx| {
             root.workspace
                 .update(cx, |workspace, cx| workspace.open_article(0, 0, cx));
             root.leaf()
@@ -154,8 +166,14 @@ fn a_second_project_gets_a_panel_of_its_own(cx: &mut gpui::TestAppContext) {
 
             root.workspace.update(cx, |workspace, cx| {
                 workspace.open_project(two.clone(), cx);
-                workspace.new_article(cx);
+                workspace.new_article(cx).detach();
             });
+            first
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .update(cx, |root, window, cx| {
             let project = root
                 .workspace
                 .read(cx)

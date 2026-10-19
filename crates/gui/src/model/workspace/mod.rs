@@ -23,10 +23,11 @@ use crate::{
     },
 };
 use artifact::board::Board;
+use artifact::location::Location;
 use bezel::theme::AppExt as _;
 use bezel::ui::AppExt as _;
 use bezel::{
-    gpui::{App, AppContext as _, Context, EntityId, EventEmitter},
+    gpui::{App, AppContext as _, Context, EntityId, EventEmitter, Task},
     theme::{Brand, Tint, Vibrancy, appearance::AppearanceMode},
     ui::icons::Icon,
 };
@@ -134,20 +135,20 @@ pub struct Workspace {
     /// older value stops.
     #[cfg(feature = "desktop")]
     icon_pass: u64,
-    /// What each project was last showing, by project path — where a launch
-    /// puts you back.
-    last: BTreeMap<PathBuf, state::Entry>,
-    /// The hand-arranged order of each project's entries, by project path.
+    /// What each project was last showing, by project location — where a
+    /// launch puts you back.
+    last: BTreeMap<Location, state::Entry>,
+    /// The hand-arranged order of each project's entries, by project location.
     /// Empty for a project nobody has dragged a row in, which lists by stamp
     /// until they do — see [`order`].
-    pub(super) order: BTreeMap<PathBuf, Vec<state::Entry>>,
-    /// The entries pinned to the top of each project's list, by project path
-    /// — see [`order`].
-    pub(super) pinned: BTreeMap<PathBuf, Vec<state::Entry>>,
-    /// What each project's list is ordered by under its pins, by project path
-    /// — see [`order`], which [`state::Sort::Manual`] reads and the other two
-    /// leave alone.
-    pub(super) sort: BTreeMap<PathBuf, state::Sort>,
+    pub(super) order: BTreeMap<Location, Vec<state::Entry>>,
+    /// The entries pinned to the top of each project's list, by project
+    /// location — see [`order`].
+    pub(super) pinned: BTreeMap<Location, Vec<state::Entry>>,
+    /// What each project's list is ordered by under its pins, by project
+    /// location — see [`order`], which [`state::Sort::Manual`] reads and the
+    /// other two leave alone.
+    pub(super) sort: BTreeMap<Location, state::Sort>,
     /// The main window's last frame, carried so the whole-file rewrite in
     /// [`Self::save`] keeps it.
     window: Option<state::Frame>,
@@ -179,8 +180,9 @@ impl Workspace {
         let projects: Vec<Project> = state
             .projects
             .into_iter()
-            .map(|path| {
-                let expanded = !state.collapsed.contains(&path);
+            .map(|location| {
+                let expanded = !state.collapsed.contains(&location);
+                let Location::Local(path) = location;
                 let mut project = Project::new(path, cx);
                 project.expanded = expanded;
                 project
@@ -273,15 +275,15 @@ impl Workspace {
         // down. A tool cannot read what is in memory here, and `state.toml` is
         // rewritten whole from this one place — so reading the file back would
         // be racing this line rather than avoiding it.
-        rail::set_open(self.paths());
+        rail::set_open(self.locations());
         state::save(&State {
-            projects: self.paths(),
+            projects: self.locations(),
             active: self.active.unwrap_or_default(),
             collapsed: self
                 .projects
                 .iter()
                 .filter(|project| !project.expanded)
-                .map(|project| project.path.clone())
+                .map(Project::location)
                 .collect(),
             last: self.last.clone(),
             order: self.order.clone(),

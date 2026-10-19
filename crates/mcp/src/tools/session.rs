@@ -16,6 +16,7 @@ use artifact::{
         record::Record,
     },
 };
+use futures::executor::block_on;
 use serde_json::json;
 use std::{collections::BTreeMap, path::Path, sync::mpsc};
 
@@ -223,7 +224,7 @@ pub(crate) fn turn_link(args: &Args<'_>) -> Option<String> {
     let (at, record) = (args.at()?, args.session()?);
     let store = fs::Project::new(at);
     let turn = chat::turns(&store.session(record)?.items).len();
-    let number = store.number(Kind::Session, record).ok()?;
+    let number = block_on(store.number(Kind::Session, record)).ok()?;
     let project = reference::project_name(at)?;
     let turn = turn as u64;
     (turn > 0).then(|| {
@@ -483,7 +484,7 @@ fn search(args: Args<'_>) -> Outcome {
         Searched::All(store) => lines
             .into_iter()
             .filter_map(|(id, at)| {
-                let number = store.number(Kind::Session, &id).ok()?;
+                let number = block_on(store.number(Kind::Session, &id)).ok()?;
                 let record = store.session(&id)?;
                 Some((number, record, at))
             })
@@ -498,7 +499,7 @@ fn search(args: Args<'_>) -> Outcome {
         let title = match record
             .article
             .as_deref()
-            .and_then(|article| project.number(Kind::Article, article).ok())
+            .and_then(|article| block_on(project.number(Kind::Article, article)).ok())
         {
             Some(article) => format!("{named} · under #{article}"),
             None => named.to_owned(),

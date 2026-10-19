@@ -18,17 +18,14 @@
 
 #[cfg(feature = "http")]
 use crate::tool::Trouble;
-use artifact::kind::Kind;
-use std::{
-    path::{Path, PathBuf},
-    sync::RwLock,
-};
+use artifact::{kind::Kind, location::Location};
+use std::{path::PathBuf, sync::RwLock};
 
 /// What the app does about a change.
 static HAND: RwLock<Option<Hand>> = RwLock::new(None);
 
 /// What the app is holding, as it last left it.
-static OPEN: RwLock<Vec<PathBuf>> = RwLock::new(Vec::new());
+static OPEN: RwLock<Vec<Location>> = RwLock::new(Vec::new());
 
 /// The agents configured, as the app last pushed them.
 static AGENTS: RwLock<Vec<Agent>> = RwLock::new(Vec::new());
@@ -46,8 +43,8 @@ const BROWSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
 /// agents running in it; nothing on disk is touched either way.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Change {
-    Open(PathBuf),
-    Close(PathBuf),
+    Open(Location),
+    Close(Location),
     /// A prompt for the session filed under `session` — its record id, which
     /// is unique across projects.
     Send {
@@ -113,14 +110,14 @@ pub fn install(hand: impl Fn(Change) + Send + Sync + 'static) {
 /// Say what is on the rail. Pushed by the app wherever the list is written
 /// down, rather than read back off a file: `state.toml` is the app's to rewrite
 /// whole, and a tool reading it would be racing the next save.
-pub fn set_open(projects: Vec<PathBuf>) {
+pub fn set_open(projects: Vec<Location>) {
     if let Ok(mut held) = OPEN.write() {
         *held = projects;
     }
 }
 
 /// The projects on the rail, in the order the app lists them.
-pub fn open() -> Vec<PathBuf> {
+pub fn open() -> Vec<Location> {
     OPEN.read().map(|held| held.clone()).unwrap_or_default()
 }
 
@@ -152,18 +149,22 @@ pub fn shown() -> Vec<Shown> {
     SHOWN.read().map(|held| held.clone()).unwrap_or_default()
 }
 
-/// Whether the rail is holding a project at `path`.
+/// Whether the rail is holding the project at `location`.
 ///
-/// Either spelling of it counts. The sidebar holds whatever the directory
-/// picker was given and the tools settle a path before asking about one, so
-/// `/tmp/x` and `/private/tmp/x` reach here as one project — the app resolves
-/// the same pair on its side, in `Workspace::project_at`.
-pub fn is_open(path: &Path) -> bool {
-    let settled = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    let want = settled(path);
+/// Either spelling of a local path counts. The sidebar holds whatever the
+/// directory picker was given and the tools settle a path before asking about
+/// one, so `/tmp/x` and `/private/tmp/x` reach here as one project — the app
+/// resolves the same pair on its side, in `Workspace::project_at`.
+pub fn is_open(location: &Location) -> bool {
+    let settled = |location: &Location| match location {
+        Location::Local(path) => {
+            Location::Local(path.canonicalize().unwrap_or_else(|_| path.to_path_buf()))
+        }
+    };
+    let want = settled(location);
     open()
         .iter()
-        .any(|held| held == path || settled(held) == want)
+        .any(|held| held == location || settled(held) == want)
 }
 
 /// Ask for the change, which is as far as a tool can take it.

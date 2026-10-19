@@ -32,6 +32,7 @@ use artifact::{
     reference::{self, Reference, Target},
     search::{self, Block, Query, Searchable},
 };
+use futures::executor::block_on;
 use serde_json::{Value, json};
 use std::{
     cell::RefCell,
@@ -412,7 +413,7 @@ fn add(args: Args<'_>) -> Outcome {
         return Err(Trouble::Refused("A board needs a name.".into()));
     }
     let key = artifact::board::key::claim(args.text(KEY)?, &project.boards(), None)?;
-    let board = project.create_board(name, &key).map_err(unwritten)?;
+    let board = block_on(project.create_board(name, &key)).map_err(unwritten)?;
     let lanes = Lane::first(&board);
     let here = project.root();
     Ok(Answer::said(outline(&board, &lanes, here)).with(shape(&board, &lanes, here)))
@@ -466,7 +467,7 @@ fn rename(args: Args<'_>) -> Outcome {
     if let Some(key) = key {
         board.key = key;
     }
-    project.save_board(&mut board).map_err(unwritten)?;
+    block_on(project.save_board(&mut board)).map_err(unwritten)?;
     let edits: Vec<Edit> = ends
         .iter()
         .flat_map(|(from, card, others)| {
@@ -490,7 +491,7 @@ fn describe(args: Args<'_>) -> Outcome {
     let project = &store(&args)?;
     let mut board = board(project, args.text(BOARD)?)?;
     board.description = args.text(DESCRIPTION)?.trim().to_owned();
-    project.save_board(&mut board).map_err(unwritten)?;
+    block_on(project.save_board(&mut board)).map_err(unwritten)?;
     Ok(Answer::said(match board.description.is_empty() {
         true => format!("{} has no description", spoken(&board)),
         false => format!("{} is described", spoken(&board)),
@@ -506,7 +507,7 @@ fn archive(args: Args<'_>) -> Outcome {
         let mut board = board(project, needle)?;
         board.archived = archived;
         said.push(spoken(&board));
-        project.save_board(&mut board).map_err(unwritten)?;
+        block_on(project.save_board(&mut board)).map_err(unwritten)?;
     }
     let what = match archived {
         true => "put away",
@@ -541,7 +542,7 @@ fn remove(args: Args<'_>) -> Outcome {
         })
         .collect();
     for board in &found {
-        project.remove_board(&board.id).map_err(unwritten)?;
+        block_on(project.remove_board(&board.id)).map_err(unwritten)?;
     }
     write_edits(&edits)?;
     Ok(Answer::said(format!("{} deleted", gone.join(", "))))
@@ -596,12 +597,13 @@ fn search(args: Args<'_>) -> Outcome {
     let filter = super::archived(&args)?;
     let boards: Vec<(std::path::PathBuf, Board)> = open
         .iter()
+        .filter_map(artifact::location::Location::local)
         .flat_map(|path| {
             fs::Project::new(path)
                 .boards()
                 .into_iter()
                 .filter(|board| filter.keeps(board.archived))
-                .map(move |board| (path.clone(), board))
+                .map(move |board| (path.to_path_buf(), board))
         })
         .collect();
     let mut said = Vec::new();
@@ -839,7 +841,7 @@ fn add_card(args: Args<'_>) -> Outcome {
         added.push(json!({ "id": card.id, "handle": handle }));
         handles.push(handle);
     }
-    project.save_board(&mut board).map_err(unwritten)?;
+    block_on(project.save_board(&mut board)).map_err(unwritten)?;
     Ok(
         Answer::said(format!("{} added to {name}", handles.join(", ")))
             .with(json!({ "cards": added })),
@@ -852,7 +854,7 @@ fn rewrite_card(args: Args<'_>) -> Outcome {
     let text = args.text(TEXT_NOW)?;
     let handle = named(&board, &id);
     board.rewrite_card(&id, text);
-    project.save_board(&mut board).map_err(unwritten)?;
+    block_on(project.save_board(&mut board)).map_err(unwritten)?;
     Ok(Answer::said(format!("{handle} now reads: {}", line(text))))
 }
 
@@ -888,7 +890,7 @@ fn set_card_busy(args: Args<'_>) -> Outcome {
             tagged.push(json!({ "id": id, "handle": handle, "busy": busy }));
             handles.push(handle);
         }
-        project.save_board(&mut board).map_err(unwritten)?;
+        block_on(project.save_board(&mut board)).map_err(unwritten)?;
     }
     let named = handles.join(", ");
     let are = match handles.len() {
@@ -1060,8 +1062,7 @@ fn move_card(args: Args<'_>) -> Outcome {
             if let Some(landed) =
                 artifact::board::carry_card(&mut board, &mut to, id, lane.as_deref())
             {
-                project
-                    .carry_card_files(&board.id, id, destination, &to.id, &landed.id)
+                block_on(project.carry_card_files(&board.id, id, destination, &to.id, &landed.id))
                     .map_err(unwritten)?;
                 carried.push(landed.said.clone());
                 landings.push((id.clone(), landed));
@@ -1071,9 +1072,9 @@ fn move_card(args: Args<'_>) -> Outcome {
     }
     let label = to.label().to_owned();
     for board in &mut moved {
-        project.save_board(board).map_err(unwritten)?;
+        block_on(project.save_board(board)).map_err(unwritten)?;
     }
-    destination.save_board(&mut to).map_err(unwritten)?;
+    block_on(destination.save_board(&mut to)).map_err(unwritten)?;
     let mut edits: Vec<Edit> = Vec::new();
     let mut blocks: Vec<(String, Vec<String>)> = Vec::new();
     for (id, landed) in &landings {
@@ -1169,7 +1170,7 @@ fn within(
         moved.push(board);
     }
     for board in &mut moved {
-        project.save_board(board).map_err(unwritten)?;
+        block_on(project.save_board(board)).map_err(unwritten)?;
     }
     Ok(Answer::said(format!("{spoken} moved to {name}")))
 }
@@ -1201,7 +1202,7 @@ fn remove_card(args: Args<'_>) -> Outcome {
             let card = board.remove_card(id).expect("the card was located above");
             gone.push(format!("{handle} — {}", line(&card.text)));
         }
-        project.save_board(&mut board).map_err(unwritten)?;
+        block_on(project.save_board(&mut board)).map_err(unwritten)?;
     }
     write_edits(&edits)?;
     Ok(Answer::said(format!("removed {}", gone.join("; "))))
@@ -1220,7 +1221,7 @@ fn add_column(args: Args<'_>) -> Outcome {
         names.push(column.name.clone());
     }
     let label = board.label().to_owned();
-    project.save_board(&mut board).map_err(unwritten)?;
+    block_on(project.save_board(&mut board)).map_err(unwritten)?;
     Ok(
         Answer::said(format!("{} added to {label}", names.join(", ")))
             .with(json!({ "columns": added })),
@@ -1237,7 +1238,7 @@ fn rename_column(args: Args<'_>) -> Outcome {
         .map(|column| column.name.clone())
         .unwrap_or_default();
     board.rename_column(&id, name);
-    project.save_board(&mut board).map_err(unwritten)?;
+    block_on(project.save_board(&mut board)).map_err(unwritten)?;
     Ok(Answer::said(format!("{was} is now {name}")))
 }
 
@@ -1262,7 +1263,7 @@ fn move_column(args: Args<'_>) -> Outcome {
             "{name} is already where it is being sent"
         )));
     }
-    project.save_board(&mut board).map_err(unwritten)?;
+    block_on(project.save_board(&mut board)).map_err(unwritten)?;
     Ok(Answer::said(match anchor {
         Some(anchor) => format!("{name} now sits in front of {anchor}"),
         None => format!("{name} now sits at the end"),
@@ -1300,7 +1301,7 @@ fn remove_column(args: Args<'_>) -> Outcome {
         board.remove_column(id);
         names.push(name.clone());
     }
-    project.save_board(&mut board).map_err(unwritten)?;
+    block_on(project.save_board(&mut board)).map_err(unwritten)?;
     Ok(Answer::said(format!(
         "{} removed from {label}",
         names.join(", ")
@@ -1670,7 +1671,7 @@ fn write_edits(edits: &[Edit]) -> Result<(), Trouble> {
             continue;
         };
         if blocking::apply(edits, &path, &mut board) {
-            project.save_board(&mut board).map_err(unwritten)?;
+            block_on(project.save_board(&mut board)).map_err(unwritten)?;
         }
     }
     Ok(())

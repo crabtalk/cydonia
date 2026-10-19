@@ -10,28 +10,50 @@ use artifact::kind::Kind;
 impl Workspace {
     /// A fresh document in the active project, opened as it lands — an empty
     /// article has nothing to look at but the caret.
-    pub fn new_article(&mut self, cx: &mut Context<Self>) -> Option<usize> {
-        let ix = self.create_article()?;
-        self.open_article(self.active?, ix, cx);
-        Some(ix)
+    pub fn new_article(&mut self, cx: &mut Context<Self>) -> Task<Option<(usize, usize)>> {
+        let made = self.create_article(cx);
+        cx.spawn(async move |workspace, cx| {
+            let (project, ix) = made.await?;
+            workspace
+                .update(cx, |workspace, cx| workspace.open_article(project, ix, cx))
+                .ok()?;
+            Some((project, ix))
+        })
     }
 
     /// A fresh document in the active project, not opened — what a space's
-    /// pane takes as a tab without leaving the space.
-    pub fn create_article(&mut self) -> Option<usize> {
-        let project = self.active?;
-        let article = article::create(&self.projects[project].path)?;
-        // Where a re-read would put it: the list is newest first, and a new one
-        // appended would sit at the bottom until the next load moved it.
-        self.projects[project].articles.insert(0, article);
-        Some(0)
+    /// pane takes as a tab without leaving the space. Answers its project and
+    /// its place in that project's articles once the backend has made it.
+    pub fn create_article(&mut self, cx: &mut Context<Self>) -> Task<Option<(usize, usize)>> {
+        let Some(path) = self.active_project().map(|open| open.path.clone()) else {
+            return Task::ready(None);
+        };
+        let made = article::create(&path);
+        cx.spawn(async move |workspace, cx| {
+            let article = made.await?;
+            workspace
+                .update(cx, |workspace, cx| {
+                    let project = workspace
+                        .projects
+                        .iter()
+                        .position(|open| open.path == path)?;
+                    // Where a re-read would put it: the list is newest first,
+                    // and a new one appended would sit at the bottom until the
+                    // next load moved it.
+                    workspace.projects[project].articles.insert(0, article);
+                    cx.notify();
+                    Some((project, 0))
+                })
+                .ok()
+                .flatten()
+        })
     }
 
     pub fn archive_article(&mut self, path: &Path, archived: bool, cx: &mut Context<Self>) {
         let Some(article) = self.article_at_mut(path) else {
             return;
         };
-        article.archive(archived);
+        article.archive(archived, cx);
         self.prune_archived(cx);
         cx.notify();
     }
@@ -140,7 +162,7 @@ impl Workspace {
             return;
         }
         let gone = project.articles.remove(ix);
-        gone.remove();
+        gone.remove(cx);
         project
             .sessions
             .retain(|held| held.chat.read(cx).article.as_deref() != Some(gone.id.as_str()));
@@ -188,7 +210,7 @@ impl Workspace {
     /// [`Article::set_full_width`].
     pub fn set_full_width(&mut self, on: &Path, wide: Option<bool>, cx: &mut Context<Self>) {
         if let Some(article) = self.article_at_mut(on) {
-            article.set_full_width(wide);
+            article.set_full_width(wide, cx);
             cx.notify();
         }
     }
@@ -202,7 +224,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         if let Some(article) = self.article_at_mut(on) {
-            article.set_comment_display(display);
+            article.set_comment_display(display, cx);
             cx.notify();
         }
     }

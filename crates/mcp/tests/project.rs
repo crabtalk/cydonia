@@ -23,7 +23,7 @@ fn a_directory_that_is_not_there_is_made_and_opened() {
     // macOS, and two spellings of one directory would be two projects.
     let settled = fresh.canonicalize().unwrap();
     assert_eq!(made, format!("made and opened {}", settled.display()));
-    assert!(rail.was_asked(Change::Open(settled)));
+    assert!(rail.was_asked(Change::Open(settled.into())));
 }
 
 /// A directory that is already there is opened and not touched — and one
@@ -38,7 +38,7 @@ fn a_directory_that_is_there_is_opened_as_it_stands() {
     let said = said(server.call("project_open", json!({ "path": held }), None));
 
     assert_eq!(said, format!("brought forward {}", held.display()));
-    assert!(rail.was_asked(Change::Open(held)));
+    assert!(rail.was_asked(Change::Open(held.into())));
 }
 
 /// A path that is a file is a mistake to report. Nothing is made over it, and
@@ -56,7 +56,7 @@ fn a_file_is_not_a_project() {
     assert!(why.contains("not a directory"), "{why}");
     assert!(file.is_file());
     assert!(!rail.asked().iter().any(|change| match change {
-        Change::Open(path) | Change::Close(path) => path == &file,
+        Change::Open(path) | Change::Close(path) => path.root() == file,
         Change::Send { .. }
         | Change::Start { .. }
         | Change::Rename { .. }
@@ -96,7 +96,7 @@ fn closing_a_project_leaves_the_directory_alone() {
     let said = said(server.call("project_close", json!({ "path": held }), None));
 
     assert_eq!(said, format!("closed {}", held.display()));
-    assert!(rail.was_asked(Change::Close(held)));
+    assert!(rail.was_asked(Change::Close(held.into())));
     assert!(scratch.path().is_dir());
 }
 
@@ -133,7 +133,7 @@ fn several_projects_close_in_one_call() {
 
     let why = refused(server.call("project_close", json!({ "path": [&held, &stranger] }), None));
     assert!(why.contains("is not open"), "{why}");
-    assert!(!rail.was_asked(Change::Close(held.clone())));
+    assert!(!rail.was_asked(Change::Close(held.clone().into())));
 
     let text = said(server.call("project_close", json!({ "path": [&held, &also] }), None));
 
@@ -141,6 +141,6 @@ fn several_projects_close_in_one_call() {
         text,
         format!("closed {}, {}", held.display(), also.display())
     );
-    assert!(rail.was_asked(Change::Close(held)));
-    assert!(rail.was_asked(Change::Close(also)));
+    assert!(rail.was_asked(Change::Close(held.into())));
+    assert!(rail.was_asked(Change::Close(also.into())));
 }

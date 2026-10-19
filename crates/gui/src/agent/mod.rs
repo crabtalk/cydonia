@@ -30,6 +30,7 @@ pub mod context;
 pub mod mcp;
 pub mod path;
 pub mod serve;
+pub mod spawner;
 
 /// How many of an installer's last output lines are kept.
 pub const OUTPUT_KEEP: usize = 40;

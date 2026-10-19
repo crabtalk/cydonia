@@ -11,7 +11,7 @@ use crate::{
     view::{
         component::divider,
         kit::new::{self, New},
-        sidebar::{Dragged, Row},
+        sidebar::{Dragged, Landed, Row},
         window::root::{Cydonia, NewSession},
     },
 };
@@ -20,7 +20,7 @@ use artifact::space::{Axis as Split, Member, Node, Side, Space};
 use bezel::{
     gpui::{
         AnyElement, App, Axis, Context, DragMoveEvent, Empty, Entity, SharedString,
-        StyleRefinement, Window, div, prelude::*, px, relative,
+        StyleRefinement, Task, Window, div, prelude::*, px, relative,
     },
     theme::Theme,
     ui::{docking, icons, menu::Item},
@@ -421,9 +421,9 @@ impl Cydonia {
     }
 
     /// The member a carried item names, once it has landed.
-    fn dropped(&mut self, item: &Dragged, cx: &mut Context<Self>) -> Option<Member> {
+    fn dropped(&mut self, item: &Dragged, cx: &mut Context<Self>) -> Option<Landed> {
         match item {
-            Dragged::Tab(member) => Some(member.clone()),
+            Dragged::Tab(member) => Some(Landed::Here(member.clone())),
             Dragged::Row(row) => row.landed(&self.workspace.clone(), cx),
         }
     }
@@ -440,7 +440,8 @@ impl Cydonia {
     }
 
     /// A release on a pane: into its strip where it joins, beside it where
-    /// it lands on an edge. Answers the pane the arrival is now in front of.
+    /// it lands on an edge. Answers the pane the arrival is now in front of,
+    /// and nothing for a session still being filed, which lands once it is.
     pub(crate) fn dock_drop(
         &mut self,
         event: &docking::Drop<Member, Dragged>,
@@ -455,11 +456,37 @@ impl Cydonia {
         {
             return None;
         }
-        let arriving = self.dropped(&event.item, cx)?;
+        match self.dropped(&event.item, cx)? {
+            Landed::Here(arriving) => self.dock_member(target, arriving, event.zone, window, cx),
+            Landed::Filing(filed) => {
+                let (target, zone) = (target.clone(), event.zone);
+                cx.spawn_in(window, async move |this, cx| {
+                    let Some(arriving) = filed.await else {
+                        return;
+                    };
+                    let _ = this.update_in(cx, |this, window, cx| {
+                        this.dock_member(&target, arriving, zone, window, cx)
+                    });
+                })
+                .detach();
+                None
+            }
+        }
+    }
+
+    /// Put `arriving` on `target` in `zone`.
+    fn dock_member(
+        &mut self,
+        target: &Member,
+        arriving: Member,
+        zone: docking::Zone,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Member> {
         if arriving == *target {
             return None;
         }
-        let side = match event.zone {
+        let side = match zone {
             docking::Zone::Join => {
                 self.add_tab(target, arriving.clone(), window, cx);
                 return Some(arriving);
@@ -794,40 +821,68 @@ impl Cydonia {
         {
             return self.new_session_action(&NewSession, window, cx);
         }
-        let member = self.workspace.update(cx, |workspace, cx| {
+        let member: Task<Option<Member>> = self.workspace.update(cx, |workspace, cx| {
             workspace.select_project(project, cx);
-            let showing = match kind {
+            match kind {
                 New::Session(at) => {
-                    let agent = workspace.agent_at(at, cx)?;
-                    let id = workspace.new_session(agent, None, cx)?;
+                    let Some(id) = workspace
+                        .agent_at(at, cx)
+                        .and_then(|agent| workspace.new_session(agent, None, cx))
+                    else {
+                        return Task::ready(None);
+                    };
                     // A space names its members by file, and a new session
                     // has none until its first turn.
-                    workspace.retain_session(id, cx)?;
-                    Showing::Session(id)
+                    let retained = workspace.retain_session(id, cx);
+                    cx.spawn(async move |workspace, cx| {
+                        retained.await?;
+                        workspace
+                            .update(cx, |workspace, cx| {
+                                workspace.member_of(project, Showing::Session(id), cx)
+                            })
+                            .ok()
+                            .flatten()
+                    })
                 }
                 New::Article => {
-                    let ix = workspace.create_article()?;
-                    Showing::Article(
+                    let made = workspace.create_article(cx);
+                    cx.spawn(async move |workspace, cx| {
+                        let (project, ix) = made.await?;
                         workspace
-                            .projects
-                            .get(project)?
-                            .articles
-                            .get(ix)?
-                            .id
-                            .clone(),
-                    )
+                            .update(cx, |workspace, cx| {
+                                let id = workspace
+                                    .projects
+                                    .get(project)?
+                                    .articles
+                                    .get(ix)?
+                                    .id
+                                    .clone();
+                                workspace.member_of(project, Showing::Article(id), cx)
+                            })
+                            .ok()
+                            .flatten()
+                    })
                 }
                 New::Table => {
-                    let ix = workspace.create_table()?;
-                    Showing::Table(workspace.projects.get(project)?.tables.get(ix)?.key.clone())
+                    let member = workspace.create_table().and_then(|ix| {
+                        let key = workspace.projects.get(project)?.tables.get(ix)?.key.clone();
+                        workspace.member_of(project, Showing::Table(key), cx)
+                    });
+                    Task::ready(member)
                 }
-                New::Board => return None,
-            };
-            workspace.member_of(project, showing, cx)
+                New::Board => Task::ready(None),
+            }
         });
-        if let Some(member) = member {
-            self.add_tab(pane, member, window, cx);
-        }
+        let pane = pane.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let Some(member) = member.await else {
+                return;
+            };
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.add_tab(&pane, member, window, cx)
+            });
+        })
+        .detach();
     }
 
     /// Put the seam after `at` where the pointer left it.
@@ -851,12 +906,7 @@ impl Cydonia {
 /// the path is part of it — or an app by its id.
 pub(crate) fn key_of(member: &Member) -> SharedString {
     SharedString::from(match member {
-        Member::Entry(entry) => format!(
-            "{}::{:?}::{}",
-            entry.project.display(),
-            entry.kind,
-            entry.id
-        ),
+        Member::Entry(entry) => format!("{}::{:?}::{}", entry.project, entry.kind, entry.id),
         Member::App { app } => format!("app::{app}"),
     })
 }

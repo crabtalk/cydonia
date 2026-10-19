@@ -1026,9 +1026,7 @@ fn render(
                     let workspace = hold.workspace.clone();
                     Rc::new(move |from, to, _: &mut Window, cx: &mut bezel::gpui::App| {
                         let _ = workspace.update(cx, |workspace, cx| {
-                            if let Some(link) = workspace.turn_link(id, from, to, cx) {
-                                cx.write_to_clipboard(ClipboardItem::new_string(link));
-                            }
+                            workspace.copy_turn_link(id, from, to, cx)
                         });
                     }) as OnLink
                 }),
@@ -1565,13 +1563,7 @@ fn zone(
                                             let workspace = hold.workspace.clone();
                                             move |_, _, cx| {
                                                 let _ = workspace.update(cx, |workspace, cx| {
-                                                    if let Some(link) =
-                                                        workspace.turn_link(id, turn, turn, cx)
-                                                    {
-                                                        cx.write_to_clipboard(
-                                                            ClipboardItem::new_string(link),
-                                                        );
-                                                    }
+                                                    workspace.copy_turn_link(id, turn, turn, cx)
                                                 });
                                             }
                                         })
@@ -1601,7 +1593,7 @@ fn zone(
                                             let workspace = hold.workspace.clone();
                                             move |_, _, cx| {
                                                 let _ = workspace.update(cx, |workspace, cx| {
-                                                    workspace.fork_session(id, first, cx);
+                                                    workspace.fork_session(id, first, cx).detach();
                                                 });
                                             }
                                         })

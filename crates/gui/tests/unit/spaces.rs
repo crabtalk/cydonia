@@ -57,10 +57,14 @@ fn two_boards(
 ) -> (gpui::Entity<Workspace>, Member, Member) {
     cx.update(|cx| bezel::theme::Theme::install(bezel::theme::Appearance::Light, cx));
     let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));
-    let (a, b) = workspace.update(cx, |workspace, cx| {
+    workspace.update(cx, |workspace, cx| {
         workspace.open_project(scratch.project("one"), cx);
-        workspace.new_board(0, "First".into(), "ONE", cx).ok();
-        workspace.new_board(0, "Second".into(), "TWO", cx).ok();
+        workspace.new_board(0, "First".into(), "ONE", cx).detach();
+        workspace.new_board(0, "Second".into(), "TWO", cx).detach();
+    });
+    cx.executor().allow_parking();
+    cx.run_until_parked();
+    let (a, b) = workspace.update(cx, |workspace, _| {
         (
             workspace.board_member(0, 0).expect("a member"),
             workspace.board_member(0, 1).expect("a member"),
@@ -97,7 +101,11 @@ fn later_drags_land_in_the_same_space(cx: &mut gpui::TestAppContext) {
         // Made before the first drag: making an entry opens it, and opening
         // one leaves the arrangement — so a board made half way through would
         // have the next drag mint a second space.
-        workspace.new_board(0, "Third".into(), "THR", cx).ok();
+        workspace.new_board(0, "Third".into(), "THR", cx).detach();
+    });
+    cx.executor().allow_parking();
+    cx.run_until_parked();
+    workspace.update(cx, |workspace, cx| {
         let c = workspace.board_member(0, 0).expect("a member");
 
         workspace.arrange(&a, &b, Side::Right, cx);
@@ -136,11 +144,15 @@ fn a_space_can_span_projects(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| bezel::theme::Theme::install(bezel::theme::Appearance::Light, cx));
     let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));
 
-    let id = workspace.update(cx, |workspace, cx| {
+    workspace.update(cx, |workspace, cx| {
         workspace.open_project(scratch.project("one"), cx);
         workspace.open_project(scratch.project("two"), cx);
-        workspace.new_board(0, "Here".into(), "ONE", cx).ok();
-        workspace.new_board(1, "There".into(), "TWO", cx).ok();
+        workspace.new_board(0, "Here".into(), "ONE", cx).detach();
+        workspace.new_board(1, "There".into(), "TWO", cx).detach();
+    });
+    cx.executor().allow_parking();
+    cx.run_until_parked();
+    let id = workspace.update(cx, |workspace, cx| {
         let here = workspace.board_member(0, 0).expect("a member");
         let there = workspace.board_member(1, 0).expect("a member");
         assert_ne!(here.project(), there.project(), "two repositories");
@@ -158,7 +170,7 @@ fn a_space_can_span_projects(cx: &mut gpui::TestAppContext) {
     let projects: Vec<_> = read
         .entries()
         .into_iter()
-        .map(|member| member.project().map(std::path::Path::to_path_buf))
+        .map(|member| member.project().cloned())
         .collect();
     assert_ne!(projects[0], projects[1], "written as two projects' entries");
 }
@@ -208,7 +220,11 @@ fn an_entry_belongs_to_one_space(cx: &mut gpui::TestAppContext) {
     let (workspace, a, b) = two_boards(&scratch, cx);
 
     workspace.update(cx, |workspace, cx| {
-        workspace.new_board(0, "Third".into(), "THR", cx).ok();
+        workspace.new_board(0, "Third".into(), "THR", cx).detach();
+    });
+    cx.executor().allow_parking();
+    cx.run_until_parked();
+    workspace.update(cx, |workspace, cx| {
         let c = workspace.board_member(0, 2).expect("a member");
 
         workspace.arrange(&a, &c, Side::Right, cx);
@@ -315,8 +331,12 @@ fn a_space_is_dropped_by_the_id_it_was_named_with(cx: &mut gpui::TestAppContext)
 fn the_pane_dropped_on_leaves_the_space_that_held_it(cx: &mut gpui::TestAppContext) {
     let scratch = Scratch::new("exclusive");
     let (workspace, a, b) = two_boards(&scratch, cx);
-    let c = workspace.update(cx, |workspace, cx| {
-        workspace.new_board(0, "Third".into(), "THR", cx).ok();
+    workspace.update(cx, |workspace, cx| {
+        workspace.new_board(0, "Third".into(), "THR", cx).detach();
+    });
+    cx.executor().allow_parking();
+    cx.run_until_parked();
+    let c = workspace.update(cx, |workspace, _| {
         workspace.board_member(0, 2).expect("a member")
     });
 
@@ -385,7 +405,11 @@ fn an_entry_can_be_dropped_from_the_space_holding_it(cx: &mut gpui::TestAppConte
     let (workspace, a, b) = two_boards(&scratch, cx);
 
     workspace.update(cx, |workspace, cx| {
-        workspace.new_board(0, "Third".into(), "THR", cx).ok();
+        workspace.new_board(0, "Third".into(), "THR", cx).detach();
+    });
+    cx.executor().allow_parking();
+    cx.run_until_parked();
+    workspace.update(cx, |workspace, cx| {
         let c = workspace.board_member(0, 0).expect("a member");
         workspace.arrange(&a, &b, Side::Right, cx);
         workspace.arrange(&b, &c, Side::Below, cx);
@@ -431,7 +455,11 @@ fn sending_into_a_pane_stays_in_the_space(cx: &mut gpui::TestAppContext) {
 
     workspace.update(cx, |workspace, cx| {
         workspace.open_project(scratch.project("one"), cx);
-        workspace.new_board(0, "First".into(), "ONE", cx).ok();
+        workspace.new_board(0, "First".into(), "ONE", cx).detach();
+    });
+    cx.executor().allow_parking();
+    cx.run_until_parked();
+    workspace.update(cx, |workspace, cx| {
         let board = workspace.board_member(0, 0).expect("a member");
 
         // Restored rather than opened: a session made through `new_session`
@@ -495,8 +523,12 @@ fn stacking_joins_a_pane_instead_of_splitting_it(cx: &mut gpui::TestAppContext) 
     workspace.update(cx, |workspace, cx| {
         workspace.open_project(scratch.project("one"), cx);
         for (name, key) in [("First", "ONE"), ("Second", "TWO"), ("Third", "THR")] {
-            workspace.new_board(0, name.into(), key, cx).ok();
+            workspace.new_board(0, name.into(), key, cx).detach();
         }
+    });
+    cx.executor().allow_parking();
+    cx.run_until_parked();
+    workspace.update(cx, |workspace, cx| {
         let a = workspace.board_member(0, 0).expect("a member");
         let b = workspace.board_member(0, 1).expect("a member");
         let c = workspace.board_member(0, 2).expect("a member");
@@ -526,8 +558,12 @@ fn closing_a_tab_leaves_the_pane_and_the_space_alone(cx: &mut gpui::TestAppConte
     workspace.update(cx, |workspace, cx| {
         workspace.open_project(scratch.project("one"), cx);
         for (name, key) in [("First", "ONE"), ("Second", "TWO"), ("Third", "THR")] {
-            workspace.new_board(0, name.into(), key, cx).ok();
+            workspace.new_board(0, name.into(), key, cx).detach();
         }
+    });
+    cx.executor().allow_parking();
+    cx.run_until_parked();
+    workspace.update(cx, |workspace, cx| {
         let a = workspace.board_member(0, 0).expect("a member");
         let b = workspace.board_member(0, 1).expect("a member");
         let c = workspace.board_member(0, 2).expect("a member");
@@ -561,8 +597,12 @@ fn stacking_an_arranged_entry_moves_it(cx: &mut gpui::TestAppContext) {
     workspace.update(cx, |workspace, cx| {
         workspace.open_project(scratch.project("one"), cx);
         for (name, key) in [("First", "ONE"), ("Second", "TWO"), ("Third", "THR")] {
-            workspace.new_board(0, name.into(), key, cx).ok();
+            workspace.new_board(0, name.into(), key, cx).detach();
         }
+    });
+    cx.executor().allow_parking();
+    cx.run_until_parked();
+    workspace.update(cx, |workspace, cx| {
         let a = workspace.board_member(0, 0).expect("a member");
         let b = workspace.board_member(0, 1).expect("a member");
         let c = workspace.board_member(0, 2).expect("a member");
@@ -590,8 +630,12 @@ fn stacking_onto_a_lone_pane_starts_a_space(cx: &mut gpui::TestAppContext) {
     workspace.update(cx, |workspace, cx| {
         workspace.open_project(scratch.project("one"), cx);
         for (name, key) in [("First", "ONE"), ("Second", "TWO")] {
-            workspace.new_board(0, name.into(), key, cx).ok();
+            workspace.new_board(0, name.into(), key, cx).detach();
         }
+    });
+    cx.executor().allow_parking();
+    cx.run_until_parked();
+    workspace.update(cx, |workspace, cx| {
         let a = workspace.board_member(0, 0).expect("a member");
         let b = workspace.board_member(0, 1).expect("a member");
         assert!(workspace.active_space().is_none());
@@ -626,8 +670,12 @@ fn stacking_moves_an_entry_between_spaces(cx: &mut gpui::TestAppContext) {
             ("Third", "THR"),
             ("Fourth", "FOU"),
         ] {
-            workspace.new_board(0, name.into(), key, cx).ok();
+            workspace.new_board(0, name.into(), key, cx).detach();
         }
+    });
+    cx.executor().allow_parking();
+    cx.run_until_parked();
+    workspace.update(cx, |workspace, cx| {
         let a = workspace.board_member(0, 0).expect("a member");
         let b = workspace.board_member(0, 1).expect("a member");
         let c = workspace.board_member(0, 2).expect("a member");
@@ -654,14 +702,18 @@ fn a_pane_put_on_an_article_opens_it(cx: &mut gpui::TestAppContext) {
     let path = scratch.project("one");
     // Written before the project is opened, so the article arrives the way one
     // read off disk at launch does: listed, and never opened.
-    crate::model::article::create(&path).expect("an article on disk");
+    futures::executor::block_on(crate::model::article::create(&path)).expect("an article on disk");
 
     cx.update(|cx| bezel::theme::Theme::install(bezel::theme::Appearance::Light, cx));
     let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));
 
     workspace.update(cx, |workspace, cx| {
         workspace.open_project(path, cx);
-        workspace.new_board(0, "First".into(), "ONE", cx).ok();
+        workspace.new_board(0, "First".into(), "ONE", cx).detach();
+    });
+    cx.executor().allow_parking();
+    cx.run_until_parked();
+    workspace.update(cx, |workspace, cx| {
         let board = workspace.board_member(0, 0).expect("a member");
         let article = workspace.article_member(0, 0).expect("a member");
         assert!(
@@ -702,8 +754,12 @@ fn a_tab_can_be_carried_to_another_pane(cx: &mut gpui::TestAppContext) {
     workspace.update(cx, |workspace, cx| {
         workspace.open_project(scratch.project("one"), cx);
         for (name, key) in [("First", "ONE"), ("Second", "TWO"), ("Third", "THR")] {
-            workspace.new_board(0, name.into(), key, cx).ok();
+            workspace.new_board(0, name.into(), key, cx).detach();
         }
+    });
+    cx.executor().allow_parking();
+    cx.run_until_parked();
+    workspace.update(cx, |workspace, cx| {
         let a = workspace.board_member(0, 0).expect("a member");
         let b = workspace.board_member(0, 1).expect("a member");
         let c = workspace.board_member(0, 2).expect("a member");
@@ -731,8 +787,12 @@ fn a_tab_dropped_on_its_own_bar_stays_put(cx: &mut gpui::TestAppContext) {
     workspace.update(cx, |workspace, cx| {
         workspace.open_project(scratch.project("one"), cx);
         for (name, key) in [("First", "ONE"), ("Second", "TWO"), ("Third", "THR")] {
-            workspace.new_board(0, name.into(), key, cx).ok();
+            workspace.new_board(0, name.into(), key, cx).detach();
         }
+    });
+    cx.executor().allow_parking();
+    cx.run_until_parked();
+    workspace.update(cx, |workspace, cx| {
         let a = workspace.board_member(0, 0).expect("a member");
         let b = workspace.board_member(0, 1).expect("a member");
         let c = workspace.board_member(0, 2).expect("a member");
@@ -756,8 +816,12 @@ fn a_tab_carried_to_an_edge_becomes_its_own_pane(cx: &mut gpui::TestAppContext) 
     workspace.update(cx, |workspace, cx| {
         workspace.open_project(scratch.project("one"), cx);
         for (name, key) in [("First", "ONE"), ("Second", "TWO"), ("Third", "THR")] {
-            workspace.new_board(0, name.into(), key, cx).ok();
+            workspace.new_board(0, name.into(), key, cx).detach();
         }
+    });
+    cx.executor().allow_parking();
+    cx.run_until_parked();
+    workspace.update(cx, |workspace, cx| {
         let a = workspace.board_member(0, 0).expect("a member");
         let b = workspace.board_member(0, 1).expect("a member");
         let c = workspace.board_member(0, 2).expect("a member");
@@ -826,7 +890,11 @@ fn a_session_with_no_file_can_be_given_one_and_arranged(cx: &mut gpui::TestAppCo
 
     workspace.update(cx, |workspace, cx| {
         workspace.open_project(scratch.project("one"), cx);
-        workspace.new_board(0, "First".into(), "ONE", cx).ok();
+        workspace.new_board(0, "First".into(), "ONE", cx).detach();
+    });
+    cx.executor().allow_parking();
+    cx.run_until_parked();
+    let (board, retained) = workspace.update(cx, |workspace, cx| {
         let board = workspace.board_member(0, 0).expect("a member");
 
         let path = workspace.projects[0].path.clone();
@@ -841,7 +909,11 @@ fn a_session_with_no_file_can_be_given_one_and_arranged(cx: &mut gpui::TestAppCo
             "nothing for a space to name yet",
         );
 
-        workspace.retain_session(7, cx).expect("a file is minted");
+        (board, workspace.retain_session(7, cx))
+    });
+    cx.run_until_parked();
+    futures::executor::block_on(retained).expect("a file is minted");
+    workspace.update(cx, |workspace, cx| {
         let session = workspace
             .member_of_session(7, cx)
             .expect("and now it names one");
@@ -884,7 +956,11 @@ fn making_an_entry_leaves_the_project_folded(cx: &mut gpui::TestAppContext) {
         workspace.toggle_project(0, cx);
         assert!(!workspace.projects[0].expanded, "folded to start");
 
-        workspace.new_board(0, "First".into(), "ONE", cx).ok();
+        workspace.new_board(0, "First".into(), "ONE", cx).detach();
+    });
+    cx.executor().allow_parking();
+    cx.run_until_parked();
+    workspace.update(cx, |workspace, _| {
         assert!(!workspace.projects[0].expanded);
     });
 }
@@ -901,8 +977,12 @@ fn a_space_keeps_the_place_it_was_dragged_to(cx: &mut gpui::TestAppContext) {
         workspace.arrange(&a, &b, Side::Right, cx);
         // A second space, over two boards the first one does not hold: an
         // entry is in one space at a time.
-        workspace.new_board(0, "Third".into(), "THR", cx).ok();
-        workspace.new_board(0, "Fourth".into(), "FOU", cx).ok();
+        workspace.new_board(0, "Third".into(), "THR", cx).detach();
+        workspace.new_board(0, "Fourth".into(), "FOU", cx).detach();
+    });
+    cx.executor().allow_parking();
+    cx.run_until_parked();
+    workspace.update(cx, |workspace, cx| {
         let c = workspace.board_member(0, 0).expect("a member");
         let d = workspace.board_member(0, 1).expect("a member");
         workspace.leave_space();
@@ -951,8 +1031,12 @@ fn closing_a_pane_beside_a_stack_keeps_the_space(cx: &mut gpui::TestAppContext) 
     workspace.update(cx, |workspace, cx| {
         workspace.open_project(scratch.project("one"), cx);
         for (name, key) in [("First", "ONE"), ("Second", "TWO"), ("Third", "THR")] {
-            workspace.new_board(0, name.into(), key, cx).ok();
+            workspace.new_board(0, name.into(), key, cx).detach();
         }
+    });
+    cx.executor().allow_parking();
+    cx.run_until_parked();
+    workspace.update(cx, |workspace, cx| {
         let a = workspace.board_member(0, 0).expect("a member");
         let b = workspace.board_member(0, 1).expect("a member");
         let c = workspace.board_member(0, 2).expect("a member");
@@ -979,8 +1063,12 @@ fn a_pane_answers_for_its_own_board(cx: &mut gpui::TestAppContext) {
     workspace.update(cx, |workspace, cx| {
         workspace.open_project(scratch.project("one"), cx);
         for (name, key) in [("First", "ONE"), ("Second", "TWO")] {
-            workspace.new_board(0, name.into(), key, cx).ok();
+            workspace.new_board(0, name.into(), key, cx).detach();
         }
+    });
+    cx.executor().allow_parking();
+    cx.run_until_parked();
+    let (on_a, on_b, made) = workspace.update(cx, |workspace, cx| {
         let a = workspace.board_member(0, 0).expect("a member");
         let b = workspace.board_member(0, 1).expect("a member");
         workspace.arrange(&a, &b, Side::Right, cx);
@@ -1003,14 +1091,20 @@ fn a_pane_answers_for_its_own_board(cx: &mut gpui::TestAppContext) {
             "and no pane falls back to the project's own",
         );
 
-        let column = workspace
-            .write_board(&on_a, cx, |board| board.add_column("Todo").id.clone())
-            .expect("the pane's board");
+        let made = workspace.write_board(&on_a, cx, |board| board.add_column("Todo").id.clone());
+        (on_a, on_b, made)
+    });
+    cx.run_until_parked();
+    let column = futures::executor::block_on(made).expect("the pane's board");
+    workspace.update(cx, |workspace, cx| {
         workspace
-            .write_board(&on_a, cx, |board| {
-                board.add_card(&column, "written in the left pane".into());
+            .write_board(&on_a, cx, {
+                let column = column.clone();
+                move |board| {
+                    board.add_card(&column, "written in the left pane".into());
+                }
             })
-            .expect("the pane's board");
+            .detach();
 
         assert_eq!(
             workspace
@@ -1040,27 +1134,49 @@ fn a_stale_board_write_lands_on_the_other_writers_board(cx: &mut gpui::TestAppCo
     cx.update(|cx| bezel::theme::Theme::install(bezel::theme::Appearance::Light, cx));
     let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));
 
+    let path = scratch.project("one");
     workspace.update(cx, |workspace, cx| {
-        let path = scratch.project("one");
         workspace.open_project(path.clone(), cx);
-        workspace.new_board(0, "Plans".into(), "PLAN", cx).ok();
+        workspace.new_board(0, "Plans".into(), "PLAN", cx).detach();
+    });
+    cx.executor().allow_parking();
+    cx.run_until_parked();
+    let other = crate::model::store::open(&path.clone().into());
+    let (id, made) = workspace.update(cx, |workspace, cx| {
         let id = workspace.active_board(cx).expect("a board").id.clone();
-        let column = workspace
-            .write_board(&id, cx, |board| board.add_column("Todo").id.clone())
-            .expect("the board");
-
+        let made = workspace.write_board(&id, cx, |board| board.add_column("Todo").id.clone());
+        (id, made)
+    });
+    cx.run_until_parked();
+    let column = futures::executor::block_on(made).expect("the board");
+    let mine = workspace.update(cx, |workspace, cx| {
         // The other writer, straight through the backend, unseen by the window.
-        let other = crate::model::store::open(&path);
         let mut theirs = other.board(&id).expect("on disk");
         theirs.add_card(&column, "theirs".into());
-        other.save_board(&mut theirs).expect("their save");
+        futures::executor::block_on(other.save_board(&mut theirs)).expect("their save");
 
-        workspace
-            .write_board(&id, cx, |board| {
-                board.add_card(&column, "mine".into());
-            })
-            .expect("the board");
-
+        let mine = column.clone();
+        workspace.write_board(&id, cx, move |board| {
+            board
+                .add_card(&mine, "mine".into())
+                .map(|card| card.id.clone())
+        })
+    });
+    // The save is answered stale, and the edit goes again onto theirs; the
+    // card answered is the one that run made.
+    cx.run_until_parked();
+    let mine = futures::executor::block_on(mine)
+        .expect("the board")
+        .expect("a card");
+    assert!(
+        crate::model::store::open(&path.clone().into())
+            .board(&id)
+            .expect("on disk")
+            .card(&mine)
+            .is_some(),
+        "the answer names the card that was saved",
+    );
+    workspace.update(cx, |workspace, cx| {
         let texts = |board: &Board| -> Vec<String> {
             board
                 .column(&column)
@@ -1109,9 +1225,14 @@ fn a_space_fold_is_kept_like_a_project_fold(cx: &mut gpui::TestAppContext) {
 fn an_article_made_in_a_pane_stays_in_the_space(cx: &mut gpui::TestAppContext) {
     let scratch = Scratch::new("pane-article");
     let (workspace, a, b) = two_boards(&scratch, cx);
-    workspace.update(cx, |workspace, cx| {
+    let made = workspace.update(cx, |workspace, cx| {
         workspace.arrange(&a, &b, Side::Right, cx);
-        let ix = workspace.create_article().expect("made");
+        workspace.create_article(cx)
+    });
+    cx.executor().allow_parking();
+    cx.run_until_parked();
+    let (_, ix) = futures::executor::block_on(made).expect("made");
+    workspace.update(cx, |workspace, cx| {
         let id = workspace.projects[0].articles[ix].id.clone();
         let member = workspace
             .member_of(0, Showing::Article(id), cx)
@@ -1137,7 +1258,11 @@ fn archiving_an_entry_takes_it_out_of_its_space(cx: &mut gpui::TestAppContext) {
     let (workspace, a, b) = two_boards(&scratch, cx);
 
     workspace.update(cx, |workspace, cx| {
-        workspace.new_board(0, "Third".into(), "THR", cx).ok();
+        workspace.new_board(0, "Third".into(), "THR", cx).detach();
+    });
+    cx.executor().allow_parking();
+    cx.run_until_parked();
+    workspace.update(cx, |workspace, cx| {
         let c = workspace.board_member(0, 0).expect("a member");
         workspace.arrange(&a, &b, Side::Right, cx);
         workspace.arrange(&b, &c, Side::Below, cx);
@@ -1177,7 +1302,11 @@ fn a_loaded_app_keeps_its_place_with_developer_mode_off(cx: &mut gpui::TestAppCo
     let workspace = cx.new(|cx| Workspace::new(settings, state::State::default(), cx));
     workspace.update(cx, |workspace, cx| {
         workspace.open_project(scratch.project("one"), cx);
-        workspace.new_board(0, "First".into(), "ONE", cx).ok();
+        workspace.new_board(0, "First".into(), "ONE", cx).detach();
+    });
+    cx.executor().allow_parking();
+    cx.run_until_parked();
+    workspace.update(cx, |workspace, cx| {
         let board = workspace.board_member(0, 0).expect("a member");
         let app = Member::app("hello");
         assert_eq!(workspace.listed_apps(cx).count(), 1);

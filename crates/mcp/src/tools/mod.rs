@@ -26,6 +26,7 @@ use crate::{
 };
 use artifact::archive::Archived;
 use artifact::error::{Act, Error};
+use artifact::location::Location;
 use artifact::reference::{Reference, Target, Within};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -103,7 +104,7 @@ pub(crate) fn root<'a>(args: &Args<'a>) -> Result<&'a Path, Trouble> {
 /// A named project, where cydonia has it open. Anywhere else is refused, and
 /// no `.cydonia/` is made there.
 pub(crate) fn on_the_rail(path: &Path) -> Result<&Path, Trouble> {
-    if rail::is_open(path) {
+    if rail::is_open(&Location::from(path)) {
         return Ok(path);
     }
     Err(Error::ProjectClosed {
@@ -131,14 +132,15 @@ pub(crate) fn project_named(name: &str) -> Result<PathBuf, Trouble> {
     let open = rail::open();
     let mut named = open
         .iter()
+        .filter_map(Location::local)
         .filter(|path| artifact::reference::names(path, name));
     match (named.next(), named.next()) {
-        (Some(one), None) => Ok(one.clone()),
+        (Some(one), None) => Ok(one.to_path_buf()),
         (Some(_), Some(_)) => Err(Trouble::Refused(format!(
             "more than one open project is named {name} — {}; name it by its whole path",
             open.iter()
-                .filter(|path| path.file_name().is_some_and(|last| last == name))
-                .map(|path| path.display().to_string())
+                .filter(|open| open.root().file_name().is_some_and(|last| last == name))
+                .map(Location::to_string)
                 .collect::<Vec<_>>()
                 .join(", ")
         ))),
@@ -233,7 +235,7 @@ pub(crate) fn held() -> Option<String> {
     let open = rail::open();
     (!open.is_empty()).then(|| {
         open.iter()
-            .map(|path| path.display().to_string())
+            .map(Location::to_string)
             .collect::<Vec<_>>()
             .join(", ")
     })
