@@ -5,6 +5,8 @@
 //! looked up on are all the spawner's host's.
 
 use super::path::{DUMP, Environment, LOGIN, TIMEOUT};
+use crate::model::remote::Remotes;
+use artifact::location::Location;
 use cupola::{
     exec::{self, Exec, Input, Output},
     shell::Script,
@@ -18,6 +20,7 @@ use std::{
     path::{Path, PathBuf},
     pin::Pin,
     process::Stdio,
+    sync::Arc,
 };
 use tokio::{
     io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _, DuplexStream},
@@ -72,9 +75,16 @@ pub trait Spawner: Send + Sync {
 /// What [`Spawner::spawn`] answers.
 pub type Spawning<'a> = Pin<Box<dyn Future<Output = io::Result<Process>> + Send + 'a>>;
 
-/// The spawner for a project, by its root.
-pub fn open(_root: &Path) -> Box<dyn Spawner> {
-    Box::new(Local::new())
+/// The spawner for the project at `location`: this machine's, or its host's,
+/// connected once per host — see [`Remotes::spawner`].
+pub async fn open(location: &Location) -> io::Result<Arc<dyn Spawner>> {
+    match location {
+        Location::Local(_) => Ok(Arc::new(Local::new())),
+        Location::Remote { host, .. } => {
+            let remotes = Remotes::get().map_err(io::Error::other)?;
+            Ok(remotes.spawner(*host).await?)
+        }
+    }
 }
 
 /// This machine. Its `PATH` is this process's as [`super::path::adopt`]

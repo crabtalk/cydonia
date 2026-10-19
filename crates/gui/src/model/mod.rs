@@ -17,7 +17,7 @@ pub mod notify;
 #[cfg(feature = "desktop")]
 pub mod prices;
 pub mod project;
-#[cfg(all(feature = "desktop", unix))]
+#[cfg(feature = "desktop")]
 pub mod remote;
 pub mod session;
 pub mod session_preferences;

@@ -1,9 +1,12 @@
 //! A session's shell: the PTY lives as long as this entity, even while hidden.
 
+#[cfg(unix)]
+use crate::model::remote::Remotes;
 use crate::{
     model::{fonts, typography},
     view::keymap,
 };
+use artifact::location::Location;
 use bezel::{
     gpui::{
         self, App, ClipboardEntry, ClipboardItem, Context, Edges, Entity, EventEmitter,
@@ -142,6 +145,27 @@ pub enum Login {
 }
 
 impl Login {
+    /// The login shell at `location`'s root: through its host's ssh
+    /// connection, for a location on another machine. Refused where that
+    /// connection cannot be had.
+    pub fn of(location: &Location) -> anyhow::Result<Self> {
+        match location {
+            Location::Local(dir) => Ok(Self::Local(dir.clone())),
+            #[cfg(unix)]
+            Location::Remote { host, root } => {
+                let control = Remotes::get()?
+                    .control(*host)
+                    .ok_or_else(|| anyhow::anyhow!("{location} is not connected"))?;
+                Ok(Self::Remote {
+                    control,
+                    dir: root.clone(),
+                })
+            }
+            #[cfg(not(unix))]
+            Location::Remote { .. } => anyhow::bail!("this build reaches no remote host"),
+        }
+    }
+
     /// Where the shell starts, on whichever machine runs it.
     fn directory(&self) -> PathBuf {
         match self {
@@ -382,28 +406,21 @@ pub struct Terminal {
 }
 
 impl Terminal {
+    /// A terminal on [`Login::of`] `location`, or one saying why there is
+    /// none.
+    pub fn at(location: &Location, cx: &mut Context<Self>) -> Self {
+        match Login::of(location) {
+            Ok(login) => Self::new(login, cx),
+            Err(error) => {
+                let mut this = Self::empty(location.root().to_path_buf(), cx);
+                this.status = Some(format!("Could not start terminal: {error:#}"));
+                this
+            }
+        }
+    }
+
     pub fn new(login: Login, cx: &mut Context<Self>) -> Self {
-        let mut this = Self {
-            directory: login.directory(),
-            emulator: Emulator::new(80, 24),
-            images: Images::new(),
-            shell: None,
-            focus: cx.focus_handle(),
-            menu: ContextMenu::default(),
-            geometry: None,
-            pressed: None,
-            selecting: false,
-            drag: None,
-            edge_scroll: None,
-            scroll_remainder: 0.,
-            status: None,
-            hold: None,
-            batch: OutputBatch::default(),
-            flush: None,
-            cursor_on: true,
-            blink: None,
-            _pump: None,
-        };
+        let mut this = Self::empty(login.directory(), cx);
         match Shell::open(&login) {
             Ok((shell, mut output)) => {
                 this.shell = Some(shell);
@@ -426,6 +443,31 @@ impl Terminal {
             Err(error) => this.status = Some(format!("Could not start terminal: {error}")),
         }
         this
+    }
+
+    /// A terminal at `directory` with no shell.
+    fn empty(directory: PathBuf, cx: &mut Context<Self>) -> Self {
+        Self {
+            directory,
+            emulator: Emulator::new(80, 24),
+            images: Images::new(),
+            shell: None,
+            focus: cx.focus_handle(),
+            menu: ContextMenu::default(),
+            geometry: None,
+            pressed: None,
+            selecting: false,
+            drag: None,
+            edge_scroll: None,
+            scroll_remainder: 0.,
+            status: None,
+            hold: None,
+            batch: OutputBatch::default(),
+            flush: None,
+            cursor_on: true,
+            blink: None,
+            _pump: None,
+        }
     }
 
     /// Hand one PTY read to the batch, feeding what it gives back.
@@ -1045,10 +1087,10 @@ struct Tab {
 }
 
 /// Where a shell should start, asked of the window as the tab is made.
-type Cwd = Box<dyn Fn(&App) -> Option<std::path::PathBuf>>;
+type Cwd = Box<dyn Fn(&App) -> Option<Location>>;
 
 pub struct TerminalPanel {
-    cwd: std::path::PathBuf,
+    cwd: Location,
     /// Where the next tab opens, asked as the tab is made. The panel stays
     /// open across everything the window moves to, so the directory it was
     /// first opened at is not where a shell started now belongs.
@@ -1068,13 +1110,13 @@ impl TerminalPanel {
     /// after it. Two arguments because the first is made while the caller is
     /// still mid-update, and cannot read itself back.
     pub fn new(
-        cwd: &Path,
-        next_cwd: impl Fn(&App) -> Option<std::path::PathBuf> + 'static,
+        cwd: &Location,
+        next_cwd: impl Fn(&App) -> Option<Location> + 'static,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let mut panel = Self {
-            cwd: cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf()),
+            cwd: cwd.settled(),
             next_cwd: Box::new(next_cwd),
             tabs: Vec::new(),
             strip: tabs::Strip::new(),
@@ -1091,10 +1133,10 @@ impl TerminalPanel {
         let cwd = match self.tabs.is_empty() {
             true => self.cwd.clone(),
             false => (self.next_cwd)(cx)
-                .map(|cwd| cwd.canonicalize().unwrap_or(cwd))
+                .map(|cwd| cwd.settled())
                 .unwrap_or_else(|| self.cwd.clone()),
         };
-        let terminal = cx.new(|cx| Terminal::new(Login::Local(cwd), cx));
+        let terminal = cx.new(|cx| Terminal::at(&cwd, cx));
         let exit = cx.subscribe_in(&terminal, window, move |this, _, _: &Exited, window, cx| {
             this.close(id, window, cx);
         });

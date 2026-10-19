@@ -17,7 +17,8 @@ use anyhow::anyhow;
 use cydonia_cupola::{
     Client, Error, Server, Service,
     client::{
-        controller::{Changes, Connector, Controller, HostId, HostStatus},
+        controller::{Changes, Connector, Controller, HostStatus},
+        host::HostId,
         session::{Heartbeat, Link, Mode, Status, Transport},
         ssh::Host,
     },

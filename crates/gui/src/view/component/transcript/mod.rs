@@ -243,7 +243,7 @@ impl State {
         &self,
         images: Vec<bezel::gpui::ImageSource>,
         selected: usize,
-        cwd: &std::path::Path,
+        cwd: &artifact::location::Location,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut bezel::gpui::App,
@@ -486,7 +486,7 @@ fn prose(
         hold.state.dragging_in(ix),
         markdown::Editing {
             annotations: &washes,
-            base: Some(&chat.cwd),
+            base: Some(chat.cwd()),
             ..Default::default()
         },
         window,
@@ -502,7 +502,7 @@ fn prose(
             }
         },
     );
-    let cwd = chat.cwd.clone();
+    let cwd = chat.location.clone();
     // Agent images, as (block, url) in the order they appear.
     let pictures: Rc<Vec<(usize, String)>> =
         Rc::new(if matches!(chat.items.get(ix), Some(ChatItem::User(_))) {
@@ -557,7 +557,7 @@ fn prose(
                 if clicked {
                     let images = pictures
                         .iter()
-                        .map(|(_, url)| gallery::source(url, &cwd))
+                        .map(|(_, url)| gallery::source(url, cwd.root()))
                         .collect();
                     view.update(cx, |view, cx| {
                         view.state.release();
@@ -1453,7 +1453,7 @@ fn zone(
                 .entry(first)
                 .or_insert_with(|| {
                     let workspace = hold.workspace.clone();
-                    cx.new(|cx| gallery::Gallery::new(images, &chat.cwd, workspace, cx))
+                    cx.new(|cx| gallery::Gallery::new(images, &chat.location, workspace, cx))
                 })
                 .clone()
         });

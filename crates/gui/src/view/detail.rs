@@ -15,7 +15,7 @@ use crate::{
     },
 };
 use artifact::kind::Kind;
-use artifact::{session::chat::ChatItem, space::Member};
+use artifact::{location::Location, session::chat::ChatItem, space::Member};
 use bezel::{
     gpui::{
         self, AnyElement, App, Axis, Context, Div, DragMoveEvent, Empty, FocusHandle,
@@ -279,20 +279,20 @@ impl Cydonia {
     ///
     /// Asked again for each tab, not once for the panel: the panel outlives
     /// whatever was in front when it was opened.
-    pub(crate) fn shell_cwd(&self, cx: &App) -> Option<PathBuf> {
+    pub(crate) fn shell_cwd(&self, cx: &App) -> Option<Location> {
         let workspace = self.workspace.read(cx);
         if let Some(space) = workspace.active_space() {
             return space
                 .panes()
                 .into_iter()
-                .find_map(|pane| pane.project().map(|project| project.root().to_path_buf()));
+                .find_map(|pane| pane.project().cloned());
         }
         if self.showing(cx) == Some(Kind::Session)
             && let Some(chat) = workspace.active_session(cx)
         {
-            return Some(chat.cwd.clone());
+            return Some(chat.location.clone());
         }
-        Some(workspace.active_project()?.path.clone())
+        Some(workspace.active_project()?.location().clone())
     }
 
     /// Nothing without the `desktop` feature: there is no shell to run.
@@ -1114,7 +1114,7 @@ impl Cydonia {
         let name = workspace
             .projects
             .get(ix)
-            .map(|project| project.path.shown())
+            .map(|project| project.root().shown())
             .unwrap_or_default();
         let offered = new::offered(workspace);
         let mut rows: Vec<AnyElement> = Vec::new();

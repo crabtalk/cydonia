@@ -45,7 +45,9 @@ fn a_table_made_takes_a_row_and_its_writes_in_order(cx: &mut gpui::TestAppContex
     settings.features.tables = true;
     let workspace = cx.new(|cx| Workspace::new(settings, State::default(), cx));
     let made = workspace.update(cx, |workspace, cx| {
-        workspace.projects.push(Project::new(scratch.project(), cx));
+        workspace
+            .projects
+            .push(Project::at(scratch.project().into(), cx).unwrap());
         workspace.active = Some(0);
         workspace.new_table(cx)
     });

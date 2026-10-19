@@ -38,7 +38,7 @@ impl Workspace {
         let location = self.projects.get(project)?.location();
         let entry = self.entry_of(project, showing, cx)?;
         self.order
-            .get(&location)?
+            .get(location)?
             .iter()
             .position(|held| held.kind == entry.kind && held.id == entry.id)
     }
@@ -50,7 +50,7 @@ impl Workspace {
         let location = self.projects.get(project)?.location();
         let entry = self.entry_of(project, showing, cx)?;
         self.pinned
-            .get(&location)?
+            .get(location)?
             .iter()
             .position(|held| held.kind == entry.kind && held.id == entry.id)
     }
@@ -72,7 +72,7 @@ impl Workspace {
         let Some(open) = self.projects.get(project) else {
             return;
         };
-        let held = self.pinned.entry(open.location()).or_default();
+        let held = self.pinned.entry(open.location().clone()).or_default();
         held.retain(|pin| !(pin.kind == entry.kind && pin.id == entry.id));
         if on {
             held.push(entry);
@@ -90,7 +90,7 @@ impl Workspace {
         let Some(open) = self.projects.get(project) else {
             return;
         };
-        if let Some(held) = self.pinned.get_mut(&open.location()) {
+        if let Some(held) = self.pinned.get_mut(open.location()) {
             held.retain(|pin| !(pin.kind == entry.kind && pin.id == entry.id));
         }
         self.save();
@@ -104,7 +104,7 @@ impl Workspace {
         let Some(open) = self.projects.get(project) else {
             return;
         };
-        self.order.insert(open.location(), order);
+        self.order.insert(open.location().clone(), order);
         self.save();
         cx.notify();
     }
@@ -113,7 +113,7 @@ impl Workspace {
     pub fn sort_of(&self, project: usize) -> state::Sort {
         self.projects
             .get(project)
-            .and_then(|open| self.sort.get(&open.location()))
+            .and_then(|open| self.sort.get(open.location()))
             .copied()
             .unwrap_or_default()
     }
@@ -125,7 +125,7 @@ impl Workspace {
         let Some(open) = self.projects.get(project) else {
             return;
         };
-        self.sort.insert(open.location(), sort);
+        self.sort.insert(open.location().clone(), sort);
         self.save();
         cx.notify();
     }
@@ -140,7 +140,7 @@ impl Workspace {
         let Some(open) = self.projects.get(project) else {
             return;
         };
-        self.pinned.insert(open.location(), pinned);
+        self.pinned.insert(open.location().clone(), pinned);
         self.save();
         cx.notify();
     }

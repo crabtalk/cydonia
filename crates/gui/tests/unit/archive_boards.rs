@@ -12,7 +12,7 @@ fn archived_boards_keep_their_cards(cx: &mut gpui::TestAppContext) {
         board.add_card(&column, "Preserve this card".into());
         board.archived = true;
         futures::executor::block_on(store.save_board(&mut board)).unwrap();
-        let project = Project::new(path.clone(), cx);
+        let project = Project::at(path.clone().into(), cx).unwrap();
         assert_eq!(project.boards[0].board.read(cx).columns[0].cards.len(), 1);
         std::fs::remove_dir_all(path).unwrap();
     });
@@ -26,7 +26,8 @@ fn archived_article_releases_its_editor_and_reopens_from_disk(cx: &mut gpui::Tes
     std::fs::create_dir_all(&path).unwrap();
     let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));
     workspace.update(cx, |_, cx| {
-        let mut article = futures::executor::block_on(article::create(&path)).unwrap();
+        let store = crate::model::store::open(&path.clone().into()).unwrap();
+        let mut article = futures::executor::block_on(article::create(&path, store)).unwrap();
         std::fs::write(&article.path, "Durable article text").unwrap();
         article.open(cx);
         article.archive(true, cx);

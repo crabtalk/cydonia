@@ -1014,6 +1014,17 @@ impl Agent {
 }
 
 #[cfg(feature = "desktop")]
+impl Settings {
+    /// Whether `agent`'s source is the one [`Settings::trusted_agents`]
+    /// agreed to for its id.
+    pub fn trusts(&self, agent: &cydonia_acp::agents::registry::Agent) -> bool {
+        self.trusted_agents
+            .get(&agent.id)
+            .is_some_and(|mark| *mark == crate::agent::source_mark(agent))
+    }
+}
+
+#[cfg(feature = "desktop")]
 impl Agent {
     /// The entry that runs `installed` under `name`. The command is a path on
     /// the machine that holds the install.
@@ -1025,6 +1036,48 @@ impl Agent {
             args: installed.args,
             env: installed.env,
         }
+    }
+
+    /// The entry that runs this entry's catalog agent on the server `client`
+    /// reaches, from that server's install record, the server installing it
+    /// first where it has none. Refused for an entry with no catalog id, and
+    /// for an agent whose source `settings.toml` has not agreed to — see
+    /// [`Settings::trusts`]. `on_line` is handed each line an install prints.
+    /// Run on [`crate::agent::acp::runtime`].
+    pub async fn installed_on(
+        &self,
+        client: &cupola::Client,
+        on_line: impl FnMut(&str),
+    ) -> Result<Self> {
+        let id = self.id.clone().with_context(|| {
+            format!(
+                "{} is not from the agent catalog, and a remote host runs only catalog agents",
+                self.name
+            )
+        })?;
+        let asked = id.clone();
+        let trusted = tokio::task::spawn_blocking(move || {
+            let settings = load()?;
+            let cache = artifact::backup::cache_dir()?;
+            let catalog =
+                cydonia_acp::agents::registry::catalog(&cache).context("no agent catalog")?;
+            let agent = catalog
+                .agents
+                .iter()
+                .find(|agent| agent.id == asked)
+                .with_context(|| format!("{asked} is not in the agent catalog"))?;
+            anyhow::Ok(settings.trusts(agent))
+        })
+        .await??;
+        anyhow::ensure!(
+            trusted,
+            "{}'s source has not been agreed to — install it in Settings › Agents first",
+            self.name
+        );
+        let installed = server::agents::Remote::new(client)
+            .resolve(&id, on_line)
+            .await?;
+        Ok(Self::installed(self.name.clone(), installed))
     }
 }
 

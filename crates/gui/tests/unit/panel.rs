@@ -3,7 +3,7 @@ use bezel::theme::Appearance;
 
 #[gpui::test]
 fn review_is_reused_and_last_close_returns_to_launcher(cx: &mut gpui::TestAppContext) {
-    let panel = cx.new(|cx| Panel::new(std::env::temp_dir(), cx));
+    let panel = cx.new(|cx| Panel::new(std::env::temp_dir().into(), cx));
     panel.update(cx, |panel, cx| {
         assert!(panel.strip.is_empty());
         panel.review(cx);
@@ -19,7 +19,7 @@ fn review_is_reused_and_last_close_returns_to_launcher(cx: &mut gpui::TestAppCon
 
 #[gpui::test]
 fn file_tabs_deduplicate_paths_and_keep_buffers(cx: &mut gpui::TestAppContext) {
-    let panel = cx.new(|cx| Panel::new(std::env::temp_dir(), cx));
+    let panel = cx.new(|cx| Panel::new(std::env::temp_dir().into(), cx));
     panel.update(cx, |panel, cx| {
         let path = std::env::temp_dir().join("cydonia-tab-example.txt");
         panel.open_file(path.clone(), cx);
@@ -41,7 +41,7 @@ fn file_tabs_deduplicate_paths_and_keep_buffers(cx: &mut gpui::TestAppContext) {
 #[gpui::test]
 fn right_terminal_exit_closes_only_its_tab(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| Theme::install(Appearance::Dark, cx));
-    let window = cx.add_window(|_, cx| Panel::new(std::env::temp_dir(), cx));
+    let window = cx.add_window(|_, cx| Panel::new(std::env::temp_dir().into(), cx));
     window
         .update(cx, |panel, window, cx| {
             panel.terminal(window, cx);
@@ -67,7 +67,7 @@ fn right_terminal_exit_closes_only_its_tab(cx: &mut gpui::TestAppContext) {
 #[gpui::test]
 fn launcher_and_popover_render(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| Theme::install(Appearance::Dark, cx));
-    let window = cx.add_window(|_, cx| Panel::new(std::env::temp_dir(), cx));
+    let window = cx.add_window(|_, cx| Panel::new(std::env::temp_dir().into(), cx));
     let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
     visual.simulate_resize(gpui::size(px(440.), px(600.)));
     visual.run_until_parked();
@@ -85,7 +85,7 @@ fn dirty_tab_close_requires_a_decision_and_keeps_failed_saves(cx: &mut gpui::Tes
     cx.update(|cx| Theme::install(Appearance::Dark, cx));
     let path = std::env::temp_dir().join(format!("cydonia-panel-save-{}.txt", std::process::id()));
     std::fs::write(&path, "original").unwrap();
-    let window = cx.add_window(|_, cx| Panel::new(std::env::temp_dir(), cx));
+    let window = cx.add_window(|_, cx| Panel::new(std::env::temp_dir().into(), cx));
     window
         .update(cx, |panel, window, cx| {
             panel.open_file(path.clone(), cx);
@@ -133,7 +133,7 @@ fn save_and_close_closes_once_the_save_landed(cx: &mut gpui::TestAppContext) {
         std::process::id()
     ));
     std::fs::write(&path, "original").unwrap();
-    let window = cx.add_window(|_, cx| Panel::new(std::env::temp_dir(), cx));
+    let window = cx.add_window(|_, cx| Panel::new(std::env::temp_dir().into(), cx));
     window
         .update(cx, |panel, window, cx| {
             panel.open_file(path.clone(), cx);
@@ -170,7 +170,7 @@ fn file_save_shortcut_works_in_the_panel(cx: &mut gpui::TestAppContext) {
     });
     let path = std::env::temp_dir().join(format!("cydonia-panel-key-{}.txt", std::process::id()));
     std::fs::write(&path, "original").unwrap();
-    let window = cx.add_window(|_, cx| Panel::new(std::env::temp_dir(), cx));
+    let window = cx.add_window(|_, cx| Panel::new(std::env::temp_dir().into(), cx));
     window
         .update(cx, |panel, _, cx| {
             panel.open_file(path.clone(), cx);
@@ -199,7 +199,7 @@ fn file_save_shortcut_works_in_the_panel(cx: &mut gpui::TestAppContext) {
 #[gpui::test]
 fn files_opens_project_tree_instead_of_native_picker(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| Theme::install(Appearance::Light, cx));
-    let window = cx.add_window(|_, cx| Panel::new(std::env::temp_dir(), cx));
+    let window = cx.add_window(|_, cx| Panel::new(std::env::temp_dir().into(), cx));
     window
         .update(cx, |panel, window, cx| {
             panel.choose(Launch::Files, window, cx);
@@ -237,7 +237,7 @@ fn command_w_closes_right_terminal_tabs_and_returns_to_launcher(cx: &mut gpui::T
         Theme::install(Appearance::Dark, cx);
         crate::view::keymap::bind_all(&crate::model::settings::Shortcuts::default(), cx);
     });
-    let window = cx.add_window(|_, cx| Panel::new(std::env::temp_dir(), cx));
+    let window = cx.add_window(|_, cx| Panel::new(std::env::temp_dir().into(), cx));
     window
         .update(cx, |panel, window, cx| {
             panel.terminal(window, cx);
@@ -266,7 +266,7 @@ fn command_w_closes_right_terminal_tabs_and_returns_to_launcher(cx: &mut gpui::T
 #[gpui::test]
 fn toggling_files_collapses_and_reopens_the_same_browser(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| Theme::install(Appearance::Dark, cx));
-    let window = cx.add_window(|_, cx| Panel::new(std::env::temp_dir(), cx));
+    let window = cx.add_window(|_, cx| Panel::new(std::env::temp_dir().into(), cx));
     window
         .update(cx, |panel, window, cx| {
             panel.toggle_files(window, cx);
@@ -290,7 +290,7 @@ fn language_status_reopens_install_prompt_in_file_panel(cx: &mut gpui::TestAppCo
         std::env::temp_dir().join(format!("cydonia-grammar-panel-{}.toml", std::process::id()));
     std::fs::write(&path, "[package]\nname = \"example\"\n".repeat(100)).unwrap();
     let window = cx.add_window(|_, cx| {
-        let mut panel = Panel::new(std::env::temp_dir(), cx);
+        let mut panel = Panel::new(std::env::temp_dir().into(), cx);
         panel.open_file(path.clone(), cx);
         panel
     });
@@ -354,7 +354,7 @@ fn terminal_menu_and_new_tab_use_cmd_t(cx: &mut gpui::TestAppContext) {
         Theme::install(Appearance::Dark, cx);
         crate::view::keymap::bind_all(&crate::model::settings::Shortcuts::default(), cx);
     });
-    let window = cx.add_window(|_, cx| Panel::new(std::env::temp_dir(), cx));
+    let window = cx.add_window(|_, cx| Panel::new(std::env::temp_dir().into(), cx));
     window
         .update(cx, |panel, window, cx| {
             let items = Panel::items(&panel.launchers(), window);
@@ -384,7 +384,7 @@ fn terminal_menu_and_new_tab_use_cmd_t(cx: &mut gpui::TestAppContext) {
 #[gpui::test]
 fn closing_the_front_tab_hands_the_front_to_its_right(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| Theme::install(Appearance::Dark, cx));
-    let window = cx.add_window(|_, cx| Panel::new(std::env::temp_dir(), cx));
+    let window = cx.add_window(|_, cx| Panel::new(std::env::temp_dir().into(), cx));
     window
         .update(cx, |panel, window, cx| {
             for _ in 0..3 {
@@ -412,7 +412,7 @@ fn closing_the_front_tab_hands_the_front_to_its_right(cx: &mut gpui::TestAppCont
 #[gpui::test]
 fn switched_off_tabs_leave_the_launchers_and_close(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| Theme::install(Appearance::Light, cx));
-    let window = cx.add_window(|_, cx| Panel::new(std::env::temp_dir(), cx));
+    let window = cx.add_window(|_, cx| Panel::new(std::env::temp_dir().into(), cx));
     window
         .update(cx, |panel, window, cx| {
             panel.choose(Launch::Files, window, cx);

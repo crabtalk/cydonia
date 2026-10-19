@@ -152,7 +152,7 @@ async fn acp_connects_over_a_remote_process(remote: &Remote) {
         env: Default::default(),
     };
     let (tx, _events) = acp::channel();
-    let launch = Launch::new(std::env::temp_dir());
+    let launch = Launch::new(artifact::location::Location::from(std::env::temp_dir()));
     let opened = Session::spawn_on(remote, &agent, launch, tx);
     let session = tokio::time::timeout(PATIENCE, opened)
         .await

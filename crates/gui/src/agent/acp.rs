@@ -20,6 +20,7 @@ use crate::{
     },
 };
 use anyhow::{Result, anyhow};
+use artifact::location::Location;
 use cydonia_acp::{
     AgentConn, Client, Direction, Error, Tap,
     client::{HistoryEntry, HistoryFork, HistoryRole},
@@ -34,7 +35,8 @@ use cydonia_acp::{
     },
 };
 use std::{
-    path::PathBuf,
+    collections::HashMap,
+    path::{Path, PathBuf},
     sync::{Arc, OnceLock},
     time::Duration,
 };
@@ -138,11 +140,19 @@ pub struct Session {
     history_fork: Option<Arc<Mutex<HistoryFork>>>,
 }
 
+/// How cydonia's own MCP server is offered to an agent.
+enum Ours {
+    /// The app's door, to an agent on this machine that takes HTTP MCP.
+    Door,
+    /// cydonia-server run as an MCP server on the agent's host: the program,
+    /// its absolute path there.
+    Relay(PathBuf),
+}
+
 /// How to open a session.
-#[derive(Default)]
 pub struct Launch {
-    /// The session's working directory.
-    pub cwd: PathBuf,
+    /// The project the session is in, whose root is its working directory.
+    pub location: Location,
     /// A session to load instead of starting fresh.
     pub previous: Option<String>,
     pub history: Option<Vec<HistoryEntry>>,
@@ -154,10 +164,14 @@ pub struct Launch {
 }
 
 impl Launch {
-    pub fn new(cwd: PathBuf) -> Self {
+    pub fn new(location: Location) -> Self {
         Self {
-            cwd,
-            ..Default::default()
+            location,
+            previous: None,
+            history: None,
+            history_pending: false,
+            choices: Choices::default(),
+            record: None,
         }
     }
 }
@@ -169,13 +183,27 @@ impl Session {
     /// With [`Launch::previous`] set and the agent capable, `session/load`
     /// replays that session's history instead of starting fresh; a failed
     /// load (stale id, agent restart) falls back to a new session.
+    ///
+    /// On another machine, `entry` is run as the agent of its catalog id
+    /// installed there — see [`settings::Agent::installed_on`].
     pub async fn spawn(entry: &settings::Agent, launch: Launch, tx: Sender) -> Result<Self> {
-        let spawner = spawner::open(&launch.cwd);
-        Self::spawn_on(&*spawner, entry, launch, tx).await
+        let spawner = spawner::open(&launch.location).await?;
+        let entry = match launch.location.host() {
+            None => entry.clone(),
+            Some(host) => {
+                let client = crate::model::remote::Remotes::get()?.client(host)?;
+                entry
+                    .installed_on(&client, |line| {
+                        let _ = tx.send(Event::Stderr(line.to_owned()));
+                    })
+                    .await?
+            }
+        };
+        Self::spawn_on(&*spawner, &entry, launch, tx).await
     }
 
-    /// [`Session::spawn`] on `spawner`'s host, `launch`'s directory a path
-    /// there.
+    /// [`Session::spawn`] on `spawner`'s host, `launch`'s location on that
+    /// host.
     pub async fn spawn_on(
         spawner: &dyn Spawner,
         entry: &settings::Agent,
@@ -204,11 +232,15 @@ impl Session {
         // would not resolve. It reaches the transcript as the execution it is
         // — see [`Event::Stderr`]. `CYDONIA_DEBUG`, which already redirects
         // the protocol tap, still echoes the lines where a developer looks.
+        let ours = match launch.location.local() {
+            Some(_) => Ours::Door,
+            None => Ours::relay(spawner)?,
+        };
         let spec = Spec {
             program: &entry.command,
             args: &entry.args,
             env: &env,
-            cwd: &launch.cwd,
+            cwd: launch.location.root(),
         };
         let process = spawner
             .spawn(&spec)
@@ -217,16 +249,17 @@ impl Session {
 
         let configured = mcp::servers();
 
+        let files = launch.location.local().is_some();
         let conn = cydonia_acp::connect_on(
             BufReader::new(process.stdout),
             process.stdin,
-            Arc::new(Frontend(tx.clone())),
+            Arc::new(Frontend(tx.clone(), files)),
             debug_tap(),
         );
         runtime().spawn(drain(process.stderr, tx.clone()));
         let child = process.handle;
 
-        Self::open(conn, child, tx, launch, configured).await
+        Self::open(conn, child, tx, launch, configured, ours).await
     }
 
     async fn open(
@@ -235,13 +268,16 @@ impl Session {
         tx: mpsc::UnboundedSender<Event>,
         launch: Launch,
         configured: Vec<mcp::McpServer>,
+        ours: Ours,
     ) -> Result<Self> {
-        let cwd = launch.cwd.clone();
+        let cwd = launch.location.root().to_owned();
+        // The files an agent on another machine works on are there, not here.
+        let files = launch.location.local().is_some();
         let init = conn
             .initialize(InitializeRequest::new(ClientCapabilities {
                 fs: FileSystemCapabilities {
-                    read_text_file: true,
-                    write_text_file: true,
+                    read_text_file: files,
+                    write_text_file: files,
                     meta: None,
                 },
                 ..Default::default()
@@ -251,8 +287,14 @@ impl Session {
 
         // Only now are the agent's MCP capabilities known, so remote
         // servers can be dropped for agents that can't reach them.
-        let (mcp_servers, built_in_mcp) =
-            acp_mcp_servers(&configured, &init, &cwd, launch.record.as_deref());
+        let (mcp_servers, built_in_mcp) = acp_mcp_servers(
+            &configured,
+            &init,
+            &ours,
+            files,
+            &cwd,
+            launch.record.as_deref(),
+        );
 
         let mut loaded = false;
         let mut response = None;
@@ -457,11 +499,18 @@ impl Session {
     /// including a failure to send it at all.
     ///
     /// Pictures the message points at go along as image blocks when the agent
-    /// takes them, read and encoded off the UI thread. An agent that does not
-    /// still has their paths in the text.
+    /// takes them, read and encoded off the UI thread: from `inline` for a
+    /// path it holds, from the path otherwise. An agent that does not still
+    /// has their paths in the text.
     /// `number` is the session's entry number and `article` the entry number
     /// of the article it was opened under, both named in the app's context.
-    pub fn prompt(&self, content: &str, number: Option<u64>, article: Option<u64>) {
+    pub fn prompt(
+        &self,
+        content: &str,
+        number: Option<u64>,
+        article: Option<u64>,
+        mut inline: HashMap<PathBuf, Vec<u8>>,
+    ) {
         let capabilities = &self.init.agent_capabilities.prompt_capabilities;
         let pictures = match capabilities.image {
             true => media::attached(content),
@@ -484,7 +533,10 @@ impl Session {
                 let images = tokio::task::spawn_blocking(move || {
                     pictures
                         .iter()
-                        .filter_map(|path| media::encode(path))
+                        .filter_map(|path| match inline.remove(path) {
+                            Some(bytes) => media::encode_bytes(bytes),
+                            None => media::encode(path),
+                        })
                         .map(|(data, mime)| {
                             ContentBlock::Image(ImageContent {
                                 data,
@@ -581,8 +633,9 @@ pub fn history(items: &[artifact::session::chat::ChatItem]) -> Vec<HistoryEntry>
 }
 
 /// Serves what the agent asks of us: file access answered here, anything
-/// the user has to see queued for the frontend.
-struct Frontend(mpsc::UnboundedSender<Event>);
+/// the user has to see queued for the frontend. The flag is whether the
+/// agent's files are on this machine; file access is refused otherwise.
+struct Frontend(mpsc::UnboundedSender<Event>, bool);
 
 impl Client for Frontend {
     async fn session_update(&self, notification: SessionNotification) {
@@ -604,6 +657,9 @@ impl Client for Frontend {
         &self,
         request: ReadTextFileRequest,
     ) -> Result<ReadTextFileResponse, Error> {
+        if !self.1 {
+            return Err(Error::method_not_found());
+        }
         read_text_file(&request)
     }
 
@@ -611,6 +667,9 @@ impl Client for Frontend {
         &self,
         request: WriteTextFileRequest,
     ) -> Result<WriteTextFileResponse, Error> {
+        if !self.1 {
+            return Err(Error::method_not_found());
+        }
         std::fs::write(&request.path, &request.content)
             .map(|()| WriteTextFileResponse::default())
             .map_err(|e| io_error(&request.path, &e))
@@ -672,36 +731,27 @@ fn loopback_bypass(existing: [Option<String>; 2]) -> String {
 
 /// The enabled servers an agent can actually reach, in ACP's shape.
 /// Remote servers are dropped for agents that don't advertise HTTP MCP
-/// rather than being sent and failing.
+/// rather than being sent and failing. A stdio server runs on the agent's
+/// host: one not marked [`mcp::McpServer::remote`] is offered only to an
+/// agent on this machine, `local`.
 ///
-/// Cydonia's own door goes first, when the agent can reach it. It is not in
+/// Cydonia's own server goes first, when the agent can reach it. It is not in
 /// `mcp.toml` and must not be — that file is the servers the user added, and
 /// this one is not the user's to remove.
 fn acp_mcp_servers(
     configured: &[mcp::McpServer],
     init: &InitializeResponse,
-    cwd: &std::path::Path,
+    ours: &Ours,
+    local: bool,
+    cwd: &Path,
     record: Option<&str>,
 ) -> (Vec<McpServer>, bool) {
     let http = init.agent_capabilities.mcp_capabilities.http;
-    let ours = http.then(serve::url).flatten().map(|url| {
-        McpServer::Http(McpServerHttp {
-            name: SERVER.to_owned(),
-            url,
-            // Which project this session is. The tools then take no directory
-            // at all — one a session's model had to supply is one it could
-            // supply wrongly, about something already known here.
-            headers: std::iter::once(serve::project(cwd))
-                .chain(record.map(serve::session))
-                .map(|(name, value)| HttpHeader {
-                    name: name.to_owned(),
-                    value,
-                    meta: None,
-                })
-                .collect(),
-            meta: None,
-        })
-    });
+    let door = || http.then(serve::url).flatten();
+    let ours = match ours {
+        Ours::Relay(program) => Some(remote_mcp_server(program, cwd, record)),
+        Ours::Door => door().map(|url| door_server(url, cwd, record)),
+    };
     let available = ours.is_some();
     let servers = ours
         .into_iter()
@@ -710,6 +760,7 @@ fn acp_mcp_servers(
                 .iter()
                 .filter(|server| server.enabled)
                 .filter_map(|server| match (&server.command, &server.url) {
+                    (Some(_), _) if !local && !server.remote => None,
                     (Some(command), _) => Some(McpServer::Stdio(McpServerStdio {
                         name: server.name.clone(),
                         command: command.into(),
@@ -736,6 +787,46 @@ fn acp_mcp_servers(
         )
         .collect();
     (servers, available)
+}
+
+/// Cydonia's own server as the app's door at `url`, for a session in `cwd`
+/// filed under `record`.
+fn door_server(url: String, cwd: &Path, record: Option<&str>) -> McpServer {
+    McpServer::Http(McpServerHttp {
+        name: SERVER.to_owned(),
+        url,
+        // Which project this session is. The tools then take no directory
+        // at all — one a session's model had to supply is one it could
+        // supply wrongly, about something already known here.
+        headers: std::iter::once(serve::project(cwd))
+            .chain(record.map(serve::session))
+            .map(|(name, value)| HttpHeader {
+                name: name.to_owned(),
+                value,
+                meta: None,
+            })
+            .collect(),
+        meta: None,
+    })
+}
+
+impl Ours {
+    /// [`Ours::Relay`] on the host `spawner` starts processes on, where Cupola
+    /// installs cydonia-server under that host's `$HOME`.
+    #[cfg(unix)]
+    fn relay(spawner: &dyn Spawner) -> Result<Self> {
+        let home = spawner
+            .var("HOME")
+            .ok_or_else(|| anyhow!("the remote login environment has no HOME"))?;
+        Ok(Self::Relay(crate::model::remote::Delegate::program(
+            Path::new(&home),
+        )))
+    }
+
+    #[cfg(not(unix))]
+    fn relay(_: &dyn Spawner) -> Result<Self> {
+        Err(anyhow!("this build reaches no remote host"))
+    }
 }
 
 /// Cydonia's own server for an agent on a remote host, as a stdio server

@@ -1,15 +1,16 @@
 //! A project: a directory, the sessions running in it, its boards and its
 //! articles.
 //!
-//! The path is the whole identity — it is what every session in the project
-//! is spawned with as its `cwd`, and what [`crate::model::state`] persists.
+//! Its [`Location`] is the whole identity — its root is what every session in
+//! the project is spawned with as its `cwd`, and it is what
+//! [`crate::model::state`] persists.
 
 use crate::{
     data::{Data, Page, Table},
     model::{
         article::{self, Article},
         session::ChatSession,
-        store::{self, Store},
+        store::Store,
         watch::Watch,
         workspace::{Showing, Workspace},
     },
@@ -78,7 +79,9 @@ impl HeldSession {
 }
 
 pub struct Project {
-    pub path: PathBuf,
+    location: Location,
+    /// Where this project's work is kept — see [`crate::model::store::open`].
+    store: Store,
     pub sessions: Vec<HeldSession>,
     pub active: Option<u64>,
     pub boards: Vec<HeldBoard>,
@@ -136,19 +139,26 @@ impl Project {
         })
     }
 
-    /// The project at `path`, its tables not yet read — see
-    /// [`Self::reload_tables`].
-    pub fn new(path: PathBuf, cx: &mut App) -> Self {
-        let store = store::open(&Location::Local(path.clone()));
+    /// The project at `location`, kept where [`crate::model::store::open`]
+    /// finds it, its tables not yet read. `None` where it finds none.
+    pub fn at(location: Location, cx: &mut App) -> Option<Self> {
+        let store = crate::model::store::open(&location)?;
+        Some(Self::new(location, store, cx))
+    }
+
+    /// The project at `location`, its work kept in `store`, its tables not yet
+    /// read — see [`Self::reload_tables`].
+    pub fn new(location: Location, store: Store, cx: &mut App) -> Self {
         Self {
             boards: store
                 .boards()
                 .into_iter()
                 .map(|board| HeldBoard::new(board, cx))
                 .collect(),
-            articles: article::list(&path),
+            articles: article::list(&location, &store),
             data: store.tables(),
-            path,
+            location,
+            store,
             sessions: Vec::new(),
             active: None,
             board: None,
@@ -223,7 +233,7 @@ impl Project {
             .drain(..)
             .map(|article| (article.path.clone(), article))
             .collect();
-        self.articles = article::list(&self.path)
+        self.articles = article::list(&self.location, &self.store)
             .into_iter()
             .map(|fresh| match held.remove(&fresh.path) {
                 // Already on screen — the document under it and its undo
@@ -286,7 +296,7 @@ impl Project {
         let seq = self.ask();
         let listed = self.data.as_ref().map(|data| data.list());
         let pages = self.read_pages();
-        let path = self.path.clone();
+        let location = self.location.clone();
         cx.spawn(async move |workspace, cx| {
             let tables = match listed {
                 Some(listed) => listed.await.unwrap_or_default(),
@@ -295,7 +305,7 @@ impl Project {
             let pages = pages.await;
             workspace
                 .update(cx, |workspace, cx| {
-                    let ix = workspace.project_at(&path)?;
+                    let ix = workspace.project_at(&location)?;
                     let open = &mut workspace.projects[ix];
                     let before = open.shape();
                     open.take_tables(seq, tables);
@@ -344,11 +354,11 @@ impl Project {
     pub fn reload_page(&mut self, cx: &mut Context<Workspace>) {
         let seq = self.ask();
         let pages = self.read_pages();
-        let path = self.path.clone();
+        let location = self.location.clone();
         cx.spawn(async move |workspace, cx| {
             let pages = pages.await;
             let _ = workspace.update(cx, |workspace, cx| {
-                if let Some(ix) = workspace.project_at(&path) {
+                if let Some(ix) = workspace.project_at(&location) {
                     workspace.projects[ix].take_pages(seq, pages);
                     cx.notify();
                 }
@@ -423,22 +433,27 @@ impl Project {
         }
     }
 
-    pub fn location(&self) -> Location {
-        Location::Local(self.path.clone())
+    pub fn location(&self) -> &Location {
+        &self.location
     }
 
-    /// Where this project's work is kept — see [`store::open`].
+    /// The project's directory, on whichever machine holds it.
+    pub fn root(&self) -> &Path {
+        self.location.root()
+    }
+
+    /// Where this project's work is kept — see [`crate::model::store::open`].
     pub fn store(&self) -> Store {
-        store::open(&self.location())
+        self.store.clone()
     }
 
     /// The tab's label: the directory's own name, or the whole path when it
     /// has none (`/`).
     pub fn name(&self) -> String {
-        self.path
-            .file_name()
+        let root = self.root();
+        root.file_name()
             .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| self.path.display().to_string())
+            .unwrap_or_else(|| root.display().to_string())
     }
 
     pub fn session<'a>(&self, id: u64, cx: &'a App) -> Option<&'a ChatSession> {

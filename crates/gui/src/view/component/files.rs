@@ -120,7 +120,8 @@ pub struct Files {
 impl EventEmitter<Open> for Files {}
 
 impl Files {
-    pub fn new(root: PathBuf, cx: &mut Context<Self>) -> Self {
+    /// The tree under `location`'s root, on whichever machine holds it.
+    pub fn new(location: Location, cx: &mut Context<Self>) -> Self {
         let filter = cx.new(|cx| TextField::new(cx).with_placeholder("Filter files…"));
         let watch = cx.subscribe(&filter, |this, _, event: &FieldEvent, cx| {
             if matches!(event, FieldEvent::Changed(_)) {
@@ -143,8 +144,8 @@ impl Files {
             }
         });
         let mut this = Self {
-            files: Backend::open(&Location::from(root.as_path())),
-            root,
+            files: Backend::open(&location),
+            root: location.root().to_path_buf(),
             focus: cx.focus_handle(),
             filter_open: false,
             filter,

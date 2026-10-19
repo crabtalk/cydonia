@@ -2,6 +2,7 @@
 
 use super::settings::{self, Agent};
 use anyhow::Result;
+use artifact::location::Location;
 use bezel::gpui::{App, Global};
 use cydonia_acp::proto::{
     SessionConfigKind, SessionConfigOption, SessionConfigOptionValue, SessionConfigSelectOption,
@@ -120,7 +121,7 @@ impl Offers {
 /// Every agent's [`Offers`] per project, read from `session-preferences.json`
 /// once and written through. Every composer and default reads offers here.
 #[derive(Default)]
-pub struct OfferCache(BTreeMap<String, BTreeMap<PathBuf, Offers>>);
+pub struct OfferCache(BTreeMap<String, BTreeMap<Location, Offers>>);
 
 impl Global for OfferCache {}
 
@@ -128,23 +129,23 @@ impl OfferCache {
     /// Read the cache in, once, at launch.
     pub fn load(cx: &mut App) {
         let mut cache = Self::default();
-        for (cwd, agents) in path().and_then(|path| read(&path)).unwrap_or_default() {
+        for (project, agents) in path().and_then(|path| read(&path)).unwrap_or_default() {
             for (key, agent) in agents {
                 if !agent.offers.is_empty() {
                     cache
                         .0
                         .entry(key)
                         .or_default()
-                        .insert(cwd.clone(), agent.offers);
+                        .insert(project.clone(), agent.offers);
                 }
             }
         }
         cx.set_global(cache);
     }
 
-    /// What `agent` offers in the project at `cwd`: its offers there, else
+    /// What `agent` offers in the project at `project`: its offers there, else
     /// its offers in another project, else nothing.
-    pub fn get(cx: &App, cwd: &Path, agent: &Agent) -> Offers {
+    pub fn get(cx: &App, project: &Location, agent: &Agent) -> Offers {
         let Some(projects) = cx
             .try_global::<Self>()
             .and_then(|cache| cache.0.get(&agent_key(agent)))
@@ -152,20 +153,20 @@ impl OfferCache {
             return Offers::default();
         };
         projects
-            .get(cwd)
+            .get(project)
             .or_else(|| projects.values().next())
             .cloned()
             .unwrap_or_default()
     }
 
-    /// Keep what `agent` offered on connecting in the project at `cwd`.
-    pub fn remember(cx: &mut App, cwd: &Path, agent: &Agent, offers: Offers) -> Result<()> {
-        edit(cwd, agent, |agent| agent.offers = offers.clone())?;
+    /// Keep what `agent` offered on connecting in the project at `project`.
+    pub fn remember(cx: &mut App, project: &Location, agent: &Agent, offers: Offers) -> Result<()> {
+        edit(project, agent, |agent| agent.offers = offers.clone())?;
         cx.default_global::<Self>()
             .0
             .entry(agent_key(agent))
             .or_default()
-            .insert(cwd.to_path_buf(), offers);
+            .insert(project.clone(), offers);
         Ok(())
     }
 }
@@ -178,7 +179,7 @@ struct AgentChoices {
     offers: Offers,
 }
 
-type Stored = BTreeMap<PathBuf, BTreeMap<String, AgentChoices>>;
+type Stored = BTreeMap<Location, BTreeMap<String, AgentChoices>>;
 
 fn path() -> Result<PathBuf> {
     Ok(settings::dir()?.join("session-preferences.json"))
@@ -199,10 +200,10 @@ fn read(path: &Path) -> Result<Stored> {
     }
 }
 
-pub fn load(cwd: &Path, agent: &Agent, session: Option<&str>) -> Choices {
+pub fn load(project: &Location, agent: &Agent, session: Option<&str>) -> Choices {
     let stored = path().and_then(|path| read(&path)).unwrap_or_default();
     let Some(agent) = stored
-        .get(cwd)
+        .get(project)
         .and_then(|project| project.get(&agent_key(agent)))
     else {
         return Choices::default();
@@ -213,11 +214,11 @@ pub fn load(cwd: &Path, agent: &Agent, session: Option<&str>) -> Choices {
         .clone()
 }
 
-fn edit(cwd: &Path, agent: &Agent, change: impl FnOnce(&mut AgentChoices)) -> Result<()> {
+fn edit(project: &Location, agent: &Agent, change: impl FnOnce(&mut AgentChoices)) -> Result<()> {
     rewrite(|stored| {
         change(
             stored
-                .entry(cwd.to_path_buf())
+                .entry(project.clone())
                 .or_default()
                 .entry(agent_key(agent))
                 .or_default(),
@@ -238,21 +239,21 @@ fn rewrite(change: impl FnOnce(&mut Stored)) -> Result<()> {
     Ok(())
 }
 
-/// Drop the choices of session `id` in the project at `cwd`, under every agent.
-pub fn forget_session(cwd: &Path, id: &str) -> Result<()> {
-    keep_sessions_where(cwd, |session| session != id)
+/// Drop the choices of session `id` in the project at `project`, under every agent.
+pub fn forget_session(project: &Location, id: &str) -> Result<()> {
+    keep_sessions_where(project, |session| session != id)
 }
 
-/// Drop the choices of every session in the project at `cwd` that `ids` does
+/// Drop the choices of every session in the project at `project` that `ids` does
 /// not name. Each agent's defaults stay.
-pub fn keep_sessions<'a>(cwd: &Path, ids: impl IntoIterator<Item = &'a str>) -> Result<()> {
+pub fn keep_sessions<'a>(project: &Location, ids: impl IntoIterator<Item = &'a str>) -> Result<()> {
     let ids: std::collections::BTreeSet<&str> = ids.into_iter().collect();
-    keep_sessions_where(cwd, |session| ids.contains(session))
+    keep_sessions_where(project, |session| ids.contains(session))
 }
 
-fn keep_sessions_where(cwd: &Path, keep: impl Fn(&str) -> bool) -> Result<()> {
+fn keep_sessions_where(project: &Location, keep: impl Fn(&str) -> bool) -> Result<()> {
     rewrite(|stored| {
-        if let Some(project) = stored.get_mut(cwd) {
+        if let Some(project) = stored.get_mut(project) {
             for agent in project.values_mut() {
                 agent.sessions.retain(|session, _| keep(session));
             }
@@ -260,23 +261,30 @@ fn keep_sessions_where(cwd: &Path, keep: impl Fn(&str) -> bool) -> Result<()> {
     })
 }
 
-pub fn remember_mode(cwd: &Path, agent: &Agent, mode: &str) -> Result<()> {
-    edit(cwd, agent, |agent| agent.defaults.mode = Some(mode.into()))
+pub fn remember_mode(project: &Location, agent: &Agent, mode: &str) -> Result<()> {
+    edit(project, agent, |agent| {
+        agent.defaults.mode = Some(mode.into())
+    })
 }
 
 pub fn remember_config(
-    cwd: &Path,
+    project: &Location,
     agent: &Agent,
     id: &str,
     value: SessionConfigOptionValue,
 ) -> Result<()> {
-    edit(cwd, agent, |agent| {
+    edit(project, agent, |agent| {
         agent.defaults.config.insert(id.into(), value);
     })
 }
 
-pub fn remember_session(cwd: &Path, agent: &Agent, id: &str, choices: &Choices) -> Result<()> {
-    edit(cwd, agent, |agent| {
+pub fn remember_session(
+    project: &Location,
+    agent: &Agent,
+    id: &str,
+    choices: &Choices,
+) -> Result<()> {
+    edit(project, agent, |agent| {
         agent.sessions.insert(id.into(), choices.clone());
     })
 }

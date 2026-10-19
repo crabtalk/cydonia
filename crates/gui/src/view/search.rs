@@ -13,7 +13,12 @@ use artifact::{
     search::{self, Block, Query},
 };
 use bezel::gpui::{App, Context, Entity, Task};
-use std::{collections::HashMap, path::PathBuf, sync::mpsc, time::Duration};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::mpsc,
+    time::Duration,
+};
 
 /// How long typing has to pause before the query is searched.
 pub(crate) const SETTLE: Duration = Duration::from_millis(80);
@@ -85,7 +90,7 @@ impl Search {
             .read(cx)
             .projects
             .iter()
-            .map(|p| p.path.clone())
+            .filter_map(|open| open.location().local().map(Path::to_path_buf))
             .collect::<Vec<_>>();
         self.task = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(SETTLE).await;

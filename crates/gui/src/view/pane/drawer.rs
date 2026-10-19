@@ -610,7 +610,7 @@ impl Cydonia {
     /// Hold the rows of every table a drawer shows, so its preview has a page
     /// to draw — see [`crate::model::project::Project::hold_pages`].
     pub(crate) fn hold_drawn_tables(&mut self, cx: &mut Context<Self>) {
-        let held: Vec<(std::path::PathBuf, String)> = {
+        let held: Vec<(artifact::location::Location, String)> = {
             let workspace = self.workspace.read(cx);
             self.leaves
                 .iter()

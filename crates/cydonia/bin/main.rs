@@ -42,6 +42,14 @@ fn main() -> Result<ExitCode> {
     // one read first would be read from before the move.
     migrate::run();
     let settings = settings::load()?;
+    // Before the workspace, which opens the remote projects `state.toml`
+    // lists through it.
+    // TODO(DEV-324): answer ssh's prompts; dropping their receiver cancels
+    // each one.
+    #[cfg(unix)]
+    if let Err(error) = gui::model::remote::Delegate::install() {
+        eprintln!("cydonia: no remote hosts: {error:#}");
+    }
     let mut state = state::restore();
     // After the restore and before the window: it reads whether `state.toml`
     // is there, which is what tells a first run from every other one.

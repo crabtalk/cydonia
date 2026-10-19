@@ -25,6 +25,7 @@ use crate::{
     },
 };
 use artifact::kind::Kind;
+use artifact::location::Location;
 use artifact::{
     board::{Card, Page, View},
     space::{Entry, Member},
@@ -54,7 +55,7 @@ use markdown::AppExt as _;
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
-    path::{Path, PathBuf},
+    path::PathBuf,
     rc::Rc,
 };
 
@@ -196,7 +197,7 @@ struct Tags {
 impl Tags {
     /// `card`'s, on a board of the project at `home`. Blocked while any card
     /// it waits on is still there.
-    fn of(card: &Card, home: &Path, workspace: &Workspace, cx: &App) -> Self {
+    fn of(card: &Card, home: &Location, workspace: &Workspace, cx: &App) -> Self {
         Self {
             blocked: workspace.blocking_boards(home, card, cx).next().is_some(),
         }
@@ -246,7 +247,7 @@ fn card_base(
     card: &str,
 ) -> Option<std::path::PathBuf> {
     let open = workspace.projects.get(project)?;
-    Some(artifact::project::fs::Project::new(&open.path).card_dir(board, card))
+    Some(artifact::project::fs::Project::new(open.root()).card_dir(board, card))
 }
 
 /// Render Markdown at the lane's text scale. Full reading uses the drawer.
@@ -404,7 +405,7 @@ pub enum Place {
 /// drawn in. An item drawn in one view is a different item in the other.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BoardKey {
-    pub project: PathBuf,
+    pub project: Location,
     pub board: String,
     pub view: View,
 }
@@ -1245,7 +1246,7 @@ impl Cydonia {
         board.board.read(cx).card(id)?;
         let board = board.board.clone();
         let base = card_base(workspace, project, &board.read(cx).id, id);
-        let home = workspace.projects.get(project)?.path.clone();
+        let home = workspace.projects.get(project)?.location().clone();
         let (card, reference) = (id.to_owned(), reference.to_owned());
         let (docs, root) = (self.card_docs.clone(), cx.entity().downgrade());
         let key = format!("card-embed-{reference}-{}", board.entity_id());
@@ -1317,7 +1318,7 @@ impl Cydonia {
                         Some((
                             board.handle_of(card),
                             card.text.clone(),
-                            Tags::of(card, member.project.root(), self.workspace.read(cx), cx),
+                            Tags::of(card, &member.project, self.workspace.read(cx), cx),
                             card_working(card, chat, &self.card_marks),
                         ))
                     })
@@ -1433,7 +1434,7 @@ impl BoardView {
     /// Where the board is listed, as `(project, index)`, while it is open.
     fn located(&self, cx: &App) -> Option<(usize, usize)> {
         let workspace = self.workspace.read(cx);
-        let project = workspace.project_at(self.board.project.root())?;
+        let project = workspace.project_at(&self.board.project)?;
         let at = workspace.projects[project].board_ix(&self.board.id)?;
         Some((project, at))
     }
@@ -1457,7 +1458,7 @@ impl BoardView {
             .iter()
             .flat_map(|column| &column.cards)
         {
-            for other in workspace.blocking_boards(self.board.project.root(), card, cx) {
+            for other in workspace.blocking_boards(&self.board.project, card, cx) {
                 if !watched.contains(other) {
                     watched.push(other.clone());
                 }
@@ -1558,7 +1559,7 @@ impl BoardView {
                 page: page.clone(),
             },
         };
-        let artifact::location::Location::Local(root) = &self.board.project;
+        let root = self.board.project.root();
         let dir = artifact::project::fs::Project::new(root).page_dir(&self.board.id, &page);
         let document = cx.new(|cx| editor::Document::new(&text, cx));
         let (editor, pictures) = crate::view::kit::document::editor(
@@ -2060,7 +2061,7 @@ impl BoardView {
         let workspace = self.workspace.read(cx);
         let board = workspace.board_in(project, board_at, cx)?;
         Some(BoardKey {
-            project: workspace.projects.get(project)?.path.clone(),
+            project: workspace.projects.get(project)?.location().clone(),
             board: board.id.clone(),
             view: board.view,
         })
@@ -3036,7 +3037,7 @@ impl BoardView {
             .as_ref()
             .is_some_and(|query| card_matches(card, handle.as_deref(), query.text()));
         let text = card.text.clone();
-        let tags = Tags::of(card, self.board.project.root(), self.workspace.read(cx), cx);
+        let tags = Tags::of(card, &self.board.project, self.workspace.read(cx), cx);
         let busy = card.busy;
         let on_board = self
             .workspace
@@ -3623,7 +3624,7 @@ impl BoardView {
             .as_ref()
             .is_some_and(|query| card_matches(card, handle.as_deref(), query.text()));
         let text = card.text.clone();
-        let tags = Tags::of(card, self.board.project.root(), self.workspace.read(cx), cx);
+        let tags = Tags::of(card, &self.board.project, self.workspace.read(cx), cx);
         let busy = card.busy;
         let on_board = self
             .workspace

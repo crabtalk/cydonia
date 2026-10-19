@@ -57,13 +57,13 @@ impl Workspace {
         };
         let made = data.create(&name, None, &[column], None);
         let listed = project.reload_tables(cx);
-        let path = project.path.clone();
+        let location = project.location().clone();
         cx.spawn(async move |workspace, cx| {
             let key = made.await.ok()?.key;
             listed.await;
             workspace
                 .update(cx, |workspace, _| {
-                    let project = workspace.project_at(&path)?;
+                    let project = workspace.project_at(&location)?;
                     // Found by key rather than taken as a known row: the list
                     // is ordered by age, and where the newest lands is the
                     // list's business, not this one's.
@@ -121,14 +121,14 @@ impl Workspace {
         let Some(open) = self.projects.get_mut(ix) else {
             return;
         };
-        let location = open.location();
+        let location = open.location().clone();
         let listed = open.reload_tables(cx);
         cx.spawn(async move |workspace, cx| {
             listed.await;
             let _ = workspace.update(cx, |workspace, cx| {
                 let active = workspace
                     .active_project()
-                    .is_some_and(|open| open.location() == location);
+                    .is_some_and(|open| *open.location() == location);
                 let table = workspace
                     .last
                     .get(&location)
@@ -295,11 +295,11 @@ impl Workspace {
 
     /// Hold the pages of the tables drawn outside the table pane, by project
     /// path and key, letting go of every other held page.
-    pub fn hold_pages(&mut self, held: &[(PathBuf, String)], cx: &mut Context<Self>) {
+    pub fn hold_pages(&mut self, held: &[(Location, String)], cx: &mut Context<Self>) {
         for open in &mut self.projects {
             let keys = held
                 .iter()
-                .filter(|(path, _)| *path == open.path)
+                .filter(|(location, _)| location == open.location())
                 .map(|(_, key)| key.clone())
                 .collect();
             open.hold_pages(keys, cx);

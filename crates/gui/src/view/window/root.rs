@@ -467,8 +467,8 @@ pub struct Cydonia {
     /// article and a board that share a working directory share the panel.
     /// [`Cydonia::shell_cwd`] is what names it, the same answer the bottom
     /// panel's shells open in.
-    pub(crate) changes_for: Option<std::path::PathBuf>,
-    pub(crate) changes_shown: std::collections::HashMap<std::path::PathBuf, bool>,
+    pub(crate) changes_for: Option<artifact::location::Location>,
+    pub(crate) changes_shown: std::collections::HashMap<artifact::location::Location, bool>,
     /// The share of the row the right-hand panel was dragged to, and `None`
     /// for one nobody has dragged. See [`crate::view::detail::panel_width`].
     pub(crate) changes_share: Option<f32>,
@@ -489,8 +489,10 @@ pub struct Cydonia {
     /// The press on a [`crate::view::window::chrome::grip`], shared by every band in the
     /// window that carries one.
     pub(crate) drag: bezel::ui::titlebar::DragState,
-    pub(crate) right_panels:
-        std::collections::HashMap<std::path::PathBuf, Entity<crate::view::component::panel::Panel>>,
+    pub(crate) right_panels: std::collections::HashMap<
+        artifact::location::Location,
+        Entity<crate::view::component::panel::Panel>,
+    >,
     /// The right panel while the library is up — see [`Cydonia::library_panel`].
     pub(crate) library_panel: Option<Entity<crate::view::component::panel::Panel>>,
     /// The buffer each card's orb paints into, by card id — see
@@ -755,7 +757,7 @@ impl Cydonia {
                 .landed()
                 .and_then(|(project, entry)| {
                     Some(mcp::rail::Shown {
-                        project: project.to_path_buf(),
+                        project: project.root().to_path_buf(),
                         kind: kind(entry.kind)?,
                         id: entry.id.clone(),
                         focused: true,
@@ -1280,7 +1282,7 @@ impl Cydonia {
             Kind::App => None,
         }
         .map(|showing| Row::Entry {
-            project: open.path.clone(),
+            project: open.location().clone(),
             showing,
         });
         // The divider is a line, not a landing.
@@ -1484,7 +1486,7 @@ impl Cydonia {
             };
             let _ = this.update(cx, |this, cx| {
                 this.workspace
-                    .update(cx, |workspace, cx| workspace.open_project(path, cx));
+                    .update(cx, |workspace, cx| workspace.open_project(path.into(), cx));
             });
         })
         .detach();

@@ -3,8 +3,9 @@
 //! Every read and write of boards, sessions, articles, numbers and tables goes
 //! through the [`Store`] that [`open`] answers, and `open` is the one place
 //! that picks the backend: the memory project [`seed`] put at a location, else
-//! the files there. A memory project holds no tables. [`Store::Remote`], a
-//! project on another machine, is not opened by `open`.
+//! the files at a location on this machine, else the project
+//! [`crate::model::remote::Remotes`] has open at a location on another
+//! machine. A memory project holds no tables.
 
 use crate::data::{Data, Here, Home, Local as _};
 use artifact::project::Result;
@@ -50,15 +51,21 @@ pub fn seed(location: impl Into<Location>, project: memory::Project) {
         .insert(location.into(), Arc::new(project));
 }
 
-pub fn open(location: &Location) -> Store {
+/// `None` for a location on another machine that no project is open at.
+pub fn open(location: &Location) -> Option<Store> {
     let held = seeded()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .get(location)
         .cloned();
     match (held, location) {
-        (Some(project), _) => Store::Memory(project),
-        (None, Location::Local(root)) => Store::Fs(fs::Project::new(root)),
+        (Some(project), _) => Some(Store::Memory(project)),
+        (None, Location::Local(root)) => Some(Store::Fs(fs::Project::new(root))),
+        #[cfg(feature = "desktop")]
+        (None, Location::Remote { .. }) => crate::model::remote::Remotes::get()
+            .ok()?
+            .project(location)
+            .map(Store::Remote),
     }
 }
 

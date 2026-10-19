@@ -125,7 +125,7 @@ fn only_the_reading_tick_is_brightest_during_hover_and_navigation(cx: &mut gpui:
         .unwrap();
         let mut chat = ChatSession::restore(
             1,
-            "/nonexistent/rail-test".into(),
+            artifact::location::Location::from(std::path::Path::new("/nonexistent/rail-test")),
             crate::model::settings::Agent {
                 name: "test".into(),
                 id: None,
@@ -273,7 +273,7 @@ fn session() -> ChatSession {
     .unwrap();
     let mut chat = ChatSession::restore(
         1,
-        "/nonexistent/rail-test".into(),
+        artifact::location::Location::from(std::path::Path::new("/nonexistent/rail-test")),
         crate::model::settings::Agent {
             name: "test".into(),
             id: None,

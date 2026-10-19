@@ -85,7 +85,7 @@ struct SavedPanels {
     #[serde(skip_serializing_if = "Option::is_none")]
     terminal_height: Option<f32>,
     /// One panel per working directory — see [`Cydonia::changes_for`].
-    projects: BTreeMap<PathBuf, SavedPanel>,
+    projects: BTreeMap<Location, SavedPanel>,
 }
 
 fn path() -> Option<PathBuf> {
@@ -154,10 +154,9 @@ impl Panel {
             match tab {
                 SavedTab::Review => self.review(cx),
                 SavedTab::Terminal(directory) => {
-                    self.cwd = if directory.is_dir() {
-                        directory
-                    } else {
-                        cwd.clone()
+                    self.cwd = match cwd.local().is_none() || directory.is_dir() {
+                        true => cwd.with_root(directory),
+                        false => cwd.clone(),
                     };
                     self.terminal(window, cx);
                 }
@@ -261,7 +260,7 @@ impl Cydonia {
     }
 }
 
-pub(super) fn saved_panel(cwd: &std::path::Path) -> Option<SavedPanel> {
+pub(super) fn saved_panel(cwd: &Location) -> Option<SavedPanel> {
     load().projects.get(cwd).cloned()
 }
 

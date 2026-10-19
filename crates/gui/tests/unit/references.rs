@@ -67,7 +67,7 @@ fn a_handle_names_its_card_on_the_keyed_board(cx: &mut gpui::TestAppContext) {
         let second = board.add_card(&column, "Second".into()).unwrap().clone();
         futures::executor::block_on(store.save_board(&mut board)).unwrap();
         let handle = second.handle.unwrap();
-        let project = Project::new(dir.clone(), cx);
+        let project = Project::at(dir.clone().into(), cx).unwrap();
 
         let found = card(&project, "dev", handle, "dev-2", cx).ok().unwrap();
         let Some(Part::Card(named)) = found.part else {
@@ -97,7 +97,9 @@ fn a_number_names_a_table(cx: &mut gpui::TestAppContext) {
         .key;
     let workspace = cx.new(|cx| Workspace::new(Settings::default(), State::default(), cx));
     workspace.update(cx, |workspace, cx| {
-        workspace.projects.push(Project::new(dir.clone(), cx));
+        workspace
+            .projects
+            .push(Project::at(dir.clone().into(), cx).unwrap());
         workspace.projects[0].reload_tables(cx).detach();
     });
     cx.run_until_parked();

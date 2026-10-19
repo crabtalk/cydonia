@@ -12,7 +12,10 @@
 use crate::model::{settings, version::Version};
 use artifact::{kind::Kind, location::Location};
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 /// What a project's list is ordered by, under the pins.
 ///
@@ -153,7 +156,7 @@ pub(crate) fn path() -> Option<PathBuf> {
     settings::dir().ok().map(|dir| dir.join("state.toml"))
 }
 
-/// Paths that have since vanished are dropped — a renamed folder would
+/// Local paths that have since vanished are dropped — a renamed folder would
 /// otherwise leave a tab no agent can spawn in. The active project is resolved
 /// by path first, so dropping an earlier one doesn't shift it.
 ///
@@ -166,9 +169,7 @@ pub fn restore() -> State {
     let projects: Vec<Location> = stored
         .projects
         .into_iter()
-        .filter(|location| match location {
-            Location::Local(path) => path.is_dir(),
-        })
+        .filter(|location| location.local().is_none_or(Path::is_dir))
         .collect();
     let active = active
         .and_then(|location| projects.iter().position(|open| *open == location))

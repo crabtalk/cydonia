@@ -23,7 +23,12 @@ impl Scratch {
             "updated": 1, "items": []
         }))
         .unwrap();
-        ChatSession::restore(1, self.0.clone(), agent("/bin/false", &[]), record)
+        ChatSession::restore(
+            1,
+            artifact::location::Location::from(self.0.clone()),
+            agent("/bin/false", &[]),
+            record,
+        )
     }
 }
 
@@ -125,7 +130,12 @@ fn queued_submission_updates_order_immediately_and_survives_restore(cx: &mut gpu
     });
     cx.run_until_parked();
     let stored = fs::Project::new(&scratch.0).sessions().pop().unwrap();
-    let restored = ChatSession::restore(2, scratch.0.clone(), agent("/bin/false", &[]), stored);
+    let restored = ChatSession::restore(
+        2,
+        artifact::location::Location::from(scratch.0.clone()),
+        agent("/bin/false", &[]),
+        stored,
+    );
     let touched = chat.read_with(cx, |chat, _| chat.touched());
     assert_eq!(restored.touched() / 1000, touched / 1000);
     assert_eq!(chat.read_with(cx, |chat, _| chat.updated), submitted);
@@ -176,7 +186,12 @@ fn cancelling_startup_terminates_an_agent_stuck_in_initialize() {
         let entry = agent("/bin/sh", &["-c", "echo ready >&2; exec sleep 60"]);
         let (tx, mut events) = acp::channel();
         let pending = PendingConnection(acp::runtime().spawn(async move {
-            Session::spawn(&entry, Launch::new(std::env::temp_dir()), tx).await
+            Session::spawn(
+                &entry,
+                Launch::new(artifact::location::Location::from(std::env::temp_dir())),
+                tx,
+            )
+            .await
         }));
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
@@ -216,7 +231,7 @@ for line in sys.stdin:
             Duration::from_secs(5),
             Session::spawn(
                 &agent("/usr/bin/python3", &["-u", "-c", AGENT]),
-                Launch::new(scratch.0.clone()),
+                Launch::new(artifact::location::Location::from(scratch.0.clone())),
                 tx,
             ),
         )

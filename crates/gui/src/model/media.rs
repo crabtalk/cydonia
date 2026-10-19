@@ -86,6 +86,10 @@ impl Picture {
         Some(Self::new(std::fs::read(path).ok()?, &extension(path)?))
     }
 
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.bytes
+    }
+
     /// The name it is filed under, taken from its bytes, so the same picture
     /// kept twice is the one file — and gpui, which caches a decoded picture
     /// against its path, is handed the copy it already has.
@@ -103,14 +107,13 @@ pub struct Shelf {
 }
 
 impl Shelf {
-    /// The shared pictures of the project at `root`.
-    pub fn shared(root: &Path) -> Self {
-        Self {
-            store: crate::model::store::open(&artifact::location::Location::Local(
-                root.to_path_buf(),
-            )),
+    /// The shared pictures of the project at `location` — see
+    /// [`crate::model::store::open`] for where there is none.
+    pub fn shared(location: &artifact::location::Location) -> Option<Self> {
+        Some(Self {
+            store: crate::model::store::open(location)?,
             owner: Owner::Shared,
-        }
+        })
     }
 
     /// File `picture` here: its name, and the write.
@@ -330,7 +333,11 @@ pub fn detach(text: &str) -> (String, Vec<PathBuf>) {
 /// is when it is already small and in a format models read, and otherwise
 /// scaled to [`LONG_EDGE`] and written as a PNG.
 pub fn encode(path: &Path) -> Option<(String, &'static str)> {
-    let bytes = std::fs::read(path).ok()?;
+    encode_bytes(std::fs::read(path).ok()?)
+}
+
+/// [`encode`] for a picture's bytes.
+pub fn encode_bytes(bytes: Vec<u8>) -> Option<(String, &'static str)> {
     let format = image::guess_format(&bytes).ok()?;
     let picture = image::load_from_memory_with_format(&bytes, format).ok()?;
     let fits = picture.width().max(picture.height()) <= LONG_EDGE;

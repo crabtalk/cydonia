@@ -20,8 +20,9 @@ use futures::{
 };
 
 use self::hosts::Hosts;
-pub use self::hosts::{HostId, Saved};
+pub use self::hosts::Saved;
 use super::{
+    host::HostId,
     session::{Heartbeat, Session, Status, Transport},
     ssh::{Delegate, Host, Remote},
 };
@@ -224,6 +225,18 @@ impl<C: Connector> Controller<C> {
             drop(live);
             drop(gone);
         }
+    }
+
+    /// What `read` makes of the transport of the host's session, while it has
+    /// one. `read` runs with the controller's sessions locked.
+    pub fn with_transport<R>(
+        &self,
+        id: HostId,
+        read: impl FnOnce(&C::Transport) -> R,
+    ) -> Option<R> {
+        let live = self.inner.live.lock().unwrap();
+        live.get(&id)
+            .map(|running| read(running.session.transport()))
     }
 
     pub fn status(&self, id: HostId) -> HostStatus {

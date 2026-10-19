@@ -1,18 +1,15 @@
 //! The saved hosts, in a TOML file: a `next` id and one `[[host]]` table per
 //! host, with its `id`, `name`, `destination` and optional `port`.
 
-use std::{collections::HashSet, fmt, fs, io, path::PathBuf};
+use std::{collections::HashSet, fs, io, path::PathBuf};
 
 use anyhow::{Context as _, bail};
 use serde::{Deserialize, Serialize};
 
-use crate::{client::ssh::Host, fs::Replacement};
-
-/// A saved host's id. Never given to another host of the same file, removed
-/// or not.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct HostId(u64);
+use crate::{
+    client::{host::HostId, ssh::Host},
+    fs::Replacement,
+};
 
 /// One saved host.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,12 +38,6 @@ struct File {
 
 /// A host's name: trimmed, and not empty.
 struct Name(String);
-
-impl fmt::Display for HostId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
 
 impl Saved {
     pub fn id(&self) -> HostId {
@@ -81,7 +72,7 @@ impl Hosts {
                 Some(name) => saved.name = name.0,
                 None => saved.name = saved.host.to_string(),
             }
-            file.next = file.next.max(saved.id.0 + 1);
+            file.next = file.next.max(saved.id.get() + 1);
         }
         Ok(Self { path, file })
     }
@@ -97,7 +88,7 @@ impl Hosts {
     pub(crate) fn add(&mut self, name: &str, host: Host) -> anyhow::Result<HostId> {
         let name = Name::parse(name)?;
         let mut file = self.file.clone();
-        let id = HostId(file.next);
+        let id = HostId::new(file.next);
         file.next += 1;
         file.hosts.push(Saved {
             id,

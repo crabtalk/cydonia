@@ -29,14 +29,14 @@ fn pending_image_only_message_has_a_gallery_and_retains_preview(cx: &mut gpui::T
             root.workspace.update(cx, |workspace, cx| {
                 workspace.settings.features.sessions = true;
                 let cwd = std::path::PathBuf::from("/nonexistent/cydonia-queue-test");
-                let mut project = Project::new(cwd.clone(), cx);
+                let mut project = Project::at(cwd.clone().into(), cx).unwrap();
                 let record = serde_json::from_value(serde_json::json!({
                     "id":"test", "agent":"test", "title":"", "name":null, "updated":1, "items":[]
                 }))
                 .unwrap();
                 let mut chat = ChatSession::restore(
                     1,
-                    cwd,
+                    artifact::location::Location::from(cwd),
                     Agent {
                         name: "test".into(),
                         id: None,
@@ -88,7 +88,7 @@ fn a_queue_is_drawn_only_under_the_session_it_is_waiting_in(cx: &mut gpui::TestA
             root.workspace.update(cx, |workspace, cx| {
                 workspace.settings.features.sessions = true;
                 let cwd = std::path::PathBuf::from("/nonexistent/cydonia-queue-test");
-                let mut project = Project::new(cwd.clone(), cx);
+                let mut project = Project::at(cwd.clone().into(), cx).unwrap();
                 for id in [1, 2] {
                     let record = serde_json::from_value(serde_json::json!({
                         "id":"test", "agent":"test", "title":"", "name":null,
@@ -97,7 +97,7 @@ fn a_queue_is_drawn_only_under_the_session_it_is_waiting_in(cx: &mut gpui::TestA
                     .unwrap();
                     let mut chat = ChatSession::restore(
                         id,
-                        cwd.clone(),
+                        artifact::location::Location::from(cwd.clone()),
                         Agent {
                             name: "test".into(),
                             id: None,

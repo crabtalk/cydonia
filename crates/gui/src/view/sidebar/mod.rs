@@ -22,6 +22,7 @@ use crate::view::{
     window::{reach::InWindow, root::Cydonia},
 };
 use artifact::kind::Kind;
+use artifact::location::Location;
 use artifact::project::Project as _;
 use artifact::space::Member;
 use bezel::ui::scroll as scrollbars;
@@ -41,13 +42,7 @@ use bezel::{
         menu::Item,
     },
 };
-use std::{
-    cell::RefCell,
-    collections::HashMap,
-    path::{Path, PathBuf},
-    rc::Rc,
-    time::Duration,
-};
+use std::{cell::RefCell, collections::HashMap, path::PathBuf, rc::Rc, time::Duration};
 
 /// The wash a row paints. With 1px either side it is [`ROW_HEIGHT`], the
 /// pitch of headings and rows alike.
@@ -152,9 +147,9 @@ pub(crate) enum Row {
     Group(Group),
     /// The line the archived entries of the project at this path are folded
     /// under.
-    Archive(PathBuf),
+    Archive(Location),
     /// An entry of the project at `project`.
-    Entry { project: PathBuf, showing: Showing },
+    Entry { project: Location, showing: Showing },
     /// An app, by its id.
     App(String),
 }
@@ -234,7 +229,7 @@ impl Row {
             Member::Entry(entry) => {
                 let (_, showing) = workspace.showing_of(member, cx)?;
                 Some(Row::Entry {
-                    project: entry.project.root().to_path_buf(),
+                    project: entry.project.clone(),
                     showing,
                 })
             }
@@ -342,10 +337,12 @@ impl Row {
         workspace.program(id, cx).cloned()
     }
 
-    /// Where an entry row is on disk, for a backend that is the disk.
+    /// Where an entry row is on disk, for a backend that is the disk of this
+    /// machine.
     pub(crate) fn place(&self, workspace: &Workspace, cx: &App) -> Option<PathBuf> {
         let (project, _) = self.located(workspace)?;
         let open = &workspace.projects[project];
+        open.location().local()?;
         let (kind, id) = match self.showing()? {
             Showing::Article(id) => (Kind::Article, id.clone()),
             Showing::Board(id) => (Kind::Board, id.clone()),
@@ -391,7 +388,7 @@ impl Heading {
 #[derive(Clone, PartialEq, Eq, Debug, Hash)]
 pub(crate) enum Group {
     /// A project, by its path.
-    Project(PathBuf),
+    Project(Location),
     /// A space, by its id.
     Space(String),
 }
@@ -505,7 +502,7 @@ pub(crate) fn on_disk(path: PathBuf) -> [(Item, Act); 2] {
 
 /// The project an entry row, a project's heading or its archive line belongs
 /// to.
-fn project_of(row: &Row) -> Option<&Path> {
+fn project_of(row: &Row) -> Option<&Location> {
     match row {
         Row::Group(Group::Project(path)) | Row::Archive(path) => Some(path),
         Row::Entry { project, .. } => Some(project),
@@ -692,14 +689,14 @@ pub(crate) fn ghost(label: SharedString, theme: &Theme) -> AnyElement {
 /// An entry's own name in the element tree: two rows must never share one.
 pub(crate) fn key_of(entry: &Row) -> String {
     match entry {
-        Row::Group(Group::Project(path)) => format!("project-{}", path.display()),
+        Row::Group(Group::Project(path)) => format!("project-{path}"),
         Row::Group(Group::Space(id)) => format!("space-{id}"),
         Row::Heading(Heading::Projects) => "projects".to_owned(),
         Row::Heading(Heading::Spaces) => "spaces".to_owned(),
         Row::Heading(Heading::Apps) => "apps".to_owned(),
-        Row::Archive(path) => format!("archive-{}", path.display()),
+        Row::Archive(path) => format!("archive-{path}"),
         Row::Entry { project, showing } => {
-            let project = project.display();
+            let project = project.to_string();
             match showing {
                 Showing::Session(id) => format!("session-{project}-{id}"),
                 Showing::Board(id) => format!("board-{project}-{id}"),
@@ -791,9 +788,9 @@ type MenuRows = Rc<dyn Fn(&mut Sidebar, &mut Context<Sidebar>) -> Vec<(Item, Act
 pub(crate) enum SidebarMenu {
     /// The `+` on a project heading, by the project's path: what to start
     /// here.
-    Add(PathBuf),
+    Add(Location),
     /// A project heading, by the project's path: what to do to the project.
-    Project(PathBuf),
+    Project(Location),
     /// The `···` on an entry's row, whichever kind it is, and a space's.
     Entry(Row),
 }

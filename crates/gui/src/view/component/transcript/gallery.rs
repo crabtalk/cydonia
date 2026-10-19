@@ -1,4 +1,5 @@
 use crate::{model::workspace::Workspace, view::component::image_preview::Preview};
+use artifact::location::Location;
 use bezel::{
     gpui::{
         self, Context, Entity, MouseButton, ObjectFit, Pixels, Point, Render, SharedString,
@@ -38,12 +39,15 @@ pub(crate) struct Gallery {
 impl Gallery {
     pub(crate) fn new(
         images: Vec<String>,
-        cwd: &Path,
+        project: &Location,
         workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let images: Vec<_> = images.iter().map(|url| source(url, cwd)).collect();
-        let preview = cx.new(|cx| Preview::new(images.clone(), cwd, workspace, cx));
+        let images: Vec<_> = images
+            .iter()
+            .map(|url| source(url, project.root()))
+            .collect();
+        let preview = cx.new(|cx| Preview::new(images.clone(), project, workspace, cx));
         // Closing the preview leaves the strip on the image it was showing.
         cx.observe(&preview, |this, preview, cx| {
             let preview = preview.read(cx);

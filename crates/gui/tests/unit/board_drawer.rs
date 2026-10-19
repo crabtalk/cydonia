@@ -88,7 +88,7 @@ fn open(
             cx.new(|cx| Cydonia::new(Settings::default(), state::State::default(), window, cx));
         root.update(cx, |root, cx| {
             root.workspace.update(cx, |workspace, cx| {
-                let mut project = Project::new(scratch.0.clone(), cx);
+                let mut project = Project::at(scratch.0.clone().into(), cx).unwrap();
                 project.board = Some(0);
                 workspace.projects.push(project);
                 workspace.active = Some(0);
@@ -877,7 +877,7 @@ fn busy_orb_opens_its_session_without_opening_the_card(cx: &mut TestAppContext) 
                 let project = &mut workspace.projects[0];
                 let chat = ChatSession::restore(
                     77,
-                    project.path.clone(),
+                    project.location().clone(),
                     crate::model::settings::Agent {
                         name: "test".into(),
                         id: None,

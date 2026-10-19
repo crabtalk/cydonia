@@ -33,7 +33,7 @@ impl Workspace {
         let open = self
             .projects
             .iter()
-            .find(|open| open.location() == member.project)
+            .find(|open| *open.location() == member.project)
             .ok_or("The project is no longer open.")?;
         let store = open.store();
         let held = open
@@ -168,7 +168,7 @@ impl Workspace {
             Ok(key) => key,
             Err(e) => return Task::ready(Err(e.to_string())),
         };
-        let (store, path) = (open.store(), open.path.clone());
+        let (store, location) = (open.store(), open.location().clone());
         let name = name.trim().to_owned();
         let made = store.create_board(&name, &key);
         cx.spawn(async move |workspace, cx| {
@@ -185,7 +185,7 @@ impl Workspace {
                     let project = workspace
                         .projects
                         .iter()
-                        .position(|open| open.path == path)
+                        .position(|open| *open.location() == location)
                         .ok_or("That project is not open.".to_owned())?;
                     workspace.projects[project]
                         .boards
@@ -636,7 +636,10 @@ impl Workspace {
             }
         }
         if let Some((from, others)) = ends
-            && let Some(path) = self.projects.get(to.0).map(|open| open.path.clone())
+            && let Some(path) = self
+                .projects
+                .get(to.0)
+                .map(|open| open.root().to_path_buf())
             && let Some(landing) = self
                 .projects
                 .get(to.0)
@@ -716,7 +719,7 @@ impl Workspace {
         let held = open.boards.iter().find(|held| held.id == board)?;
         let board = held.board.read(cx);
         let card = board.card(card)?;
-        Some(read(Place::of(&open.path, board, card)?, card))
+        Some(read(Place::of(open.root(), board, card)?, card))
     }
 
     /// Where card `card` of board `board` is, and the cards its lists name —

@@ -78,7 +78,7 @@ fn fork_context_is_sent_once_and_completed_forks_resume_without_reimporting() {
             Launch {
                 history: Some(history.clone()),
                 history_pending: true,
-                ..Launch::new(std::env::temp_dir())
+                ..Launch::new(artifact::location::Location::from(std::env::temp_dir()))
             },
             tx,
         )
@@ -89,12 +89,12 @@ fn fork_context_is_sent_once_and_completed_forks_resume_without_reimporting() {
             events.try_recv().is_err(),
             "opening a fork must not run a turn"
         );
-        session.prompt("edited question", None, None);
+        session.prompt("edited question", None, None, Default::default());
         let text = answer(&mut events).await;
         assert!(text.contains("unique prior question"));
         assert!(text.contains("unique prior answer"));
         assert!(text.contains("edited question"));
-        session.prompt("next question", None, None);
+        session.prompt("next question", None, None, Default::default());
         let text = answer(&mut events).await;
         assert!(!text.contains("unique prior question"));
         drop(session);
@@ -106,14 +106,14 @@ fn fork_context_is_sent_once_and_completed_forks_resume_without_reimporting() {
                 previous: Some("fork".into()),
                 history: Some(history),
                 history_pending: false,
-                ..Launch::new(std::env::temp_dir())
+                ..Launch::new(artifact::location::Location::from(std::env::temp_dir()))
             },
             tx,
         )
         .await
         .unwrap();
         assert!(loaded.loaded);
-        loaded.prompt("after reopening", None, None);
+        loaded.prompt("after reopening", None, None, Default::default());
         assert!(!answer(&mut events).await.contains("unique prior question"));
     });
 }
@@ -150,14 +150,14 @@ fn unsent_fork_reimports_after_loading_and_missing_agent_state_uses_saved_histor
                     previous: Some(previous.into()),
                     history: Some(acp::history(&[ChatItem::Agent("preserved context".into())])),
                     history_pending: pending,
-                    ..Launch::new(std::env::temp_dir())
+                    ..Launch::new(artifact::location::Location::from(std::env::temp_dir()))
                 },
                 tx,
             )
             .await
             .unwrap();
             assert_eq!(session.loaded, loaded);
-            session.prompt("continue", None, None);
+            session.prompt("continue", None, None, Default::default());
             assert!(answer(&mut events).await.contains("preserved context"));
         }
     });
@@ -182,7 +182,12 @@ fn an_empty_fork_is_saved_with_its_draft_before_any_prompt(cx: &mut gpui::TestAp
         "updated": 1, "items": [{"User": "editable prompt"}]
     }))
     .unwrap();
-    let source = ChatSession::restore(1, path.clone(), agent(), record);
+    let source = ChatSession::restore(
+        1,
+        artifact::location::Location::from(path.clone()),
+        agent(),
+        record,
+    );
     let fork = cx.new(|_| source.fork_at(2, 0).unwrap());
     fork.update(cx, |fork, cx| fork.flush(cx));
     // A fork has no id until the backend mints one.
@@ -191,7 +196,12 @@ fn an_empty_fork_is_saved_with_its_draft_before_any_prompt(cx: &mut gpui::TestAp
     assert_eq!(records.len(), 1);
     let saved = records.into_iter().next().unwrap();
     assert_ne!(saved.id, "source");
-    let restored = ChatSession::restore(3, path.clone(), agent(), saved);
+    let restored = ChatSession::restore(
+        3,
+        artifact::location::Location::from(path.clone()),
+        agent(),
+        saved,
+    );
     assert!(restored.items.is_empty());
     assert_eq!(restored.draft, "editable prompt");
     assert!(restored.fork.is_some());

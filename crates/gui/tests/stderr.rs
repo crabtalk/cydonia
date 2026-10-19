@@ -121,7 +121,12 @@ fn a_launch_that_dies_still_hands_back_what_it_printed() {
     );
     let (tx, mut events) = acp::channel();
     let (opened, printed) = acp::runtime().block_on(async move {
-        let opened = Session::spawn(&entry, Launch::new(std::env::temp_dir()), tx).await;
+        let opened = Session::spawn(
+            &entry,
+            Launch::new(artifact::location::Location::from(std::env::temp_dir())),
+            tx,
+        )
+        .await;
         // The stderr reader is a task of its own, so wait for the line rather
         // than for a clock. The timeout is only there to fail rather than hang.
         let printed = tokio::time::timeout(Duration::from_secs(10), async {

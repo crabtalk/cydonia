@@ -115,13 +115,7 @@ impl SettingsWindow {
         else {
             return;
         };
-        let agreed = self
-            .workspace
-            .read(cx)
-            .settings
-            .trusted_agents
-            .get(&agent.id)
-            .is_some_and(|mark| *mark == agent::source_mark(&agent));
+        let agreed = self.workspace.read(cx).settings.trusts(&agent);
         match agreed {
             true => self.fetch(ix, cx),
             false => {

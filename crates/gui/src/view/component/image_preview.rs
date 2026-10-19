@@ -1,5 +1,6 @@
 //! Shared image-preview frame and controls.
 use crate::{model::workspace::Workspace, view::component::file::pictures::Pictures};
+use artifact::location::Location;
 use bezel::{
     gpui::{
         self, AnyElement, Context, CursorStyle, Empty, Entity, MouseButton, ObjectFit, Pixels,
@@ -13,7 +14,7 @@ use bezel::{
     },
 };
 use markdown::PictureMenu;
-use std::{cell::Cell, path::Path, rc::Rc};
+use std::{cell::Cell, rc::Rc};
 
 /// Between the card's edge and the picture and toolbar inside it.
 const INSET: f32 = 12.;
@@ -95,18 +96,18 @@ pub(crate) struct Preview {
 }
 
 impl Preview {
-    /// `cwd` is the project whose shared pictures a picture fetched off the
-    /// web to open elsewhere is filed among.
+    /// `project` is the project whose shared pictures a picture fetched off
+    /// the web to open elsewhere is filed among.
     pub(crate) fn new(
         images: Vec<gpui::ImageSource>,
-        cwd: &Path,
+        project: &Location,
         workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) -> Self {
         let pictures = cx.new(|cx| {
             Pictures::new(
-                cwd.to_path_buf(),
-                crate::model::media::Shelf::shared(cwd),
+                project.root().to_path_buf(),
+                crate::model::media::Shelf::shared(project),
                 workspace,
                 cx,
             )

@@ -5,6 +5,7 @@ use super::{Docs, Tags, card_preview};
 use crate::model::workspace::references;
 use crate::view::{kit::watch::Watch, window::root::Cydonia};
 use artifact::board::Board;
+use artifact::location::Location;
 use bezel::{
     gpui::{
         AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, SharedString,
@@ -18,7 +19,7 @@ use std::{path::PathBuf, rc::Rc};
 pub(crate) struct CardEmbed {
     board: Entity<Board>,
     /// The project the board is in, where the card's blockers resolve.
-    home: PathBuf,
+    home: Location,
     card: String,
     /// The link it was embedded by, which pressing it opens.
     reference: String,
@@ -36,7 +37,7 @@ impl CardEmbed {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         board: Entity<Board>,
-        home: PathBuf,
+        home: Location,
         card: String,
         reference: String,
         base: Option<PathBuf>,

@@ -4,6 +4,7 @@
 //! paints: cydonia's mark and the title.
 
 use crate::{
+    model::project::Project,
     model::workspace::{
         Showing, Workspace,
         references::{self, Part},
@@ -69,20 +70,20 @@ impl Global for Linkables {}
 /// Every open project's entries, as what `@` lists. Installed with
 /// `cx.set_global`.
 pub(crate) fn read(workspace: &Workspace, cx: &App) -> Linkables {
-    let active = workspace.active_project().map(|project| &project.path);
+    let active = workspace.active_project().map(Project::location);
     let mut held = Vec::new();
     for project in &workspace.projects {
-        let Some(name) = reference::project_name(&project.path) else {
+        let Some(name) = reference::project_name(project.root()) else {
             continue;
         };
-        let active = active == Some(&project.path);
+        let active = active == Some(project.location());
         let shown = |number: u64| {
             Reference::entry(Some(&name), number, None)
                 .relative(active)
                 .to_string()
         };
         let row = |showing: Showing| Row::Entry {
-            project: project.path.clone(),
+            project: project.location().clone(),
             showing,
         };
         let linkable =
@@ -238,10 +239,10 @@ impl Carded<'_> {
 }
 
 pub(crate) fn carded<'a>(workspace: &'a Workspace, cx: &'a App) -> Vec<Carded<'a>> {
-    let active = workspace.active_project().map(|project| &project.path);
+    let active = workspace.active_project().map(Project::location);
     let mut cards = Vec::new();
     for project in &workspace.projects {
-        let Some(name) = reference::project_name(&project.path) else {
+        let Some(name) = reference::project_name(project.root()) else {
             continue;
         };
         for board in project.boards.iter().map(|held| held.board.read(cx)) {
@@ -251,8 +252,8 @@ pub(crate) fn carded<'a>(workspace: &'a Workspace, cx: &'a App) -> Vec<Carded<'a
                 };
                 cards.push(Carded {
                     project: name.to_string(),
-                    path: &project.path,
-                    active: active == Some(&project.path),
+                    path: project.root(),
+                    active: active == Some(project.location()),
                     board,
                     card,
                     number,

@@ -347,7 +347,7 @@ impl Tab {
         let article = workspace.article_of(self.entry.as_ref(), cx)?;
         let chip = article.number.and_then(|number| {
             let project = &workspace.projects[workspace.article_at(&article.path)?.0];
-            let name = reference::project_name(&project.path)?;
+            let name = reference::project_name(project.root())?;
             let within = Some(reference::Within::Span(lines));
             Some(composer::mention_chip(
                 &reference::Reference::entry(None, number, within).to_string(),

@@ -170,12 +170,13 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) -> Option<Entity<Panel>> {
         let workspace = self.workspace.read(cx);
-        let project = workspace.projects[workspace.project_at(path)?].path.clone();
+        let at = workspace.project_at(&artifact::location::Location::from(path))?;
+        let project = workspace.projects[at].location().clone();
         let cwd = if self
             .workspace
             .read(cx)
             .active_project()
-            .is_some_and(|active| active.path == project)
+            .is_some_and(|active| *active.location() == project)
         {
             self.shell_cwd(cx).unwrap_or(project)
         } else {

@@ -14,9 +14,9 @@
 #[cfg(feature = "desktop")]
 use crate::agent::acp::{self, Event, Launch, Reply, Session};
 #[cfg(feature = "desktop")]
-use crate::model::notify;
-#[cfg(feature = "desktop")]
 use crate::model::workspace::references;
+#[cfg(feature = "desktop")]
+use crate::model::{media, notify};
 use crate::model::{
     session_preferences::{self, Choices, OfferCache, Offers},
     settings,
@@ -47,10 +47,12 @@ use futures::{FutureExt as _, future::Shared};
 use std::{
     cell::RefCell,
     collections::{BTreeMap, VecDeque},
-    path::PathBuf,
+    path::Path,
     rc::Rc,
     time::Duration,
 };
+#[cfg(feature = "desktop")]
+use std::{collections::HashMap, path::PathBuf};
 use web_time::{Instant, SystemTime, UNIX_EPOCH};
 
 /// What the stand-in answers without the `desktop` feature, one per turn in
@@ -155,9 +157,10 @@ pub struct ChatSession {
     pub number: Option<u64>,
     pub id: u64,
     pub entry: settings::Agent,
-    /// The directory the agent runs in, which is the project's. Kept here so
-    /// a session can reconnect and file itself without asking the workspace.
-    pub cwd: PathBuf,
+    /// The project's location, whose root is the directory the agent runs in.
+    /// Kept here so a session can reconnect and file itself without asking
+    /// the workspace.
+    pub location: Location,
     pub connection: Connection,
     pub items: Vec<ChatItem>,
     history_unloaded: bool,
@@ -220,6 +223,11 @@ pub struct ChatSession {
     /// Prompts waiting for an agent to send them to: what was typed while a
     /// turn was in flight, and what a card sent to a new session opened it with.
     pub queue: VecDeque<String>,
+    /// The bytes of pictures this app filed for messages, by the path the
+    /// message names each at, until the message is sent. A picture named
+    /// here goes to the agent from these bytes rather than from its path.
+    #[cfg(feature = "desktop")]
+    inline: HashMap<PathBuf, Vec<u8>>,
     /// The geometry of the sidebar's orb for this session, reused tick to
     /// tick. Its own buffer: each orb on screen is filled where it is built
     /// and read back in the paint phase.
@@ -237,7 +245,7 @@ impl ChatSession {
     pub(crate) fn turn_link(&self, from: usize, to: usize) -> Option<String> {
         use artifact::reference::{self, Reference, Span, Within};
         let number = self.number?;
-        let name = reference::project_name(&self.cwd)?;
+        let name = reference::project_name(self.cwd())?;
         let turns = Span {
             from: from.min(to) as u64,
             to: from.max(to) as u64,
@@ -246,28 +254,34 @@ impl ChatSession {
     }
 
     /// Where this session is filed — its project's backend.
-    fn store(&self) -> Store {
-        store::open(&Location::from(self.cwd.as_path()))
+    fn store(&self) -> Option<Store> {
+        store::open(&self.location)
     }
 
-    /// Open a session on `entry`. `seed` is its first prompt, sent as soon as
-    /// the agent is up — what a card sent to a new session rides in on.
+    /// The directory the agent runs in, on the machine the project is on.
+    pub fn cwd(&self) -> &Path {
+        self.location.root()
+    }
+
+    /// Open a session on `entry` in the project at `location`. `seed` is its
+    /// first prompt, sent as soon as the agent is up — what a card sent to a
+    /// new session rides in on.
     pub fn connect(
         id: u64,
         entry: settings::Agent,
-        cwd: PathBuf,
+        location: Location,
         seed: Option<String>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let preferences = session_preferences::load(&cwd, &entry, None);
-        Self::open(id, entry, cwd, seed, preferences, cx)
+        let preferences = session_preferences::load(&location, &entry, None);
+        Self::open(id, entry, location, seed, preferences, cx)
     }
 
     /// [`Self::connect`] with the choices the launch starts from given.
     fn open(
         id: u64,
         entry: settings::Agent,
-        cwd: PathBuf,
+        location: Location,
         seed: Option<String>,
         preferences: Choices,
         cx: &mut Context<Self>,
@@ -276,7 +290,7 @@ impl ChatSession {
         let (launch, connection) = (
             Launch {
                 choices: preferences.clone(),
-                ..Launch::new(cwd.clone())
+                ..Launch::new(location.clone())
             },
             Connection::Connecting,
         );
@@ -285,7 +299,7 @@ impl ChatSession {
         let mut chat = Self {
             id,
             entry,
-            cwd,
+            location,
             connection,
             items: Vec::new(),
             history_unloaded: false,
@@ -320,6 +334,8 @@ impl ChatSession {
             turn_started: None,
             tool_started: BTreeMap::new(),
             queue: seed.into_iter().collect(),
+            #[cfg(feature = "desktop")]
+            inline: HashMap::new(),
             mark: Rc::default(),
             epoch: 0,
             _pump: Task::ready(()),
@@ -338,12 +354,12 @@ impl ChatSession {
     pub fn connect_article(
         id: u64,
         entry: settings::Agent,
-        cwd: PathBuf,
+        location: Location,
         article: String,
         choices: Choices,
         cx: &mut Context<Self>,
     ) -> Self {
-        let mut chat = Self::open(id, entry, cwd, None, choices, cx);
+        let mut chat = Self::open(id, entry, location, None, choices, cx);
         chat.article = Some(article);
         chat
     }
@@ -351,13 +367,13 @@ impl ChatSession {
     /// A session read back from disk. It starts idle — a launch must not spawn
     /// an agent per session — and reconnects when it is brought to the front,
     /// or when something is sent to it.
-    pub fn restore(id: u64, cwd: PathBuf, entry: settings::Agent, record: Record) -> Self {
+    pub fn restore(id: u64, location: Location, entry: settings::Agent, record: Record) -> Self {
         let updated = record.at();
-        let preferences = session_preferences::load(&cwd, &entry, Some(&record.id));
+        let preferences = session_preferences::load(&location, &entry, Some(&record.id));
         Self {
             id,
             entry,
-            cwd,
+            location,
             connection: Connection::Idle,
             replay: record.replay,
             items: record.items,
@@ -392,6 +408,8 @@ impl ChatSession {
             turn_started: None,
             tool_started: BTreeMap::new(),
             queue: VecDeque::new(),
+            #[cfg(feature = "desktop")]
+            inline: HashMap::new(),
             mark: Rc::default(),
             epoch: 0,
             _pump: Task::ready(()),
@@ -410,7 +428,7 @@ impl ChatSession {
         let Some(record) = self
             .record
             .as_deref()
-            .and_then(|id| self.store().session(id))
+            .and_then(|id| self.store()?.session(id))
         else {
             return false;
         };
@@ -431,7 +449,7 @@ impl ChatSession {
         let Some(record) = self
             .record
             .as_deref()
-            .and_then(|id| self.store().session(id))
+            .and_then(|id| self.store()?.session(id))
         else {
             return;
         };
@@ -509,12 +527,12 @@ impl ChatSession {
 
     pub fn fork_at(&self, id: u64, before: usize) -> Option<Self> {
         let source = if self.history_unloaded {
-            self.store().session(self.record.as_deref()?)?
+            self.store()?.session(self.record.as_deref()?)?
         } else {
             self.to_record()
         };
         let record = source.fork_at(before)?;
-        let mut chat = Self::restore(id, self.cwd.clone(), self.entry.clone(), record);
+        let mut chat = Self::restore(id, self.location.clone(), self.entry.clone(), record);
         chat.record = None;
         chat.written = false;
         chat.preferences = self.preferences.clone();
@@ -530,7 +548,10 @@ impl ChatSession {
         if let Some(filing) = &self.filing {
             return filing.clone();
         }
-        let made = self.store().create_session();
+        let Some(store) = self.store() else {
+            return Task::ready(None).shared();
+        };
+        let made = store.create_session();
         let filing = cx
             .spawn(async move |this, cx| {
                 let id = made.await.ok();
@@ -570,7 +591,10 @@ impl ChatSession {
                 let id = filing.await;
                 let numbered = this.read_with(cx, |chat, _| chat.number.is_some()).ok()?;
                 let number = match (&id, numbered) {
-                    (Some(id), false) => store.number(Kind::Session, id).await.ok(),
+                    (Some(id), false) => match &store {
+                        Some(store) => store.number(Kind::Session, id).await.ok(),
+                        None => None,
+                    },
                     _ => None,
                 };
                 this.update(cx, |chat, cx| {
@@ -668,8 +692,10 @@ impl ChatSession {
     }
 
     fn write_record(&mut self, cx: &App) {
-        cx.background_spawn(self.store().save_session(&self.to_record()))
-            .detach();
+        if let Some(store) = self.store() {
+            cx.background_spawn(store.save_session(&self.to_record()))
+                .detach();
+        }
         self.written = true;
         self.save_preferences();
     }
@@ -696,7 +722,7 @@ impl ChatSession {
                 }),
                 history_pending: self.replay.is_some(),
                 choices: self.preferences.clone(),
-                ..Launch::new(self.cwd.clone())
+                ..Launch::new(self.location.clone())
             };
             self._pump = self.launch(launch, cx);
             self.connection = Connection::Connecting;
@@ -791,6 +817,13 @@ impl ChatSession {
         }
     }
 
+    /// Send the picture a message names at `path` from `bytes`, the bytes this
+    /// app filed there.
+    #[cfg(feature = "desktop")]
+    pub fn hold_picture(&mut self, path: PathBuf, bytes: Vec<u8>) {
+        self.inline.insert(path, bytes);
+    }
+
     /// Send now, or queue it for whenever there is an agent to send it to —
     /// a turn in flight, or a connection still being made.
     pub fn send(&mut self, content: String, cx: &mut Context<Self>) {
@@ -864,9 +897,16 @@ impl ChatSession {
             let article = self
                 .article
                 .as_deref()
-                .and_then(|id| self.store().article(id))
+                .and_then(|id| self.store()?.article(id))
                 .and_then(|article| article.number);
-            session.prompt(&content, self.number, article);
+            let inline = media::attached(&content)
+                .into_iter()
+                .filter_map(|path| {
+                    let bytes = self.inline.remove(&path)?;
+                    Some((path, bytes))
+                })
+                .collect();
+            session.prompt(&content, self.number, article, inline);
             self.last_activity = Instant::now();
             self.turn_started = Some(self.last_activity);
             self.tool_started.clear();
@@ -978,14 +1018,14 @@ impl ChatSession {
                 config: self.config.clone(),
             }
         } else {
-            OfferCache::get(cx, &self.cwd, &self.entry).with(&self.preferences)
+            OfferCache::get(cx, &self.location, &self.entry).with(&self.preferences)
         }
     }
 
     fn save_preferences(&mut self) {
         if let Some(record) = &self.record
             && let Err(error) = session_preferences::remember_session(
-                &self.cwd,
+                &self.location,
                 &self.entry,
                 record,
                 &self.preferences,
@@ -1440,7 +1480,9 @@ fn pump(entry: &settings::Agent, launch: Launch, cx: &mut Context<ChatSession>) 
                         modes: chat.modes.clone(),
                         config: chat.config.clone(),
                     };
-                    if let Err(error) = OfferCache::remember(cx, &chat.cwd, &chat.entry, offers) {
+                    if let Err(error) =
+                        OfferCache::remember(cx, &chat.location, &chat.entry, offers)
+                    {
                         chat.notice(true, &format!("Could not save agent options: {error}"));
                     }
                     chat.connection = Connection::Live(Box::new(session));

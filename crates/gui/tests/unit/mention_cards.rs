@@ -143,7 +143,7 @@ fn a_bare_number_names_the_entry_of_that_number_before_cards() {
         archived: false,
         kind: Kind::Article,
         row: Row::Entry {
-            project: "cloud".into(),
+            project: std::path::Path::new("cloud").into(),
             showing: crate::model::workspace::Showing::Article(number.to_string()),
         },
     };

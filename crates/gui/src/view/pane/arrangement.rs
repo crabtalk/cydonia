@@ -321,7 +321,7 @@ impl Cydonia {
         }
         let Some(open) = workspace
             .active_project()
-            .filter(|open| &open.path == project)
+            .filter(|open| open.location() == project)
         else {
             return false;
         };

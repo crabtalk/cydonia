@@ -1,14 +1,19 @@
 //! What cydonia hands Cupola for a remote host: cydonia-server, built from
 //! the checkout this app was built from, ssh's prompts, answered by whoever
 //! holds the [`Prompt`] receiver, and the services the app answers the
-//! server with.
+//! server with. [`Delegate::install`] puts Cupola's controller over the
+//! saved hosts behind [`super::Remotes`].
 
+use super::{Hosts, Remotes};
+use crate::{agent::acp, model::settings};
 use cupola::{
     Client,
     client::{
+        controller::{Controller, Ssh},
+        host::HostId,
         platform::{Os, Platform},
-        session::Mode,
-        ssh,
+        session::{Heartbeat, Mode},
+        ssh::{self, Control},
     },
 };
 use futures::{
@@ -30,6 +35,9 @@ const CHECKOUT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
 
 /// Where server builds go, under the checkout.
 const TARGET_DIR: &str = "target/cydonia-server";
+
+/// The saved hosts, in the config directory.
+const HOSTS: &str = "hosts.toml";
 
 /// cydonia's [`ssh::Delegate`].
 pub struct Delegate {
@@ -70,6 +78,36 @@ impl Delegate {
     pub fn new() -> (Self, UnboundedReceiver<Prompt>) {
         let (prompts, receiver) = mpsc::unbounded();
         (Self { prompts }, receiver)
+    }
+
+    /// Installs Cupola's controller over the hosts saved in the config
+    /// directory's `hosts.toml`, connecting over ssh through a delegate, as
+    /// the process's [`Remotes`]. Its sessions run on [`acp::runtime`].
+    /// Answers where the delegate's prompts arrive.
+    pub fn install() -> anyhow::Result<UnboundedReceiver<Prompt>> {
+        let (delegate, prompts) = Self::new();
+        let path = settings::dir()?.join(HOSTS);
+        let (controller, runner) =
+            Controller::open(path, Ssh::new(delegate), Heartbeat::default())?;
+        Remotes::install(controller)?;
+        acp::runtime().spawn(runner);
+        Ok(prompts)
+    }
+
+    /// Where Cupola installs the server binary on a host whose home directory
+    /// is `home`.
+    pub fn program(home: &Path) -> PathBuf {
+        home.join(ssh::ServerPath::new(server::NAME, server::VERSION).as_path())
+    }
+}
+
+impl<D: ssh::Delegate> Hosts for Controller<Ssh<D>> {
+    fn client(&self, host: HostId) -> anyhow::Result<Client> {
+        Controller::client(self, host)
+    }
+
+    fn control(&self, host: HostId) -> Option<Control> {
+        self.with_transport(host, |remote| remote.control().clone())
     }
 }
 

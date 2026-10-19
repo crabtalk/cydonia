@@ -68,6 +68,8 @@ pub enum Backend {
     Here(Here),
     #[cfg(feature = "desktop")]
     Remote(Remote),
+    #[cfg(feature = "desktop")]
+    Unreachable(Unreachable),
 }
 
 impl Contents {
@@ -80,10 +82,18 @@ impl Contents {
 }
 
 impl Backend {
-    /// The files of the project at `location`.
+    /// The files of the project at `location`: [`Unreachable`] for a location
+    /// on a host whose client cannot be had.
     pub fn open(location: &Location) -> Self {
         match location {
             Location::Local(_) => Self::Here(Here::default()),
+            #[cfg(feature = "desktop")]
+            Location::Remote { host, root } => {
+                match crate::model::remote::Remotes::get().and_then(|r| r.client(*host)) {
+                    Ok(client) => Self::Remote(Remote::new(&client, root.clone())),
+                    Err(error) => Self::Unreachable(Unreachable(format!("{error:#}").into())),
+                }
+            }
         }
     }
 }
@@ -96,6 +106,8 @@ macro_rules! each {
             Backend::Here($files) => $call.boxed(),
             #[cfg(feature = "desktop")]
             Backend::Remote($files) => $call.boxed(),
+            #[cfg(feature = "desktop")]
+            Backend::Unreachable($files) => $call.boxed(),
         }
     }};
 }
@@ -130,6 +142,8 @@ impl Files for Backend {
             Backend::Here(files) => files.local(),
             #[cfg(feature = "desktop")]
             Backend::Remote(files) => files.local(),
+            #[cfg(feature = "desktop")]
+            Backend::Unreachable(files) => files.local(),
         }
     }
 }
@@ -292,6 +306,46 @@ impl Files for Memory {
 
     fn local(&self) -> bool {
         true
+    }
+}
+
+/// The files of a project whose host's client could not be had: every call
+/// is refused with why.
+#[cfg(feature = "desktop")]
+#[derive(Clone)]
+pub struct Unreachable(std::sync::Arc<str>);
+
+#[cfg(feature = "desktop")]
+impl Unreachable {
+    fn refused<T>(&self) -> std::future::Ready<io::Result<T>> {
+        std::future::ready(Err(io::Error::other(self.0.to_string())))
+    }
+}
+
+#[cfg(feature = "desktop")]
+impl Files for Unreachable {
+    fn read_dir(
+        &self,
+        _: &Path,
+    ) -> impl Future<Output = io::Result<Vec<(bool, PathBuf)>>> + Send + use<> {
+        self.refused()
+    }
+
+    fn read(&self, _: &Path, _: u64) -> impl Future<Output = io::Result<Contents>> + Send + use<> {
+        self.refused()
+    }
+
+    fn replace(
+        &self,
+        _: &Path,
+        _: Vec<u8>,
+        _: Option<Vec<u8>>,
+    ) -> impl Future<Output = io::Result<()>> + Send + use<> {
+        self.refused()
+    }
+
+    fn local(&self) -> bool {
+        false
     }
 }
 

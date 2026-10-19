@@ -32,6 +32,10 @@ pub struct McpServer {
     /// The registry id this came from, when it came from there.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
+    /// Whether a `command` server is also run on a remote host, for an agent
+    /// there. Written only when set.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub remote: bool,
 }
 
 const fn enabled_by_default() -> bool {
@@ -106,5 +110,6 @@ pub fn install(server: &registry::Server) -> Result<()> {
         env: BTreeMap::new(),
         url,
         id: Some(server.id.clone()),
+        remote: false,
     })
 }

@@ -23,6 +23,7 @@ use crate::view::{
         section::Section,
     },
 };
+use artifact::location::Location;
 use bezel::{
     gpui::{
         self, AnyElement, App, Context, Div, ElementId, Empty, FontWeight, MouseButton,
@@ -40,7 +41,6 @@ use bezel::{
         widgets::{ButtonStyle, Buttons, Content, Layout},
     },
 };
-use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 /// A line of an extended row under its name: small, muted, cut to one line.
@@ -810,7 +810,7 @@ impl Sidebar {
     /// With more than one agent installed the session row asks which, since
     /// the one `⌘N` would pick is whoever the project last talked to — which
     /// leaves every other agent with no way in.
-    fn add_rows(&self, path: &Path, cx: &App) -> Vec<(Item, Act)> {
+    fn add_rows(&self, path: &Location, cx: &App) -> Vec<(Item, Act)> {
         let workspace = self.workspace.read(cx);
         let Some(ix) = workspace.project_at(path) else {
             return Vec::new();
@@ -834,18 +834,18 @@ impl Sidebar {
     /// The `+` menu of the project at `path`, while it is up.
     fn add_menu(
         &self,
-        path: &Path,
+        path: &Location,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let ix = self.workspace.read(cx).project_at(path)?;
         let id = SharedString::from(format!("add-menu-{ix}"));
-        self.menu_here(&SidebarMenu::Add(path.to_path_buf()), id, window, cx)
+        self.menu_here(&SidebarMenu::Add(path.clone()), id, window, cx)
     }
 
     /// The label a project's list is narrowed to, on its heading, with a ×
     /// that lists every entry again.
-    fn label_filter_chip(&self, path: &Path, cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn label_filter_chip(&self, path: &Location, cx: &mut Context<Self>) -> Option<AnyElement> {
         let workspace = self.workspace.read(cx);
         let ix = workspace.project_at(path)?;
         let label = workspace.projects[ix].label.clone()?;
@@ -903,7 +903,7 @@ impl Sidebar {
 
     /// What a press on the heading opens. Removing closes the tab — the
     /// directory and everything in it stays where it is.
-    fn project_rows(&self, path: &Path, cx: &App) -> Vec<(Item, Act)> {
+    fn project_rows(&self, path: &Location, cx: &App) -> Vec<(Item, Act)> {
         let Some(ix) = self.workspace.read(cx).project_at(path) else {
             return Vec::new();
         };
@@ -929,7 +929,9 @@ impl Sidebar {
             ],
         )];
         rows.extend(self.label_filter_menu(ix, cx));
-        rows.extend(on_disk(PathBuf::from(path)));
+        if let Some(root) = path.local() {
+            rows.extend(on_disk(root.to_path_buf()));
+        }
         rows.push(menu::row::<Cydonia>(
             Item::action("Remove project").with_icon(icons::files::FolderMinus),
             move |this, _, cx| this.close_project(ix, cx),
@@ -941,13 +943,13 @@ impl Sidebar {
     /// under the `···` from the button.
     fn project_menu(
         &self,
-        path: &Path,
+        path: &Location,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let ix = self.workspace.read(cx).project_at(path)?;
         let id = SharedString::from(format!("project-menu-{ix}"));
-        self.menu_here(&SidebarMenu::Project(path.to_path_buf()), id, window, cx)
+        self.menu_here(&SidebarMenu::Project(path.clone()), id, window, cx)
     }
 
     /// The row that raises the palette, or — while a query is applied — the

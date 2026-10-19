@@ -22,7 +22,7 @@ pub(crate) fn editor(
     configure: impl FnOnce(Editor) -> Editor,
     cx: &mut App,
 ) -> (Entity<Editor>, Entity<Pictures>) {
-    let pictures = cx.new(|cx| Pictures::new(dir.to_path_buf(), shelf, workspace, cx));
+    let pictures = cx.new(|cx| Pictures::new(dir.to_path_buf(), Some(shelf), workspace, cx));
     let overlay = Pictures::overlay(&pictures);
     let editor = cx.new(|cx| {
         configure(

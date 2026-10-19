@@ -19,6 +19,7 @@ use crate::{
         session::ChatSession,
         settings::{self, Feature, Settings},
         state::{self, State},
+        store::{self, Store},
         watch::{self, Watch},
     },
 };
@@ -38,7 +39,7 @@ use markdown::AppExt as _;
 use mcp::rail::{self, Change};
 use std::{
     collections::{BTreeMap, HashMap},
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 /// The wait before the first retry of agent icons; each retry doubles it.
@@ -95,9 +96,20 @@ pub struct Resident {
     pub items: usize,
 }
 
+/// A project on another machine that is listed and not yet on the rail —
+/// see [`Workspace::open_remote`].
+struct Opening {
+    location: Location,
+    /// Whether the sidebar shows what is under its heading once it lands.
+    expanded: bool,
+}
+
 pub struct Workspace {
     pub settings: Settings,
     pub projects: Vec<Project>,
+    /// The projects being opened on their hosts, in the order they were
+    /// asked for.
+    opening: Vec<Opening>,
     pub active: Option<usize>,
     pub appearance: AppearanceMode,
     pub cursor_blink: bool,
@@ -177,18 +189,30 @@ pub struct Workspace {
 
 impl Workspace {
     pub fn new(settings: Settings, state: State, cx: &mut Context<Self>) -> Self {
+        let front = state.projects.get(state.active).cloned();
+        let mut elsewhere = Vec::new();
         let projects: Vec<Project> = state
             .projects
             .into_iter()
-            .map(|location| {
+            .filter_map(|location| {
                 let expanded = !state.collapsed.contains(&location);
-                let Location::Local(path) = location;
-                let mut project = Project::new(path, cx);
+                let Some(mut project) = Project::at(location.clone(), cx) else {
+                    elsewhere.push((location, expanded));
+                    return None;
+                };
                 project.expanded = expanded;
-                project
+                Some(project)
             })
             .collect();
-        let active = (!projects.is_empty()).then_some(state.active);
+        let active = (!projects.is_empty()).then(|| {
+            front
+                .as_ref()
+                .and_then(|front| projects.iter().position(|open| open.location() == front))
+                .unwrap_or(match front {
+                    Some(_) => 0,
+                    None => state.active,
+                })
+        });
         let restore: Vec<usize> = (0..projects.len()).collect();
         let look = settings.appearance.clone();
         cx.set_scrollbar_visibility(look.scrollbars.into());
@@ -203,6 +227,7 @@ impl Workspace {
         let mut this = Self {
             settings,
             projects,
+            opening: Vec::new(),
             active,
             appearance: look.mode,
             cursor_blink: look.cursor_blink,
@@ -250,6 +275,13 @@ impl Workspace {
             this.watch_project(ix, cx);
             this.list_tables(ix, cx);
         }
+        #[cfg(feature = "desktop")]
+        for (location, expanded) in elsewhere {
+            let select = front.as_ref() == Some(&location);
+            this.open_remote(location, expanded, select, cx);
+        }
+        #[cfg(not(feature = "desktop"))]
+        drop(elsewhere);
         this.open_last_entry(cx);
         this.bring_up_space(cx);
         this.load_agent_icons(cx);
@@ -285,6 +317,13 @@ impl Workspace {
                 .iter()
                 .filter(|project| !project.expanded)
                 .map(Project::location)
+                .chain(
+                    self.opening
+                        .iter()
+                        .filter(|opening| !opening.expanded)
+                        .map(|opening| &opening.location),
+                )
+                .cloned()
                 .collect(),
             last: self.last.clone(),
             order: self.order.clone(),

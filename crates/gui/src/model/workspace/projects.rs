@@ -8,9 +8,15 @@ use super::*;
 use artifact::kind::Kind;
 
 impl Workspace {
-    /// The projects on the rail, in the order the sidebar lists them.
+    /// The projects on the rail, in the order the sidebar lists them, then
+    /// the ones still opening.
     pub(super) fn locations(&self) -> Vec<Location> {
-        self.projects.iter().map(Project::location).collect()
+        self.projects
+            .iter()
+            .map(Project::location)
+            .chain(self.opening.iter().map(|opening| &opening.location))
+            .cloned()
+            .collect()
     }
 
     /// Take what the tools ask of the rail — see [`mcp::rail`], where the other
@@ -31,10 +37,8 @@ impl Workspace {
             while let Some(change) = asks.next().await {
                 let held = workspace
                     .update(cx, |workspace, cx| match change {
-                        Change::Open(Location::Local(path)) => workspace.open_project_at(path, cx),
-                        Change::Close(Location::Local(path)) => {
-                            workspace.close_project_at(&path, cx)
-                        }
+                        Change::Open(location) => workspace.open_project_at(location, cx),
+                        Change::Close(location) => workspace.close_project_at(&location, cx),
                         Change::Send { session, message } => {
                             workspace.send_to_record(&session, message, cx)
                         }
@@ -48,7 +52,7 @@ impl Workspace {
                             project,
                             agent,
                             message,
-                        } => workspace.start_in(&project, &agent, message, cx),
+                        } => workspace.start_in(&Location::Local(project), &agent, message, cx),
                     })
                     .is_ok();
                 // The workspace has gone, and there is no rail to move.
@@ -67,17 +71,101 @@ impl Workspace {
     /// which spawned a process — a download, on an `npx` line — for somebody
     /// who had done nothing but name a folder. A session is opened where one is
     /// asked for, and ⌘N is where.
-    pub fn open_project(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        if let Some(ix) = self.projects.iter().position(|p| p.path == path) {
+    ///
+    /// A project on another machine is opened on its host first, and is put
+    /// on the rail and brought forward once it lands.
+    pub fn open_project(&mut self, location: Location, cx: &mut Context<Self>) {
+        if let Some(ix) = self.projects.iter().position(|p| *p.location() == location) {
             self.select_project(ix, cx);
             return;
         }
-        self.projects.push(Project::new(path, cx));
+        let Some(store) = store::open(&location) else {
+            #[cfg(feature = "desktop")]
+            self.open_remote(location, true, true, cx);
+            return;
+        };
+        let ix = self.hold_project(location, store, true, cx);
+        self.select_project(ix, cx);
+    }
+
+    /// Put the project at `location`, kept in `store`, at the end of the rail
+    /// with what it has on disk, and answer where it is.
+    pub(super) fn hold_project(
+        &mut self,
+        location: Location,
+        store: Store,
+        expanded: bool,
+        cx: &mut Context<Self>,
+    ) -> usize {
+        let mut project = Project::new(location, store, cx);
+        project.expanded = expanded;
+        self.projects.push(project);
         let ix = self.projects.len() - 1;
         self.list_tables(ix, cx);
         self.restore_sessions(ix, cx);
         self.watch_project(ix, cx);
-        self.select_project(ix, cx);
+        ix
+    }
+
+    /// Open the project at `location` on its host, holding it as opening —
+    /// listed in `state.toml`, not on the rail — until it lands. Landed, it is
+    /// put on the rail, and brought forward with `select`. One closed while
+    /// opening is let go.
+    #[cfg(feature = "desktop")]
+    pub(super) fn open_remote(
+        &mut self,
+        location: Location,
+        expanded: bool,
+        select: bool,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::model::remote::Remotes;
+        if self
+            .opening
+            .iter()
+            .any(|opening| opening.location == location)
+        {
+            return;
+        }
+        self.opening.push(Opening {
+            location: location.clone(),
+            expanded,
+        });
+        self.save();
+        cx.spawn(async move |workspace, cx| {
+            let opened = match Remotes::get() {
+                Ok(remotes) => remotes.open(&location).await,
+                Err(error) => Err(error),
+            };
+            // TODO(DEV-324): a project that does not land stays opening, with
+            // nothing on screen saying why.
+            let Ok(project) = opened else {
+                return;
+            };
+            let _ = workspace.update(cx, |workspace, cx| {
+                let Some(at) = workspace
+                    .opening
+                    .iter()
+                    .position(|opening| opening.location == location)
+                else {
+                    if let Ok(remotes) = Remotes::get() {
+                        remotes.close(&location);
+                    }
+                    return;
+                };
+                let opening = workspace.opening.remove(at);
+                let ix =
+                    workspace.hold_project(location, Store::Remote(project), opening.expanded, cx);
+                match select {
+                    true => workspace.select_project(ix, cx),
+                    false => {
+                        workspace.save();
+                        cx.notify();
+                    }
+                }
+            });
+        })
+        .detach();
     }
 
     pub fn select_project(&mut self, ix: usize, cx: &mut Context<Self>) {
@@ -111,8 +199,8 @@ impl Workspace {
     /// Carry a project to another place in the list. `active` follows the
     /// project it points at rather than the index it sits on: which one is in
     /// front has nothing to do with what order they are listed in.
-    pub fn move_project(&mut self, path: &Path, to: usize, cx: &mut Context<Self>) {
-        let Some(from) = self.project_at(path) else {
+    pub fn move_project(&mut self, location: &Location, to: usize, cx: &mut Context<Self>) {
+        let Some(from) = self.project_at(location) else {
             return;
         };
         if from == to || to >= self.projects.len() {
@@ -130,36 +218,46 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Whichever project is at `path`, by the path the sidebar holds it under
-    /// or by what that resolves to.
+    /// Whichever project is at `location`, by the location the sidebar holds
+    /// it under or by what that settles to — see [`Location::settled`].
     ///
     /// The tools settle a path before handing it over and the directory picker
     /// does not — see `mcp::tools::project` — so `/tmp/x` on the rail and
     /// `/private/tmp/x` from a tool are one project, and opening the second
     /// would otherwise list the same directory twice.
-    pub fn project_at(&self, path: &Path) -> Option<usize> {
-        let settled = path.canonicalize().ok();
-        self.projects.iter().position(|open| {
-            open.path == path
-                || open
-                    .path
-                    .canonicalize()
-                    .is_ok_and(|held| held == path || settled.as_ref() == Some(&held))
-        })
+    pub fn project_at(&self, location: &Location) -> Option<usize> {
+        if let Some(ix) = self
+            .projects
+            .iter()
+            .position(|open| open.location() == location)
+        {
+            return Some(ix);
+        }
+        let settled = location.settled();
+        self.projects
+            .iter()
+            .position(|open| open.location().settled() == settled)
     }
 
-    /// Bring the project at `path` forward, opening it where it is not on the
-    /// rail at all. What the tools ask for; the sidebar names a row instead.
-    fn open_project_at(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        match self.project_at(&path) {
+    /// Bring the project at `location` forward, opening it where it is not on
+    /// the rail at all. What the tools ask for; the sidebar names a row
+    /// instead.
+    fn open_project_at(&mut self, location: Location, cx: &mut Context<Self>) {
+        match self.project_at(&location) {
             Some(ix) => self.select_project(ix, cx),
-            None => self.open_project(path, cx),
+            None => self.open_project(location, cx),
         }
     }
 
-    /// Close whichever project is at `path`, if one is.
-    fn close_project_at(&mut self, path: &Path, cx: &mut Context<Self>) {
-        let Some(ix) = self.project_at(path) else {
+    /// Close whichever project is at `location`, if one is, or stop opening
+    /// it.
+    fn close_project_at(&mut self, location: &Location, cx: &mut Context<Self>) {
+        let before = self.opening.len();
+        self.opening.retain(|opening| opening.location != *location);
+        if self.opening.len() != before {
+            self.save();
+        }
+        let Some(ix) = self.project_at(location) else {
             return;
         };
         self.close_project(ix, cx);
@@ -171,7 +269,14 @@ impl Workspace {
         if ix >= self.projects.len() {
             return;
         }
-        self.projects.remove(ix);
+        let closed = self.projects.remove(ix);
+        #[cfg(feature = "desktop")]
+        if closed.location().host().is_some()
+            && let Ok(remotes) = crate::model::remote::Remotes::get()
+        {
+            remotes.close(closed.location());
+        }
+        drop(closed);
         self.active = self.active.and_then(|active| {
             let next = if active > ix { active - 1 } else { active };
             (!self.projects.is_empty()).then(|| next.min(self.projects.len() - 1))
@@ -196,7 +301,7 @@ impl Workspace {
         let Some(entry) = self
             .projects
             .get(ix)
-            .and_then(|open| self.last.get(&open.location()))
+            .and_then(|open| self.last.get(open.location()))
         else {
             return;
         };
@@ -245,13 +350,13 @@ impl Workspace {
     /// entry, and this is how the view learns which one of the four it was.
     pub fn landing(&self) -> Option<Kind> {
         let open = self.active_project()?;
-        self.last.get(&open.location()).map(|entry| entry.kind)
+        self.last.get(open.location()).map(|entry| entry.kind)
     }
 
     /// The active project, and the entry it was last showing.
-    pub fn landed(&self) -> Option<(&Path, &state::Entry)> {
+    pub fn landed(&self) -> Option<(&Location, &state::Entry)> {
         let open = self.active_project()?;
-        Some((&open.path, self.last.get(&open.location())?))
+        Some((open.location(), self.last.get(open.location())?))
     }
 
     /// Remember the entry a project is now showing, so the next launch lands on
@@ -283,7 +388,8 @@ impl Workspace {
         let Some(open) = self.projects.get(project) else {
             return;
         };
-        self.last.insert(open.location(), state::Entry { kind, id });
+        self.last
+            .insert(open.location().clone(), state::Entry { kind, id });
         self.prune_archived(cx);
         self.save();
     }
@@ -329,21 +435,25 @@ impl Workspace {
     /// shows up without anyone asking for it. Every way of opening a project
     /// arrives here, and closing one drops the watch with the project.
     pub(super) fn watch_project(&mut self, ix: usize, cx: &mut Context<Self>) {
-        let Some(path) = self.projects.get(ix).map(|open| open.path.clone()) else {
+        let Some(open) = self.projects.get(ix) else {
             return;
         };
-        let watch = Watch::open(path, cx);
+        let watch = Watch::open(open.location().clone(), open.store(), cx);
         if let Some(project) = self.projects.get_mut(ix) {
             project.watch = Some(watch);
         }
     }
 
-    /// Re-read one project off disk and reconcile it. Addressed by path rather
-    /// than by index because the watch that calls this outlives any index it
-    /// could have been armed with — the rail is reorderable, and closing a
-    /// project shifts every one after it.
-    pub fn reload_project(&mut self, path: &Path, cx: &mut Context<Self>) {
-        let Some(ix) = self.projects.iter().position(|open| open.path == path) else {
+    /// Re-read one project off disk and reconcile it. Addressed by location
+    /// rather than by index because the watch that calls this outlives any
+    /// index it could have been armed with — the rail is reorderable, and
+    /// closing a project shifts every one after it.
+    pub fn reload_project(&mut self, location: &Location, cx: &mut Context<Self>) {
+        let Some(ix) = self
+            .projects
+            .iter()
+            .position(|open| open.location() == location)
+        else {
             return;
         };
         if self.projects[ix].reload(cx) {

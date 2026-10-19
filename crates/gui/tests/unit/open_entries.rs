@@ -51,7 +51,7 @@ fn opening_an_entry_outside_the_space_lands_on_it(cx: &mut gpui::TestAppContext)
     window
         .update(cx, |root, _, cx| {
             root.workspace.update(cx, |workspace, cx| {
-                workspace.open_project(scratch.project("one"), cx);
+                workspace.open_project(scratch.project("one").into(), cx);
                 // Newest first, so the third made is board 0 and the first
                 // made is board 2.
                 workspace.new_board(0, "First".into(), "ONE", cx).detach();
@@ -120,7 +120,7 @@ fn making_an_entry_inside_a_space_lands_on_it(cx: &mut gpui::TestAppContext) {
     window
         .update(cx, |root, _, cx| {
             root.workspace.update(cx, |workspace, cx| {
-                workspace.open_project(scratch.project("one"), cx);
+                workspace.open_project(scratch.project("one").into(), cx);
                 workspace.new_board(0, "First".into(), "ONE", cx).detach();
                 workspace.new_board(0, "Second".into(), "TWO", cx).detach();
             });
@@ -182,7 +182,7 @@ fn starting_a_session_inside_a_space_lands_on_it(cx: &mut gpui::TestAppContext) 
                     args: vec![],
                     env: Default::default(),
                 }];
-                workspace.open_project(scratch.project("one"), cx);
+                workspace.open_project(scratch.project("one").into(), cx);
                 workspace.new_board(0, "First".into(), "ONE", cx).detach();
                 workspace.new_board(0, "Second".into(), "TWO", cx).detach();
             });
@@ -237,7 +237,7 @@ fn opening_an_entry_a_space_holds_enters_the_space(cx: &mut gpui::TestAppContext
     window
         .update(cx, |root, _, cx| {
             root.workspace.update(cx, |workspace, cx| {
-                workspace.open_project(scratch.project("one"), cx);
+                workspace.open_project(scratch.project("one").into(), cx);
                 workspace.new_board(0, "First".into(), "ONE", cx).detach();
                 workspace.new_board(0, "Second".into(), "TWO", cx).detach();
                 workspace.new_board(0, "Third".into(), "THR", cx).detach();
@@ -314,7 +314,7 @@ fn syncing_the_composers_leaves_the_focus_where_it_was(cx: &mut gpui::TestAppCon
     window
         .update(cx, |root, _, cx| {
             root.workspace.update(cx, |workspace, cx| {
-                workspace.open_project(scratch.project("one"), cx);
+                workspace.open_project(scratch.project("one").into(), cx);
                 workspace.new_board(0, "First".into(), "ONE", cx).detach();
             });
         })
@@ -326,10 +326,10 @@ fn syncing_the_composers_leaves_the_focus_where_it_was(cx: &mut gpui::TestAppCon
             let (board, session) = root.workspace.update(cx, |workspace, cx| {
                 let board = workspace.board_member(0, 0).expect("a member");
 
-                let path = workspace.projects[0].path.clone();
+                let path = workspace.projects[0].root().to_path_buf();
                 let mut chat = crate::model::session::ChatSession::restore(
                     7,
-                    path,
+                    artifact::location::Location::from(path),
                     crate::model::settings::Agent {
                         name: "test".into(),
                         id: None,
@@ -404,7 +404,7 @@ fn a_session_dropped_before_its_id_lands_is_placed_once_it_does(cx: &mut gpui::T
     window
         .update(cx, |root, _, cx| {
             root.workspace.update(cx, |workspace, cx| {
-                workspace.open_project(path.clone(), cx);
+                workspace.open_project(path.clone().into(), cx);
                 workspace.new_board(0, "First".into(), "ONE", cx).detach();
             });
         })
@@ -427,7 +427,7 @@ fn a_session_dropped_before_its_id_lands_is_placed_once_it_does(cx: &mut gpui::T
             });
             let event = docking::Drop {
                 item: Dragged::Row(Row::Entry {
-                    project: path.clone(),
+                    project: path.clone().into(),
                     showing: Showing::Session(id),
                 }),
                 pane: board.clone(),

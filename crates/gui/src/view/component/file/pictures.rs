@@ -32,8 +32,8 @@ impl gpui::Global for Loaded {}
 pub(crate) struct Pictures {
     /// The directory a relative picture path is joined onto.
     base: PathBuf,
-    /// Where a picture fetched off the web is filed.
-    shelf: Shelf,
+    /// Where a picture fetched off the web is filed, where anywhere is.
+    shelf: Option<Shelf>,
     /// What went wrong opening the last picture, for the host to show.
     pub(crate) error: Option<String>,
     /// What opens a picture, by its lowercase extension. `None` while the
@@ -59,7 +59,7 @@ impl Pictures {
     /// Pictures are checked for a save every `workspace`'s watch delay.
     pub(crate) fn new(
         base: PathBuf,
-        shelf: Shelf,
+        shelf: Option<Shelf>,
         workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -141,7 +141,7 @@ impl Pictures {
     }
 
     /// Point relative paths at `base` and fetches at `shelf`.
-    pub(crate) fn place(&mut self, base: PathBuf, shelf: Shelf) {
+    pub(crate) fn place(&mut self, base: PathBuf, shelf: Option<Shelf>) {
         self.base = base;
         self.shelf = shelf;
     }
@@ -203,7 +203,7 @@ impl Pictures {
                     let url = url.clone();
                     async move {
                         let file = match url.contains("://") {
-                            true => fetch(&url, &shelf).await?,
+                            true => fetch(&url, shelf.as_ref()).await?,
                             false => base.join(&url),
                         };
                         external::open(&file, &target)?;
@@ -248,8 +248,10 @@ fn stamp(path: &Path) -> Option<Stamp> {
 /// Fetch the picture at `url` onto `shelf`, and answer where it is on this
 /// machine.
 #[cfg(feature = "desktop")]
-async fn fetch(url: &str, shelf: &Shelf) -> anyhow::Result<PathBuf> {
+async fn fetch(url: &str, shelf: Option<&Shelf>) -> anyhow::Result<PathBuf> {
     use anyhow::Context as _;
+
+    let shelf = shelf.context("No project keeps the picture")?;
 
     let bytes = crate::model::media::download(url)?;
     let format = image::guess_format(&bytes)?;
@@ -263,7 +265,7 @@ async fn fetch(url: &str, shelf: &Shelf) -> anyhow::Result<PathBuf> {
 }
 
 #[cfg(not(feature = "desktop"))]
-async fn fetch(_: &str, _: &Shelf) -> anyhow::Result<PathBuf> {
+async fn fetch(_: &str, _: Option<&Shelf>) -> anyhow::Result<PathBuf> {
     anyhow::bail!("Pictures on the web cannot be fetched here")
 }
 

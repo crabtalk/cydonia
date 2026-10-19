@@ -11,6 +11,7 @@ use artifact::error::Error;
 use artifact::{
     article::anchor,
     kind::Kind,
+    location::Location,
     reference::{self, Span, Target, Within},
 };
 use bezel::gpui::{App, Entity, Global, WeakEntity};
@@ -22,7 +23,7 @@ use std::{
 
 /// An entry a reference resolved to.
 pub struct Resolved {
-    pub project: PathBuf,
+    pub project: Location,
     pub showing: Showing,
     pub kind: Kind,
     pub number: u64,
@@ -88,7 +89,12 @@ impl Workspace {
         let Some(project) = self.named_project(reference.project, None) else {
             return Err(Error::NoProjectNamed {
                 name: reference.project.unwrap_or_default().to_owned(),
-                open: self.projects.iter().map(Project::location).collect(),
+                open: self
+                    .projects
+                    .iter()
+                    .map(Project::location)
+                    .cloned()
+                    .collect(),
             }
             .to_string());
         };
@@ -115,7 +121,7 @@ impl Workspace {
             (Some(_), _) => unreachable!("refused by `reference::fits`"),
         };
         Ok(Resolved {
-            project: project.path.clone(),
+            project: project.location().clone(),
             showing,
             kind,
             number,
@@ -127,7 +133,7 @@ impl Workspace {
     /// The board holding the card `text` names, `text` being a card
     /// reference as written in the project at `home`. Nothing for one naming
     /// no card.
-    pub fn card_board(&self, home: &Path, text: &str, cx: &App) -> Option<&Entity<Board>> {
+    pub fn card_board(&self, home: &Location, text: &str, cx: &App) -> Option<&Entity<Board>> {
         let reference = reference::parse(text)?;
         let Target::Card { key, handle } = reference.target else {
             return None;
@@ -142,7 +148,7 @@ impl Workspace {
     /// of the project at `home`.
     pub fn blocking_boards<'a>(
         &'a self,
-        home: &'a Path,
+        home: &'a Location,
         card: &'a artifact::board::Card,
         cx: &'a App,
     ) -> impl Iterator<Item = &'a Entity<Board>> {
@@ -163,15 +169,21 @@ impl Workspace {
 
     /// The project `name` names, or with none the one at `home`, else the
     /// active one.
-    fn named_project(&self, name: Option<&str>, home: Option<&Path>) -> Option<&Project> {
+    fn named_project(&self, name: Option<&str>, home: Option<&Location>) -> Option<&Project> {
         match (name, home) {
             (Some(name), _) => self
                 .projects
                 .iter()
-                .find(|project| reference::names(&project.path, name)),
+                .find(|project| reference::names(project.root(), name)),
             (None, Some(home)) => self.projects.get(self.project_at(home)?),
             (None, None) => self.active_project(),
         }
+    }
+
+    /// The open project whose directory is `root`, for what
+    /// [`artifact::board::blocking`] addresses a project by.
+    fn rooted(&self, root: &Path) -> Option<&Project> {
+        self.projects.iter().find(|open| open.root() == root)
     }
 }
 
@@ -251,7 +263,7 @@ fn card(
         return Err(format!("{text} is on a board with no number"));
     };
     Ok(Resolved {
-        project: project.path.clone(),
+        project: project.location().clone(),
         showing: Showing::Board(board.id.clone()),
         kind: Kind::Board,
         number,
@@ -317,13 +329,15 @@ pub struct Held<'a> {
 
 impl Shelf for Held<'_> {
     fn project(&self, from: &Path, name: Option<&str>) -> Option<PathBuf> {
-        let project = self.workspace.named_project(name, Some(from))?;
-        Some(project.path.clone())
+        let home = self.workspace.rooted(from).map(Project::location);
+        let project = self.workspace.named_project(name, home)?;
+        Some(project.root().to_path_buf())
     }
 
     fn card(&self, project: &Path, key: &str, handle: u64) -> Option<Found> {
-        let at = self.workspace.project_at(project)?;
-        let board = self.workspace.projects[at]
+        let board = self
+            .workspace
+            .rooted(project)?
             .keyed_board(key, self.cx)?
             .read(self.cx);
         Some(Found {

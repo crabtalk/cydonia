@@ -96,7 +96,7 @@ impl Cydonia {
         let workspace = self.workspace.read(cx);
         let open = workspace.projects.get(project)?;
         let row = Row::Entry {
-            project: open.path.clone(),
+            project: open.location().clone(),
             showing: showing.clone(),
         };
         let facts = open.facts(&showing, cx)?;

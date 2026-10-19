@@ -80,6 +80,8 @@ fn line_endings(source: &str, saved: &str) -> String {
 }
 
 pub struct FileView {
+    /// The project the file is in, whose root is [`Self::root`].
+    location: Location,
     pub root: PathBuf,
     focus: gpui::FocusHandle,
     pub path: PathBuf,
@@ -122,7 +124,13 @@ pub struct FileView {
 }
 
 impl FileView {
-    pub fn new(path: PathBuf, workspace: WeakEntity<Workspace>, cx: &mut Context<Self>) -> Self {
+    /// The file at `path` in the project at `location`.
+    pub fn new(
+        location: Location,
+        path: PathBuf,
+        workspace: WeakEntity<Workspace>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let field = cx.new(|cx| {
             TextField::new(cx)
                 .with_frame(false)
@@ -189,12 +197,12 @@ impl FileView {
                     .await;
             }
         });
-        let root = path.parent().unwrap_or(Path::new("/")).to_path_buf();
-        let files = Backend::open(&Location::from(root.as_path()));
+        let root = location.root().to_path_buf();
+        let files = Backend::open(&location);
         let pictures = cx.new(|cx| {
             pictures::Pictures::new(
                 root.clone(),
-                crate::model::media::Shelf::shared(&root),
+                crate::model::media::Shelf::shared(&location),
                 workspace,
                 cx,
             )
@@ -208,6 +216,7 @@ impl FileView {
         .detach();
         let picture_overlay = pictures::Pictures::overlay(&pictures);
         Self {
+            location,
             root,
             focus: cx.focus_handle(),
             language: crate::model::language::Here::of(&path),
@@ -867,7 +876,7 @@ impl Render for FileView {
                 .parent()
                 .map(Path::to_path_buf)
                 .unwrap_or_default();
-            let shelf = crate::model::media::Shelf::shared(&self.root);
+            let shelf = crate::model::media::Shelf::shared(&self.location);
             self.pictures
                 .update(cx, |pictures, _| pictures.place(base, shelf));
         }

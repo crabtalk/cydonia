@@ -63,7 +63,9 @@ fn the_seeded_project_reads_in_order() {
     let project = scratch("order");
     write(&project).expect("seed written");
 
-    let titles: Vec<String> = crate::model::article::list(&project)
+    let location = artifact::location::Location::from(project.clone());
+    let store = crate::model::store::open(&location).expect("a store");
+    let titles: Vec<String> = crate::model::article::list(&location, &store)
         .into_iter()
         .map(|article| article.title)
         .collect();
@@ -73,7 +75,7 @@ fn the_seeded_project_reads_in_order() {
     let boards = fs::Project::new(&project).boards();
     let board = boards.first().expect("the welcome board");
     assert_eq!(board.name, "Getting started");
-    let newest = crate::model::article::list(&project)
+    let newest = crate::model::article::list(&location, &store)
         .last()
         .expect("an article")
         .touched;

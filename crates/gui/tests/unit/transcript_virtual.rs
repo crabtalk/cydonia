@@ -27,9 +27,9 @@ fn long_session_renders_nearby_turns_and_navigates_without_losing_selection(
     let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));
     workspace.update(cx, |workspace, cx| {
         let cwd = std::path::PathBuf::from("/nonexistent/cydonia-virtual-test");
-        let mut project = Project::new(cwd.clone(), cx);
+        let mut project = Project::at(cwd.clone().into(), cx).unwrap();
         let record = serde_json::from_value(serde_json::json!({"id":"test", "agent":"test", "title":"", "name":null, "updated":1, "items":[]})).unwrap();
-        let mut chat = ChatSession::restore(1, cwd, Agent {name:"test".into(), id:None, command:String::new(), args:vec![], env:Default::default()}, record);
+        let mut chat = ChatSession::restore(1, artifact::location::Location::from(cwd), Agent {name:"test".into(), id:None, command:String::new(), args:vec![], env:Default::default()}, record);
         for i in 0..1000 { chat.items.push(ChatItem::User(format!("Question {i}"))); chat.items.push(ChatItem::Agent(format!("Answer {i}\n\nAnother paragraph with **bold** text."))); }
         project.sessions.push(crate::model::project::HeldSession::new(chat, cx)); workspace.projects.push(project);
     });

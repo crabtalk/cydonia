@@ -345,7 +345,7 @@ impl Tab {
             let agent = chat.entry.name.clone();
             let cwd = workspace
                 .active_project()
-                .map(|project| project.path.shown())
+                .map(|project| project.root().shown())
                 .unwrap_or_default();
             // Except where the agent is not here to be started in it. A
             // transcript that has nothing to show *and* nowhere to send is the
@@ -529,7 +529,7 @@ impl Tab {
     ) -> Option<impl IntoElement + use<>> {
         let theme = Theme::of(cx).clone();
         let chat = self.workspace.read(cx).session(id, cx)?;
-        let cwd = chat.cwd.clone();
+        let cwd = chat.location.clone();
         let queue = chat.queue.clone();
         self.queued_galleries
             .retain(|(session, ix, text), _| *session == id && queue.get(*ix) == Some(text));

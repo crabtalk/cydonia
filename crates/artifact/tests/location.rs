@@ -30,6 +30,17 @@ fn a_local_location_is_written_as_its_path() {
 }
 
 #[test]
+fn a_local_location_keys_json_as_its_path() {
+    let path = PathBuf::from("/work/one");
+    let paths = BTreeMap::from([(path.clone(), 1)]);
+    let locations = BTreeMap::from([(Location::Local(path), 1)]);
+    let written = serde_json::to_string(&paths).unwrap();
+    assert_eq!(serde_json::to_string(&locations).unwrap(), written);
+    let read: BTreeMap<Location, i32> = serde_json::from_str(&written).unwrap();
+    assert_eq!(read, locations);
+}
+
+#[test]
 fn a_member_reads_its_project_as_a_location() {
     let member: Member =
         toml::from_str("project = \"/work/one\"\nkind = \"board\"\nid = \"b1\"\n").unwrap();

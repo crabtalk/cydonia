@@ -11,12 +11,12 @@
 //! nobody paired, and a rename out of the tree looks like one into it. So a
 //! knock carries nothing: the answer to any of them is the same re-read.
 
-use crate::model::{store, workspace::Workspace};
+use crate::model::{store::Store, workspace::Workspace};
 use artifact::location::Location;
 use artifact::project::Project as _;
 use bezel::gpui::{Context, Task};
 use futures::{StreamExt as _, channel::mpsc};
-use std::{path::PathBuf, time::Duration};
+use std::time::Duration;
 
 /// How quiet the directory has to go before it is re-read, in milliseconds, and
 /// what the setting behind it defaults to. Writing one document is a string of
@@ -44,21 +44,20 @@ pub struct Watch {
 }
 
 impl Watch {
-    /// Watch a project's `.cydonia/`, and reconcile the project whenever it
-    /// moves.
+    /// Watch the project at `location`, kept in `store`, and reconcile the
+    /// project whenever it moves.
     ///
-    /// The project is found again by path on each pass rather than held by
-    /// index: the rail can be reordered and projects closed while this runs,
-    /// and the index it was armed on would by then be somebody else's.
-    pub fn open(root: PathBuf, cx: &mut Context<Workspace>) -> Self {
+    /// The project is found again by location on each pass rather than held
+    /// by index: the rail can be reordered and projects closed while this
+    /// runs, and the index it was armed on would by then be somebody else's.
+    pub fn open(location: Location, store: Store, cx: &mut Context<Workspace>) -> Self {
         let pump = cx.spawn(async move |workspace, cx| {
             loop {
                 let (tx, mut knocks) = mpsc::unbounded();
                 let knock = move || {
                     let _ = tx.unbounded_send(());
                 };
-                let Some(watching) = store::open(&Location::from(root.as_path())).watch(knock)
-                else {
+                let Some(watching) = store.watch(knock) else {
                     // No watcher this backend will give us, and no event
                     // coming to say otherwise. Watching nothing beats spinning.
                     return;
@@ -75,7 +74,7 @@ impl Watch {
                     cx.background_executor().timer(settle).await;
                     while knocks.try_recv().is_ok() {}
                     let held = workspace
-                        .update(cx, |workspace, cx| workspace.reload_project(&root, cx))
+                        .update(cx, |workspace, cx| workspace.reload_project(&location, cx))
                         .is_ok();
                     // The workspace went away, and the watch goes with it.
                     if !held {

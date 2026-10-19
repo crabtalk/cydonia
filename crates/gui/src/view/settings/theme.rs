@@ -9,6 +9,7 @@ use crate::{
     },
 };
 use artifact::board::View;
+use artifact::location::Location;
 use bezel::theme::AppExt as _;
 use bezel::ui::color::{Swatch, SystemColor};
 use bezel::{
@@ -20,7 +21,6 @@ use bezel::{
     ui::combobox::{Combobox, ComboboxEvent},
     ui::widgets::{self, Controls, Scaffolding, SliderDrag},
 };
-use std::path::PathBuf;
 
 /// The tint's ceiling: Slate's chroma, the most coloured of the five neutrals
 /// bezel ships in `BASE_COLORS`. Past it the greys stop reading as greys.
@@ -476,7 +476,7 @@ impl SettingsWindow {
         let workspace = self.workspace.read(cx);
         let Some(cwd) = workspace
             .active_project()
-            .map(|project| project.path.clone())
+            .map(|project| project.location().clone())
         else {
             return vec![
                 theme
@@ -601,7 +601,7 @@ impl SettingsWindow {
         blurb: &'static str,
         options: Vec<(SharedString, ArticleChange)>,
         current: Option<usize>,
-        cwd: PathBuf,
+        cwd: Location,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         use bezel::ui::popover;

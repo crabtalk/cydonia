@@ -12,11 +12,7 @@
 //! rewrite the way a vault rewrites its own links.
 
 use crate::model::language::Grammars as _;
-use crate::model::{
-    cover, file_url, language,
-    store::{self, Store},
-    workspace::Workspace,
-};
+use crate::model::{cover, file_url, language, store::Store, workspace::Workspace};
 use artifact::location::Location;
 use artifact::project::Project as _;
 use artifact::{
@@ -806,25 +802,27 @@ impl From<&Article> for layout::Article {
     }
 }
 
-/// This project's articles, most recently touched first.
-pub fn list(project: &Path) -> Vec<Article> {
-    migrate(project);
-    let store = store::open(&Location::from(project));
+/// The articles of the project at `location`, kept in `store`, most recently
+/// touched first. A project on this machine is migrated first.
+pub fn list(location: &Location, store: &Store) -> Vec<Article> {
+    if let Some(root) = location.local() {
+        migrate(root);
+    }
     store
         .articles()
         .into_iter()
-        .map(|held| Article::new(project, store.clone(), held))
+        .map(|held| Article::new(location.root(), store.clone(), held))
         .collect()
 }
 
-/// A new, empty document, once the backend has made it.
-pub fn create(project: &Path) -> impl Future<Output = Option<Article>> + use<> {
-    let project = project.to_owned();
-    let store = store::open(&Location::from(project.as_path()));
+/// A new, empty document in the project at `root`, kept in `store`, once the
+/// backend has made it.
+pub fn create(root: &Path, store: Store) -> impl Future<Output = Option<Article>> + use<> {
+    let root = root.to_owned();
     let made = store.create_article("");
     async move {
         let held = made.await.ok()?;
-        Some(Article::new(&project, store, held))
+        Some(Article::new(&root, store, held))
     }
 }
 

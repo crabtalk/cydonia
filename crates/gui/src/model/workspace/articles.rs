@@ -25,10 +25,11 @@ impl Workspace {
     /// pane takes as a tab without leaving the space. Answers its project and
     /// its place in that project's articles once the backend has made it.
     pub fn create_article(&mut self, cx: &mut Context<Self>) -> Task<Option<(usize, usize)>> {
-        let Some(path) = self.active_project().map(|open| open.path.clone()) else {
+        let Some(open) = self.active_project() else {
             return Task::ready(None);
         };
-        let made = article::create(&path);
+        let location = open.location().clone();
+        let made = article::create(open.root(), open.store());
         cx.spawn(async move |workspace, cx| {
             let article = made.await?;
             workspace
@@ -36,7 +37,7 @@ impl Workspace {
                     let project = workspace
                         .projects
                         .iter()
-                        .position(|open| open.path == path)?;
+                        .position(|open| *open.location() == location)?;
                     // Where a re-read would put it: the list is newest first,
                     // and a new one appended would sit at the bottom until the
                     // next load moved it.
@@ -107,15 +108,18 @@ impl Workspace {
 
     /// Move an article, its folder and assets with it, into another open
     /// project. Its buffer is written first, so what moves is what is on
-    /// screen. Both projects are read again afterwards.
+    /// screen. Both projects are read again afterwards. Both must be on this
+    /// machine.
     pub fn move_article(&mut self, from: usize, ix: usize, to: usize, cx: &mut Context<Self>) {
         if from == to {
             return;
         }
-        let (Some(source), Some(target)) = (
-            self.projects.get(from).map(|open| open.path.clone()),
-            self.projects.get(to).map(|open| open.path.clone()),
-        ) else {
+        let local = |at: usize| {
+            let open = self.projects.get(at)?;
+            open.location().local()?;
+            Some(open.location().clone())
+        };
+        let (Some(source), Some(target)) = (local(from), local(to)) else {
             return;
         };
         let Some(article) = self
@@ -128,7 +132,7 @@ impl Workspace {
         article.write(cx);
         let content = article.path.clone();
         let id = article.id.clone();
-        let Ok(arrived) = artifact::article::move_to(&content, &target) else {
+        let Ok(arrived) = artifact::article::move_to(&content, target.root()) else {
             return;
         };
         // Its sessions went with it, and are held where it landed.

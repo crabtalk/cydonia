@@ -5,11 +5,12 @@ mod persistence;
 #[cfg(not(target_os = "linux"))]
 use super::browser::Browser;
 #[cfg(feature = "desktop")]
-use super::terminal::{DirectoryChanged, Exited, Login, Terminal};
+use super::terminal::{DirectoryChanged, Exited, Terminal};
 use super::{changes::Changes, file::FileView, files::Files};
 use crate::model::{settings::PanelTabs, workspace::Workspace};
 use crate::view::window::root::{Cydonia, ToggleChanges};
 use crate::view::{modals::desktop::DesktopOnly, window::chrome};
+use artifact::location::Location;
 use bezel::{
     gpui::{
         self, AnyElement, Axis, Context, DragMoveEvent, Empty, Entity, Focusable, Render,
@@ -107,7 +108,7 @@ struct Tab {
 }
 
 pub struct Panel {
-    cwd: PathBuf,
+    cwd: Location,
     project_root: PathBuf,
     files: Option<Entity<Files>>,
     files_open: bool,
@@ -141,9 +142,9 @@ pub struct Panel {
 }
 
 impl Panel {
-    pub fn new(cwd: PathBuf, cx: &mut Context<Self>) -> Self {
+    pub fn new(cwd: Location, cx: &mut Context<Self>) -> Self {
         Self {
-            project_root: cwd.clone(),
+            project_root: cwd.root().to_path_buf(),
             files: None,
             files_open: false,
             files_width: 220.,
@@ -207,9 +208,9 @@ impl Panel {
 
     /// Point the panel at `cwd`: where a terminal opened from now on starts.
     /// Tabs already open keep the directory they were opened in.
-    fn retarget(&mut self, cwd: PathBuf) {
+    fn retarget(&mut self, cwd: Location) {
         if self.cwd != cwd {
-            self.project_root = cwd.canonicalize().unwrap_or(cwd.clone());
+            self.project_root = cwd.settle(cwd.root());
             self.cwd = cwd;
         }
     }
@@ -303,7 +304,7 @@ impl Panel {
             cx.notify();
             return;
         }
-        let review = cx.new(|cx| Changes::new(self.cwd.clone(), cx));
+        let review = cx.new(|cx| Changes::new(&self.cwd, cx));
         let open = cx.subscribe(&review, |this, _, event: &super::changes::OpenFile, cx| {
             this.open_file(event.0.clone(), cx);
         });
@@ -320,7 +321,7 @@ impl Panel {
 
     #[cfg(feature = "desktop")]
     fn terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let terminal = cx.new(|cx| Terminal::new(Login::Local(self.cwd.clone()), cx));
+        let terminal = cx.new(|cx| Terminal::at(&self.cwd, cx));
         let id = self.next_id;
         let exit = cx.subscribe_in(&terminal, window, move |this, _, _: &Exited, window, cx| {
             let focused = this.contents.get(&id).is_some_and(|tab| {
@@ -354,7 +355,7 @@ impl Panel {
             return;
         }
         if self.files.is_none() {
-            let files = cx.new(|cx| Files::new(self.project_root.clone(), cx));
+            let files = cx.new(|cx| Files::new(self.cwd.with_root(self.project_root.clone()), cx));
             self.files_subscription = Some(cx.subscribe(
                 &files,
                 |this, _, event: &super::files::Open, cx| {
@@ -382,7 +383,7 @@ impl Panel {
 
     fn open_file(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         self.focus_pending = true;
-        let path = path.canonicalize().unwrap_or(path);
+        let path = self.cwd.settle(&path);
         let open = self
             .ordered()
             .find(|(_, tab)| matches!(&tab.content, Content::File(file) if file.read(cx).path == path))
@@ -392,11 +393,8 @@ impl Panel {
             cx.notify();
             return;
         }
-        let file = cx.new(|cx| {
-            let mut file = FileView::new(path, self.workspace.clone(), cx);
-            file.root = self.project_root.clone();
-            file
-        });
+        let project = self.cwd.with_root(self.project_root.clone());
+        let file = cx.new(|cx| FileView::new(project, path, self.workspace.clone(), cx));
         let watch = cx.observe(&file, |_, _, cx| cx.notify());
         let forward = cx.subscribe(&file, |_, _, event: &DesktopOnly, cx| {
             cx.emit(DesktopOnly(event.0))
@@ -1257,7 +1255,7 @@ impl Cydonia {
     /// The right panel for `cwd`, made the first time it is asked for.
     pub(crate) fn right_panel(
         &mut self,
-        cwd: PathBuf,
+        cwd: Location,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<Panel> {
@@ -1277,7 +1275,7 @@ impl Cydonia {
     /// Not saved across launches.
     fn library_panel(
         &mut self,
-        cwd: PathBuf,
+        cwd: Location,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<Panel> {
@@ -1300,7 +1298,7 @@ impl Cydonia {
 
     fn new_panel(
         &mut self,
-        cwd: PathBuf,
+        cwd: Location,
         restore: Option<persistence::SavedPanel>,
         offers: PanelTabs,
         window: &mut Window,
@@ -1311,7 +1309,7 @@ impl Cydonia {
             let mut panel = Panel::new(cwd.clone(), cx);
             panel.toggle = toggle;
             panel.restore_pending = restore;
-            panel.project_root = cwd.canonicalize().unwrap_or(cwd.clone());
+            panel.project_root = cwd.settle(cwd.root());
             panel.workspace = self.workspace.downgrade();
             panel.offers = offers;
             panel
@@ -1337,14 +1335,14 @@ impl Cydonia {
     /// A session's own directory is in here because it is not always its
     /// project's — a session on a worktree has its diff, its tree and its
     /// shells in the worktree.
-    fn panel_directories(&self, cx: &gpui::App) -> std::collections::HashSet<std::path::PathBuf> {
+    fn panel_directories(&self, cx: &gpui::App) -> std::collections::HashSet<Location> {
         let workspace = self.workspace.read(cx);
         workspace
             .projects
             .iter()
             .flat_map(|project| {
-                std::iter::once(project.path.clone())
-                    .chain(project.chats(cx).map(|chat| chat.cwd.clone()))
+                std::iter::once(project.location().clone())
+                    .chain(project.chats(cx).map(|chat| chat.location.clone()))
             })
             .collect()
     }

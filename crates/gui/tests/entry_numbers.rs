@@ -25,10 +25,9 @@ impl Drop for Scratch {
 #[gpui::test]
 fn app_and_agent_catalog_share_article_and_table_numbers(cx: &mut gpui::TestAppContext) {
     let scratch = Scratch::new("catalog");
-    let article = futures::executor::block_on(article::create(&scratch.0)).unwrap();
-    let mut data = store::open(&Location::from(scratch.0.as_path()))
-        .make_tables()
-        .unwrap();
+    let store = store::open(&Location::from(scratch.0.as_path())).expect("a store");
+    let article = futures::executor::block_on(article::create(&scratch.0, store.clone())).unwrap();
+    let mut data = store.make_tables().unwrap();
     let table = futures::executor::block_on(data.create(
         "Notes",
         None,

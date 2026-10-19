@@ -156,15 +156,10 @@ pub fn shown() -> Vec<Shown> {
 /// one, so `/tmp/x` and `/private/tmp/x` reach here as one project — the app
 /// resolves the same pair on its side, in `Workspace::project_at`.
 pub fn is_open(location: &Location) -> bool {
-    let settled = |location: &Location| match location {
-        Location::Local(path) => {
-            Location::Local(path.canonicalize().unwrap_or_else(|_| path.to_path_buf()))
-        }
-    };
-    let want = settled(location);
+    let want = location.settled();
     open()
         .iter()
-        .any(|held| held == location || settled(held) == want)
+        .any(|held| held == location || held.settled() == want)
 }
 
 /// Ask for the change, which is as far as a tool can take it.

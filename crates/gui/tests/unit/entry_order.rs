@@ -52,7 +52,7 @@ fn three_boards(
     cx.update(|cx| bezel::theme::Theme::install(bezel::theme::Appearance::Light, cx));
     let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));
     workspace.update(cx, |workspace, cx| {
-        workspace.open_project(scratch.project("one"), cx);
+        workspace.open_project(scratch.project("one").into(), cx);
         workspace.new_board(0, "First".into(), "ONE", cx).detach();
         workspace.new_board(0, "Second".into(), "TWO", cx).detach();
         workspace.new_board(0, "Third".into(), "THR", cx).detach();
@@ -289,7 +289,7 @@ fn the_sort_is_per_project_and_survives_a_relaunch(cx: &mut gpui::TestAppContext
     let two = scratch.project("two");
 
     workspace.update(cx, |workspace, cx| {
-        workspace.open_project(two.clone(), cx);
+        workspace.open_project(two.clone().into(), cx);
         workspace.set_sort(0, state::Sort::Touched, cx);
         assert_eq!(workspace.sort_of(1), state::Sort::Manual, "its own project");
     });

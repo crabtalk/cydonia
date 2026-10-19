@@ -42,7 +42,11 @@ use bezel::{
         popover,
     },
 };
-use std::{ops::Range, path::PathBuf, rc::Rc};
+use std::{
+    ops::Range,
+    path::{Path, PathBuf},
+    rc::Rc,
+};
 
 const CONTEXT: &str = "CydoniaSearch";
 
@@ -195,11 +199,11 @@ impl Hit {
                 let open = workspace
                     .projects
                     .iter()
-                    .find(|open| open.path == found.root)?;
+                    .find(|open| open.location().local() == Some(found.root.as_path()))?;
                 let showing = open.stored(found.kind, &found.id, cx)?;
                 let touched = open.facts(&showing, cx)?.touched;
                 let row = Row::Entry {
-                    project: open.path.clone(),
+                    project: open.location().clone(),
                     showing,
                 };
                 Some((
@@ -444,7 +448,7 @@ impl Palette {
             .read(cx)
             .projects
             .iter()
-            .map(|open| open.path.clone())
+            .filter_map(|open| open.location().local().map(Path::to_path_buf))
             .collect();
         self.task = Some(cx.spawn(async move |this, cx| {
             // A keystroke landing in the meantime drops this task, so a burst
@@ -515,10 +519,10 @@ impl Palette {
                     let project = workspace
                         .projects
                         .iter()
-                        .find(|open| artifact::reference::names(&open.path, &carded.project))?;
+                        .find(|open| artifact::reference::names(open.root(), &carded.project))?;
                     Some(Hit {
                         row: Row::Entry {
-                            project: project.path.clone(),
+                            project: project.location().clone(),
                             showing: Showing::Board(carded.board.id.clone()),
                         },
                         snippet: None,

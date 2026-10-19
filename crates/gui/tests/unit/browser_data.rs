@@ -49,7 +49,7 @@ fn clearing_browser_tabs_preserves_file_drafts_and_selection() {
 #[cfg(not(target_os = "linux"))]
 #[gpui::test]
 fn clearing_closes_live_and_pending_browser_tabs(cx: &mut gpui::TestAppContext) {
-    let panel = cx.new(|cx| Panel::new(std::env::temp_dir(), cx));
+    let panel = cx.new(|cx| Panel::new(std::env::temp_dir().into(), cx));
     panel.update(cx, |panel, cx| {
         panel.review(cx);
         panel.browser(1, "about:blank".into(), String::new(), cx);
@@ -81,7 +81,7 @@ fn clearing_removes_browsers_from_background_projects_and_disk(cx: &mut gpui::Te
     let window = cx.add_window(|window, cx| {
         Cydonia::new(Settings::default(), state::State::default(), window, cx)
     });
-    let panel = cx.new(|cx| Panel::new(scratch.join("background"), cx));
+    let panel = cx.new(|cx| Panel::new(scratch.join("background").into(), cx));
     panel.update(cx, |panel, cx| {
         panel.review(cx);
         panel.browser(100, "about:blank".into(), String::new(), cx);
@@ -89,11 +89,11 @@ fn clearing_removes_browsers_from_background_projects_and_disk(cx: &mut gpui::Te
     window
         .update(cx, |root, _, _| {
             root.right_panels
-                .insert(scratch.join("background"), panel.clone());
+                .insert(scratch.join("background").into(), panel.clone());
         })
         .unwrap();
     let stored = SavedPanels {
-        projects: [(scratch.join("unopened"), saved(2))].into(),
+        projects: [(scratch.join("unopened").into(), saved(2))].into(),
         ..Default::default()
     };
     let file = path().unwrap();
@@ -115,7 +115,7 @@ fn clearing_removes_browsers_from_background_projects_and_disk(cx: &mut gpui::Te
             .iter()
             .all(|tab| !matches!(tab, SavedTab::Browser { .. }))
     }));
-    let unopened = &stored.projects[&scratch.join("unopened")];
+    let unopened = &stored.projects[&scratch.join("unopened").into()];
     assert_eq!(unopened.active, Some(1));
     assert!(
         matches!(&unopened.tabs[1], SavedTab::File { draft: Some((_, text)), .. } if text == "edited")

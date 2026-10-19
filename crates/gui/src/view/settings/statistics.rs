@@ -80,7 +80,7 @@ impl SettingsWindow {
             .read(cx)
             .projects
             .iter()
-            .map(|project| project.path.clone())
+            .filter_map(|project| project.location().local().map(std::path::Path::to_path_buf))
             .collect();
         let days = self.statistics.days;
         let sessions = self.workspace.read(cx).settings.features.sessions;
@@ -117,7 +117,7 @@ impl SettingsWindow {
             .read(cx)
             .projects
             .iter()
-            .map(|project| project.path.clone())
+            .filter_map(|project| project.location().local().map(std::path::Path::to_path_buf))
             .collect();
         let days = self.statistics.days;
         self.statistics._load = Some(cx.spawn(async move |this, cx| {

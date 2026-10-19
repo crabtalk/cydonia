@@ -71,7 +71,7 @@ fn a_clicked_session_link_reaches_the_handler_with_the_session_folder(
         let workspace = cx.new(|cx| Workspace::new(Settings::default(), State::default(), cx));
         workspace.update(cx, |workspace, cx| {
             let cwd = PathBuf::from("/work/project");
-            let mut project = Project::new(cwd.clone(), cx);
+            let mut project = Project::at(cwd.clone().into(), cx).unwrap();
             let record = serde_json::from_value(serde_json::json!({
                 "id": "test", "agent": "test", "title": "", "name": null,
                 "updated": 1, "items": []
@@ -82,7 +82,7 @@ fn a_clicked_session_link_reaches_the_handler_with_the_session_folder(
                 .push(crate::model::project::HeldSession::new(
                     ChatSession::restore(
                         1,
-                        cwd,
+                        artifact::location::Location::from(cwd),
                         Agent {
                             name: "test".into(),
                             id: None,

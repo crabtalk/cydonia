@@ -123,7 +123,7 @@ impl BoardView {
             .filter(|card| {
                 !card.busy
                     && workspace
-                        .blocking_boards(self.board.project.root(), card, cx)
+                        .blocking_boards(&self.board.project, card, cx)
                         .next()
                         .is_none()
             })
@@ -156,7 +156,7 @@ impl BoardView {
                 )
             };
             let recent = workspace
-                .project_at(this.board.project.root())
+                .project_at(&this.board.project)
                 .and_then(|ix| workspace.projects.get(ix))
                 .map(|project| {
                     project
@@ -200,10 +200,9 @@ impl BoardView {
                     id
                 }
                 To::New(at) => {
-                    let (Some(ix), Some(agent)) = (
-                        workspace.project_at(project.root()),
-                        workspace.agent_at(at, cx),
-                    ) else {
+                    let (Some(ix), Some(agent)) =
+                        (workspace.project_at(&project), workspace.agent_at(at, cx))
+                    else {
                         return;
                     };
                     let Some(id) = workspace.new_session_in(ix, agent, Some(text), true, cx) else {

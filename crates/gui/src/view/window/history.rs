@@ -294,7 +294,7 @@ impl Cydonia {
         let workspace = self.workspace.read(cx);
         let (project, showing) = workspace.showing_of(member, cx)?;
         Some(Row::Entry {
-            project: workspace.projects.get(project)?.path.clone(),
+            project: workspace.projects.get(project)?.location().clone(),
             showing,
         })
     }

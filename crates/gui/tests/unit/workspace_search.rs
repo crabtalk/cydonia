@@ -39,7 +39,8 @@ fn workspace_search_keeps_results_beyond_the_palette_limit(cx: &mut gpui::TestAp
     window
         .update(cx, |this, _, cx| {
             this.workspace.update(cx, |workspace, cx| {
-                let mut project = crate::model::project::Project::new(root.clone(), cx);
+                let mut project =
+                    crate::model::project::Project::at(root.clone().into(), cx).unwrap();
                 project.expanded = false;
                 workspace.projects.push(project);
             });

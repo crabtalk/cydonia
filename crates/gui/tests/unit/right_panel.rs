@@ -18,13 +18,13 @@ fn agent_browser_reveals_a_closed_panel_and_activates_its_tab(cx: &mut gpui::Tes
     window
         .update(cx, |root, window, cx| {
             root.workspace.update(cx, |workspace, cx| {
-                workspace.open_project(path.clone(), cx);
+                workspace.open_project(path.clone().into(), cx);
                 workspace.settings.features.panel.browser = true;
             });
             root.set_changes_open(false, cx);
             root.sync_changes(window, cx);
             assert!(root.changes.is_none());
-            let panel = root.right_panel(path.clone(), window, cx);
+            let panel = root.right_panel(path.clone().into(), window, cx);
             panel.update(cx, |panel, cx| {
                 let first = panel.open_browser("about:blank".into(), cx).unwrap();
                 panel.open_browser("about:blank".into(), cx).unwrap();
@@ -40,8 +40,8 @@ fn agent_browser_reveals_a_closed_panel_and_activates_its_tab(cx: &mut gpui::Tes
             root.sync_changes(window, cx);
             assert!(root.changes_open);
             assert_eq!(root.changes.as_ref(), Some(&panel));
-            assert_eq!(root.changes_shown.get(&path), Some(&true));
-            assert!(persistence::saved_panel(&path).unwrap().open);
+            assert_eq!(root.changes_shown.get(&path.clone().into()), Some(&true));
+            assert!(persistence::saved_panel(&path.clone().into()).unwrap().open);
         })
         .unwrap();
 }
@@ -85,7 +85,7 @@ fn an_article_and_a_board_in_one_project_share_its_panel(cx: &mut gpui::TestAppC
     window
         .update(cx, |root, _, cx| {
             root.workspace.update(cx, |workspace, cx| {
-                workspace.open_project(path.clone(), cx);
+                workspace.open_project(path.clone().into(), cx);
                 workspace.new_article(cx).detach();
                 workspace.new_board(0, "First".into(), "ONE", cx).detach();
             });
@@ -107,7 +107,7 @@ fn an_article_and_a_board_in_one_project_share_its_panel(cx: &mut gpui::TestAppC
             assert!(root.changes_open, "the panel is up beside the article");
             let on_article = root.changes.clone().expect("a panel");
             assert_eq!(
-                root.changes_for.as_deref(),
+                root.changes_for.as_ref().map(|at| at.root()),
                 Some(path.as_path()),
                 "named by the directory, not by the entry"
             );
@@ -147,7 +147,7 @@ fn a_second_project_gets_a_panel_of_its_own(cx: &mut gpui::TestAppContext) {
     window
         .update(cx, |root, _, cx| {
             root.workspace.update(cx, |workspace, cx| {
-                workspace.open_project(one.clone(), cx);
+                workspace.open_project(one.clone().into(), cx);
                 workspace.new_article(cx).detach();
             });
         })
@@ -165,7 +165,7 @@ fn a_second_project_gets_a_panel_of_its_own(cx: &mut gpui::TestAppContext) {
             let first = root.changes.clone().expect("a panel");
 
             root.workspace.update(cx, |workspace, cx| {
-                workspace.open_project(two.clone(), cx);
+                workspace.open_project(two.clone().into(), cx);
                 workspace.new_article(cx).detach();
             });
             first
@@ -179,7 +179,7 @@ fn a_second_project_gets_a_panel_of_its_own(cx: &mut gpui::TestAppContext) {
                 .read(cx)
                 .projects
                 .iter()
-                .position(|open| open.path == two)
+                .position(|open| open.root() == two)
                 .expect("the second project");
             root.workspace
                 .update(cx, |workspace, cx| workspace.open_article(project, 0, cx));

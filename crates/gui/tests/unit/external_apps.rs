@@ -81,6 +81,7 @@ fn external_icon_toggles_the_app_menu_without_reopening(cx: &mut gpui::TestAppCo
     cx.update(|cx| Theme::install(bezel::theme::Appearance::Light, cx));
     let file = cx.new(|cx| {
         let mut file = FileView::new(
+            std::path::Path::new("/tmp").into(),
             "/tmp/cydonia-menu-example.rs".into(),
             WeakEntity::new_invalid(),
             cx,
@@ -131,6 +132,7 @@ fn a_single_app_leaves_nothing_to_pick(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| Theme::install(bezel::theme::Appearance::Light, cx));
     let file = cx.new(|cx| {
         let mut file = FileView::new(
+            std::path::Path::new("/tmp").into(),
             "/tmp/cydonia-menu-single.rs".into(),
             WeakEntity::new_invalid(),
             cx,

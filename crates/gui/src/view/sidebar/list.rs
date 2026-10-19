@@ -55,7 +55,7 @@ impl<'a> List<'a> {
         if split.is_some()
             && let Some(open) = self.workspace.projects.get(project)
         {
-            rows.push(Row::Archive(open.path.clone()));
+            rows.push(Row::Archive(open.location().clone()));
             if open.archive_open {
                 rows.extend(entries);
             }
@@ -78,7 +78,7 @@ impl<'a> List<'a> {
         // times and the case is never shown from here.
         let folded = |name: &str| name.to_lowercase();
         let row = |showing| Row::Entry {
-            project: open.path.clone(),
+            project: open.location().clone(),
             showing,
         };
         // Apps are listed under their own heading — see [`Self::apps`].
@@ -282,7 +282,7 @@ impl<'a> List<'a> {
         let projects = workspace
             .projects
             .iter()
-            .map(|open| Group::Project(open.path.clone()));
+            .map(|open| Group::Project(open.location().clone()));
         let spaces = workspace
             .spaces
             .iter()
@@ -394,7 +394,7 @@ impl<'a> List<'a> {
                         Some(Group::Space(id)) => format!("space-{id}").into(),
                         _ => format!(
                             "entries-{}-{}-{}",
-                            project.display(),
+                            project,
                             row.pinned(self.workspace, self.cx),
                             row.archived(self.workspace, self.cx),
                         )

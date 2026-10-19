@@ -158,15 +158,15 @@ impl Workspace {
         let Some(space) = self.spaces.get(ix) else {
             return;
         };
-        let wanted: Vec<PathBuf> = space
+        let wanted: Vec<Location> = space
             .entries()
             .into_iter()
-            .filter_map(|member| member.project()?.local().map(Path::to_path_buf))
-            .filter(|path| !self.projects.iter().any(|open| open.path == *path))
-            .filter(|path| path.is_dir())
+            .filter_map(|member| member.project().cloned())
+            .filter(|location| self.project_at(location).is_none())
+            .filter(|location| location.local().is_none_or(Path::is_dir))
             .collect();
-        for path in wanted {
-            self.open_project(path, cx);
+        for location in wanted {
+            self.open_project(location, cx);
         }
         self.space = Some(ix);
         self.bring_up_space(cx);
@@ -462,7 +462,7 @@ impl Workspace {
         let Some(open) = self
             .projects
             .iter()
-            .find(|open| member.project().and_then(Location::local) == Some(open.path.as_path()))
+            .find(|open| member.project() == Some(open.location()))
         else {
             return false;
         };
@@ -573,13 +573,14 @@ impl Workspace {
             }
         }
         live.extend(self.apps.iter().map(|held| Member::app(held.id.clone())));
-        let open: Vec<Location> = self.projects.iter().map(Project::location).collect();
+        let open: Vec<&Location> = self.projects.iter().map(Project::location).collect();
         // A table is not missing from a project whose tables have not landed.
         let unlisted: Vec<Location> = self
             .projects
             .iter()
             .filter(|open| !open.tables_listed())
             .map(Project::location)
+            .cloned()
             .collect();
         for space in &mut self.spaces {
             let gone: Vec<Member> = space
@@ -588,7 +589,7 @@ impl Workspace {
                 .filter(|member| {
                     member
                         .project()
-                        .is_none_or(|project| open.iter().any(|at| at == project))
+                        .is_none_or(|project| open.contains(&project))
                         && !live.contains(member)
                         && !(member.kind() == Kind::Table
                             && member
@@ -607,9 +608,10 @@ impl Workspace {
     /// whose project is shut, or which has gone since the space named it —
     /// that draws as an empty pane rather than a panic.
     pub fn showing_of(&self, member: &Member, cx: &App) -> Option<(usize, Showing)> {
-        let at = self.projects.iter().position(|open| {
-            member.project().and_then(Location::local) == Some(open.path.as_path())
-        })?;
+        let at = self
+            .projects
+            .iter()
+            .position(|open| member.project() == Some(open.location()))?;
         let open = self.projects.get(at)?;
         let showing = open.stored(member.kind(), member.id(), cx)?;
         Some((at, showing))
@@ -626,14 +628,14 @@ impl Workspace {
         };
         let open = self.projects.get(project)?;
         let record = open.session(id, cx)?.filed()?.to_owned();
-        Some(Member::new(open.location(), Kind::Session, record))
+        Some(Member::new(open.location().clone(), Kind::Session, record))
     }
 
     /// [`Self::member_of`] for a board, an article or a table, whose id is
     /// its file. Nothing for a session.
     fn filed_member(&self, project: usize, showing: Showing) -> Option<Entry> {
         let open = self.projects.get(project)?;
-        let project = open.location();
+        let project = open.location().clone();
         let (kind, id) = match showing {
             Showing::Session(_) => return None,
             Showing::Board(id) => {

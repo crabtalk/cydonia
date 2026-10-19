@@ -7,6 +7,7 @@
 pub mod askpass;
 #[cfg(unix)]
 pub mod controller;
+pub mod host;
 pub mod platform;
 pub mod session;
 #[cfg(unix)]

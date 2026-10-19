@@ -4,6 +4,7 @@ use crate::model::git::{
     self, Backend, Change, Repository,
     preview::{Kind, Preview},
 };
+use artifact::location::Location;
 use bezel::ui::scroll as scrollbars;
 use bezel::{
     gpui::{
@@ -45,7 +46,8 @@ pub struct Changes {
 }
 
 impl Changes {
-    pub fn new(cwd: PathBuf, cx: &mut Context<Self>) -> Self {
+    /// The changes of the repository at or above `location`'s root.
+    pub fn new(location: &Location, cx: &mut Context<Self>) -> Self {
         let poll = cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(Duration::from_secs(3)).await;
@@ -62,8 +64,8 @@ impl Changes {
             }
         });
         let mut this = Self {
-            git: git::open(&cwd),
-            cwd,
+            git: git::open(location),
+            cwd: location.root().to_path_buf(),
             repository: None,
             selected: None,
             preview: Arc::default(),

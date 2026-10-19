@@ -23,7 +23,7 @@ fn entry(project: &str, active: bool, number: u64, title: &str, key: Option<&str
             None => Kind::Article,
         },
         row: Row::Entry {
-            project: project.into(),
+            project: std::path::Path::new(project).into(),
             showing: Showing::Article(number.to_string()),
         },
     }

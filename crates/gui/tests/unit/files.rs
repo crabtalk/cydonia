@@ -68,7 +68,7 @@ fn folder_symlinks_do_not_recurse_outside_the_project() {
 fn file_tree_renders_and_reveals_selected_file(cx: &mut gpui::TestAppContext) {
     let tree = Tree::new();
     cx.update(|cx| Theme::install(bezel::theme::Appearance::Light, cx));
-    let window = cx.add_window(|_, cx| Files::new(tree.0.clone(), cx));
+    let window = cx.add_window(|_, cx| Files::new(tree.0.clone().into(), cx));
     window
         .update(cx, |files, _, cx| {
             files.reveal(Some(tree.0.join("src/ui/view.rs")), cx);
@@ -88,7 +88,7 @@ fn command_f_toggles_filter_and_clears_it_on_close(cx: &mut gpui::TestAppContext
         Theme::install(bezel::theme::Appearance::Light, cx);
         cx.bind_keys([gpui::KeyBinding::new("cmd-f", ToggleFilter, None)]);
     });
-    let window = cx.add_window(|_, cx| Files::new(tree.0.clone(), cx));
+    let window = cx.add_window(|_, cx| Files::new(tree.0.clone().into(), cx));
     window
         .update(cx, |files, window, cx| {
             assert!(!files.filter_open);

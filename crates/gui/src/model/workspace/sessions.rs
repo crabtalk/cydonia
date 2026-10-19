@@ -64,7 +64,7 @@ impl Workspace {
     pub fn link_of_session(&self, id: u64, cx: &App) -> Option<String> {
         let project = &self.projects[self.project_of(id)?];
         let number = project.session(id, cx)?.number?;
-        let name = artifact::reference::project_name(&project.path)?;
+        let name = artifact::reference::project_name(project.root())?;
         Some(artifact::reference::Reference::entry(Some(&name), number, None).link())
     }
 
@@ -94,8 +94,8 @@ impl Workspace {
         }
         let id = self.next_id;
         self.next_id += 1;
-        let cwd = self.projects[ix].path.clone();
-        let chat = cx.new(|cx| ChatSession::connect(id, entry, cwd, seed, cx));
+        let location = self.projects[ix].location().clone();
+        let chat = cx.new(|cx| ChatSession::connect(id, entry, location, seed, cx));
         let project = &mut self.projects[ix];
         project.sessions.push(HeldSession { id, chat });
         if front {
@@ -301,9 +301,10 @@ impl Workspace {
     /// agent is resolved by name; a session whose agent has since left
     /// `settings.toml` comes back readable but cannot reconnect.
     pub(super) fn restore_sessions(&mut self, ix: usize, cx: &mut App) {
-        let path = self.projects[ix].path.clone();
+        let location = self.projects[ix].location().clone();
         let records = self.projects[ix].store().sessions();
-        let _ = session_preferences::keep_sessions(&path, records.iter().map(|r| r.id.as_str()));
+        let _ =
+            session_preferences::keep_sessions(&location, records.iter().map(|r| r.id.as_str()));
         for stored in records {
             self.restore_record(ix, stored, cx);
         }
@@ -317,7 +318,7 @@ impl Workspace {
         stored: artifact::session::record::Record,
         cx: &mut App,
     ) {
-        let path = self.projects[ix].path.clone();
+        let location = self.projects[ix].location().clone();
         let id = self.next_id;
         self.next_id += 1;
         let entry = super::named(
@@ -337,7 +338,7 @@ impl Workspace {
             args: Vec::new(),
             env: Default::default(),
         });
-        let mut chat = ChatSession::restore(id, path.clone(), entry, stored);
+        let mut chat = ChatSession::restore(id, location, entry, stored);
         chat.unload_history();
         let chat = HeldSession::new(chat, cx);
         self.projects[ix].sessions.push(chat);
@@ -412,8 +413,9 @@ impl Workspace {
         let choices = self.article_choices(&entry);
         let id = self.next_id;
         self.next_id += 1;
-        let cwd = self.projects[ix].path.clone();
-        let chat = cx.new(|cx| ChatSession::connect_article(id, entry, cwd, article, choices, cx));
+        let location = self.projects[ix].location().clone();
+        let chat =
+            cx.new(|cx| ChatSession::connect_article(id, entry, location, article, choices, cx));
         self.projects[ix].sessions.push(HeldSession { id, chat });
         cx.notify();
         Some(id)
@@ -451,19 +453,19 @@ impl Workspace {
         cx: &App,
     ) -> Option<(settings::Agent, session_preferences::Offers)> {
         let (ix, _) = self.thread_article(path)?;
-        self.article_default_offers(&self.projects[ix].path, cx)
+        self.article_default_offers(self.projects[ix].location(), cx)
     }
 
-    /// The same for the project at `cwd`, which the Settings screen reads the
-    /// article default's options from.
+    /// The same for the project at `project`, which the Settings screen reads
+    /// the article default's options from.
     pub fn article_default_offers(
         &self,
-        cwd: &Path,
+        project: &Location,
         cx: &App,
     ) -> Option<(settings::Agent, session_preferences::Offers)> {
         let agent = self.article_agent(cx)?;
         let choices = self.article_choices(&agent);
-        let offers = OfferCache::get(cx, cwd, &agent).with(&choices);
+        let offers = OfferCache::get(cx, project, &agent).with(&choices);
         Some((agent, offers))
     }
 
@@ -471,23 +473,23 @@ impl Workspace {
     /// own agent — see [`Self::remember_article`].
     pub fn set_article_default(
         &mut self,
-        cwd: &Path,
+        project: &Location,
         change: ArticleChange,
         cx: &mut Context<Self>,
     ) {
         let Some(current) = self.article_agent(cx) else {
             return;
         };
-        self.remember_article(cwd, &current, change, cx);
+        self.remember_article(project, &current, change, cx);
     }
 
     /// Change the article default by one pick made on `current`, with the
-    /// offers read from the project at `cwd`. A pick the agent does not offer
-    /// is dropped. A pick on another agent than the default's, or a change of
-    /// agent, starts the choices over on that agent.
+    /// offers read from the project at `project`. A pick the agent does not
+    /// offer is dropped. A pick on another agent than the default's, or a
+    /// change of agent, starts the choices over on that agent.
     fn remember_article(
         &mut self,
-        cwd: &Path,
+        project: &Location,
         current: &settings::Agent,
         change: ArticleChange,
         cx: &mut Context<Self>,
@@ -506,7 +508,7 @@ impl Workspace {
                 ..Default::default()
             };
         }
-        let offers = OfferCache::get(cx, cwd, current);
+        let offers = OfferCache::get(cx, project, current);
         match change {
             ArticleChange::Agent(_) => {}
             ArticleChange::Mode(mode) => {
@@ -552,11 +554,11 @@ impl Workspace {
         }
     }
 
-    /// The directory of the project holding the article at `path`, while
+    /// The location of the project holding the article at `path`, while
     /// article threads are on.
-    pub fn article_cwd(&self, path: &Path) -> Option<PathBuf> {
+    pub fn article_cwd(&self, path: &Path) -> Option<Location> {
         let (ix, _) = self.thread_article(path)?;
-        Some(self.projects[ix].path.clone())
+        Some(self.projects[ix].location().clone())
     }
 
     /// The project holding the article at `path`, and the article's id, while
@@ -576,21 +578,28 @@ impl Workspace {
         }
     }
 
-    /// Open a session on the agent named `agent` in the project at `path`,
+    /// Open a session on the agent named `agent` in the project at `project`,
     /// seeded with `content`, behind whatever the window shows. Nothing
     /// happens where either is not held.
-    pub fn start_in(&mut self, path: &Path, agent: &str, content: String, cx: &mut Context<Self>) {
+    pub fn start_in(
+        &mut self,
+        project: &Location,
+        agent: &str,
+        content: String,
+        cx: &mut Context<Self>,
+    ) {
         let entry = named(&self.settings.agents, Some(agent), agent).cloned();
-        if let (Some(ix), Some(entry)) = (self.project_at(path), entry) {
+        if let (Some(ix), Some(entry)) = (self.project_at(project), entry) {
             self.new_session_in(ix, entry, Some(content), false, cx);
         }
     }
 
     /// Send a message with pictures, once each is filed among the project's
     /// shared pictures. Each is written into the message as a line of its
-    /// own naming its file on this machine, which is what the transcript
-    /// paints and what the prompt reads back out for the agent. A picture
-    /// that is not filed, or not on this machine, is let go.
+    /// own naming its file on the project's machine, which is what the
+    /// transcript paints and what the prompt reads back out for the agent —
+    /// from the bytes filed, for a project on another machine. A picture that
+    /// is not filed is let go.
     pub fn send_attached(
         &mut self,
         id: u64,
@@ -606,29 +615,43 @@ impl Workspace {
             store: self.projects[ix].store(),
             owner: artifact::project::Owner::Shared,
         };
+        let inline = self.projects[ix].location().local().is_none();
         let filed: Vec<_> = attachments
             .iter()
             .filter_map(media::Attachment::picture)
             .map(|picture| {
                 let (name, write) = shelf.put(&picture);
                 let file = shelf.file(&name);
-                async move { write.await.ok().and(file) }
+                let bytes = inline.then(|| picture.into_bytes());
+                async move { Some((write.await.ok().and(file)?, bytes)) }
             })
             .collect();
         let text = text.trim_end().to_owned();
         cx.spawn(async move |this, cx| {
+            let filed: Vec<_> = futures::future::join_all(filed)
+                .await
+                .into_iter()
+                .flatten()
+                .collect();
             let mut parts = vec![text];
-            parts.extend(
-                futures::future::join_all(filed)
-                    .await
-                    .into_iter()
-                    .flatten()
-                    .map(|path| media::line(&path)),
-            );
+            parts.extend(filed.iter().map(|(path, _)| media::line(path)));
             parts.retain(|part| !part.is_empty());
-            if !parts.is_empty() {
-                let _ = this.update(cx, |this, cx| this.send(id, parts.join("\n\n"), cx));
+            if parts.is_empty() {
+                return;
             }
+            let _ = this.update(cx, |this, cx| {
+                #[cfg(feature = "desktop")]
+                if let Some(chat) = this.session_entity(id) {
+                    chat.update(cx, |chat, _| {
+                        for (path, bytes) in filed {
+                            if let Some(bytes) = bytes {
+                                chat.hold_picture(path, bytes);
+                            }
+                        }
+                    });
+                }
+                this.send(id, parts.join("\n\n"), cx)
+            });
         })
         .detach();
     }
@@ -684,7 +707,7 @@ impl Workspace {
         if let Some(record) = project.session(id, cx).and_then(|chat| chat.record.clone()) {
             cx.background_spawn(project.store().remove_session(&record))
                 .detach();
-            let _ = session_preferences::forget_session(&project.path, &record);
+            let _ = session_preferences::forget_session(project.location(), &record);
         }
         project.sessions.retain(|held| held.id != id);
         if project.active == Some(id) {
@@ -781,7 +804,7 @@ impl Workspace {
             (
                 taken,
                 chat.article.is_some(),
-                chat.cwd.clone(),
+                chat.location.clone(),
                 chat.entry.clone(),
             )
         });
@@ -817,7 +840,7 @@ impl Workspace {
             (
                 taken,
                 chat.article.is_some(),
-                chat.cwd.clone(),
+                chat.location.clone(),
                 chat.entry.clone(),
             )
         });

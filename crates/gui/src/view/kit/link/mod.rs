@@ -190,7 +190,7 @@ fn file_of(
             .projects
             .iter()
             .find(|project| project.store().files(base))
-            .map(|project| project.path.clone())
+            .map(|project| project.root().to_path_buf())
     });
     crate::model::file_url::target(project.as_deref().or(link.base), link.url)
 }
@@ -449,7 +449,7 @@ impl Cydonia {
                 .read(cx)
                 .projects
                 .iter()
-                .find(|open| &open.path == project)
+                .find(|open| open.location() == project)
                 .and_then(|open| open.boards.get(open.board_ix(id)?))
                 .map(|held| {
                     held.board
