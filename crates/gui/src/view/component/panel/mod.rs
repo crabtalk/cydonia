@@ -1351,11 +1351,11 @@ impl Cydonia {
 }
 
 #[cfg(test)]
-#[path = "../../../tests/unit/panel.rs"]
+#[path = "../../../../tests/unit/panel.rs"]
 mod tests;
 
 #[cfg(test)]
-#[path = "../../../tests/unit/right_panel.rs"]
+#[path = "../../../../tests/unit/right_panel.rs"]
 mod right_panel_tests;
 
 /// The control that hides and shows the right panel: on the panel's strip

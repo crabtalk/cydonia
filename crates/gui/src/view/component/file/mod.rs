@@ -1040,5 +1040,5 @@ impl Render for FileView {
 }
 
 #[cfg(test)]
-#[path = "../../../tests/unit/file.rs"]
+#[path = "../../../../tests/unit/file.rs"]
 mod tests;

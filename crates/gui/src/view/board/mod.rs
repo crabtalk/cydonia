@@ -3888,17 +3888,17 @@ impl Render for BoardView {
 }
 
 #[cfg(test)]
-#[path = "../../tests/unit/board_find.rs"]
+#[path = "../../../tests/unit/board_find.rs"]
 mod find_tests;
 
 #[cfg(test)]
-#[path = "../../tests/unit/board_docs.rs"]
+#[path = "../../../tests/unit/board_docs.rs"]
 mod doc_tests;
 
 #[cfg(test)]
-#[path = "../../tests/unit/board_preview.rs"]
+#[path = "../../../tests/unit/board_preview.rs"]
 mod preview_tests;
 
 #[cfg(test)]
-#[path = "../../tests/unit/board_drawer.rs"]
+#[path = "../../../tests/unit/board_drawer.rs"]
 mod drawer_tests;

@@ -1548,5 +1548,5 @@ impl Render for Composer {
 }
 
 #[cfg(test)]
-#[path = "../../../tests/unit/composer_drafts.rs"]
+#[path = "../../../../tests/unit/composer_drafts.rs"]
 mod draft_tests;

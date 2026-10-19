@@ -2160,21 +2160,21 @@ fn working(
 }
 
 #[cfg(test)]
-#[path = "../../../tests/unit/transcript_turns.rs"]
+#[path = "../../../../tests/unit/transcript_turns.rs"]
 mod tests;
 
 #[cfg(test)]
-#[path = "../../../tests/unit/transcript_rail.rs"]
+#[path = "../../../../tests/unit/transcript_rail.rs"]
 mod rail_tests;
 
 #[cfg(test)]
-#[path = "../../../tests/unit/transcript_virtual.rs"]
+#[path = "../../../../tests/unit/transcript_virtual.rs"]
 mod virtual_tests;
 
 #[cfg(test)]
-#[path = "../../../tests/unit/transcript_scrollbar.rs"]
+#[path = "../../../../tests/unit/transcript_scrollbar.rs"]
 mod scrollbar_tests;
 
 #[cfg(test)]
-#[path = "../../../tests/unit/transcript_links.rs"]
+#[path = "../../../../tests/unit/transcript_links.rs"]
 mod link_tests;
