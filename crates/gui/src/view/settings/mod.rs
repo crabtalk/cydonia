@@ -287,8 +287,16 @@ pub struct SettingsWindow {
 /// would be two views of one preference. One open over another workspace
 /// than `workspace`, left by a workspace window that has since closed, is
 /// drawn again over `workspace`.
+///
+/// Deferred: an action dispatched in the settings window runs while gpui holds
+/// that window, and a held window reads as closed.
 #[cfg(feature = "desktop")]
 pub fn open(workspace: Entity<Workspace>, section: Section, cx: &mut App) {
+    cx.defer(move |cx| show_or_open(workspace, section, cx));
+}
+
+#[cfg(feature = "desktop")]
+fn show_or_open(workspace: Entity<Workspace>, section: Section, cx: &mut App) {
     let open = cx
         .windows()
         .into_iter()
