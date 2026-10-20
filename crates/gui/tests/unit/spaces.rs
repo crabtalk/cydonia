@@ -665,56 +665,6 @@ fn making_an_entry_leaves_the_project_folded(cx: &mut gpui::TestAppContext) {
     });
 }
 
-/// Spaces are listed in hand order once one has been dragged, and a re-read
-/// off disk keeps it — the files carry the time they were written and nothing
-/// else.
-#[gpui::test]
-fn a_space_keeps_the_place_it_was_dragged_to(cx: &mut gpui::TestAppContext) {
-    let scratch = Scratch::new("reorder");
-    let (workspace, a, b) = two_boards(&scratch, cx);
-
-    workspace.update(cx, |workspace, cx| {
-        workspace.arrange(&a, &b, Side::Right, cx);
-        // A second space, over two boards the first one does not hold: an
-        // entry is in one space at a time.
-        workspace.new_board(0, "Third".into(), "THR", cx).ok();
-        workspace.new_board(0, "Fourth".into(), "FOU", cx).ok();
-        let c = workspace.board_member(0, 0).expect("a member");
-        let d = workspace.board_member(0, 1).expect("a member");
-        workspace.open_tab(c.clone(), crate::model::workspace::Opening::Kept, cx);
-        workspace.arrange(&c, &d, Side::Right, cx);
-
-        let ids: Vec<String> = workspace
-            .spaces
-            .iter()
-            .map(|space| space.id.clone())
-            .collect();
-        assert_eq!(workspace.space(), Some(0), "the newest is the open one");
-
-        workspace.move_space(&ids[0], 1, cx);
-        assert_eq!(
-            workspace
-                .spaces
-                .iter()
-                .map(|space| space.id.clone())
-                .collect::<Vec<_>>(),
-            vec![ids[1].clone(), ids[0].clone()]
-        );
-        assert_eq!(workspace.space(), Some(1), "and it is still the open one");
-
-        workspace.reload_spaces(cx);
-        assert_eq!(
-            workspace
-                .spaces
-                .iter()
-                .map(|space| space.id.clone())
-                .collect::<Vec<_>>(),
-            vec![ids[1].clone(), ids[0].clone()],
-            "a re-read is not a re-sort"
-        );
-    });
-}
-
 /// A card written in a pane is filed into that pane's board, not into
 /// whichever board its project is pointed at.
 #[gpui::test]
@@ -826,28 +776,30 @@ fn a_stale_board_write_lands_on_the_other_writers_board(cx: &mut gpui::TestAppCo
     });
 }
 
-/// A space folds the way a project does, and a fold written to `state.toml`
-/// is the fold the next launch starts with.
+/// A space is reached through its tab alone, so one `state.toml` holds no
+/// tab for gets one at launch.
 #[gpui::test]
-fn a_space_fold_is_kept_like_a_project_fold(cx: &mut gpui::TestAppContext) {
-    let scratch = Scratch::new("fold-space");
+fn every_space_has_a_tab_after_a_relaunch(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("space-tab");
     let (workspace, a, b) = two_boards(&scratch, cx);
 
     let id = workspace.update(cx, |workspace, cx| {
         workspace.arrange(&a, &b, Side::Right, cx);
-        let id = workspace.spaces[0].id.clone();
-        assert!(!workspace.space_folded(&id), "open to start");
-        workspace.toggle_space(&id, cx);
-        assert!(workspace.space_folded(&id));
-        id
+        workspace.spaces[0].id.clone()
     });
 
     let state = state::State {
-        folded_spaces: vec![id.clone()],
+        tabs: Some(Vec::new()),
         ..Default::default()
     };
     let restored = cx.new(|cx| Workspace::new(Settings::default(), state, cx));
-    restored.update(cx, |workspace, _| assert!(workspace.space_folded(&id)));
+    restored.update(cx, |workspace, _| {
+        assert!(
+            workspace
+                .strip()
+                .contains(&crate::model::workspace::Slot::Space { space: id.clone() })
+        )
+    });
 }
 
 /// Archived anywhere, not only from the sidebar, an entry leaves its space,
@@ -958,8 +910,8 @@ fn an_edited_preview_is_kept(cx: &mut gpui::TestAppContext) {
     });
 }
 
-/// Entries put into a space leave the strip for the space's tab, and the
-/// last tab out leaves the window on none.
+/// Entries put into a space leave the strip for the space's tab, and closing
+/// that tab deletes the space and leaves the window on none.
 #[gpui::test]
 fn tabs_close_and_leave_for_a_space(cx: &mut gpui::TestAppContext) {
     use crate::model::workspace::Opening;
@@ -975,10 +927,9 @@ fn tabs_close_and_leave_for_a_space(cx: &mut gpui::TestAppContext) {
         workspace.close_slot(&crate::model::workspace::Slot::Space { space: id }, cx);
         assert!(workspace.strip().is_empty());
         assert!(workspace.arranged().is_none());
-        assert_eq!(
-            workspace.spaces.len(),
-            1,
-            "closing its tab leaves the space"
+        assert!(
+            workspace.spaces.is_empty(),
+            "closing its tab deletes the space"
         );
     });
 }

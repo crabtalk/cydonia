@@ -866,7 +866,7 @@ impl Space {
         }
     }
 
-    /// The sidebar's label.
+    /// The name its tab shows.
     pub fn label(&self) -> &str {
         match self.name.is_empty() {
             true => UNNAMED,
@@ -993,7 +993,7 @@ impl Space {
 
     /// Take one entry out. A pane holding tabs keeps the pane and loses a tab;
     /// the last one out closes the pane. The space stays when its last pane
-    /// goes: it is deleted from the sidebar and nowhere else.
+    /// goes: it is deleted with its tab and nowhere else.
     ///
     /// A zoomed pane that is closed leaves the rest unzoomed rather than
     /// standing something else in its place.

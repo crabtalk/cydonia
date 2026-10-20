@@ -37,7 +37,7 @@ pub trait Store {
 
     fn read(id: &str) -> Option<Space>;
 
-    /// Write one back, and take the time it was written at — what the sidebar
+    /// Write one back, and take the time it was written at — what [`Self::all`]
     /// orders on.
     fn save(space: &mut Space);
 

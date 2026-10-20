@@ -131,29 +131,28 @@ impl Tab {
                     entry.archived,
                     Host::Tab(this.entry.clone()),
                 );
-                let member = this.entry.clone();
-                let Some(rows) = this
-                    .root
-                    .update(cx, |root, cx| {
-                        Self::through(menu::sections([
-                            root.entry_rows(host, &row, archived, cx),
-                            root.pane_rows(&member, cx),
-                        ]))
-                    })
-                    .ok()
-                else {
-                    return;
-                };
-                let rows = std::cell::RefCell::new(Some(rows));
-                ContextMenu::toggle(
-                    this,
-                    |this| &mut this.menu,
-                    TabMenu::Entry,
-                    Place::BelowEnd,
-                    move |_, _, _| menu::chooser(rows.borrow_mut().take().unwrap_or_default()),
-                    window,
-                    cx,
-                );
+                let (member, tab) = (this.entry.clone(), cx.entity());
+                // From the window: its rows read this tab back.
+                this.defer_window(window, cx, move |root, window, cx| {
+                    let rows = Self::through(menu::sections([
+                        root.entry_rows(host, &row, archived, cx),
+                        root.pane_rows(&member, cx),
+                    ]));
+                    let rows = std::cell::RefCell::new(Some(rows));
+                    tab.update(cx, |this, cx| {
+                        ContextMenu::toggle(
+                            this,
+                            |this| &mut this.menu,
+                            TabMenu::Entry,
+                            Place::BelowEnd,
+                            move |_, _, _| {
+                                menu::chooser(rows.borrow_mut().take().unwrap_or_default())
+                            },
+                            window,
+                            cx,
+                        )
+                    });
+                });
             }));
             ContextMenu::trigger(button, |this: &mut Self| &mut this.menu, TabMenu::Entry, cx)
                 .children(self.menu.render_for(

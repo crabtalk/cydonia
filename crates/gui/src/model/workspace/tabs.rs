@@ -184,9 +184,18 @@ impl Workspace {
         edited
     }
 
-    /// Take a tab off the strip. The one in front hands the front to its
-    /// neighbour, to its left or, for the first, to its right.
+    /// Take a tab off the strip. A space's takes the space with it; the
+    /// entries it arranges stay where they are.
     pub fn close_slot(&mut self, slot: &Slot, cx: &mut Context<Self>) {
+        match slot {
+            Slot::Space { space } => self.delete_space_id(space, cx),
+            Slot::Entry(_) => self.take_slot(slot, cx),
+        }
+    }
+
+    /// Take a tab off the strip and nothing else. The one in front hands the
+    /// front to its neighbour, to its left or, for the first, to its right.
+    pub(super) fn take_slot(&mut self, slot: &Slot, cx: &mut Context<Self>) {
         let Some(at) = self.strip.iter().position(|tab| tab == slot) else {
             return;
         };
@@ -243,7 +252,8 @@ impl Workspace {
 
     /// The tabs `state.toml` holds, or else the entry the active project last
     /// showed — and the space the window was on, where it holds no tab for
-    /// it. Tabs on what has since gone are left out.
+    /// it, then every space still without one. Tabs on what has since gone
+    /// are left out.
     pub(super) fn restore_tabs(
         &mut self,
         tabs: Option<Vec<Slot>>,
@@ -275,6 +285,15 @@ impl Workspace {
                 Slot::Entry(member) => self.showing_of(member, cx).is_some(),
             })
             .collect();
+        // A space is reached through its tab alone.
+        for space in &self.spaces {
+            let slot = Slot::Space {
+                space: space.id.clone(),
+            };
+            if !self.strip.contains(&slot) {
+                self.strip.push(slot);
+            }
+        }
         self.front = front;
         self.save();
     }

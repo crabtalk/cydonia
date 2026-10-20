@@ -269,11 +269,6 @@ impl Row {
                 }
                 Row::Archive(_) | Row::Heading(_) => return None,
                 Row::App(id) => workspace.program(id, cx)?.read(cx).label(),
-                Row::Group(Group::Space(id)) => workspace
-                    .spaces
-                    .get(workspace.space_ix(id)?)?
-                    .label()
-                    .to_owned(),
                 Row::Entry { showing, .. } => {
                     let (project, ix) = self.located(workspace)?;
                     workspace.projects[project]
@@ -286,8 +281,7 @@ impl Row {
     }
 
     /// Whether a row's entry is put away. `false` for the rows that are not
-    /// entries, and for a space — archiving one drops the arrangement rather
-    /// than filing it.
+    /// entries.
     pub(crate) fn archived(&self, workspace: &Workspace, cx: &App) -> bool {
         let Row::Entry { showing, .. } = self else {
             return false;
@@ -340,8 +334,6 @@ impl Row {
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub(crate) enum Heading {
     Projects,
-    /// Drawn only while there is a space.
-    Spaces,
     /// The apps listed. Drawn only while there is one.
     Apps,
 }
@@ -351,7 +343,6 @@ impl Heading {
     fn label(self) -> &'static str {
         match self {
             Self::Projects => "Projects",
-            Self::Spaces => "Spaces",
             Self::Apps => "Apps",
         }
     }
@@ -359,21 +350,16 @@ impl Heading {
     fn key(self) -> &'static str {
         match self {
             Self::Projects => "projects",
-            Self::Spaces => "spaces",
             Self::Apps => "apps",
         }
     }
 }
 
-/// What entries are listed under: a project holds its own, a space the ones it
-/// arranges. One heading, one fold and one drag for both — see
-/// [`Sidebar::group_head`].
+/// What entries are listed under — see [`Sidebar::group_head`].
 #[derive(Clone, PartialEq, Eq, Debug, Hash)]
 pub(crate) enum Group {
     /// A project, by its path.
     Project(PathBuf),
-    /// A space, by its id.
-    Space(String),
 }
 
 /// How a row's entry stands to what the window is showing.
@@ -459,7 +445,7 @@ fn project_of(row: &Row) -> Option<&Path> {
     match row {
         Row::Group(Group::Project(path)) | Row::Archive(path) => Some(path),
         Row::Entry { project, .. } => Some(project),
-        Row::Group(Group::Space(_)) | Row::Heading(_) | Row::App(_) => None,
+        Row::Heading(_) | Row::App(_) => None,
     }
 }
 
@@ -504,7 +490,6 @@ impl Renaming {
                 showing: Showing::Table(key),
                 ..
             } => Some(Self::Table(key.clone())),
-            Row::Group(Group::Space(id)) => Some(Self::Space(id.clone())),
             Row::Entry {
                 showing: Showing::Article(_) | Showing::Board(_),
                 ..
@@ -644,9 +629,7 @@ pub(crate) fn ghost(label: SharedString, theme: &Theme) -> AnyElement {
 pub(crate) fn key_of(entry: &Row) -> String {
     match entry {
         Row::Group(Group::Project(path)) => format!("project-{}", path.display()),
-        Row::Group(Group::Space(id)) => format!("space-{id}"),
         Row::Heading(Heading::Projects) => "projects".to_owned(),
-        Row::Heading(Heading::Spaces) => "spaces".to_owned(),
         Row::Heading(Heading::Apps) => "apps".to_owned(),
         Row::Archive(path) => format!("archive-{}", path.display()),
         Row::Entry { project, showing } => {
@@ -1154,13 +1137,11 @@ impl Sidebar {
             return;
         }
         self.defer_window(window, cx, |root, _, cx| root.commit(cx));
-        self.workspace.update(cx, |workspace, cx| match group {
-            Group::Project(path) => {
-                if let Some(ix) = workspace.project_at(path) {
-                    workspace.toggle_project(ix, cx);
-                }
+        let Group::Project(path) = group;
+        self.workspace.update(cx, |workspace, cx| {
+            if let Some(ix) = workspace.project_at(path) {
+                workspace.toggle_project(ix, cx);
             }
-            Group::Space(id) => workspace.toggle_space(id, cx),
         });
     }
 
@@ -1312,13 +1293,6 @@ impl Sidebar {
                 self.workspace
                     .update(cx, |workspace, cx| workspace.move_project(path, to, cx));
             }
-            Row::Group(Group::Space(id)) => {
-                let to = above
-                    .filter(|row| matches!(row, Row::Group(Group::Space(_))))
-                    .count();
-                self.workspace
-                    .update(cx, |workspace, cx| workspace.move_space(id, to, cx));
-            }
             _ => {
                 let places = self.list(cx).row_places(&rows);
                 let kind = |row: &Row| places.get(row).map(|place| place.kind.clone());
@@ -1330,25 +1304,7 @@ impl Sidebar {
                     .cloned()
                     .collect();
                 region.insert(at.min(region.len()), carried.clone());
-                let at = rows.iter().position(|row| row == carried).unwrap_or(0);
-                let group = rows[..at].iter().rev().find_map(|row| match row {
-                    Row::Group(group) => Some(group),
-                    _ => None,
-                });
-                match group {
-                    // The sidebar's order alone: the space's panes stay put.
-                    Some(Group::Space(id)) => {
-                        let workspace = self.workspace.read(cx);
-                        let members: Vec<Member> = region
-                            .iter()
-                            .filter_map(|row| row.member(workspace, cx))
-                            .collect();
-                        self.workspace.update(cx, |workspace, cx| {
-                            workspace.set_space_order(id, members, cx);
-                        });
-                    }
-                    _ => self.reorder_entries(carried, region, cx),
-                }
+                self.reorder_entries(carried, region, cx);
             }
         }
     }

@@ -338,20 +338,6 @@ impl Cydonia {
         let open = located.and_then(|(project, _)| workspace.projects.get(project));
         let ix = located.map_or(0, |(_, ix)| ix);
         match entry {
-            // A space holds none of what it arranges, so nothing but the
-            // arrangement itself goes.
-            Row::Group(Group::Space(id)) => workspace
-                .space_ix(id)
-                .map(|ix| &workspace.spaces[ix])
-                .map(|space| {
-                    (
-                        // Beside the config, not in a project: a space spans
-                        // them — see [`crate::model::spaces`].
-                        Some(format!("~/.config/cydonia/spaces/{}.toml", space.id)),
-                        format!("The entries it arranges stay where they are. {UNDONE}"),
-                    )
-                })
-                .unwrap_or_else(|| at(None)),
             Row::Entry {
                 showing: Showing::Session(id),
                 ..

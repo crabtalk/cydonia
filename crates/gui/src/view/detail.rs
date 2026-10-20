@@ -689,9 +689,11 @@ impl Cydonia {
                     .flex_none()
                     .when(floating, |strip| strip.mx(px(Theme::CONTENT_INSET / 2.)))
                     .child(
-                        self.strip
-                            .clone()
-                            .cached(gpui::StyleRefinement::default().w_full()),
+                        self.strip.clone().cached(
+                            gpui::StyleRefinement::default()
+                                .w_full()
+                                .h(px(root::HEADER_HEIGHT)),
+                        ),
                     ),
             )
             .child(

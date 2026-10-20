@@ -163,10 +163,6 @@ pub struct Workspace {
     /// The tab the next opening replaces — see [`Workspace::open_tab`].
     /// Runtime only.
     preview: Option<artifact::space::Member>,
-    /// Spaces whose members the sidebar hides, by id.
-    folded_spaces: std::collections::HashSet<String>,
-    /// The order the sidebar lists each space's members in, by space id.
-    space_order: std::collections::BTreeMap<String, Vec<artifact::space::Member>>,
     /// The sidebar's sections whose rows are hidden, by name.
     folded_sections: std::collections::HashSet<String>,
     /// The palette's commands last run, most recent first.
@@ -235,8 +231,6 @@ impl Workspace {
             strip: Vec::new(),
             front: None,
             preview: None,
-            folded_spaces: state.folded_spaces.iter().cloned().collect(),
-            space_order: state.space_order,
             folded_sections: state.folded_sections.iter().cloned().collect(),
             recent_commands: state.commands,
             release: state.release,
@@ -292,18 +286,6 @@ impl Workspace {
             sort: self.sort.clone(),
             space: self.active_space().map(|space| space.id.clone()),
             spaces: self.spaces.iter().map(|space| space.id.clone()).collect(),
-            folded_spaces: self
-                .spaces
-                .iter()
-                .filter(|space| self.folded_spaces.contains(&space.id))
-                .map(|space| space.id.clone())
-                .collect(),
-            space_order: self
-                .space_order
-                .iter()
-                .filter(|(id, _)| self.spaces.iter().any(|space| &space.id == *id))
-                .map(|(id, order)| (id.clone(), order.clone()))
-                .collect(),
             folded_sections: {
                 let mut folded: Vec<String> = self.folded_sections.iter().cloned().collect();
                 folded.sort();

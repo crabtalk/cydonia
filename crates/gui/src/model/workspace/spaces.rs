@@ -90,53 +90,9 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Whether a space's members are hidden in the sidebar.
-    pub fn space_folded(&self, id: &str) -> bool {
-        self.folded_spaces.contains(id)
-    }
-
-    /// The space's members in the order the sidebar lists them.
-    pub fn listed_members(&self, space: &artifact::space::Space) -> Vec<Member> {
-        let mut members = space.entries();
-        if let Some(order) = self.space_order.get(&space.id) {
-            members.sort_by_key(|member| order.iter().position(|at| at == member).map(|at| at + 1));
-        }
-        members
-    }
-
-    /// Write down the order the sidebar lists a space's members in.
-    pub fn set_space_order(&mut self, id: &str, order: Vec<Member>, cx: &mut Context<Self>) {
-        self.space_order.insert(id.to_owned(), order);
-        self.save();
-        cx.notify();
-    }
-
-    /// Hide a space's members in the sidebar, or show them again.
-    pub fn toggle_space(&mut self, id: &str, cx: &mut Context<Self>) {
-        if !self.folded_spaces.remove(id) {
-            self.folded_spaces.insert(id.to_owned());
-        }
-        self.save();
-        cx.notify();
-    }
-
     /// Where the space with `id` is listed.
     pub fn space_ix(&self, id: &str) -> Option<usize> {
         self.spaces.iter().position(|space| space.id == id)
-    }
-
-    /// Carry a space to another place in the list.
-    pub fn move_space(&mut self, id: &str, to: usize, cx: &mut Context<Self>) {
-        let Some(from) = self.space_ix(id) else {
-            return;
-        };
-        if from == to || to >= self.spaces.len() {
-            return;
-        }
-        let space = self.spaces.remove(from);
-        self.spaces.insert(to, space);
-        self.save();
-        cx.notify();
     }
 
     /// Read every space back off disk. Called at launch, since nothing else
@@ -324,8 +280,8 @@ impl Workspace {
     /// entry's tab.
     ///
     /// Closing down to one entry closes the space: an arrangement of one thing
-    /// is not an arrangement, and leaving the file behind would put a row in
-    /// the sidebar for something the window is no longer doing. Entries, not
+    /// is not an arrangement, and leaving the file behind would put a tab on
+    /// the strip for something the window is no longer doing. Entries, not
     /// panes: a leaf stacking two entries beside a pane of one is still an
     /// arrangement once that pane goes.
     ///
@@ -456,7 +412,7 @@ impl Workspace {
         }
         let id = self.spaces.remove(ix).id;
         Shelf::remove(&id);
-        self.close_slot(&Slot::Space { space: id }, cx);
+        self.take_slot(&Slot::Space { space: id }, cx);
         self.save();
         cx.notify();
     }
@@ -481,9 +437,7 @@ impl Workspace {
         }
     }
 
-    /// The space a given entry is a member of, if any — what the sidebar
-    /// lists it under. One put away holds nothing: its members are listed
-    /// where they would be without it.
+    /// The space a given entry is a member of, if any.
     pub fn space_holding(&self, member: &Member) -> Option<usize> {
         self.spaces.iter().position(|space| space.contains(member))
     }

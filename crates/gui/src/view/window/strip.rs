@@ -7,9 +7,12 @@ use crate::{
     model::workspace::{Slot, Workspace},
     view::{
         component::panel::changes_toggle,
-        kit::menu,
+        kit::{
+            menu,
+            rename::{NameEvent, NameField},
+        },
         pane::arrangement,
-        sidebar::{Dragged, Row},
+        sidebar::{Dragged, Renaming, Row},
         window::{
             chrome,
             entry::Host,
@@ -28,6 +31,7 @@ use bezel::{
     ui::{
         context_menu::{ContextMenu, Place},
         icons,
+        input::Case,
         menu::Item,
         tabs,
         titlebar::CaptionSide,
@@ -45,6 +49,8 @@ pub(crate) enum StripMenu {
     Add,
     /// An entry's tab, right-pressed: its entry's own menu.
     Tab(Member),
+    /// A space's tab, right-pressed, by the space's id.
+    Space(String),
 }
 
 /// The window's strip. Drawn `.cached(...)`: it observes the workspace, and
@@ -54,6 +60,9 @@ pub(crate) struct Strip {
     root: WeakEntity<Cydonia>,
     reorder: tabs::Reorder<Dragged>,
     menu: ContextMenu<Self, StripMenu>,
+    /// The space whose tab holds the name field, by its id.
+    renaming: Option<String>,
+    name_field: Entity<NameField>,
     /// Whether the pointer is over the strip: its `+` takes room there only
     /// then.
     hovered: bool,
@@ -70,11 +79,27 @@ impl Strip {
         cx: &mut Context<Self>,
     ) -> Self {
         cx.observe(&workspace, |_, _, cx| cx.notify()).detach();
+        let name_field = cx.new(NameField::new);
+        cx.subscribe(&name_field, |this, _, event: &NameEvent, cx| {
+            let Some(id) = this.renaming.take() else {
+                return;
+            };
+            if let NameEvent::Named(name) = event {
+                let name = name.clone();
+                this.workspace.update(cx, |workspace, cx| {
+                    Renaming::Space(id).commit(name, workspace, cx)
+                });
+            }
+            cx.notify();
+        })
+        .detach();
         Self {
             workspace,
             root,
             reorder: tabs::Reorder::new(),
             menu: ContextMenu::default(),
+            renaming: None,
+            name_field,
             hovered: false,
             sidebar_open: true,
             last: true,
@@ -88,6 +113,15 @@ impl Strip {
             self.last = last;
             cx.notify();
         }
+    }
+
+    /// Put the name field on the tab of the space with `id`.
+    pub(crate) fn start_rename(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        let label = Renaming::Space(id.clone()).label(self.workspace.read(cx), cx);
+        self.name_field
+            .update(cx, |field, cx| field.start(label, Case::Mixed, window, cx));
+        self.renaming = Some(id);
+        cx.notify();
     }
 
     /// Open `menu` at `place` with the rows the window builds for it, or shut
@@ -125,7 +159,8 @@ impl Strip {
 
     /// One tab: its name, and the `×` that takes it off the strip. An entry's
     /// tab opens its entry's menu on a right press, and reads in italic while
-    /// it is the preview.
+    /// it is the preview. A space's opens the menu that renames it, and its `×`
+    /// deletes the space.
     fn tab(
         &self,
         slot: &Slot,
@@ -166,11 +201,14 @@ impl Strip {
                 (arrangement::key_of(member), label, entry)
             }
             Slot::Space { space } => {
-                let name = workspace
-                    .space_ix(space)
-                    .and_then(|ix| workspace.spaces.get(ix))
-                    .map(|space| space.label().to_owned())
-                    .unwrap_or_default();
+                let name = match self.renaming.as_ref() == Some(space) {
+                    true => String::new(),
+                    false => workspace
+                        .space_ix(space)
+                        .and_then(|ix| workspace.spaces.get(ix))
+                        .map(|space| space.label().to_owned())
+                        .unwrap_or_default(),
+                };
                 (
                     SharedString::from(format!("space::{space}")),
                     tabs::Label::new(name).with_icon(icons::layout::LayoutDashboard),
@@ -224,6 +262,44 @@ impl Strip {
                 .children(self.menu.render_for(
                     &menu_key,
                     "strip-tab-menu-card",
+                    |this| &mut this.menu,
+                    window,
+                    cx,
+                ))
+            }
+            (Slot::Space { space }, _) => {
+                let menu_key = StripMenu::Space(space.clone());
+                let renaming = self.renaming.as_ref() == Some(space);
+                el.on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener({
+                        let (menu_key, space) = (menu_key.clone(), space.clone());
+                        move |this, press: &gpui::MouseDownEvent, window, cx| {
+                            let space = space.clone();
+                            this.toggle_menu(
+                                menu_key.clone(),
+                                Place::At(press.position),
+                                move |_, _, _| {
+                                    vec![menu::row::<Cydonia>(
+                                        Item::action("Rename").with_icon(icons::text::SquarePen),
+                                        move |root, window, cx| {
+                                            let space = space.clone();
+                                            root.strip.update(cx, |strip, cx| {
+                                                strip.start_rename(space, window, cx)
+                                            });
+                                        },
+                                    )]
+                                },
+                                window,
+                                cx,
+                            );
+                        }
+                    }),
+                )
+                .children(renaming.then(|| self.name_field.clone()))
+                .children(self.menu.render_for(
+                    &menu_key,
+                    "strip-space-menu-card",
                     |this| &mut this.menu,
                     window,
                     cx,

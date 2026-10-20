@@ -860,7 +860,6 @@ impl Cydonia {
     }
 
     /// Take a tab off the strip, and put the focus on what is in front after.
-    /// A space's tab leaves the space on the shelf.
     pub(crate) fn close_slot(&mut self, slot: &Slot, window: &mut Window, cx: &mut Context<Self>) {
         self.commit(cx);
         self.workspace
