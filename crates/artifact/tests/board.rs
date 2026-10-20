@@ -288,7 +288,7 @@ fn a_board_is_made_with_the_key_it_is_given() {
     let scratch = Scratch::new("board-given-key");
     let board = scratch
         .store()
-        .create_board("Roadmap", "back")
+        .create_board("Roadmap", "back", cydonia_artifact::board::View::Lanes)
         .expect("made");
 
     assert_eq!(board.name, "Roadmap");
@@ -300,8 +300,14 @@ fn a_board_is_made_with_the_key_it_is_given() {
 #[test]
 fn boards_in_a_project_take_different_keys() {
     let scratch = Scratch::new("board-keys");
-    let one = scratch.store().create_board("Roadmap", "").expect("made");
-    let two = scratch.store().create_board("Roadmap", "").expect("made");
+    let one = scratch
+        .store()
+        .create_board("Roadmap", "", cydonia_artifact::board::View::Lanes)
+        .expect("made");
+    let two = scratch
+        .store()
+        .create_board("Roadmap", "", cydonia_artifact::board::View::Lanes)
+        .expect("made");
 
     assert!(!one.key.is_empty());
     assert_ne!(one.key, two.key);

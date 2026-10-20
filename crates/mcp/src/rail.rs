@@ -18,7 +18,7 @@
 
 #[cfg(feature = "http")]
 use crate::tool::Trouble;
-use artifact::kind::Kind;
+use artifact::{board::View, kind::Kind};
 use std::{
     path::{Path, PathBuf},
     sync::RwLock,
@@ -37,6 +37,9 @@ static AGENTS: RwLock<Vec<Agent>> = RwLock::new(Vec::new());
 static SHOWN: RwLock<Vec<Shown>> = RwLock::new(Vec::new());
 
 static BROWSER: RwLock<Option<Browser>> = RwLock::new(None);
+
+/// How a new board is laid out, as the app last pushed it.
+static BOARD_VIEW: RwLock<View> = RwLock::new(View::Lanes);
 
 /// How long a browser call waits for the window's answer.
 #[cfg(feature = "http")]
@@ -135,6 +138,20 @@ pub fn set_agents(agents: Vec<Agent>) {
 /// The agents configured, in the order `settings.toml` lists them.
 pub fn agents() -> Vec<Agent> {
     AGENTS.read().map(|held| held.clone()).unwrap_or_default()
+}
+
+/// Say how a new board is laid out. Pushed by the app at launch and whenever
+/// the setting moves.
+pub fn set_board_view(view: View) {
+    if let Ok(mut held) = BOARD_VIEW.write() {
+        *held = view;
+    }
+}
+
+/// How a board a tool makes is laid out. [`View::Lanes`] until the app pushes
+/// its setting.
+pub fn board_view() -> View {
+    BOARD_VIEW.read().map(|held| *held).unwrap_or_default()
 }
 
 /// Say what the window is showing. Pushed on every render of the window, so

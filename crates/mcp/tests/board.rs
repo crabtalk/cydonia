@@ -14,7 +14,7 @@ fn a_board_answers_to_key_name_and_id() {
     let scratch = Scratch::new("addressing");
     let board = scratch
         .store()
-        .create_board("Roadmap", "ROAD")
+        .create_board("Roadmap", "ROAD", artifact::board::View::Lanes)
         .expect("a board");
     let server = scratch.server();
 
@@ -35,7 +35,7 @@ fn a_card_is_addressed_by_the_handle_it_is_given() {
     let scratch = Scratch::new("handles");
     scratch
         .store()
-        .create_board("Roadmap", "ROAD")
+        .create_board("Roadmap", "ROAD", artifact::board::View::Lanes)
         .expect("a board");
     let server = scratch.server();
     said(server.call(
@@ -79,8 +79,12 @@ fn a_card_is_addressed_by_the_handle_it_is_given() {
 fn a_handle_splits_on_its_last_dash() {
     let scratch = Scratch::new("last-dash");
     let store = scratch.store();
-    store.create_board("Roadmap", "ROA").expect("a board");
-    store.create_board("Roadmap", "ROA2").expect("another");
+    store
+        .create_board("Roadmap", "ROA", artifact::board::View::Lanes)
+        .expect("a board");
+    store
+        .create_board("Roadmap", "ROA2", artifact::board::View::Lanes)
+        .expect("another");
     let server = scratch.server();
     said(server.call(
         "board_add_column",
@@ -107,7 +111,7 @@ fn a_refusal_says_what_is_there() {
     let scratch = Scratch::new("refusals");
     scratch
         .store()
-        .create_board("Roadmap", "ROAD")
+        .create_board("Roadmap", "ROAD", artifact::board::View::Lanes)
         .expect("a board");
     let server = scratch.server();
     said(server.call(
@@ -145,7 +149,7 @@ fn a_column_holding_cards_is_not_dropped() {
     let scratch = Scratch::new("columns");
     scratch
         .store()
-        .create_board("Roadmap", "ROAD")
+        .create_board("Roadmap", "ROAD", artifact::board::View::Lanes)
         .expect("a board");
     let server = scratch.server();
     said(server.call(
@@ -185,7 +189,7 @@ fn a_missing_argument_is_not_a_refusal() {
     let scratch = Scratch::new("arguments");
     scratch
         .store()
-        .create_board("Roadmap", "ROAD")
+        .create_board("Roadmap", "ROAD", artifact::board::View::Lanes)
         .expect("a board");
     let server = scratch.server();
 
@@ -204,7 +208,7 @@ fn what_a_tool_wrote_is_on_disk() {
     let scratch = Scratch::new("on-disk");
     scratch
         .store()
-        .create_board("Roadmap", "ROAD")
+        .create_board("Roadmap", "ROAD", artifact::board::View::Lanes)
         .expect("a board");
     let server = scratch.server();
     said(server.call(
@@ -411,7 +415,7 @@ fn a_card_is_tagged_and_untagged() {
     let scratch = Scratch::new("status");
     scratch
         .store()
-        .create_board("Roadmap", "ROAD")
+        .create_board("Roadmap", "ROAD", artifact::board::View::Lanes)
         .expect("a board");
     let server = scratch.server();
     said(server.call(
@@ -461,8 +465,12 @@ fn a_card_is_tagged_and_untagged() {
 fn several_cards_are_tagged_in_one_call() {
     let scratch = Scratch::new("status-batch");
     let store = scratch.store();
-    store.create_board("Roadmap", "ROAD").expect("a board");
-    store.create_board("Development", "DEV").expect("a board");
+    store
+        .create_board("Roadmap", "ROAD", artifact::board::View::Lanes)
+        .expect("a board");
+    store
+        .create_board("Development", "DEV", artifact::board::View::Lanes)
+        .expect("a board");
     let server = scratch.server();
     for board in ["ROAD", "DEV"] {
         said(server.call(
@@ -530,14 +538,20 @@ fn a_card_waits_on_cards_across_boards_and_projects() {
     std::fs::create_dir(&foo).unwrap();
     Rail::holding(&[scratch.path(), &foo]);
     let other = artifact::project::fs::Project::new(&foo);
-    let mut ops = other.create_board("Operations", "OPS").expect("a board");
+    let mut ops = other
+        .create_board("Operations", "OPS", artifact::board::View::Lanes)
+        .expect("a board");
     let lane = ops.add_column("Todo").id.clone();
     ops.add_card(&lane, "Rotate the keys".into());
     other.save_board(&mut ops).unwrap();
 
     let store = scratch.store();
-    store.create_board("Roadmap", "ROAD").expect("a board");
-    store.create_board("Development", "DEV").expect("a board");
+    store
+        .create_board("Roadmap", "ROAD", artifact::board::View::Lanes)
+        .expect("a board");
+    store
+        .create_board("Development", "DEV", artifact::board::View::Lanes)
+        .expect("a board");
     let server = scratch.server();
     for board in ["ROAD", "DEV"] {
         said(server.call(
@@ -633,8 +647,12 @@ fn a_wait_follows_a_card_that_is_carried_or_rekeyed() {
     let scratch = Scratch::new("card-blockers-moved");
     Rail::holding(&[scratch.path()]);
     let store = scratch.store();
-    store.create_board("Roadmap", "ROAD").expect("a board");
-    store.create_board("Development", "DEV").expect("a board");
+    store
+        .create_board("Roadmap", "ROAD", artifact::board::View::Lanes)
+        .expect("a board");
+    store
+        .create_board("Development", "DEV", artifact::board::View::Lanes)
+        .expect("a board");
     let server = scratch.server();
     for board in ["ROAD", "DEV"] {
         said(server.call(
@@ -692,7 +710,7 @@ fn a_board_is_laid_out_in_one_call_per_kind() {
     let scratch = Scratch::new("batch-layout");
     scratch
         .store()
-        .create_board("Roadmap", "ROAD")
+        .create_board("Roadmap", "ROAD", artifact::board::View::Lanes)
         .expect("a board");
     let server = scratch.server();
 
@@ -734,7 +752,7 @@ fn several_cards_and_columns_are_dropped_in_one_call() {
     let scratch = Scratch::new("batch-drop");
     scratch
         .store()
-        .create_board("Roadmap", "ROAD")
+        .create_board("Roadmap", "ROAD", artifact::board::View::Lanes)
         .expect("a board");
     let server = scratch.server();
     said(server.call(
@@ -796,7 +814,7 @@ fn a_board_is_renamed_and_optionally_re_keyed() {
     let scratch = Scratch::new("rename-board");
     let board = scratch
         .store()
-        .create_board("Roadmap", "ROAD")
+        .create_board("Roadmap", "ROAD", artifact::board::View::Lanes)
         .expect("a board");
     let server = scratch.server();
     said(server.call(
@@ -844,8 +862,12 @@ fn a_board_is_renamed_and_optionally_re_keyed() {
 fn a_rename_onto_a_taken_key_changes_nothing() {
     let scratch = Scratch::new("rename-clash");
     let store = scratch.store();
-    store.create_board("Roadmap", "ROAD").expect("a board");
-    store.create_board("Backlog", "BACK").expect("a board");
+    store
+        .create_board("Roadmap", "ROAD", artifact::board::View::Lanes)
+        .expect("a board");
+    store
+        .create_board("Backlog", "BACK", artifact::board::View::Lanes)
+        .expect("a board");
     let server = scratch.server();
 
     let why = refused(server.call(
@@ -977,7 +999,9 @@ fn a_board_is_put_away_and_then_deleted() {
 fn busy_cards_record_the_calling_session_and_keep_it_when_cleared() {
     let scratch = Scratch::new("busy-session");
     let store = scratch.store();
-    let mut board = store.create_board("Roadmap", "ROAD").unwrap();
+    let mut board = store
+        .create_board("Roadmap", "ROAD", artifact::board::View::Lanes)
+        .unwrap();
     let column = board.add_column("Todo").id.clone();
     board.add_card(&column, "First".into());
     board.add_card(&column, "Second".into());
@@ -1009,7 +1033,9 @@ fn busy_cards_record_the_calling_session_and_keep_it_when_cleared() {
 fn added_cards_record_the_calling_session_without_busy() {
     let scratch = Scratch::new("add-session");
     let store = scratch.store();
-    let mut board = store.create_board("Roadmap", "ROAD").unwrap();
+    let mut board = store
+        .create_board("Roadmap", "ROAD", artifact::board::View::Lanes)
+        .unwrap();
     board.add_column("Todo");
     store.save_board(&mut board).unwrap();
     said(scratch.server().call_from(
@@ -1031,11 +1057,11 @@ fn a_board_is_found_across_open_projects() {
     let here = Scratch::new("search-here");
     let there = Scratch::new("search-there");
     here.store()
-        .create_board("Development", "ZQA")
+        .create_board("Development", "ZQA", artifact::board::View::Lanes)
         .expect("a board");
     there
         .store()
-        .create_board("Development", "ZQB")
+        .create_board("Development", "ZQB", artifact::board::View::Lanes)
         .expect("a board");
     let server = here.server();
     Rail::also(there.path());
@@ -1065,7 +1091,7 @@ fn a_board_read_pages_a_long_column() {
     let scratch = Scratch::new("paged");
     scratch
         .store()
-        .create_board("Roadmap", "ROAD")
+        .create_board("Roadmap", "ROAD", artifact::board::View::Lanes)
         .expect("a board");
     let server = scratch.server();
     let at = json!({ "project": scratch.path(), "board": "ROAD" });
@@ -1123,7 +1149,7 @@ fn a_card_is_read_whole_by_its_handle() {
     Rail::also(scratch.path());
     scratch
         .store()
-        .create_board("Roadmap", "ROAD")
+        .create_board("Roadmap", "ROAD", artifact::board::View::Lanes)
         .expect("a board");
     let server = scratch.server();
     said(server.call(
@@ -1168,7 +1194,7 @@ fn a_description_is_read_with_the_board_and_its_cards() {
     let scratch = Scratch::new("described");
     scratch
         .store()
-        .create_board("Roadmap", "ROAD")
+        .create_board("Roadmap", "ROAD", artifact::board::View::Lanes)
         .expect("a board");
     let server = scratch.server();
     said(server.call(
@@ -1216,11 +1242,15 @@ fn a_description_is_read_with_the_board_and_its_cards() {
 fn archived_boards_are_listed_and_searched_only_when_asked() {
     let scratch = Scratch::new("archived-filter");
     let store = scratch.store();
-    let mut live = store.create_board("Roadmap", "ROAD").expect("a board");
+    let mut live = store
+        .create_board("Roadmap", "ROAD", artifact::board::View::Lanes)
+        .expect("a board");
     let lane = live.add_column("Todo").id.clone();
     live.add_card(&lane, "Wire the picker".into());
     store.save_board(&mut live).unwrap();
-    let mut old = store.create_board("Attic", "OLD").expect("a board");
+    let mut old = store
+        .create_board("Attic", "OLD", artifact::board::View::Lanes)
+        .expect("a board");
     let lane = old.add_column("Todo").id.clone();
     old.add_card(&lane, "Wire the old picker".into());
     old.archived = true;

@@ -125,15 +125,10 @@ impl Workspace {
             .map(|held| held.board.read(cx).clone())
             .collect();
         let key = artifact::board::key::claim(key, &held, None).map_err(|e| e.to_string())?;
-        let mut board = open
+        let board = open
             .store()
-            .create_board(name.trim(), &key)
+            .create_board(name.trim(), &key, view)
             .map_err(|e| Error::failed(name.trim(), Act::Written, e).to_string())?;
-        // What the app is set to, written into the board as it is made — see
-        // [`artifact::board::Board::view`]. From here the board answers for
-        // itself, and the setting moving does not move it.
-        board.view = view;
-        let _ = open.store().save_board(&mut board);
         open.boards
             .insert(0, crate::model::project::HeldBoard::new(board, cx));
         self.open_board(project, 0, cx);

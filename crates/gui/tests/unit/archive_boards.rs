@@ -7,7 +7,9 @@ fn archived_boards_keep_their_cards(cx: &mut gpui::TestAppContext) {
             std::env::temp_dir().join(format!("cydonia-archive-board-{}", std::process::id()));
         std::fs::create_dir_all(&path).unwrap();
         let store = fs::Project::new(&path);
-        let mut board = store.create_board("Archive", "ARC").unwrap();
+        let mut board = store
+            .create_board("Archive", "ARC", artifact::board::View::Lanes)
+            .unwrap();
         let column = board.add_column("Todo").id.clone();
         board.add_card(&column, "Preserve this card".into());
         board.archived = true;

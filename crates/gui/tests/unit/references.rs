@@ -55,7 +55,9 @@ fn a_handle_names_its_card_on_the_keyed_board(cx: &mut gpui::TestAppContext) {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let store = fs::Project::new(&dir);
-        let mut board = store.create_board("Work", "DEV").unwrap();
+        let mut board = store
+            .create_board("Work", "DEV", artifact::board::View::Lanes)
+            .unwrap();
         let column = board.add_column("Todo").id.clone();
         board.add_card(&column, "First".into()).unwrap();
         let second = board.add_card(&column, "Second".into()).unwrap().clone();

@@ -110,7 +110,9 @@ fn place_is_an_articles_directory_and_a_boards_directory() {
     let scratch = Scratch::new("project-place");
     let store = scratch.store();
     let article = store.create_article("# Plan\n").unwrap();
-    let board = store.create_board("Road", "").unwrap();
+    let board = store
+        .create_board("Road", "", cydonia_artifact::board::View::Lanes)
+        .unwrap();
     let cydonia = scratch.path().join(".cydonia");
     assert_eq!(
         store.place(Kind::Article, &article.id),
@@ -143,7 +145,9 @@ fn an_entry_was_created_at_the_stamp_it_is_named_for() {
     let scratch = Scratch::new("project-created");
     let store = scratch.store();
     let article = store.create_article("").unwrap();
-    let board = store.create_board("Plans", "").unwrap();
+    let board = store
+        .create_board("Plans", "", cydonia_artifact::board::View::Lanes)
+        .unwrap();
     assert_eq!(article.created, article.id.parse().ok());
     assert_eq!(store.articles()[0].created, article.id.parse().ok());
     assert_eq!(

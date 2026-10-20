@@ -581,11 +581,17 @@ impl super::Project for Project {
         boards
     }
 
-    fn create_board(&self, name: &str, key: &str) -> super::Result<Board> {
+    fn create_board(
+        &self,
+        name: &str,
+        key: &str,
+        view: crate::board::View,
+    ) -> super::Result<Board> {
         let dir = self.init()?.join(BOARDS);
         std::fs::create_dir_all(&dir)?;
         let mut board = Board::new(free_board(&dir, stamp::now()), name);
         board.created = stamp::named(&board.id);
+        board.view = view;
         // Reading the other boards is also what settles any key they are
         // still missing.
         board.key = key::or_derived(key, &board.name, || {

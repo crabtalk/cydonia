@@ -23,6 +23,12 @@ and `article_rewrite` for an intentional full replacement. After an editor
 save, reread before constructing an exact match: whitespace, escaping and
 list numbering can be normalized.
 
+## Card content
+
+A card's first line is its title. Write it as a plain line of text, not a
+heading: a lane draws a heading at heading size. Put the card's body below a
+blank line, and give it no headings of its own.
+
 ## Highlights
 
 Wrap text in `==` to highlight it: `a ==key phrase== here`. Highlights paint

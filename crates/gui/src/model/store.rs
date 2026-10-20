@@ -106,8 +106,8 @@ impl Project for Store {
         each!(self, store => store.board(id))
     }
 
-    fn create_board(&self, name: &str, key: &str) -> Result<Board> {
-        each!(self, store => store.create_board(name, key))
+    fn create_board(&self, name: &str, key: &str, view: artifact::board::View) -> Result<Board> {
+        each!(self, store => store.create_board(name, key, view))
     }
 
     fn save_board(&self, board: &mut Board) -> Result<()> {

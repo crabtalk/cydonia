@@ -948,6 +948,7 @@ impl Workspace {
     /// board already made carries its own answer.
     pub fn set_default_board_view(&mut self, view: artifact::board::View, cx: &mut Context<Self>) {
         self.board_view = view;
+        rail::set_board_view(view);
         self.save_appearance();
         cx.notify();
     }

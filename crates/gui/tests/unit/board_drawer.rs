@@ -56,7 +56,9 @@ fn open(
 ) {
     let scratch = Scratch::new(name);
     let store = fs::Project::new(&scratch.0);
-    let mut board = store.create_board("Work", "DEV").unwrap();
+    let mut board = store
+        .create_board("Work", "DEV", artifact::board::View::Lanes)
+        .unwrap();
     let column = board.add_column("Todo").id.clone();
     let cards = vec![
         board

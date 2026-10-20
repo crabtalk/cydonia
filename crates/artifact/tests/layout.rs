@@ -7,7 +7,9 @@ use std::fs;
 /// A board and its column, with two cards on it.
 fn board_with_two(scratch: &Scratch) -> (String, String, String) {
     let store = scratch.store();
-    let mut made = store.create_board("Work", "WORK").unwrap();
+    let mut made = store
+        .create_board("Work", "WORK", cydonia_artifact::board::View::Lanes)
+        .unwrap();
     let column = made.add_column("Todo").id.clone();
     let one = made.add_card(&column, "one".into()).unwrap().id.clone();
     let two = made.add_card(&column, "two".into()).unwrap().id.clone();
@@ -118,7 +120,9 @@ fn a_moved_card_keeps_its_id() {
     let (id, one, _) = board_with_two(&scratch);
     let store = scratch.store();
     let mut from = store.board(&id).unwrap();
-    let mut to = store.create_board("Plan", "PLAN").unwrap();
+    let mut to = store
+        .create_board("Plan", "PLAN", cydonia_artifact::board::View::Lanes)
+        .unwrap();
     to.add_column("Todo");
     board::carry_card(&mut from, &mut to, &one, None).unwrap();
     store.save_board(&mut to).unwrap();
@@ -169,7 +173,9 @@ fn a_carried_card_takes_its_pictures() {
     fs::write(assets.join("pic.png"), b"png").unwrap();
 
     let mut from = store.board(&id).unwrap();
-    let mut to = store.create_board("Plan", "PLAN").unwrap();
+    let mut to = store
+        .create_board("Plan", "PLAN", cydonia_artifact::board::View::Lanes)
+        .unwrap();
     to.add_column("Todo");
     let landed = board::carry_card(&mut from, &mut to, &one, None).unwrap();
     store

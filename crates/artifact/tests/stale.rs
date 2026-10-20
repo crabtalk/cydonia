@@ -10,7 +10,9 @@ use cydonia_artifact::{
 };
 
 fn two_writers(store: &impl Project) {
-    let made = store.create_board("Plans", "PLAN").unwrap();
+    let made = store
+        .create_board("Plans", "PLAN", cydonia_artifact::board::View::Lanes)
+        .unwrap();
     let mut first = store.board(&made.id).unwrap();
     let mut second = store.board(&made.id).unwrap();
 
@@ -33,7 +35,9 @@ fn two_writers(store: &impl Project) {
 }
 
 fn gone(store: &impl Project) {
-    let made = store.create_board("Plans", "PLAN").unwrap();
+    let made = store
+        .create_board("Plans", "PLAN", cydonia_artifact::board::View::Lanes)
+        .unwrap();
     let mut held = store.board(&made.id).unwrap();
     store.remove_board(&made.id).unwrap();
     assert!(matches!(
@@ -71,7 +75,9 @@ fn memory_refuses_to_resurrect_a_removed_board() {
 fn a_hand_edit_makes_a_held_copy_stale() {
     let scratch = Scratch::new("stale-hand");
     let store = scratch.store();
-    let made = store.create_board("Plans", "PLAN").unwrap();
+    let made = store
+        .create_board("Plans", "PLAN", cydonia_artifact::board::View::Lanes)
+        .unwrap();
     let mut held = store.board(&made.id).unwrap();
     let file = scratch
         .path()
@@ -94,7 +100,9 @@ fn a_hand_edit_makes_a_held_copy_stale() {
 fn files_refuse_a_stale_description() {
     let scratch = Scratch::new("stale-fs-description");
     let store = scratch.store();
-    let made = store.create_board("Plans", "PLAN").unwrap();
+    let made = store
+        .create_board("Plans", "PLAN", cydonia_artifact::board::View::Lanes)
+        .unwrap();
     let mut first = store.board(&made.id).unwrap();
     let mut second = store.board(&made.id).unwrap();
 
