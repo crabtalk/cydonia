@@ -13,7 +13,7 @@ impl Render for PaneView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let pane = self.0.update(cx, |root, cx| {
             root.sync_items(cx);
-            root.pane(&self.1, window, cx)
+            root.pane(&self.1, true, window, cx)
         });
         div().w(px(600.)).h(px(500.)).child(pane)
     }
@@ -49,7 +49,7 @@ fn arranged_session_measures_its_own_composer(cx: &mut gpui::TestAppContext) {
             // The pane a space would hold this tab in.
             let (workspace, owner) = (root.workspace.clone(), cx.entity().downgrade());
             let pane = cx.new(|cx| crate::view::pane::Pane::new(member.clone(), workspace, owner, cx));
-            pane.update(cx, |pane, _| pane.tabs = vec![tab.clone()]);
+            pane.update(cx, |pane, _| pane.tab = Some(tab.clone()));
             root.panes.push(pane);
             let composer = tab.read(cx).composer.clone();
             composer.update(cx, |composer, cx| {

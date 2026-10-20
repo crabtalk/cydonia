@@ -40,6 +40,8 @@ pub(crate) enum TabMenu {
     /// The `···` on the title row: the entry's own menu — see
     /// [`crate::view::pane::title`].
     Entry,
+    /// The title row's move, where the pane can go more than one way.
+    Move,
 }
 
 /// One pane: what it shows, and what it holds while it shows it.
@@ -341,7 +343,6 @@ impl Render for Tab {
         };
         let composer = self.composer.clone();
         let title = self.title_row(window, cx);
-        let corner = self.corner(cx).filter(|_| title.is_none());
         div()
             .relative()
             .flex_1()
@@ -363,6 +364,5 @@ impl Render for Tab {
                 .child(crate::view::detail::drop_wash(&theme))
             })
             .children(drawer)
-            .children(corner)
     }
 }

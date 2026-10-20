@@ -628,16 +628,15 @@ fn a_session_with_no_file_can_be_given_one_and_arranged(cx: &mut gpui::TestAppCo
     });
 }
 
-/// Closing a pane that holds one tab, in a space of two. The space goes with
-/// it — one pane left is no arrangement — and the window lands on the survivor.
+/// Closing a pane in a space of two. The space goes with it — one pane left
+/// is no arrangement — and the window lands on the survivor.
 #[gpui::test]
-fn a_pane_holding_one_tab_closes(cx: &mut gpui::TestAppContext) {
+fn a_pane_closes(cx: &mut gpui::TestAppContext) {
     let scratch = Scratch::new("close-one-tab");
     let (workspace, a, b) = two_boards(&scratch, cx);
 
     workspace.update(cx, |workspace, cx| {
         workspace.arrange(&a, &b, Side::Right, cx);
-        assert_eq!(workspace.stack_of(&b), vec![b.clone()], "one tab");
 
         workspace.close_pane(&b, cx);
         assert!(workspace.active_space().is_none(), "the space goes too");

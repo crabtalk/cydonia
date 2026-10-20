@@ -268,7 +268,7 @@ impl Cydonia {
         let workspace = self.workspace.read(cx);
         if let Some(space) = workspace.active_space() {
             return space
-                .panes()
+                .entries()
                 .into_iter()
                 .find_map(|pane| pane.project().map(Path::to_path_buf));
         }
@@ -574,8 +574,7 @@ impl Cydonia {
     }
 
     /// The card the library or the launch view stands in, under the window's
-    /// band — see [`Cydonia::window_band`]. Flat, the band is drawn over the
-    /// card's top; floating, it is on the chrome over the card.
+    /// top row — see [`Cydonia::window_band`].
     fn lone_card(
         &mut self,
         library: Option<gpui::Entity<crate::view::library::Library>>,
@@ -601,7 +600,7 @@ impl Cydonia {
             Some(_) => self.drawer_layer(None, window, cx),
             None => Vec::new(),
         };
-        let card = bezel::ui::window::content(floating, cx)
+        bezel::ui::window::content(floating, cx)
             .flex_1()
             .min_h_0()
             .min_w_0()
@@ -616,42 +615,11 @@ impl Cydonia {
                     .flex()
                     .flex_col()
                     .overflow_hidden()
-                    .when(!floating, |el| el.pt(px(root::HEADER_HEIGHT)))
                     .child(body),
             )
-            .children((!floating).then(|| self.window_band(window, cx)))
             .when(!drawer.is_empty(), |card| {
-                card.child(
-                    div()
-                        .absolute()
-                        .top(px(match floating {
-                            true => 0.,
-                            false => root::HEADER_HEIGHT,
-                        }))
-                        .bottom_0()
-                        .left_0()
-                        .right_0()
-                        .children(drawer),
-                )
-            });
-        match floating {
-            false => card,
-            true => div()
-                .flex_1()
-                .min_h_0()
-                .min_w_0()
-                .flex()
-                .flex_col()
-                .child(
-                    div()
-                        .relative()
-                        .flex_none()
-                        .h(px(root::HEADER_HEIGHT))
-                        .mx(px(Theme::CONTENT_INSET / 2.))
-                        .child(self.window_band(window, cx)),
-                )
-                .child(card),
-        }
+                card.child(div().absolute().inset_0().children(drawer))
+            })
     }
 
     pub(crate) fn detail(
@@ -669,11 +637,31 @@ impl Cydonia {
             Some(_) => None,
             None => self.panes(window, cx),
         };
-        let _arranged = panes.is_some();
+        // The window's top row, over every column the panel's included: the
+        // strip over a tab, the band over the library or the launch view.
+        // Floating, it is on the chrome over the cards.
+        let top = div()
+            .flex_none()
+            .relative()
+            .h(px(root::HEADER_HEIGHT))
+            .when(floating, |top| top.mx(px(Theme::CONTENT_INSET / 2.)))
+            .when(!floating, |top| {
+                top.bg(bezel::ui::window::content_fill(false, &theme))
+            })
+            .child(match panes.is_some() {
+                true => self
+                    .strip
+                    .clone()
+                    .cached(
+                        gpui::StyleRefinement::default()
+                            .w_full()
+                            .h(px(root::HEADER_HEIGHT)),
+                    )
+                    .into_any_element(),
+                false => self.window_band(window, cx),
+            });
         let main = match (library, panes) {
-            // The strip on top, and under it the entry or the space in front.
-            // Floating, the strip is on the chrome and runs as wide as the
-            // cards do.
+            // The entry or the space in front.
             (_, Some(panes)) => match floating {
                 true => div(),
                 false => bezel::ui::window::content(false, cx),
@@ -684,28 +672,7 @@ impl Cydonia {
             .relative()
             .flex()
             .flex_col()
-            .child(
-                div()
-                    .flex_none()
-                    .when(floating, |strip| strip.mx(px(Theme::CONTENT_INSET / 2.)))
-                    .child(
-                        self.strip.clone().cached(
-                            gpui::StyleRefinement::default()
-                                .w_full()
-                                .h(px(root::HEADER_HEIGHT)),
-                        ),
-                    ),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .min_w_0()
-                    .relative()
-                    .flex()
-                    .flex_col()
-                    .child(panes),
-            ),
+            .child(panes),
             (library, None) => self.lone_card(library, window, cx),
         };
         // The one panel the window has, under whatever is showing: a space's
@@ -832,9 +799,6 @@ impl Cydonia {
                         .on_drag(TerminalResize, |_, _, _, cx| cx.new(|_| Empty)),
                 )
             });
-        if !floating {
-            return panels.into_any_element();
-        }
         // Floating, the cards leave the column half the inset to pad itself by.
         div()
             .flex_1()
@@ -842,8 +806,12 @@ impl Cydonia {
             .min_h_0()
             .flex()
             .flex_col()
-            .px(px(Theme::CONTENT_INSET / 2.))
-            .pb(px(Theme::CONTENT_INSET / 2.))
+            .when(floating, |column| {
+                column
+                    .px(px(Theme::CONTENT_INSET / 2.))
+                    .pb(px(Theme::CONTENT_INSET / 2.))
+            })
+            .child(top)
             .child(panels)
             .into_any_element()
     }

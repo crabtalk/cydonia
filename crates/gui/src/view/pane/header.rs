@@ -102,9 +102,7 @@ impl Cydonia {
     /// right panel's toggle and the right caption buttons.
     pub(crate) fn window_band(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        // The window's top right, when this band is the one at it: the right
-        // panel holds it while it is up.
-        let right = self.changes.is_none() && chrome::has(CaptionSide::Right, window, cx);
+        let right = chrome::has(CaptionSide::Right, window, cx);
         // The window's top left is the sidebar's while it is open.
         let left = !self.sidebar_open && chrome::has(CaptionSide::Left, window, cx);
         // The lights belong to the window, not a pane, so their clearance is
@@ -149,8 +147,16 @@ impl Cydonia {
             .children(
                 // Nothing to open it on where there is no directory in front
                 // — see [`Cydonia::shell_cwd`].
-                (!self.changes_open && self.shell_cwd(cx).is_some())
-                    .then(|| changes_toggle("Show right panel", Painter::of(cx), Theme::of(cx))),
+                self.shell_cwd(cx).is_some().then(|| {
+                    changes_toggle(
+                        match self.changes_open {
+                            true => "Hide right panel",
+                            false => "Show right panel",
+                        },
+                        Painter::of(cx),
+                        Theme::of(cx),
+                    )
+                }),
             )
             .children(
                 right

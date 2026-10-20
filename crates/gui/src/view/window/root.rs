@@ -49,7 +49,7 @@ use bezel::{
         widgets::{ButtonStyle, Buttons, Content, SplitDrag},
     },
 };
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
 pub(crate) const SIDEBAR_WIDTH: f32 = 200.;
 
@@ -60,9 +60,12 @@ const SIDEBAR_WIDTH_MAX: f32 = 420.;
 /// The sidebar's gutter: a row's outer margin, and the padding inside it.
 pub(crate) const SIDEBAR_GUTTER: f32 = 8.;
 
-/// The header strip's height, which the traffic lights centre in: macOS 26's
-/// 14px lights with [`TRAFFIC_LIGHT_INSET`] above and below them.
-pub(crate) const HEADER_HEIGHT: f32 = 32.;
+/// The window's top row — the strip of tabs and the sidebar's band — which
+/// the traffic lights centre in down its height.
+pub(crate) const HEADER_HEIGHT: f32 = 42.;
+
+/// The row at the top of a card: a pane's title row, the right panel's tabs.
+pub(crate) const CARD_ROW_HEIGHT: f32 = 32.;
 
 /// The room the pill keeps above and below its content.
 pub(crate) const COMPOSER_INSET: f32 = 4.;
@@ -526,6 +529,9 @@ pub struct Cydonia {
     /// every pane. Read when a pane's last tab closes with the focus on it —
     /// see [`Cydonia::close_pane`]. Runtime only, as [`Pane`]'s own are.
     pub(crate) tab_history: Vec<Member>,
+    /// A zoom on its way — see [`Cydonia::toggle_zoom`].
+    pub(crate) zoom_glide: Option<crate::view::pane::arrangement::ZoomGlide>,
+    pub(crate) pane_places: Rc<RefCell<crate::view::pane::arrangement::Places>>,
     /// The library, while it stands over the panes — see
     /// [`crate::view::library`].
     pub(crate) library: Option<Entity<crate::view::library::Library>>,
@@ -648,9 +654,9 @@ impl Cydonia {
 
     /// Tell the strip where it stands against the window's chrome.
     fn sync_strip(&mut self, cx: &mut Context<Self>) {
-        let (sidebar_open, last) = (self.sidebar_open, self.changes.is_none());
+        let (sidebar_open, panel_open) = (self.sidebar_open, self.changes.is_some());
         self.strip
-            .update(cx, |strip, cx| strip.seat(sidebar_open, last, cx));
+            .update(cx, |strip, cx| strip.seat(sidebar_open, panel_open, cx));
     }
 
     /// Tell each pane whether it is the one with the focus, where that moved.
@@ -731,11 +737,9 @@ impl Cydonia {
     fn publish_shown(&self, cx: &App) {
         // A session is the chat the tools are talking in, not a thing shown.
         let kind = |kind: Kind| (kind != Kind::Session).then_some(kind);
-        // The front tab of each pane, not every tab: a tab behind another is
-        // not on screen.
         let fronts = self
             .arrangement(cx)
-            .map(|space| space.tree.fronts())
+            .map(|space| space.entries())
             .unwrap_or_default();
         let shown: Vec<mcp::rail::Shown> = self
             .leaves
@@ -832,11 +836,7 @@ impl Cydonia {
                 workspace.open_tab(member.clone(), opening, cx);
             }),
         }
-        // The pane a tab is in is keyed by the first of its strip — see
-        // [`Self::show_tab`].
-        let stack = self.workspace.read(cx).stack_of(&member);
-        let pane = stack.first().cloned().unwrap_or_else(|| member.clone());
-        self.show_tab(&pane, &member, window, cx);
+        self.show_pane(&member, window, cx);
     }
 
     /// Bring a tab of the strip forward, and the focus with it.
@@ -865,10 +865,9 @@ impl Cydonia {
         self.workspace
             .update(cx, |workspace, cx| workspace.close_slot(slot, cx));
         self.sync_leaves(window, cx);
-        let front = self.arrangement(cx).and_then(|space| {
-            let pane = space.focused().or_else(|| space.panes().first().cloned())?;
-            space.front_of(&pane)
-        });
+        let front = self
+            .arrangement(cx)
+            .and_then(|space| space.focused().or_else(|| space.entries().first().cloned()));
         if let Some(entry) = front {
             self.focused = usize::MAX;
             self.focus_pane(&entry, window, cx);
@@ -1090,6 +1089,8 @@ impl Cydonia {
                 move |item, window, cx| board::ghost(&this, item, window, cx)
             }),
             tab_history: Vec::new(),
+            zoom_glide: None,
+            pane_places: Rc::default(),
             modals: cx.new(|_| ModalLayer::default()),
             library: None,
             menu: ContextMenu::default(),
@@ -1116,8 +1117,7 @@ impl Cydonia {
         this.sync_leaves(window, cx);
         if let Some(front) = this
             .arrangement(cx)
-            .and_then(|space| space.focused().or_else(|| space.panes().first().cloned()))
-            .and_then(|pane| this.workspace.read(cx).front_of(&pane))
+            .and_then(|space| space.focused().or_else(|| space.entries().first().cloned()))
             && let Some(at) = this
                 .leaves
                 .iter()

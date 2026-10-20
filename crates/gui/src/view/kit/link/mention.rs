@@ -10,7 +10,7 @@ use crate::{
     },
     view::{
         kit::{
-            icon::kind_icon,
+            icon::{kind_icon, session_icon},
             text::{CardTitle, untitled},
         },
         sidebar::Row,
@@ -111,9 +111,7 @@ pub(crate) fn read(workspace: &Workspace, cx: &App) -> Linkables {
                 archived: chat.closed,
                 labels: chat.labels.clone(),
                 ..linkable(
-                    workspace
-                        .agent_icon(&chat.entry.name)
-                        .unwrap_or_else(|| kind_icon(Kind::Session)),
+                    session_icon(chat, workspace),
                     untitled(&chat.title, "Untitled session"),
                     format!("Session · {} · {}", chat.entry.name, shown(number)),
                     number,

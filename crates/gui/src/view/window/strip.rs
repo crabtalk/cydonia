@@ -1,14 +1,14 @@
 //! The window's strip: a tab for each entry and space the window holds, and
 //! the window's own controls at its ends — past the lights, the fold while the
-//! sidebar is shut, the `+`, the front tab's `···`, the right panel's toggle
-//! and the right caption buttons.
+//! sidebar is shut, the `+`, the right panel's toggle and the right caption
+//! buttons.
 
 use crate::{
     model::workspace::{Slot, Workspace},
     view::{
         component::panel::changes_toggle,
         kit::{
-            menu,
+            icon, menu,
             rename::{NameEvent, NameField},
         },
         pane::arrangement,
@@ -34,13 +34,12 @@ use bezel::{
         menu::Item,
         tabs,
         titlebar::CaptionSide,
-        tooltip::Tooltip,
     },
 };
 
 /// Between the controls in the strip.
 const BAR_GAP: f32 = 2.;
-/// The room the window is dragged by beside a track of tabs.
+/// The room the window is dragged by before a track of tabs.
 const GRIP_WIDTH: f32 = 32.;
 
 /// Which of the strip's menus is up.
@@ -50,8 +49,6 @@ pub(crate) enum StripMenu {
     Add,
     /// A tab, right-pressed: its entry's own menu, or its space's.
     Tab(Slot),
-    /// The `···` at the strip's end: the front tab's menu.
-    Front,
 }
 
 /// The window's strip. Drawn `.cached(...)`: it observes the workspace, and
@@ -64,13 +61,10 @@ pub(crate) struct Strip {
     /// The tab holding the name field, and what it renames.
     renaming: Option<(Slot, Renaming)>,
     name_field: Entity<NameField>,
-    /// Whether the pointer is over the strip: its `+` takes room there only
-    /// then.
-    hovered: bool,
     sidebar_open: bool,
-    /// Whether the strip ends at the window's top right: the right panel is
-    /// down, so the caption buttons and the panel's toggle are the strip's.
-    last: bool,
+    /// Whether the right panel is up, which the toggle at the strip's end
+    /// says.
+    panel_open: bool,
 }
 
 impl Strip {
@@ -100,17 +94,16 @@ impl Strip {
             menu: ContextMenu::default(),
             renaming: None,
             name_field,
-            hovered: false,
             sidebar_open: true,
-            last: true,
+            panel_open: false,
         }
     }
 
     /// Where the strip stands against the window's own chrome.
-    pub(crate) fn seat(&mut self, sidebar_open: bool, last: bool, cx: &mut Context<Self>) {
-        if (self.sidebar_open, self.last) != (sidebar_open, last) {
+    pub(crate) fn seat(&mut self, sidebar_open: bool, panel_open: bool, cx: &mut Context<Self>) {
+        if (self.sidebar_open, self.panel_open) != (sidebar_open, panel_open) {
             self.sidebar_open = sidebar_open;
-            self.last = last;
+            self.panel_open = panel_open;
             cx.notify();
         }
     }
@@ -144,19 +137,34 @@ impl Strip {
                     root.entry_rows(Host::Tab(member.clone()), &entry.row, entry.archived, cx)
                 })
                 .unwrap_or_default(),
-            Slot::Space { space } => vec![menu::row::<Cydonia>(
-                Item::action("Rename").with_icon(icons::text::SquarePen),
-                move |root, window, cx| {
-                    let (slot, what) = (
-                        Slot::Space {
+            Slot::Space { space } => {
+                let rename = menu::row::<Cydonia>(
+                    Item::action("Rename").with_icon(icons::text::SquarePen),
+                    {
+                        let space = space.clone();
+                        move |root, window, cx| {
+                            let (slot, what) = (
+                                Slot::Space {
+                                    space: space.clone(),
+                                },
+                                Renaming::Space(space.clone()),
+                            );
+                            root.strip
+                                .update(cx, |strip, cx| strip.start_rename(slot, what, window, cx));
+                        }
+                    },
+                );
+                let close = menu::row::<Cydonia>(
+                    Item::action("Close tab").with_icon(icons::notifications::X),
+                    move |root, window, cx| {
+                        let slot = Slot::Space {
                             space: space.clone(),
-                        },
-                        Renaming::Space(space.clone()),
-                    );
-                    root.strip
-                        .update(cx, |strip, cx| strip.start_rename(slot, what, window, cx));
-                },
-            )],
+                        };
+                        root.close_slot(&slot, window, cx)
+                    },
+                );
+                menu::sections([vec![rename], vec![close]])
+            }
         }
     }
 
@@ -193,10 +201,9 @@ impl Strip {
         );
     }
 
-    /// One tab: its name, and the `×` that takes it off the strip. An entry's
-    /// tab opens its entry's menu on a right press, and reads in italic while
-    /// it is the preview. A space's opens the menu that renames it, and its `×`
-    /// deletes the space.
+    /// One tab: its kind's mark and its name. A right press opens its menu,
+    /// which closes it: an entry's own menu, or a space's, whose closing
+    /// deletes the space. An entry's reads in italic while it is the preview.
     fn tab(
         &self,
         slot: &Slot,
@@ -226,7 +233,8 @@ impl Strip {
                     .filter(|_| !renaming)
                     .map(|toolbar| toolbar.title.clone())
                     .unwrap_or_default();
-                let mut label = tabs::Label::new(title);
+                let mut label =
+                    tabs::Label::new(title).with_icon(icon::entry_icon(member, workspace, cx));
                 // A number is the badge rather than part of the name: the name
                 // truncates and the reference has to survive that.
                 if let Some(number) = toolbar
@@ -307,66 +315,11 @@ impl Strip {
             }
             false => el,
         };
-        let el = el.children(renaming.then(|| self.name_field.clone()));
-        el.child(
-            tabs::close(theme, key, tabs::Close::OnHover)
-                .tooltip(move |window, cx| Tooltip::text("Close tab", window, cx))
-                .on_click(cx.listener({
-                    let shut = slot.clone();
-                    move |this, _, window, cx| {
-                        cx.stop_propagation();
-                        let shut = shut.clone();
-                        this.defer_window(window, cx, move |root, window, cx| {
-                            root.close_slot(&shut, window, cx)
-                        });
-                    }
-                })),
-        )
+        el.children(renaming.then(|| self.name_field.clone()))
     }
 
-    /// The `···` at the strip's end, holding the front tab's menu. Always
-    /// there while a tab is, so the controls past it keep their places.
-    fn front_button(
-        &self,
-        front: Slot,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> gpui::Stateful<gpui::Div> {
-        let open = self.menu.key() == Some(&StripMenu::Front);
-        let button = menu::button(
-            "strip-front-menu",
-            icons::layout::Ellipsis,
-            menu::Reveal::Always,
-            open,
-            cx,
-        )
-        .on_click(cx.listener(move |this, _, window, cx| {
-            cx.stop_propagation();
-            this.toggle_menu(
-                StripMenu::Front,
-                Place::BelowEnd,
-                Self::slot_rows(front.clone()),
-                window,
-                cx,
-            );
-        }));
-        ContextMenu::trigger(
-            button,
-            |this: &mut Self| &mut this.menu,
-            StripMenu::Front,
-            cx,
-        )
-        .children(self.menu.render_for(
-            &StripMenu::Front,
-            "strip-front-card",
-            |this| &mut this.menu,
-            window,
-            cx,
-        ))
-    }
-
-    /// The `+`, revealed while the pointer is over the strip: the sidebar's
-    /// `+` for `project`, landing as a tab of its own.
+    /// The `+`: the sidebar's `+` for `project`, landing as a tab of its own.
+    /// Always on show, so the track beside it keeps its width.
     fn add_button(
         &self,
         project: usize,
@@ -377,7 +330,7 @@ impl Strip {
         let button = menu::button(
             "strip-add",
             icons::math::Plus,
-            menu::Reveal::Shown(self.hovered),
+            menu::Reveal::Always,
             open,
             cx,
         )
@@ -428,7 +381,7 @@ impl Render for Strip {
         // top left. Fullscreen has none.
         let fold = !self.sidebar_open;
         let left = fold && chrome::has(CaptionSide::Left, window, cx);
-        let right = self.last && chrome::has(CaptionSide::Right, window, cx);
+        let right = chrome::has(CaptionSide::Right, window, cx);
         let lead = match self.sidebar_open {
             _ if left => 0.,
             // Floating, the column pads itself by half the gap between cards
@@ -437,7 +390,6 @@ impl Render for Strip {
             true if floating => 0.,
             true => root::HEADER_INSET,
         };
-        let owner = cx.entity().downgrade();
         let (fold_controls, grip) = match self.root.upgrade() {
             Some(root) => root.update(cx, |root, cx| {
                 (
@@ -465,42 +417,6 @@ impl Render for Strip {
         root::band()
             .id("window-strip")
             .relative()
-            .child(
-                gpui::canvas(
-                    |_, _, _| {},
-                    move |bounds, _, window, _| {
-                        let exited = owner.clone();
-                        window.on_mouse_event(move |_: &gpui::MouseExitEvent, phase, _, cx| {
-                            if phase != gpui::DispatchPhase::Capture {
-                                return;
-                            }
-                            let _ = exited.update(cx, |this, cx| {
-                                if this.hovered {
-                                    this.hovered = false;
-                                    cx.notify();
-                                }
-                            });
-                        });
-                        let owner = owner.clone();
-                        // The scrollbar blocks hitbox hover beneath it, but is
-                        // still inside the strip. Track its bounds instead.
-                        window.on_mouse_event(move |event: &gpui::MouseMoveEvent, phase, _, cx| {
-                            if phase != gpui::DispatchPhase::Capture {
-                                return;
-                            }
-                            let _ = owner.update(cx, |this, cx| {
-                                let over = bounds.contains(&event.position);
-                                if this.hovered != over {
-                                    this.hovered = over;
-                                    cx.notify();
-                                }
-                            });
-                        });
-                    },
-                )
-                .absolute()
-                .size_full(),
-            )
             .w_full()
             .gap(px(BAR_GAP))
             .pl(px(lead))
@@ -517,6 +433,16 @@ impl Render for Strip {
                     .child(controls)
                     .into_any_element()
             }))
+            .child(match tracked {
+                true => div()
+                    .flex_none()
+                    .w(px(GRIP_WIDTH))
+                    .h_full()
+                    .flex()
+                    .child(grip)
+                    .into_any_element(),
+                false => grip,
+            })
             // The tabs on a track of their own, which scrolls sideways once
             // they no longer fit: the controls keep their places while it does.
             // One tab has no track, back while its name is typed.
@@ -539,26 +465,16 @@ impl Render for Strip {
                         })),
                 )
             })
+            // At the strip's end, where the panes below end their own rows.
             .children(project.map(|project| self.add_button(project, window, cx)))
-            .child(match tracked {
-                true => div()
-                    .flex_none()
-                    .w(px(GRIP_WIDTH))
-                    .h_full()
-                    .flex()
-                    .child(grip)
-                    .into_any_element(),
-                false => grip,
-            })
-            .children(
-                front
-                    .clone()
-                    .map(|front| self.front_button(front, window, cx)),
-            )
-            .children(
-                self.last
-                    .then(|| changes_toggle("Show right panel", Painter::of(cx), Theme::of(cx))),
-            )
+            .child(changes_toggle(
+                match self.panel_open {
+                    true => "Hide right panel",
+                    false => "Show right panel",
+                },
+                Painter::of(cx),
+                Theme::of(cx),
+            ))
             .children(
                 right
                     .then(|| chrome::caption(CaptionSide::Right, window, cx))

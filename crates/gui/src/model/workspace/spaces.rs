@@ -211,25 +211,10 @@ impl Workspace {
         }
     }
 
-    /// The entries the pane holding this one draws, in strip order — see
-    /// [`Self::arranged`]. Empty for an entry no pane is on.
-    pub fn stack_of(&self, entry: &Member) -> Vec<Member> {
-        self.arranged()
-            .map(|space| space.stack_of(entry))
-            .unwrap_or_default()
-    }
-
-    /// The tab the pane holding this entry shows — see [`Space::front_of`].
-    pub fn front_of(&self, entry: &Member) -> Option<Member> {
-        self.arranged()?.front_of(entry)
-    }
-
-    /// Bring a tab forward: in its pane of the space in front, or else in the
-    /// strip.
+    /// Bring an entry forward in the strip. One in the space in front is
+    /// already on screen.
     pub fn set_front(&mut self, tab: &Member, cx: &mut Context<Self>) {
-        if self.active_space().is_some_and(|space| space.contains(tab)) {
-            self.edit_space(cx, |space| space.set_front(tab));
-        } else {
+        if !self.active_space().is_some_and(|space| space.contains(tab)) {
             self.front_tab(&Slot::Entry(tab.clone()), cx);
         }
     }
@@ -729,8 +714,7 @@ impl Workspace {
             return;
         };
         let showing: Vec<_> = space
-            .tree
-            .fronts()
+            .entries()
             .iter()
             .filter_map(|member| self.showing_of(member, cx))
             .collect();

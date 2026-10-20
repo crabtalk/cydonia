@@ -462,7 +462,41 @@ impl SettingsWindow {
                 vec![self.source_paste_row(cx), self.download_web_row(cx)],
             ))
             .child(boxed("Article session", self.article_session_rows(cx)))
+            .children(self.links_group(cx))
             .into_any_element()
+    }
+
+    /// What a session a link opens in the drawer shows. Only with sessions on.
+    fn links_group(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        let settings = &self.workspace.read(cx).settings;
+        if !settings.features.sessions {
+            return None;
+        }
+        let on = settings.drawer_composer;
+        let theme = Theme::of(cx).clone();
+        Some(
+            group(&theme, "Links")
+                .child(
+                    theme.group_box().child(
+                        self.switch_row(
+                            Switch::new(
+                                "drawer-composer",
+                                "Reply to linked sessions",
+                                "A session a link opens in the drawer has a composer under it.",
+                                on,
+                            )
+                            .first(true),
+                            cx,
+                            move |this, cx| {
+                                this.workspace.update(cx, |workspace, cx| {
+                                    workspace.set_drawer_composer(!on, cx)
+                                });
+                            },
+                        ),
+                    ),
+                )
+                .into_any_element(),
+        )
     }
 
     /// The article default: the agent an article's session opens on, and the

@@ -19,12 +19,15 @@ use crate::{
 use artifact::space::{Axis as Split, Member, Node, Side, Space};
 use bezel::{
     gpui::{
-        AnyElement, App, Axis, Context, DragMoveEvent, Empty, Entity, SharedString,
-        StyleRefinement, Window, div, prelude::*, px, relative,
+        AnyElement, App, Axis, Bounds, Context, DragMoveEvent, Empty, Entity, Pixels, SharedString,
+        StyleRefinement, Window, canvas, div, prelude::*, px, relative,
     },
+    motion::{self, AppExt as _, LAYOUT},
     theme::Theme,
     ui::{docking, icons, menu::Item},
 };
+use std::collections::HashMap;
+use web_time::Instant;
 
 /// The least of a split a pane may be squeezed to. A pane thinner than this
 /// has nothing left to grab it by.
@@ -39,6 +42,25 @@ const MIN_SHARE: f64 = 0.08;
 pub struct SeamDrag {
     pub path: Vec<usize>,
     pub at: usize,
+}
+
+/// A pane gliding between its place in the space and the whole of it.
+pub(crate) struct ZoomGlide {
+    entry: Member,
+    /// Its place in the space, from the space's top left.
+    from: Bounds<Pixels>,
+    /// Toward the whole of the space, or back to its place.
+    expanding: bool,
+    since: Instant,
+}
+
+/// Where the panes of the space in front and the space itself were last laid
+/// out, in the window's coordinates. A zoomed space draws one pane, so its
+/// others keep the place they had before it zoomed.
+#[derive(Default)]
+pub(crate) struct Places {
+    panes: HashMap<Member, Bounds<Pixels>>,
+    space: Option<Bounds<Pixels>>,
 }
 
 impl Cydonia {
@@ -56,26 +78,102 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let space = self.arrangement(cx)?;
-        // A zoomed pane stands over the rest, which keep their places
-        // underneath — see [`Space::zoom`].
-        if let Some(entry) = space.zoomed() {
-            return Some(self.pane(&entry, window, cx));
-        }
-        Some(self.node(&space.tree, &mut Vec::new(), window, cx))
+        let places = self.pane_places.clone();
+        let measured = canvas(
+            move |bounds, _, _| places.borrow_mut().space = Some(bounds),
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .size_full();
+        let total = LAYOUT.total().mul_f32(motion::speed_scale()).as_secs_f32();
+        let glide = self.zoom_glide.as_ref().and_then(|glide| {
+            let raw = glide.since.elapsed().as_secs_f32() / total.max(f32::EPSILON);
+            (raw < 1.0 && space.contains(&glide.entry)).then(|| {
+                let t = LAYOUT.progress(raw);
+                let t = if glide.expanding { t } else { 1.0 - t };
+                (glide.entry.clone(), glide.from, t)
+            })
+        });
+        let body = match (glide, space.zoomed()) {
+            // The pane on its way, over the rest in their places with its own
+            // left empty.
+            (Some((entry, from, t)), _) => {
+                window.request_animation_frame();
+                let at =
+                    |from: Pixels, to: Pixels| px(motion::lerp(f32::from(from), f32::from(to), t));
+                let whole = self
+                    .pane_places
+                    .borrow()
+                    .space
+                    .map(|space| space.size)
+                    .unwrap_or(from.size);
+                let tree = self.node(&space.tree, &mut Vec::new(), Some(&entry), window, cx);
+                // Opaque under the moving pane, whose own fill lets what is
+                // beneath show through; the rest fade as it covers them.
+                let floating = self.workspace.read(cx).settings.appearance.floating;
+                let fill = bezel::ui::window::content_fill(floating, Theme::of(cx));
+                let backing = div()
+                    .absolute()
+                    .inset_0()
+                    .bg(fill)
+                    .when(floating, |backing| {
+                        backing
+                            .m(px(Theme::CONTENT_INSET / 2.))
+                            .rounded(px(Theme::panel_radius()))
+                    });
+                div()
+                    .relative()
+                    .size_full()
+                    .flex()
+                    .child(div().size_full().flex().opacity(1. - t).child(tree))
+                    .child(
+                        div()
+                            .absolute()
+                            .left(at(from.origin.x, px(0.)))
+                            .top(at(from.origin.y, px(0.)))
+                            .w(at(from.size.width, whole.width))
+                            .h(at(from.size.height, whole.height))
+                            .flex()
+                            .child(backing)
+                            .child(self.pane(&entry, false, window, cx)),
+                    )
+                    .into_any_element()
+            }
+            // A zoomed pane stands over the rest, which keep their places
+            // underneath — see [`Space::zoom`].
+            (None, Some(entry)) => self.pane(&entry, false, window, cx),
+            (None, None) => self.node(&space.tree, &mut Vec::new(), None, window, cx),
+        };
+        Some(
+            div()
+                .relative()
+                .size_full()
+                .min_w_0()
+                .min_h_0()
+                .flex()
+                .child(body)
+                .child(measured)
+                .into_any_element(),
+        )
     }
 
-    /// One node: a pane, or a split of them laid out along its axis.
+    /// One node: a pane, or a split of them laid out along its axis. `empty`
+    /// is a pane drawn elsewhere, whose place is left as room.
     fn node(
         &mut self,
         node: &Node<Member>,
         path: &mut Vec<usize>,
+        empty: Option<&Member>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         match node {
+            Node::Leaf { entry, .. } if Some(entry) == empty => {
+                div().flex_1().min_w_0().min_h_0().into_any_element()
+            }
             // `entry` is the pane's name, not what it is showing — the pane
             // resolves its own strip and which of it is in front.
-            Node::Leaf { entry, .. } => self.pane(entry, window, cx),
+            Node::Leaf { entry, .. } => self.pane(entry, true, window, cx),
             Node::Split { axis, children, .. } => {
                 let axis = *axis;
                 let theme = Theme::of(cx).clone();
@@ -122,7 +220,7 @@ impl Cydonia {
                     }));
                 for (ix, child) in children.iter().enumerate() {
                     path.push(ix);
-                    let body = self.node(child, path, window, cx);
+                    let body = self.node(child, path, empty, window, cx);
                     path.pop();
                     row = row.child(
                         div()
@@ -176,42 +274,52 @@ impl Cydonia {
         }
     }
 
-    /// One pane: the entries it holds, and whichever of them is in front.
-    ///
-    /// `entry` is the pane's *name* — the first of its strip, which is what
-    /// the space keeps and what every drop and close here is aimed at. What
-    /// the pane is showing is [`Workspace::front_of`], and the two are the same
-    /// thing only for a pane holding one entry.
-    fn pane(&mut self, entry: &Member, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let front = self
-            .workspace
-            .read(cx)
-            .front_of(entry)
-            .unwrap_or_else(|| entry.clone());
+    /// One pane, on `entry`. `placed` is whether the tree lays it out where
+    /// it stands, the place a zoom glides from.
+    fn pane(
+        &mut self,
+        entry: &Member,
+        placed: bool,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let body = match self.pane_named(entry, cx) {
             Some(pane) => pane
                 .cached(StyleRefinement::default().flex().flex_col().size_full())
                 .into_any_element(),
             None => div().flex_1().into_any_element(),
         };
-        // By the tab in front: that is what a drop joins or divides.
-        let body = self
-            .dock
-            .pane(front, px(crate::view::window::root::HEADER_HEIGHT), body);
-        // Flat, the panes are one plane on the window's fill. Floating, each
-        // pane draws its own card under its bar.
-        let floating = self.workspace.read(cx).settings.appearance.floating;
-        match floating {
-            true => div(),
-            false => bezel::ui::window::content(false, cx),
-        }
-        .flex_1()
-        .min_w_0()
-        .min_h_0()
-        .flex()
-        .flex_col()
-        .child(body)
-        .into_any_element()
+        let body = self.dock.pane(
+            entry.clone(),
+            px(crate::view::window::root::CARD_ROW_HEIGHT),
+            body,
+        );
+        // No fill: flat, the panes sit on the fill the column under the strip
+        // paints once; floating, each pane draws its own card.
+        let (places, named) = (self.pane_places.clone(), entry.clone());
+        div()
+            .flex_1()
+            .min_w_0()
+            .min_h_0()
+            .relative()
+            .flex()
+            .flex_col()
+            .child(body)
+            // Only where the tree lays it out: zoomed or gliding, it is not in its
+            // place.
+            .when(placed, |pane| {
+                pane.child(
+                    canvas(
+                        move |bounds, _, _| {
+                            places.borrow_mut().panes.insert(named, bounds);
+                        },
+                        |_, _, _, _| {},
+                    )
+                    .absolute()
+                    .size_full(),
+                )
+            })
+            .into_any_element()
     }
 
     /// The pane of the open space named `name`.
@@ -223,31 +331,19 @@ impl Cydonia {
     }
 
     /// Make a pane for every pane of the open space and drop the rest, and
-    /// hand each its tabs and where it stands in the window.
+    /// hand each its tab.
     pub(crate) fn sync_panes(&mut self, cx: &mut Context<Self>) {
         let Some(space) = self.arrangement(cx) else {
             self.panes.clear();
             return;
         };
         let mut kept = Vec::new();
-        for name in space.panes() {
-            let stack = self.workspace.read(cx).stack_of(&name);
-            // A pane is named by its first tab, and a close or a reorder can
-            // hand the name on: the pane holding any of the strip is this one.
-            // A close takes the old name out of the strip, so the tabs it held
-            // are what still match it.
+        for name in space.entries() {
             let pane = match self
                 .panes
                 .iter()
-                .position(|pane| stack.contains(&pane.read(cx).name))
-                .or_else(|| {
-                    self.panes.iter().position(|pane| {
-                        pane.read(cx)
-                            .tabs
-                            .iter()
-                            .any(|tab| stack.contains(&tab.read(cx).entry))
-                    })
-                }) {
+                .position(|pane| pane.read(cx).name == name)
+            {
                 Some(at) => self.panes.remove(at),
                 None => {
                     let (workspace, root) = (self.workspace.clone(), cx.entity().downgrade());
@@ -255,19 +351,14 @@ impl Cydonia {
                     cx.new(|cx| Pane::new(name, workspace, root, cx))
                 }
             };
-            let tabs: Vec<_> = stack
+            let tab = self
+                .leaves
                 .iter()
-                .filter_map(|tab| {
-                    self.leaves
-                        .iter()
-                        .find(|leaf| leaf.read(cx).entry == *tab)
-                        .cloned()
-                })
-                .collect();
+                .find(|leaf| leaf.read(cx).entry == name)
+                .cloned();
             pane.update(cx, |pane, cx| {
-                if pane.name != name || pane.tabs != tabs {
-                    pane.name = name.clone();
-                    pane.tabs = tabs;
+                if pane.tab != tab {
+                    pane.tab = tab;
                     cx.notify();
                 }
             });
@@ -276,16 +367,7 @@ impl Cydonia {
         self.panes = kept;
     }
 
-    /// Bring `tab` to the front of the pane named `pane`.
-    fn set_front(&mut self, pane: &Member, tab: &Member, cx: &mut Context<Self>) {
-        self.sync_panes(cx);
-        if let Some(pane) = self.pane_named(pane, cx) {
-            let tab = tab.clone();
-            pane.update(cx, |pane, cx| pane.set_front(tab, cx));
-        }
-    }
-
-    /// Whether a pane draws the entry `row` names: the front tab of a pane.
+    /// Whether a pane draws the entry `row` names.
     pub(crate) fn on_screen(&self, row: &Row, cx: &App) -> bool {
         let Row::Entry { project, showing } = row else {
             return false;
@@ -298,37 +380,34 @@ impl Cydonia {
         let (Some(space), Some(at)) = (workspace.arranged(), workspace.project_at(project)) else {
             return false;
         };
-        space.tree.fronts().iter().any(|front| {
+        space.entries().iter().any(|shown| {
             workspace
-                .showing_of(front, cx)
+                .showing_of(shown, cx)
                 .is_some_and(|(open, shown)| open == at && &shown == showing)
         })
     }
 
-    /// Note a tab as the one most recently brought to the front, which is
-    /// where a close falls back to — see [`Cydonia::tab_history`].
+    /// Note a pane as the one most recently entered, which is where a close
+    /// falls back to — see [`Cydonia::tab_history`].
     fn remember_front(&mut self, tab: &Member) {
         self.tab_history.retain(|seen| seen != tab);
         self.tab_history.push(tab.clone());
     }
 
-    /// Show one of a pane's tabs, and put the focus on it — a tab pressed is a
-    /// pane entered, the same as a press anywhere else in one.
-    pub(crate) fn show_tab(
+    /// Put the focus on the pane on `entry`.
+    pub(crate) fn show_pane(
         &mut self,
-        pane: &Member,
-        tab: &Member,
+        entry: &Member,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.set_front(pane, tab, cx);
-        self.remember_front(tab);
-        // Before the focus moves: a tab the space has gained since the last
+        self.remember_front(entry);
+        // Before the focus moves: a pane the space has gained since the last
         // frame has no leaf yet, and [`Cydonia::focus_pane`] moves nothing it
         // cannot find.
         self.sync_leaves(window, cx);
         self.focused = usize::MAX;
-        self.focus_pane(tab, window, cx);
+        self.focus_pane(entry, window, cx);
         self.reveal_applied_match(cx);
         cx.notify();
     }
@@ -369,13 +448,6 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) -> Option<Member> {
         let target = &event.pane;
-        let stack = self.workspace.read(cx).stack_of(target);
-        if let Dragged::Tab(Slot::Entry(tab)) = &event.item
-            && stack.contains(tab)
-            && (event.zone == docking::Zone::Join || stack.len() == 1)
-        {
-            return None;
-        }
         let arriving = self.dropped(&event.item, cx)?;
         if arriving == *target {
             return None;
@@ -400,70 +472,50 @@ impl Cydonia {
         Some(arriving)
     }
 
-    /// What can be done to the pane of a space `entry` is on: zoom it, move
-    /// it across a seam, close it. Nothing for an entry no space in front
-    /// holds beside another — see [`crate::view::pane::title`].
-    pub(crate) fn pane_rows(&self, entry: &Member, cx: &App) -> Vec<(Item, menu::Act)> {
-        let several = self
-            .workspace
-            .read(cx)
-            .active_space()
-            .is_some_and(|space| space.contains(entry) && space.leaves() > 1);
-        if !several {
+    /// The ways the pane on `entry` can move across a seam: each side with a
+    /// pane across it, its label and its arrow. Empty for an entry no space in
+    /// front holds beside another.
+    pub(crate) fn pane_moves(
+        &self,
+        entry: &Member,
+        cx: &App,
+    ) -> Vec<(Side, &'static str, &'static [u8])> {
+        if self.zoomed(entry, cx).is_none() {
             return Vec::new();
         }
-        let zoomed = self
-            .arrangement(cx)
-            .and_then(|space| space.zoomed())
-            .is_some_and(|at| at == *entry);
-
-        let zoom = vec![menu::row::<Self>(
-            match zoomed {
-                true => Item::action("Restore").with_icon(icons::arrows::Shrink),
-                false => Item::action("Expand").with_icon(icons::arrows::Expand),
-            },
-            {
-                let on = entry.clone();
-                move |this, _, cx| this.zoom_focused(&on, cx)
-            },
-        )];
-        // Only the ways this pane can actually go: a move with nothing across
-        // the seam is a row that does nothing, and a menu of those teaches
-        // that the menu does nothing.
-        let mut moves = Vec::new();
-        for (side, label, icon) in [
+        [
             (Side::Left, "Move left", icons::arrows::ArrowLeft),
             (Side::Right, "Move right", icons::arrows::ArrowRight),
             (Side::Above, "Move up", icons::arrows::ArrowUp),
             (Side::Below, "Move down", icons::arrows::ArrowDown),
-        ] {
-            if self
-                .workspace
+        ]
+        .into_iter()
+        .filter(|(side, _, _)| {
+            self.workspace
                 .read(cx)
-                .neighbour_pane(entry, side)
-                .is_none()
-            {
-                continue;
-            }
-            let on = entry.clone();
-            moves.push(menu::row::<Self>(
-                Item::action(label).with_icon(icon),
-                move |this, window, cx| this.move_pane(&on, side, window, cx),
-            ));
-        }
-        let close = vec![menu::row::<Self>(
-            Item::action("Close pane").with_icon(icons::notifications::X),
-            {
+                .neighbour_pane(entry, *side)
+                .is_some()
+        })
+        .collect()
+    }
+
+    /// [`Self::pane_moves`] as rows of a menu.
+    pub(crate) fn move_rows(&self, entry: &Member, cx: &App) -> Vec<(Item, menu::Act)> {
+        self.pane_moves(entry, cx)
+            .into_iter()
+            .map(|(side, label, icon)| {
                 let on = entry.clone();
-                move |this, window, cx| this.close_pane(&on, window, cx)
-            },
-        )];
-        menu::sections([zoom, moves, close])
+                menu::row::<Self>(
+                    Item::action(label).with_icon(icon),
+                    move |this, window, cx| this.move_pane(&on, side, window, cx),
+                )
+            })
+            .collect()
     }
 
     /// Exchange a pane with the one across the seam, and keep the focus on it
     /// — the pane moved, not the attention.
-    fn move_pane(
+    pub(crate) fn move_pane(
         &mut self,
         entry: &Member,
         side: Side,
@@ -479,10 +531,40 @@ impl Cydonia {
         }
     }
 
-    /// Stand a pane over the others, or put it back.
-    fn zoom_focused(&mut self, entry: &Member, cx: &mut Context<Self>) {
+    /// Whether `entry`'s pane is the one zoomed, or nothing where it is no
+    /// pane of a space in front beside another.
+    pub(crate) fn zoomed(&self, entry: &Member, cx: &App) -> Option<bool> {
+        let space = self.workspace.read(cx).active_space()?;
+        (space.contains(entry) && space.leaves() > 1)
+            .then(|| space.zoomed().is_some_and(|at| at == *entry))
+    }
+
+    /// Stand a pane over the others, or put it back, gliding between its
+    /// place and the whole of the space.
+    pub(crate) fn toggle_zoom(&mut self, entry: &Member, cx: &mut Context<Self>) {
+        let expanding = self
+            .arrangement(cx)
+            .and_then(|space| space.zoomed())
+            .as_ref()
+            != Some(entry);
+        let places = self.pane_places.borrow();
+        self.zoom_glide = places
+            .space
+            .zip(places.panes.get(entry).copied())
+            .filter(|_| !cx.reduced_motion())
+            .map(|(space, pane)| ZoomGlide {
+                entry: entry.clone(),
+                from: Bounds {
+                    origin: pane.origin - space.origin,
+                    size: pane.size,
+                },
+                expanding,
+                since: Instant::now(),
+            });
+        drop(places);
         self.workspace
             .update(cx, |workspace, cx| workspace.zoom_pane(entry, cx));
+        cx.notify();
     }
 
     /// Drop one pane from the arrangement.
@@ -492,19 +574,9 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // What the tab's own pane shows once it is gone — see
-        // [`Pane::front_after`].
-        let next = self
-            .workspace
-            .read(cx)
-            .stack_of(entry)
-            .first()
-            .and_then(|name| self.pane_named(name, cx))
-            .and_then(|pane| pane.read(cx).front_after(entry, cx));
-        // Where the focus lands: where it is, unless it was on the tab
-        // closing. Then on the tab its pane shows next, and for a pane's last
-        // tab on the tab that was in front before it anywhere in the space,
-        // or else the space's last tab.
+        // Where the focus lands: where it is, unless it was on the pane
+        // closing. Then on the pane entered before it, or else the space's
+        // last.
         let entries = self
             .arrangement(cx)
             .map(|space| space.entries())
@@ -512,7 +584,6 @@ impl Cydonia {
         let kept = self
             .focused_entry(cx)
             .filter(|focused| focused != entry)
-            .or_else(|| next.clone())
             .or_else(|| {
                 self.tab_history
                     .iter()
@@ -527,11 +598,6 @@ impl Cydonia {
         let alone = self
             .workspace
             .update(cx, |workspace, cx| workspace.close_pane(entry, cx));
-        if let Some(next) = &next
-            && let Some(pane) = self.workspace.read(cx).stack_of(next).first().cloned()
-        {
-            self.set_front(&pane, next, cx);
-        }
         self.sync_leaves(window, cx);
         let landing = alone
             .map(|(member, _)| member)
@@ -556,10 +622,8 @@ impl Cydonia {
     /// about it. `select-pane -LRUD` measured off the bounds would be truer to
     /// tmux; it needs each pane's frame, which nothing here keeps yet.
     pub(crate) fn step_pane(&mut self, step: isize, window: &mut Window, cx: &mut Context<Self>) {
-        // Panes, not members: a pane holding three tabs is one stop on the
-        // walk, and ⌃⇥ is what steps through what it holds.
         let panes = match self.arrangement(cx) {
-            Some(space) => space.panes(),
+            Some(space) => space.entries(),
             None => return,
         };
         if panes.len() < 2 {
@@ -567,27 +631,17 @@ impl Cydonia {
         }
         let here = self.focused_entry(cx);
         let at = here
-            .and_then(|front| {
-                let stack = self.workspace.read(cx).stack_of(&front);
-                let pane = stack.first()?;
-                panes.iter().position(|named| named == pane)
-            })
+            .and_then(|here| panes.iter().position(|named| *named == here))
             .unwrap_or(0);
         let landing = (at as isize + step).rem_euclid(panes.len() as isize) as usize;
-        let Some(pane) = panes.get(landing) else {
+        let Some(pane) = panes.get(landing).cloned() else {
             return;
         };
-        let front = self
-            .workspace
-            .read(cx)
-            .front_of(pane)
-            .unwrap_or_else(|| pane.clone());
         self.focused = usize::MAX;
-        self.focus_pane(&front, window, cx);
+        self.focus_pane(&pane, window, cx);
     }
 
-    /// Close the tab in front — and with it the pane, where it was the pane's
-    /// last. The keyboard's half of the `×` on a tab.
+    /// Close the focused pane. The keyboard's half of the `×` in its header.
     pub(crate) fn close_focused_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(entry) = self.focused_entry(cx) else {
             return;
@@ -596,7 +650,7 @@ impl Cydonia {
     }
 
     /// Take an entry that is going away — archived or deleted — out of the
-    /// open space, and land on the top-left pane's front tab.
+    /// open space, and land on the top-left pane.
     pub(crate) fn put_away_pane(
         &mut self,
         entry: &Member,
@@ -606,13 +660,12 @@ impl Cydonia {
         self.close_pane(entry, window, cx);
         let Some(pane) = self
             .arrangement(cx)
-            .and_then(|space| space.panes().first().cloned())
+            .and_then(|space| space.entries().first().cloned())
         else {
             return;
         };
-        let front = self.workspace.read(cx).front_of(&pane).unwrap_or(pane);
         self.focused = usize::MAX;
-        self.focus_pane(&front, window, cx);
+        self.focus_pane(&pane, window, cx);
     }
 
     /// Stand the pane in front over the others, or put it back.
@@ -620,10 +673,7 @@ impl Cydonia {
         let Some(entry) = self.focused_entry(cx) else {
             return;
         };
-        self.workspace.update(cx, |workspace, cx| {
-            workspace.zoom_pane(&entry, cx);
-        });
-        cx.notify();
+        self.toggle_zoom(&entry, cx);
     }
 
     /// Open a space: the window is arranged by it until an entry no space
@@ -634,12 +684,13 @@ impl Cydonia {
             workspace.open_space(ix, cx);
         });
         self.sync_leaves(window, cx);
-        // The focus lands on the tab in front of the pane the space last had
-        // focused, or else of the first pane it lays out, at its top left.
-        let front = self.workspace.read(cx).active_space().and_then(|space| {
-            let pane = space.focused().or_else(|| space.panes().first().cloned())?;
-            space.front_of(&pane)
-        });
+        // The focus lands on the pane the space last had focused, or else the
+        // first it lays out, at its top left.
+        let front = self
+            .workspace
+            .read(cx)
+            .active_space()
+            .and_then(|space| space.focused().or_else(|| space.entries().first().cloned()));
         if let Some(entry) = front {
             self.focused = usize::MAX;
             self.focus_pane(&entry, window, cx);

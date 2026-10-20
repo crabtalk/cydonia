@@ -1,8 +1,8 @@
 //! What the window does to an entry: open it, put it away, delete it, pin
 //! it, name it, and the rows of its menu — whichever view's menu asked.
 
+use crate::model::workspace::Opening;
 use crate::model::workspace::Showing;
-use crate::model::workspace::{Opening, Slot};
 use crate::view::{
     article::TogglePlainText,
     keymap::{self, Command},
@@ -149,12 +149,16 @@ impl Cydonia {
     ) -> Vec<(Item, menu::Act)> {
         // `../desktop`'s rule for what a `···` may carry: only commands with no
         // affordance on the object. An article's title is the head of its own
-        // page, so it is not offered a second route here. Everywhere else the
-        // name is display-only and this is the way; a board's opens its
-        // identity panel.
+        // page and a board's name in the band opens its identity panel, so
+        // neither is offered a second route here. Everywhere else the name is
+        // display-only and this is the way.
         // An app's name is its manifest's, and it is not filed or pinned.
         let app = matches!(entry, Row::App(_));
-        let named = !app && !matches!(entry.showing(), Some(Showing::Article(_)));
+        let named = !app
+            && !matches!(
+                entry.showing(),
+                Some(Showing::Article(_) | Showing::Board(_))
+            );
         // A page's measure and how it is being read: the open page's, since
         // [`Self::set_full_width`] and [`Self::plain_text`] are about the one
         // the window is showing. A row's menu names an entry that may not be
@@ -474,15 +478,6 @@ impl Cydonia {
         let Some(what) = Renaming::of(entry) else {
             return;
         };
-        // A lone tab's name is the strip's, so the strip holds the field.
-        if let Host::Tab(member) = host {
-            let slot = Slot::Entry(member.clone());
-            if self.workspace.read(cx).front_slot() == Some(&slot) {
-                self.strip
-                    .update(cx, |strip, cx| strip.start_rename(slot, what, window, cx));
-                return;
-            }
-        }
         let tab = match host {
             Host::Tab(member) => self
                 .leaves

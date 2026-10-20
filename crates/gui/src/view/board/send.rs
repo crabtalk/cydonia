@@ -9,6 +9,7 @@ use crate::{
     view::{
         component::composer,
         kit::{
+            icon::session_icon,
             menu,
             new::{self, New},
         },
@@ -147,9 +148,7 @@ impl BoardView {
             };
             let row = |chat: &ChatSession| {
                 let (on, sent, to) = (on.clone(), sent.clone(), To::Session(chat.id));
-                let icon = workspace
-                    .agent_icon(&chat.entry.name)
-                    .unwrap_or_else(|| icons::social::MessageCircle.into());
+                let icon = session_icon(chat, workspace);
                 menu::row::<Self>(
                     Item::action(chat.label()).with_icon(icon),
                     move |this, _, cx| this.send(&on, &sent, to, cx),

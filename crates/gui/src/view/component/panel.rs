@@ -8,8 +8,8 @@ use super::browser::Browser;
 use super::terminal::{DirectoryChanged, Exited, Terminal};
 use super::{changes::Changes, file::FileView, files::Files};
 use crate::model::{settings::PanelTabs, workspace::Workspace};
+use crate::view::modals::desktop::DesktopOnly;
 use crate::view::window::root::{Cydonia, ToggleChanges};
-use crate::view::{modals::desktop::DesktopOnly, window::chrome};
 use bezel::{
     gpui::{
         self, AnyElement, Axis, Context, DragMoveEvent, Empty, Entity, Focusable, Render,
@@ -22,7 +22,6 @@ use bezel::{
         icons,
         menu::Item,
         tabs,
-        titlebar::{self, CaptionSide},
         tooltip::Tooltip,
         widgets::{ButtonStyle, Buttons as _},
     },
@@ -126,8 +125,6 @@ pub struct Panel {
     closing: Option<usize>,
     focus_pending: bool,
     restore_pending: Option<persistence::SavedPanel>,
-    /// The press on the strip's [`chrome::grip`].
-    drag: titlebar::DragState,
     /// Which switchable tabs may be open: the settings' word, pushed in by
     /// the root, within [`Self::offers`].
     tabs: PanelTabs,
@@ -136,8 +133,6 @@ pub struct Panel {
     offers: PanelTabs,
     /// Whose settings the panel's files read.
     workspace: WeakEntity<Workspace>,
-    /// The root's, which paints [`changes_toggle`] on the header too.
-    toggle: Painter,
 }
 
 impl Panel {
@@ -158,11 +153,9 @@ impl Panel {
             closing: None,
             focus_pending: false,
             restore_pending: None,
-            drag: Default::default(),
             tabs: PanelTabs::default(),
             offers: PanelTabs::default(),
             workspace: WeakEntity::new_invalid(),
-            toggle: Painter::of(cx),
         }
     }
 
@@ -630,7 +623,6 @@ impl Render for Panel {
             self.focus(window, cx);
         }
         let theme = Theme::of(cx).clone();
-        let right = chrome::has(CaptionSide::Right, window, cx);
         let launchers = self.launchers();
         let popup = self
             .menu
@@ -792,104 +784,110 @@ impl Render for Panel {
             .on_action(cx.listener(|this, _: &PrevTab, window, cx| this.cycle(-1, window, cx)))
             .child(
                 crate::view::window::root::band()
+                    .h(px(crate::view::window::root::CARD_ROW_HEIGHT))
+                    // Its first control at the column's edge, as its last.
+                    .pl(px(crate::view::window::root::BUTTON_EDGE))
                     .gap(px(6.))
-                    // At the window's top right while it is up.
-                    .when(right, |band| band.pr_0())
-                    .child(
-                        self.reorder
-                            .bar(
-                                "panel-tabs",
-                                &self.strip,
-                                self.ordered().map(|(id, tab)| {
-                                    let icon = match &tab.content {
-                                        Content::Review(_) => icons::development::GitCompare,
-                                        #[cfg(feature = "desktop")]
-                                        Content::Terminal(_) => icons::development::Terminal,
-                                        Content::File(_) => icons::files::File,
-                                        #[cfg(not(target_os = "linux"))]
-                                        Content::Browser(_) => icons::navigation::Globe,
-                                    };
-                                    // The path is the tooltip and the last component is
-                                    // the name: several tabs can be named the same.
-                                    let (name, path, dirty) = match &tab.content {
-                                        Content::Review(_) => {
-                                            ("Review".to_string(), "Review".to_string(), false)
+                    // The strip only while it holds a tab.
+                    .when(!self.strip.is_empty(), |band| {
+                        band.child(
+                            self.reorder
+                                .bar(
+                                    "panel-tabs",
+                                    &self.strip,
+                                    self.ordered().map(|(id, tab)| {
+                                        let icon = match &tab.content {
+                                            Content::Review(_) => icons::development::GitCompare,
+                                            #[cfg(feature = "desktop")]
+                                            Content::Terminal(_) => icons::development::Terminal,
+                                            Content::File(_) => icons::files::File,
+                                            #[cfg(not(target_os = "linux"))]
+                                            Content::Browser(_) => icons::navigation::Globe,
+                                        };
+                                        // The path is the tooltip and the last component is
+                                        // the name: several tabs can be named the same.
+                                        let (name, path, dirty) = match &tab.content {
+                                            Content::Review(_) => {
+                                                ("Review".to_string(), "Review".to_string(), false)
+                                            }
+                                            #[cfg(feature = "desktop")]
+                                            Content::Terminal(terminal) => {
+                                                let path = &terminal.read(cx).directory;
+                                                (
+                                                    path.file_name()
+                                                        .unwrap_or(path.as_os_str())
+                                                        .to_string_lossy()
+                                                        .into_owned(),
+                                                    path.display().to_string(),
+                                                    false,
+                                                )
+                                            }
+                                            #[cfg(not(target_os = "linux"))]
+                                            Content::Browser(browser) => {
+                                                let browser = browser.read(cx);
+                                                (
+                                                    browser.title().to_owned(),
+                                                    browser.url().to_owned(),
+                                                    false,
+                                                )
+                                            }
+                                            Content::File(file) => {
+                                                let file = file.read(cx);
+                                                (
+                                                    file.path
+                                                        .file_name()
+                                                        .unwrap_or_default()
+                                                        .to_string_lossy()
+                                                        .into_owned(),
+                                                    file.path.display().to_string(),
+                                                    file.dirty(cx),
+                                                )
+                                            }
+                                        };
+                                        let name = gpui::SharedString::from(name);
+                                        let mut label =
+                                            tabs::Label::new(name.clone()).with_icon(icon);
+                                        // Unsaved work is the mark rather than a bullet in
+                                        // the name: the name truncates and the mark does
+                                        // not.
+                                        if dirty {
+                                            label = label.mark(
+                                                icons::Icon::glyph(icons::glyph::CircleSmall)
+                                                    .solid(),
+                                            );
                                         }
-                                        #[cfg(feature = "desktop")]
-                                        Content::Terminal(terminal) => {
-                                            let path = &terminal.read(cx).directory;
-                                            (
-                                                path.file_name()
-                                                    .unwrap_or(path.as_os_str())
-                                                    .to_string_lossy()
-                                                    .into_owned(),
-                                                path.display().to_string(),
-                                                false,
-                                            )
-                                        }
-                                        #[cfg(not(target_os = "linux"))]
-                                        Content::Browser(browser) => {
-                                            let browser = browser.read(cx);
-                                            (
-                                                browser.title().to_owned(),
-                                                browser.url().to_owned(),
-                                                false,
-                                            )
-                                        }
-                                        Content::File(file) => {
-                                            let file = file.read(cx);
-                                            (
-                                                file.path
-                                                    .file_name()
-                                                    .unwrap_or_default()
-                                                    .to_string_lossy()
-                                                    .into_owned(),
-                                                file.path.display().to_string(),
-                                                file.dirty(cx),
-                                            )
-                                        }
-                                    };
-                                    let name = gpui::SharedString::from(name);
-                                    let mut label = tabs::Label::new(name.clone()).with_icon(icon);
-                                    // Unsaved work is the mark rather than a bullet in
-                                    // the name: the name truncates and the mark does
-                                    // not.
-                                    if dirty {
-                                        label = label.mark(
-                                            icons::Icon::glyph(icons::glyph::CircleSmall).solid(),
-                                        );
-                                    }
-                                    let state = match self.strip.active() == Some(&id) {
-                                        true => tabs::State::Focused,
-                                        false => tabs::State::Resting,
-                                    };
-                                    let key = gpui::SharedString::from(format!("panel-{id}"));
-                                    let tab = tabs::tab(&theme, key.clone(), label, state)
-                                        .tooltip(move |window, cx| {
-                                            Tooltip::text(path.clone(), window, cx)
-                                        })
-                                        .on_click(cx.listener(move |this, _, window, cx| {
-                                            this.strip.activate(&id);
-                                            this.focus(window, cx);
-                                            cx.notify();
-                                        }))
-                                        .child(
-                                            tabs::close(&theme, key, tabs::Close::OnHover)
-                                                .on_click(cx.listener(
-                                                    move |this, _, window, cx| {
-                                                        cx.stop_propagation();
-                                                        this.close(id, window, cx);
-                                                    },
-                                                )),
-                                        );
-                                    (id, tab)
-                                }),
-                            )
-                            .on_reorder(cx.listener(|this, moved: &tabs::Move, _, cx| {
-                                this.strip.reorder(moved.from, moved.to);
-                                cx.notify();
-                            })),
-                    )
+                                        let state = match self.strip.active() == Some(&id) {
+                                            true => tabs::State::Focused,
+                                            false => tabs::State::Resting,
+                                        };
+                                        let key = gpui::SharedString::from(format!("panel-{id}"));
+                                        let tab = tabs::tab(&theme, key.clone(), label, state)
+                                            .tooltip(move |window, cx| {
+                                                Tooltip::text(path.clone(), window, cx)
+                                            })
+                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                this.strip.activate(&id);
+                                                this.focus(window, cx);
+                                                cx.notify();
+                                            }))
+                                            .child(
+                                                tabs::close(&theme, key, tabs::Close::OnHover)
+                                                    .on_click(cx.listener(
+                                                        move |this, _, window, cx| {
+                                                            cx.stop_propagation();
+                                                            this.close(id, window, cx);
+                                                        },
+                                                    )),
+                                            );
+                                        (id, tab)
+                                    }),
+                                )
+                                .on_reorder(cx.listener(|this, moved: &tabs::Move, _, cx| {
+                                    this.strip.reorder(moved.from, moved.to);
+                                    cx.notify();
+                                })),
+                        )
+                    })
                     .child(
                         div()
                             .relative()
@@ -920,13 +918,6 @@ impl Render for Panel {
                                     }),
                             )
                             .children(popup),
-                    )
-                    .child(chrome::grip("panel-grip", &self.drag, window))
-                    .child(changes_toggle("Hide right panel", self.toggle, &theme))
-                    .children(
-                        right
-                            .then(|| chrome::caption(CaptionSide::Right, window, cx))
-                            .flatten(),
                     ),
             )
             .when_some(self.closing, |panel, id| {
@@ -1282,10 +1273,8 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<Panel> {
-        let toggle = Painter::of(cx);
         let panel = cx.new(|cx| {
             let mut panel = Panel::new(cwd.clone(), cx);
-            panel.toggle = toggle;
             panel.restore_pending = restore;
             panel.project_root = cwd.canonicalize().unwrap_or(cwd.clone());
             panel.workspace = self.workspace.downgrade();
@@ -1334,9 +1323,8 @@ mod tests;
 #[path = "../../../tests/unit/right_panel.rs"]
 mod right_panel_tests;
 
-/// The control that hides and shows the right panel: on the panel's strip
-/// while it is up, on the header while it is down. One fade under `painter`,
-/// the root, so the wash under the pointer carries across the swap.
+/// The control that hides and shows the right panel, at the window's top
+/// right whether it is up or down.
 pub(crate) fn changes_toggle(
     label: &'static str,
     painter: Painter,

@@ -1,18 +1,16 @@
-//! A pane's title row in a space, over what it shows: what it is on, the
-//! field that renames it, a board's identity panel, an article's comments,
-//! and the `···` holding the entry's menu and the pane's. A tab holding one
-//! entry has no title row: its name and `···` are the strip's, and its comments
-//! and board panel stand in its top right corner.
+//! A pane's title row, over what it shows: its kind's mark and what it is on,
+//! the field that renames it, a board's identity panel, an article's
+//! comments, the `···` holding the entry's menu, the move and the expand of
+//! a pane beside others, and the `×` that closes it.
 
 use super::{Tab, TabMenu, header::Naming};
-use crate::model::workspace::Slot;
 use crate::view::{
-    kit::menu,
+    kit::{icon, menu},
     sidebar::Renaming,
     window::{entry::Host, reach::InWindow as _, root},
 };
 use bezel::{
-    gpui::{AnyElement, App, Context, FontWeight, SharedString, Window, div, prelude::*, px},
+    gpui::{AnyElement, Context, FontWeight, SharedString, Window, div, prelude::*, px},
     theme::{TextStyle, Theme, Typeset},
     ui::{
         context_menu::{ContextMenu, Place},
@@ -23,52 +21,13 @@ use bezel::{
 };
 
 impl Tab {
-    /// Whether this tab is the strip's front tab on its own, not a pane of a
-    /// space.
-    pub(crate) fn lone(&self, cx: &App) -> bool {
-        self.workspace.read(cx).front_slot() == Some(&Slot::Entry(self.entry.clone()))
-    }
-
-    /// A lone tab's corner, over its content: an article's comments and a
-    /// board's identity panel, under the strip's `···` that opens the panel.
-    pub(crate) fn corner(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let comments = self
-            .article_shown(cx)
-            .map(|view| view.read(cx).comments.clone());
-        let panel = self
-            .info
-            .as_ref()
-            .map(|info| info.board.clone())
-            .and_then(|board| self.info_panel(&board, Place::BelowEnd, cx));
-        if comments.is_none() && panel.is_none() {
-            return None;
-        }
-        Some(
-            div()
-                .absolute()
-                .top_0()
-                .right_0()
-                .h(px(root::HEADER_HEIGHT))
-                .px(px(root::HEADER_INSET))
-                .flex()
-                .flex_row()
-                .items_center()
-                .children(comments)
-                .children(panel)
-                .into_any_element(),
-        )
-    }
-
     /// The row: the entry's name, or the field renaming it, and what acts on
-    /// it. Nothing for an entry that has gone, or for a lone tab.
+    /// it. Nothing for an entry that has gone.
     pub(crate) fn title_row(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        if self.lone(cx) {
-            return None;
-        }
         let theme = Theme::of(cx).clone();
         let toolbar = self
             .root
@@ -97,8 +56,9 @@ impl Tab {
             .map(|view| view.read(cx).comments.clone());
         let row = div()
             .flex_none()
-            .h(px(root::HEADER_HEIGHT))
-            .px(px(root::HEADER_INSET))
+            .h(px(root::CARD_ROW_HEIGHT))
+            .pl(px(root::HEADER_INSET))
+            .pr(px(root::BUTTON_EDGE))
             .flex()
             .flex_row()
             .items_center()
@@ -146,6 +106,13 @@ impl Tab {
             .flex()
             .flex_row()
             .items_center()
+            .child(
+                icons::icon(icon::entry_icon(&self.entry, self.workspace.read(cx), cx))
+                    .flex_none()
+                    .mr(px(6.))
+                    .size(px(14.))
+                    .text_color(theme.text_muted),
+            )
             .child(title)
             .children(toolbar.number.map(|number| {
                 div()
@@ -156,11 +123,7 @@ impl Tab {
                     .text_color(theme.text_muted)
                     .child(format!("#{number}"))
             }))
-            .children(
-                board
-                    .as_deref()
-                    .and_then(|id| self.info_panel(id, Place::Below, cx)),
-            );
+            .children(board.as_deref().and_then(|id| self.info_panel(id, cx)));
         let menu = toolbar.entry.map(|entry| {
             let open = self.menu.key() == Some(&TabMenu::Entry);
             let button = menu::button(
@@ -177,13 +140,10 @@ impl Tab {
                     entry.archived,
                     Host::Tab(this.entry.clone()),
                 );
-                let (member, tab) = (this.entry.clone(), cx.entity());
+                let tab = cx.entity();
                 // From the window: its rows read this tab back.
                 this.defer_window(window, cx, move |root, window, cx| {
-                    let rows = Self::through(menu::sections([
-                        root.entry_rows(host, &row, archived, cx),
-                        root.pane_rows(&member, cx),
-                    ]));
+                    let rows = Self::through(root.entry_rows(host, &row, archived, cx));
                     let rows = std::cell::RefCell::new(Some(rows));
                     tab.update(cx, |this, cx| {
                         ContextMenu::toggle(
@@ -209,10 +169,120 @@ impl Tab {
                     cx,
                 ))
         });
+        // In a space beside another pane: it stands over them, or goes back.
+        let zoom = self
+            .root
+            .upgrade()
+            .and_then(|root| root.read(cx).zoomed(&self.entry, cx))
+            .map(|zoomed| {
+                let (mark, tip) = match zoomed {
+                    true => (icons::arrows::Minimize2, "Restore"),
+                    false => (icons::arrows::Maximize2, "Expand"),
+                };
+                menu::button("tab-zoom-pane", mark, menu::Reveal::Always, false, cx)
+                    .tooltip(move |window, cx| Tooltip::text(tip, window, cx))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        cx.stop_propagation();
+                        let entry = this.entry.clone();
+                        this.defer_window(window, cx, move |root, _, cx| {
+                            root.toggle_zoom(&entry, cx)
+                        });
+                    }))
+            });
+        // Across a seam: the one way there is, or a menu of them.
+        let moves = self
+            .root
+            .upgrade()
+            .map(|root| root.read(cx).pane_moves(&self.entry, cx))
+            .unwrap_or_default();
+        let shift = match moves.as_slice() {
+            [] => None,
+            [(side, label, mark)] => {
+                let (side, label) = (*side, *label);
+                Some(
+                    menu::button("tab-move-pane", *mark, menu::Reveal::Always, false, cx)
+                        .tooltip(move |window, cx| Tooltip::text(label, window, cx))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            cx.stop_propagation();
+                            let entry = this.entry.clone();
+                            this.defer_window(window, cx, move |root, window, cx| {
+                                root.move_pane(&entry, side, window, cx)
+                            });
+                        })),
+                )
+            }
+            _ => {
+                let open = self.menu.key() == Some(&TabMenu::Move);
+                let button = menu::button(
+                    "tab-move-pane",
+                    icons::arrows::Move,
+                    menu::Reveal::Always,
+                    open,
+                    cx,
+                )
+                .tooltip(|window, cx| Tooltip::text("Move", window, cx))
+                .on_click(cx.listener(|this, _, window, cx| {
+                    cx.stop_propagation();
+                    let (entry, tab) = (this.entry.clone(), cx.entity());
+                    // From the window: its rows read this tab back.
+                    this.defer_window(window, cx, move |root, window, cx| {
+                        let rows = Self::through(root.move_rows(&entry, cx));
+                        let rows = std::cell::RefCell::new(Some(rows));
+                        tab.update(cx, |this, cx| {
+                            ContextMenu::toggle(
+                                this,
+                                |this| &mut this.menu,
+                                TabMenu::Move,
+                                Place::BelowEnd,
+                                move |_, _, _| {
+                                    menu::chooser(rows.borrow_mut().take().unwrap_or_default())
+                                },
+                                window,
+                                cx,
+                            )
+                        });
+                    });
+                }));
+                Some(
+                    ContextMenu::trigger(
+                        button,
+                        |this: &mut Self| &mut this.menu,
+                        TabMenu::Move,
+                        cx,
+                    )
+                    .children(self.menu.render_for(
+                        &TabMenu::Move,
+                        "tab-move-menu-card",
+                        |this| &mut this.menu,
+                        window,
+                        cx,
+                    )),
+                )
+            }
+        };
+        // In a space it closes the pane; alone, the tab with it.
+        let close = menu::button(
+            "tab-close-pane",
+            icons::notifications::X,
+            menu::Reveal::Always,
+            false,
+            cx,
+        )
+        .tooltip(|window, cx| Tooltip::text("Close", window, cx))
+        .on_click(cx.listener(|this, _, window, cx| {
+            cx.stop_propagation();
+            let entry = this.entry.clone();
+            this.defer_window(window, cx, move |root, window, cx| {
+                root.close_pane(&entry, window, cx)
+            });
+        }));
         Some(
             row.child(name)
                 .children(comments)
                 .children(menu)
+                .children(shift)
+                .children(zoom)
+                .child(close)
                 .into_any_element(),
         )
     }

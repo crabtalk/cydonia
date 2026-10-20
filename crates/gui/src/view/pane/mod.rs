@@ -22,25 +22,21 @@ use bezel::{
 };
 
 /// One pane of what the window lays out: the entry it shows under its title
-/// row. A leaf a space stacks several entries in shows its front.
+/// row.
 pub(crate) struct Pane {
-    /// The pane's name: the first entry of its leaf, which is what the space
-    /// keeps and what every drop and close is aimed at.
+    /// The pane's name: the entry of its leaf, which is what the space keeps
+    /// and what every drop and close is aimed at.
     pub(crate) name: Member,
     workspace: Entity<Workspace>,
     root: WeakEntity<Cydonia>,
-    /// The tab of each entry of the leaf, in the leaf's order.
-    pub(crate) tabs: Vec<Entity<Tab>>,
-    /// The tabs brought to the front since the pane was made, most recent
-    /// last — what [`Self::front_after`] reads. Runtime only; the tab in
-    /// front is the space's.
-    fronts: Vec<Member>,
+    /// The tab on the entry, once the window has made it.
+    pub(crate) tab: Option<Entity<Tab>>,
 }
 
 impl Pane {
-    /// Whether one of this pane's tabs holds the window's focus.
+    /// Whether this pane's tab holds the window's focus.
     pub(crate) fn focused(&self, cx: &App) -> bool {
-        self.tabs.iter().any(|tab| tab.read(cx).focused)
+        self.tab.as_ref().is_some_and(|tab| tab.read(cx).focused)
     }
 
     pub(crate) fn new(
@@ -54,63 +50,8 @@ impl Pane {
             name,
             workspace,
             root,
-            tabs: Vec::new(),
-            fronts: Vec::new(),
+            tab: None,
         }
-    }
-
-    /// The pane's strip, as the space orders it.
-    pub(crate) fn stack(&self, cx: &App) -> Vec<Member> {
-        self.workspace.read(cx).stack_of(&self.name)
-    }
-
-    /// The entry in front.
-    pub(crate) fn front(&self, cx: &App) -> Member {
-        self.workspace
-            .read(cx)
-            .front_of(&self.name)
-            .unwrap_or_else(|| self.name.clone())
-    }
-
-    pub(crate) fn set_front(&mut self, front: Member, cx: &mut Context<Self>) {
-        let stack = self.stack(cx);
-        self.fronts
-            .retain(|seen| *seen != front && stack.contains(seen));
-        self.fronts.push(front.clone());
-        self.workspace
-            .update(cx, |workspace, cx| workspace.set_front(&front, cx));
-        cx.notify();
-    }
-
-    /// The tab in front once `gone` leaves the strip: the one in front now
-    /// where that is not `gone`; else the one in front before it, or else its
-    /// neighbour — to its left, to its right for the first. `None` where
-    /// `gone` is the strip's last tab, or not in it.
-    pub(crate) fn front_after(&self, gone: &Member, cx: &App) -> Option<Member> {
-        let stack = self.stack(cx);
-        let at = stack.iter().position(|tab| tab == gone)?;
-        let front = self.front(cx);
-        if front != *gone {
-            return Some(front);
-        }
-        self.fronts
-            .iter()
-            .rev()
-            .find(|tab| *tab != gone && stack.contains(tab))
-            .or_else(|| match at {
-                0 => stack.get(1),
-                at => stack.get(at - 1),
-            })
-            .cloned()
-    }
-
-    /// The tab in front.
-    pub(crate) fn front_tab(&self, cx: &App) -> Option<Entity<Tab>> {
-        let front = self.front(cx);
-        self.tabs
-            .iter()
-            .find(|tab| tab.read(cx).entry == front)
-            .cloned()
     }
 }
 
@@ -118,8 +59,8 @@ impl Render for Pane {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::of(cx).clone();
         let key = arrangement::key_of(&self.name);
-        let front = self.front(cx);
-        let tab = self.front_tab(cx);
+        let front = self.name.clone();
+        let tab = self.tab.clone();
         let focus = tab.as_ref().map(|tab| tab.read(cx).focus.clone());
         let body = match tab {
             Some(tab) => tab
@@ -136,9 +77,8 @@ impl Render for Pane {
             // With the context but without this, a pane claims chords that
             // never reach it: an action runs through the focused element's
             // ancestors, and a pane showing a board holds nothing that takes
-            // the focus — see [`Tab::focus`]. The front tab's handle: the
-            // body, the composer and [`Cydonia::focus_pane`] all answer for
-            // the tab in front.
+            // the focus — see [`Tab::focus`]. The tab's handle: the body, the
+            // composer and [`Cydonia::focus_pane`] all answer for it.
             .when_some(focus, |pane, focus| pane.track_focus(&focus))
             .group("pane")
             .size_full()
