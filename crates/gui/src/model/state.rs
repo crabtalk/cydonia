@@ -126,13 +126,13 @@ pub struct State {
     #[serde(default)]
     pub commands: Vec<String>,
     /// The window's tabs, in strip order — see
-    /// [`crate::model::workspace::Workspace::tabs`]. Nothing in a file written
-    /// before tabs, which lands on the active project's `last`.
+    /// [`crate::model::workspace::Workspace::strip`]. Nothing in a file
+    /// written before tabs, which lands on the active project's `last`.
     #[serde(default)]
-    pub tabs: Option<Vec<artifact::space::Member>>,
+    pub tabs: Option<Vec<crate::model::workspace::Slot>>,
     /// The tab in front. One the strip no longer holds, or none, is its first.
     #[serde(default)]
-    pub front: Option<artifact::space::Member>,
+    pub front: Option<crate::model::workspace::Slot>,
 }
 
 /// Where the main window stands, in the platform's logical pixels. For a

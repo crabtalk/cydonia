@@ -1,6 +1,6 @@
 //! A tab's title row, over what it shows: what it is on, the field that
 //! renames it, a board's identity panel, an article's comments, and the
-//! entry's `···`.
+//! `···` holding the entry's menu — and, in a space, the pane's.
 
 use super::{Tab, TabMenu, header::Naming};
 use crate::view::{
@@ -131,10 +131,14 @@ impl Tab {
                     entry.archived,
                     Host::Tab(this.entry.clone()),
                 );
+                let member = this.entry.clone();
                 let Some(rows) = this
                     .root
                     .update(cx, |root, cx| {
-                        Self::through(root.entry_rows(host, &row, archived, cx))
+                        Self::through(menu::sections([
+                            root.entry_rows(host, &row, archived, cx),
+                            root.pane_rows(&member, cx),
+                        ]))
                     })
                     .ok()
                 else {

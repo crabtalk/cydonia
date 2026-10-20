@@ -268,10 +268,6 @@ impl Workspace {
         id: String,
         cx: &mut Context<Self>,
     ) {
-        // Opening any entry leaves the arrangement. Here rather than in each
-        // `open_*`: this is the one place they all come through, so there is
-        // no way to open an entry and forget to.
-        self.leave_space();
         self.note_landing(project, kind, id, cx);
     }
 

@@ -250,7 +250,7 @@ fn opening_an_entry_a_space_holds_enters_the_space(cx: &mut gpui::TestAppContext
                 "the arrangement holding it is what opening it opens"
             );
             root.sync_leaves(window, cx);
-            assert_eq!(root.leaves.len(), 2, "arranged, not alone");
+            assert_eq!(root.panes.len(), 2, "arranged, not alone");
             assert_eq!(
                 Some(&root.leaf().unwrap().read(cx).entry),
                 Some(&a),

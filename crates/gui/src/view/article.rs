@@ -677,7 +677,7 @@ pub(crate) struct ArticleView {
     find: Find,
     /// The picker the labels under the title open.
     labels: Labels,
-    /// The comments button the pane's bar draws for it.
+    /// The comments button the tab's title row draws for it.
     pub(crate) comments: Entity<comments::CommentsButton>,
     /// The field under the open comment that asks a follow-up on it. One,
     /// since one comment is open at a time.

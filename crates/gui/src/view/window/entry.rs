@@ -37,9 +37,10 @@ impl Cydonia {
             library: self.library.is_some(),
             focused: self.focused_entry(cx),
             open: self
-                .arrangement(cx)
-                .map(|space| space.entries())
-                .unwrap_or_default(),
+                .leaves
+                .iter()
+                .map(|leaf| leaf.read(cx).entry.clone())
+                .collect(),
         }
     }
 

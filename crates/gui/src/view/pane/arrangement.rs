@@ -4,7 +4,8 @@
 //! The tree is [`artifact::space::Node`] — see there for what the shape
 //! means. This is only how it lands on the window.
 
-use super::{Pane, Seat};
+use super::Pane;
+use crate::model::workspace::Slot;
 use crate::view::kit::menu;
 use crate::{
     model::workspace::Showing,
@@ -45,7 +46,7 @@ impl Cydonia {
     /// [`crate::model::workspace::Workspace::arranged`]. The tree is walked
     /// while the workspace is drawn from, so it is cloned out first.
     pub(crate) fn arrangement(&self, cx: &App) -> Option<Space> {
-        self.workspace.read(cx).arranged().cloned()
+        self.workspace.read(cx).arranged()
     }
 
     /// The panes the window is arranged in, or nothing where no tab is open.
@@ -228,11 +229,6 @@ impl Cydonia {
             self.panes.clear();
             return;
         };
-        let first = space.entries().first().cloned();
-        let last = match self.changes.is_none() {
-            true => space.zoomed().or_else(|| top_right(&space.tree)),
-            false => None,
-        };
         let mut kept = Vec::new();
         for name in space.panes() {
             let stack = self.workspace.read(cx).stack_of(&name);
@@ -268,16 +264,10 @@ impl Cydonia {
                         .cloned()
                 })
                 .collect();
-            let seat = Seat {
-                first: first.as_ref() == Some(&name),
-                last: last.as_ref() == Some(&name),
-                sidebar_open: self.sidebar_open,
-            };
             pane.update(cx, |pane, cx| {
-                if pane.name != name || pane.tabs != tabs || pane.seat != seat {
+                if pane.name != name || pane.tabs != tabs {
                     pane.name = name.clone();
                     pane.tabs = tabs;
-                    pane.seat = seat;
                     cx.notify();
                 }
             });
@@ -315,41 +305,6 @@ impl Cydonia {
         })
     }
 
-    /// Move `moving` to `to`'s place in their pane's strip. `false`, and
-    /// nothing moves, where the two are not in one strip.
-    ///
-    /// A pane is named by its strip's first entry, so a move that changes the
-    /// first renames the pane.
-    pub(crate) fn reorder_tab(
-        &mut self,
-        moving: &Member,
-        to: &Member,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        let stack = self.workspace.read(cx).stack_of(to);
-        if moving == to || !stack.contains(moving) {
-            return false;
-        }
-        self.workspace
-            .update(cx, |workspace, cx| workspace.reorder_tab(moving, to, cx));
-        let (Some(was), Some(now)) = (
-            stack.first().cloned(),
-            self.workspace.read(cx).stack_of(to).first().cloned(),
-        ) else {
-            return true;
-        };
-        if was != now
-            && let Some(pane) = self.pane_named(&was, cx)
-        {
-            pane.update(cx, |pane, cx| {
-                pane.name = now;
-                cx.notify();
-            });
-        }
-        cx.notify();
-        true
-    }
-
     /// Note a tab as the one most recently brought to the front, which is
     /// where a close falls back to — see [`Cydonia::tab_history`].
     fn remember_front(&mut self, tab: &Member) {
@@ -381,7 +336,7 @@ impl Cydonia {
     /// The member a carried item names, once it has landed.
     fn dropped(&mut self, item: &Dragged, cx: &mut Context<Self>) -> Option<Member> {
         match item {
-            Dragged::Tab(member) => Some(member.clone()),
+            Dragged::Tab(slot) => slot.entry().cloned(),
             Dragged::Row(row) => row.landed(&self.workspace.clone(), cx),
         }
     }
@@ -390,15 +345,23 @@ impl Cydonia {
     pub(crate) fn label_of_dragged(&self, item: &Dragged, cx: &App) -> String {
         match item {
             Dragged::Row(row) => row.label(self.workspace.read(cx), cx),
-            Dragged::Tab(member) => self
+            Dragged::Tab(Slot::Entry(member)) => self
                 .member_toolbar(member, cx)
                 .map(|toolbar| toolbar.title)
                 .unwrap_or_default(),
+            Dragged::Tab(Slot::Space { space }) => {
+                let workspace = self.workspace.read(cx);
+                workspace
+                    .space_ix(space)
+                    .and_then(|ix| workspace.spaces.get(ix))
+                    .map(|space| space.label().to_owned())
+                    .unwrap_or_default()
+            }
         }
     }
 
-    /// A release on a pane: into its strip where it joins, beside it where
-    /// it lands on an edge. Answers the pane the arrival is now in front of.
+    /// A release on a pane: beside it where it lands on an edge, and as a tab
+    /// of the strip anywhere else. Answers the entry the focus is now on.
     pub(crate) fn dock_drop(
         &mut self,
         event: &docking::Drop<Member, Dragged>,
@@ -407,7 +370,7 @@ impl Cydonia {
     ) -> Option<Member> {
         let target = &event.pane;
         let stack = self.workspace.read(cx).stack_of(target);
-        if let Dragged::Tab(tab) = &event.item
+        if let Dragged::Tab(Slot::Entry(tab)) = &event.item
             && stack.contains(tab)
             && (event.zone == docking::Zone::Join || stack.len() == 1)
         {
@@ -419,7 +382,7 @@ impl Cydonia {
         }
         let side = match event.zone {
             docking::Zone::Join => {
-                self.add_tab(target, arriving.clone(), window, cx);
+                self.join_strip(arriving.clone(), window, cx);
                 return Some(arriving);
             }
             docking::Zone::Left => Side::Left,
@@ -437,16 +400,18 @@ impl Cydonia {
         Some(arriving)
     }
 
-    /// What the `···` on a pane's bar offers: what can be done to the *pane*.
-    ///
-    /// Nothing about the entry it is on — no rename, no archive, no delete.
-    /// Those act on a thing that has its own row in the sidebar and its own
-    /// title row in the tab, and `../desktop`'s rule for a `···` is that it
-    /// carries only what has no affordance elsewhere. A delete one click from
-    /// the moves would also be a delete nobody meant.
-    ///
-    /// Closing is not here either: it keeps the button on the bar.
+    /// What can be done to the pane of a space `entry` is on: zoom it, move
+    /// it across a seam, close it. Nothing for an entry no space in front
+    /// holds beside another — see [`crate::view::pane::title`].
     pub(crate) fn pane_rows(&self, entry: &Member, cx: &App) -> Vec<(Item, menu::Act)> {
+        let several = self
+            .workspace
+            .read(cx)
+            .active_space()
+            .is_some_and(|space| space.contains(entry) && space.leaves() > 1);
+        if !several {
+            return Vec::new();
+        }
         let zoomed = self
             .arrangement(cx)
             .and_then(|space| space.zoomed())
@@ -486,7 +451,14 @@ impl Cydonia {
                 move |this, window, cx| this.move_pane(&on, side, window, cx),
             ));
         }
-        menu::sections([zoom, moves])
+        let close = vec![menu::row::<Self>(
+            Item::action("Close pane").with_icon(icons::notifications::X),
+            {
+                let on = entry.clone();
+                move |this, window, cx| this.close_pane(&on, window, cx)
+            },
+        )];
+        menu::sections([zoom, moves, close])
     }
 
     /// Exchange a pane with the one across the seam, and keep the focus on it
@@ -675,51 +647,36 @@ impl Cydonia {
         cx.notify();
     }
 
-    /// Put `arriving` in `pane`'s strip as its front tab, and focus it.
-    pub(crate) fn add_tab(
+    /// Open `arriving` as a tab of the strip, in front, and focus it.
+    pub(crate) fn join_strip(
         &mut self,
-        pane: &Member,
         arriving: Member,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.workspace.update(cx, |workspace, cx| {
-            workspace.stack_pane(pane, &arriving, cx)
-        });
-        // The pane's name can have changed under the move — a tab dragged out
-        // of a strip leaves the one behind it holding the pane — so the strip
-        // is read back rather than assumed.
-        let stack = self.workspace.read(cx).stack_of(&arriving);
-        if let Some(pane) = stack.first().cloned() {
-            self.set_front(&pane, &arriving, cx);
-            self.remember_front(&arriving);
-        }
+        self.library = None;
+        self.workspace
+            .update(cx, |workspace, cx| workspace.join_strip(&arriving, cx));
+        self.remember_front(&arriving);
         self.sync_leaves(window, cx);
         self.focused = usize::MAX;
         self.focus_pane(&arriving, window, cx);
         cx.notify();
     }
 
-    /// What the `+` in a pane's bar starts: the sidebar's `+` for the
-    /// project of the pane's front tab, landing as a tab of the pane.
-    pub(crate) fn pane_add_rows(
-        &self,
-        pane: &Member,
-        project: usize,
-        cx: &App,
-    ) -> Vec<(Item, menu::Act)> {
+    /// What the strip's `+` starts: the sidebar's `+` for `project`,
+    /// landing as a tab of its own.
+    pub(crate) fn new_tab_rows(&self, project: usize, cx: &App) -> Vec<(Item, menu::Act)> {
         new::rows(new::offered(self.workspace.read(cx)), |kind| {
-            let pane = pane.clone();
             Box::new(move |this: &mut Cydonia, window, cx| {
-                this.new_in_pane(&pane, project, kind, window, cx)
+                this.new_in_tab(project, kind, window, cx)
             })
         })
     }
 
-    /// Make an entry in `project` and open it as the front tab of `pane`.
-    fn new_in_pane(
+    /// Make an entry in `project` and open it as a tab of its own.
+    fn new_in_tab(
         &mut self,
-        pane: &Member,
         project: usize,
         kind: New,
         window: &mut Window,
@@ -727,7 +684,7 @@ impl Cydonia {
     ) {
         self.commit(cx);
         if let New::Board = kind {
-            return self.ask_new_board_into(project, Some(pane.clone()), window, cx);
+            return self.ask_new_board(project, window, cx);
         }
         // No agent to open one on: the session pane says so and offers the
         // install.
@@ -742,9 +699,7 @@ impl Cydonia {
                 New::Session(at) => {
                     let agent = workspace.agent_at(at, cx)?;
                     let id = workspace.new_session(agent, None, cx)?;
-                    // A space names its members by file, and a new session
-                    // has none until its first turn.
-                    workspace.retain_session(id, cx)?;
+                    workspace.mint_record(id, cx)?;
                     Showing::Session(id)
                 }
                 New::Article => {
@@ -768,7 +723,7 @@ impl Cydonia {
             workspace.member_of(project, showing, cx)
         });
         if let Some(member) = member {
-            self.add_tab(pane, member, window, cx);
+            self.join_strip(member, window, cx);
         }
     }
 
@@ -814,18 +769,6 @@ fn seam_id(path: &[usize], at: usize) -> usize {
 #[cfg(test)]
 #[path = "../../../tests/unit/open_entries.rs"]
 mod open_entry_tests;
-
-/// The pane at a tree's top right: the last of a row, the first of a column.
-fn top_right(node: &Node<Member>) -> Option<Member> {
-    match node {
-        Node::Leaf { entry, .. } => Some(entry.clone()),
-        Node::Split { axis, children, .. } => match axis {
-            Split::Horizontal => children.last(),
-            Split::Vertical => children.first(),
-        }
-        .and_then(top_right),
-    }
-}
 
 #[cfg(test)]
 #[path = "../../../tests/unit/pane_footer.rs"]

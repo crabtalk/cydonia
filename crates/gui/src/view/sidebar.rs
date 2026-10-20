@@ -569,7 +569,8 @@ pub(crate) fn tint(selected: bool, archived: bool, theme: &Theme) -> Hsla {
 #[derive(Clone, PartialEq)]
 pub(crate) enum Dragged {
     Row(Row),
-    Tab(Member),
+    /// A tab of the window's strip.
+    Tab(crate::model::workspace::Slot),
 }
 
 /// A row's kind and the section it is listed in.

@@ -179,8 +179,8 @@ fn a_member_in_a_shut_project_resolves_to_nothing(cx: &mut gpui::TestAppContext)
     });
 }
 
-/// Opening any entry leaves the arrangement — one funnel, so no `open_*` can
-/// forget to. The space is left, not deleted.
+/// An entry opened as a tab of its own leaves the space behind its tab. The
+/// space is left, not deleted.
 #[gpui::test]
 fn opening_another_entry_leaves_the_space(cx: &mut gpui::TestAppContext) {
     let scratch = Scratch::new("leave");
@@ -190,7 +190,7 @@ fn opening_another_entry_leaves_the_space(cx: &mut gpui::TestAppContext) {
         workspace.arrange(&a, &b, Side::Right, cx);
         assert!(workspace.active_space().is_some(), "arranged");
 
-        workspace.open_board(0, 0, cx);
+        workspace.open_tab(a.clone(), crate::model::workspace::Opening::Kept, cx);
         assert!(workspace.active_space().is_none(), "left it");
         assert_eq!(workspace.spaces.len(), 1, "but it is still there");
 
@@ -213,7 +213,7 @@ fn an_entry_belongs_to_one_space(cx: &mut gpui::TestAppContext) {
 
         workspace.arrange(&a, &c, Side::Right, cx);
         let first = workspace.active_space().expect("open").id.clone();
-        workspace.leave_space();
+        workspace.open_tab(b.clone(), crate::model::workspace::Opening::Kept, cx);
         workspace.arrange(&b, &c, Side::Right, cx);
 
         let held = workspace.space_holding(&c).expect("in a space");
@@ -327,7 +327,7 @@ fn the_pane_dropped_on_leaves_the_space_that_held_it(cx: &mut gpui::TestAppConte
         // Out on its own and dragged into a second arrangement, which is what
         // opening an entry the space does not hold and then dropping beside it
         // does.
-        workspace.leave_space();
+        workspace.open_tab(a.clone(), crate::model::workspace::Opening::Kept, cx);
         workspace.arrange(&a, &c, Side::Right, cx);
 
         let open = workspace.active_space().expect("open");
@@ -484,162 +484,22 @@ fn resting_session(id: u64, project: &std::path::Path) -> crate::model::session:
     )
 }
 
-/// An entry dropped on a pane's bar joins that pane rather than splitting it,
-/// and the arrangement stays the shape it was.
+/// A drop on a pane but not on its edge opens the arrival as a tab of the
+/// strip, and starts no space.
 #[gpui::test]
-fn stacking_joins_a_pane_instead_of_splitting_it(cx: &mut gpui::TestAppContext) {
-    let scratch = Scratch::new("stack");
-    cx.update(|cx| bezel::theme::Theme::install(bezel::theme::Appearance::Light, cx));
-    let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));
-
+fn a_drop_off_the_edge_opens_a_tab(cx: &mut gpui::TestAppContext) {
+    use crate::model::workspace::Opening;
+    let scratch = Scratch::new("join-strip");
+    let (workspace, a, b) = two_boards(&scratch, cx);
     workspace.update(cx, |workspace, cx| {
-        workspace.open_project(scratch.project("one"), cx);
-        for (name, key) in [("First", "ONE"), ("Second", "TWO"), ("Third", "THR")] {
-            workspace.new_board(0, name.into(), key, cx).ok();
-        }
-        let a = workspace.board_member(0, 0).expect("a member");
-        let b = workspace.board_member(0, 1).expect("a member");
-        let c = workspace.board_member(0, 2).expect("a member");
-        workspace.arrange(&a, &b, Side::Right, cx);
-        assert_eq!(workspace.active_space().expect("open").leaves(), 2);
-
-        workspace.stack_pane(&a, &c, cx);
-
-        let space = workspace.active_space().expect("open");
-        assert_eq!(space.leaves(), 2, "still two panes");
-        assert_eq!(space.panes(), vec![a.clone(), b.clone()]);
-        assert_eq!(workspace.stack_of(&a), vec![a.clone(), c.clone()]);
-        // Named from the tab as well as from the pane: either says which pane.
-        assert_eq!(workspace.stack_of(&c), vec![a, c]);
-        assert_eq!(workspace.stack_of(&b), vec![b]);
-    });
-}
-
-/// Closing a tab of a pane holding several leaves the pane — and so the
-/// space — exactly where it was.
-#[gpui::test]
-fn closing_a_tab_leaves_the_pane_and_the_space_alone(cx: &mut gpui::TestAppContext) {
-    let scratch = Scratch::new("close-tab");
-    cx.update(|cx| bezel::theme::Theme::install(bezel::theme::Appearance::Light, cx));
-    let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));
-
-    workspace.update(cx, |workspace, cx| {
-        workspace.open_project(scratch.project("one"), cx);
-        for (name, key) in [("First", "ONE"), ("Second", "TWO"), ("Third", "THR")] {
-            workspace.new_board(0, name.into(), key, cx).ok();
-        }
-        let a = workspace.board_member(0, 0).expect("a member");
-        let b = workspace.board_member(0, 1).expect("a member");
-        let c = workspace.board_member(0, 2).expect("a member");
-        workspace.arrange(&a, &b, Side::Right, cx);
-        workspace.stack_pane(&a, &c, cx);
-
-        // Two panes and one of them holding a tab: closing that tab must not
-        // read as closing down to one pane, which drops the space.
-        workspace.close_pane(&c, cx);
-
-        let space = workspace.active_space().expect("still open");
-        assert_eq!(space.leaves(), 2);
-        assert_eq!(workspace.stack_of(&a), vec![a.clone()]);
-
-        // Now it is the pane's last, so the pane goes — and with it the
-        // space, which is down to one.
-        workspace.close_pane(&a, cx);
-        assert!(workspace.active_space().is_none(), "the space is gone");
-        assert_eq!(workspace.projects[0].board, Some(1), "left on what remains");
-    });
-}
-
-/// An entry is in one pane at a time: stacking one already arranged elsewhere
-/// moves it rather than showing it twice.
-#[gpui::test]
-fn stacking_an_arranged_entry_moves_it(cx: &mut gpui::TestAppContext) {
-    let scratch = Scratch::new("stack-move");
-    cx.update(|cx| bezel::theme::Theme::install(bezel::theme::Appearance::Light, cx));
-    let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));
-
-    workspace.update(cx, |workspace, cx| {
-        workspace.open_project(scratch.project("one"), cx);
-        for (name, key) in [("First", "ONE"), ("Second", "TWO"), ("Third", "THR")] {
-            workspace.new_board(0, name.into(), key, cx).ok();
-        }
-        let a = workspace.board_member(0, 0).expect("a member");
-        let b = workspace.board_member(0, 1).expect("a member");
-        let c = workspace.board_member(0, 2).expect("a member");
-        workspace.arrange(&a, &b, Side::Right, cx);
-        workspace.arrange(&b, &c, Side::Below, cx);
-        assert_eq!(workspace.active_space().expect("open").leaves(), 3);
-
-        workspace.stack_pane(&a, &c, cx);
-
-        let space = workspace.active_space().expect("open");
-        assert_eq!(space.leaves(), 2, "the pane it left collapsed");
-        assert_eq!(space.entries().len(), 3, "and nothing is shown twice");
-        assert_eq!(workspace.stack_of(&a), vec![a, c]);
-    });
-}
-
-/// With no space open, a tab dropped on the one pane showing starts the space:
-/// one pane, holding both.
-#[gpui::test]
-fn stacking_onto_the_windows_strip_adds_a_tab(cx: &mut gpui::TestAppContext) {
-    let scratch = Scratch::new("stack-strip");
-    cx.update(|cx| bezel::theme::Theme::install(bezel::theme::Appearance::Light, cx));
-    let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));
-
-    workspace.update(cx, |workspace, cx| {
-        workspace.open_project(scratch.project("one"), cx);
-        for (name, key) in [("First", "ONE"), ("Second", "TWO")] {
-            workspace.new_board(0, name.into(), key, cx).ok();
-        }
-        let a = workspace.board_member(0, 0).expect("a member");
-        let b = workspace.board_member(0, 1).expect("a member");
-        workspace.open_tab(a.clone(), crate::model::workspace::Opening::Kept, cx);
-
-        workspace.stack_pane(&a, &b, cx);
-
+        workspace.open_tab(a.clone(), Opening::Kept, cx);
+        workspace.join_strip(&b, cx);
         assert!(workspace.active_space().is_none(), "no space started");
         assert_eq!(workspace.tab_strip(), vec![a.clone(), b.clone()]);
-        assert_eq!(workspace.stack_of(&a), vec![a.clone(), b.clone()]);
-
-        // Onto itself it is nothing.
-        workspace.stack_pane(&a, &a, cx);
-        assert_eq!(workspace.tab_strip(), vec![a.clone(), b.clone()]);
-    });
-}
-
-/// A tab carried from one space onto a pane of another moves there: the space
-/// it left, down to one entry, goes.
-#[gpui::test]
-fn stacking_moves_an_entry_between_spaces(cx: &mut gpui::TestAppContext) {
-    let scratch = Scratch::new("stack-across");
-    cx.update(|cx| bezel::theme::Theme::install(bezel::theme::Appearance::Light, cx));
-    let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));
-
-    workspace.update(cx, |workspace, cx| {
-        workspace.open_project(scratch.project("one"), cx);
-        for (name, key) in [
-            ("First", "ONE"),
-            ("Second", "TWO"),
-            ("Third", "THR"),
-            ("Fourth", "FOU"),
-        ] {
-            workspace.new_board(0, name.into(), key, cx).ok();
-        }
-        let a = workspace.board_member(0, 0).expect("a member");
-        let b = workspace.board_member(0, 1).expect("a member");
-        let c = workspace.board_member(0, 2).expect("a member");
-        let d = workspace.board_member(0, 3).expect("a member");
-        workspace.arrange(&a, &b, Side::Right, cx);
-        workspace.leave_space();
-        workspace.arrange(&c, &d, Side::Right, cx);
-        assert_eq!(workspace.spaces.len(), 2);
-
-        workspace.stack_pane(&c, &a, cx);
-
-        assert_eq!(workspace.spaces.len(), 1, "the space a left is gone");
-        assert_eq!(workspace.stack_of(&c), vec![c.clone(), a.clone()]);
-        assert!(!workspace.active_space().expect("open").contains(&b));
+        assert_eq!(
+            workspace.front_slot().and_then(|slot| slot.entry()),
+            Some(&b)
+        );
     });
 }
 
@@ -672,7 +532,6 @@ fn a_pane_put_on_an_article_opens_it(cx: &mut gpui::TestAppContext) {
         );
 
         workspace.arrange(&board, &article, Side::Right, cx);
-        workspace.stack_pane(&board, &article, cx);
         let id = workspace.projects[0].articles[0].id.clone();
         workspace.select_showing(0, Showing::Article(id), cx);
 
@@ -685,89 +544,6 @@ fn a_pane_put_on_an_article_opens_it(cx: &mut gpui::TestAppContext) {
             "the pane opened it",
         );
         assert_eq!(workspace.projects[0].article, Some(0));
-    });
-}
-
-/// A tab carried from one pane's bar to another's leaves the strip it was in
-/// and joins the one it landed on. The panes stay where they are — a tab
-/// crossing is not a pane moving.
-#[gpui::test]
-fn a_tab_can_be_carried_to_another_pane(cx: &mut gpui::TestAppContext) {
-    let scratch = Scratch::new("carry-tab");
-    cx.update(|cx| bezel::theme::Theme::install(bezel::theme::Appearance::Light, cx));
-    let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));
-
-    workspace.update(cx, |workspace, cx| {
-        workspace.open_project(scratch.project("one"), cx);
-        for (name, key) in [("First", "ONE"), ("Second", "TWO"), ("Third", "THR")] {
-            workspace.new_board(0, name.into(), key, cx).ok();
-        }
-        let a = workspace.board_member(0, 0).expect("a member");
-        let b = workspace.board_member(0, 1).expect("a member");
-        let c = workspace.board_member(0, 2).expect("a member");
-        workspace.arrange(&a, &b, Side::Right, cx);
-        workspace.stack_pane(&a, &c, cx);
-        assert_eq!(workspace.stack_of(&a), vec![a.clone(), c.clone()]);
-
-        workspace.stack_pane(&b, &c, cx);
-
-        let space = workspace.active_space().expect("open");
-        assert_eq!(space.leaves(), 2, "the panes did not move");
-        assert_eq!(space.panes(), vec![a.clone(), b.clone()]);
-        assert_eq!(workspace.stack_of(&a), vec![a.clone()]);
-        assert_eq!(workspace.stack_of(&b), vec![b.clone(), c.clone()]);
-    });
-}
-
-/// The same tab let go over the bar it is already in does nothing at all.
-#[gpui::test]
-fn a_tab_dropped_on_its_own_bar_stays_put(cx: &mut gpui::TestAppContext) {
-    let scratch = Scratch::new("same-bar");
-    cx.update(|cx| bezel::theme::Theme::install(bezel::theme::Appearance::Light, cx));
-    let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));
-
-    workspace.update(cx, |workspace, cx| {
-        workspace.open_project(scratch.project("one"), cx);
-        for (name, key) in [("First", "ONE"), ("Second", "TWO"), ("Third", "THR")] {
-            workspace.new_board(0, name.into(), key, cx).ok();
-        }
-        let a = workspace.board_member(0, 0).expect("a member");
-        let b = workspace.board_member(0, 1).expect("a member");
-        let c = workspace.board_member(0, 2).expect("a member");
-        workspace.arrange(&a, &b, Side::Right, cx);
-        workspace.stack_pane(&a, &c, cx);
-
-        workspace.stack_pane(&a, &c, cx);
-
-        assert_eq!(workspace.stack_of(&a), vec![a, c], "order kept");
-    });
-}
-
-/// A tab carried onto a pane's *edge* is pulled out of its strip into a pane
-/// of its own — the other half of the gesture.
-#[gpui::test]
-fn a_tab_carried_to_an_edge_becomes_its_own_pane(cx: &mut gpui::TestAppContext) {
-    let scratch = Scratch::new("tab-to-edge");
-    cx.update(|cx| bezel::theme::Theme::install(bezel::theme::Appearance::Light, cx));
-    let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));
-
-    workspace.update(cx, |workspace, cx| {
-        workspace.open_project(scratch.project("one"), cx);
-        for (name, key) in [("First", "ONE"), ("Second", "TWO"), ("Third", "THR")] {
-            workspace.new_board(0, name.into(), key, cx).ok();
-        }
-        let a = workspace.board_member(0, 0).expect("a member");
-        let b = workspace.board_member(0, 1).expect("a member");
-        let c = workspace.board_member(0, 2).expect("a member");
-        workspace.arrange(&a, &b, Side::Right, cx);
-        workspace.stack_pane(&a, &c, cx);
-
-        workspace.arrange(&b, &c, Side::Below, cx);
-
-        let space = workspace.active_space().expect("open");
-        assert_eq!(space.leaves(), 3);
-        assert_eq!(workspace.stack_of(&a), vec![a], "it left the strip");
-        assert_eq!(workspace.stack_of(&c), vec![c], "and holds a pane alone");
     });
 }
 
@@ -796,7 +572,7 @@ fn the_open_space_is_restored_at_launch(cx: &mut gpui::TestAppContext) {
     });
 }
 
-/// Leaving the arrangement for a single entry is remembered too — the next
+/// A single entry brought in front of the space is remembered too — the next
 /// launch lands on that entry, not back in the space.
 #[gpui::test]
 fn leaving_the_space_is_remembered(cx: &mut gpui::TestAppContext) {
@@ -805,7 +581,9 @@ fn leaving_the_space_is_remembered(cx: &mut gpui::TestAppContext) {
 
     workspace.update(cx, |workspace, cx| {
         workspace.arrange(&a, &b, Side::Right, cx);
-        workspace.open_board(0, 0, cx);
+        workspace.new_board(0, "Third".into(), "THR", cx).ok();
+        let c = workspace.board_member(0, 0).expect("a member");
+        workspace.open_tab(c, crate::model::workspace::Opening::Kept, cx);
     });
 
     assert_eq!(state::restore().space, None);
@@ -903,7 +681,7 @@ fn a_space_keeps_the_place_it_was_dragged_to(cx: &mut gpui::TestAppContext) {
         workspace.new_board(0, "Fourth".into(), "FOU", cx).ok();
         let c = workspace.board_member(0, 0).expect("a member");
         let d = workspace.board_member(0, 1).expect("a member");
-        workspace.leave_space();
+        workspace.open_tab(c.clone(), crate::model::workspace::Opening::Kept, cx);
         workspace.arrange(&c, &d, Side::Right, cx);
 
         let ids: Vec<String> = workspace
@@ -911,7 +689,7 @@ fn a_space_keeps_the_place_it_was_dragged_to(cx: &mut gpui::TestAppContext) {
             .iter()
             .map(|space| space.id.clone())
             .collect();
-        assert_eq!(workspace.space, Some(0), "the newest is the open one");
+        assert_eq!(workspace.space(), Some(0), "the newest is the open one");
 
         workspace.move_space(&ids[0], 1, cx);
         assert_eq!(
@@ -922,7 +700,7 @@ fn a_space_keeps_the_place_it_was_dragged_to(cx: &mut gpui::TestAppContext) {
                 .collect::<Vec<_>>(),
             vec![ids[1].clone(), ids[0].clone()]
         );
-        assert_eq!(workspace.space, Some(1), "and it is still the open one");
+        assert_eq!(workspace.space(), Some(1), "and it is still the open one");
 
         workspace.reload_spaces(cx);
         assert_eq!(
@@ -934,35 +712,6 @@ fn a_space_keeps_the_place_it_was_dragged_to(cx: &mut gpui::TestAppContext) {
             vec![ids[1].clone(), ids[0].clone()],
             "a re-read is not a re-sort"
         );
-    });
-}
-
-/// Two entries in one pane beside a third: closing the lone pane leaves the
-/// space holding the pane of two tabs. What is left is counted in entries,
-/// not panes.
-#[gpui::test]
-fn closing_a_pane_beside_a_stack_keeps_the_space(cx: &mut gpui::TestAppContext) {
-    let scratch = Scratch::new("close-beside-stack");
-    cx.update(|cx| bezel::theme::Theme::install(bezel::theme::Appearance::Light, cx));
-    let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));
-
-    workspace.update(cx, |workspace, cx| {
-        workspace.open_project(scratch.project("one"), cx);
-        for (name, key) in [("First", "ONE"), ("Second", "TWO"), ("Third", "THR")] {
-            workspace.new_board(0, name.into(), key, cx).ok();
-        }
-        let a = workspace.board_member(0, 0).expect("a member");
-        let b = workspace.board_member(0, 1).expect("a member");
-        let c = workspace.board_member(0, 2).expect("a member");
-        workspace.arrange(&a, &b, Side::Right, cx);
-        workspace.stack_pane(&a, &c, cx);
-
-        workspace.close_pane(&b, cx);
-
-        let space = workspace.active_space().expect("still open");
-        assert_eq!(space.leaves(), 1, "one pane left");
-        assert_eq!(space.entries(), vec![a.clone(), c.clone()], "both tabs");
-        assert_eq!(workspace.stack_of(&a), vec![a, c], "in one strip");
     });
 }
 
@@ -1101,32 +850,6 @@ fn a_space_fold_is_kept_like_a_project_fold(cx: &mut gpui::TestAppContext) {
     restored.update(cx, |workspace, _| assert!(workspace.space_folded(&id)));
 }
 
-/// An article made from a pane's `+` lands as a tab of that pane, in the space
-/// that is open.
-#[gpui::test]
-fn an_article_made_in_a_pane_stays_in_the_space(cx: &mut gpui::TestAppContext) {
-    let scratch = Scratch::new("pane-article");
-    let (workspace, a, b) = two_boards(&scratch, cx);
-    workspace.update(cx, |workspace, cx| {
-        workspace.arrange(&a, &b, Side::Right, cx);
-        let ix = workspace.create_article().expect("made");
-        let id = workspace.projects[0].articles[ix].id.clone();
-        let member = workspace
-            .member_of(0, Showing::Article(id), cx)
-            .expect("a member");
-        workspace.stack_pane(&b, &member, cx);
-        assert_eq!(workspace.space, Some(0));
-        assert_eq!(workspace.spaces.len(), 1);
-        assert!(
-            workspace
-                .active_space()
-                .unwrap()
-                .entries()
-                .contains(&member)
-        );
-    });
-}
-
 /// Archived anywhere, not only from the sidebar, an entry leaves its space,
 /// and a space left with one pane goes with it.
 #[gpui::test]
@@ -1235,8 +958,8 @@ fn an_edited_preview_is_kept(cx: &mut gpui::TestAppContext) {
     });
 }
 
-/// The last tab out leaves the window on none, and an entry put into a space
-/// leaves the strip.
+/// Entries put into a space leave the strip for the space's tab, and the
+/// last tab out leaves the window on none.
 #[gpui::test]
 fn tabs_close_and_leave_for_a_space(cx: &mut gpui::TestAppContext) {
     use crate::model::workspace::Opening;
@@ -1248,10 +971,45 @@ fn tabs_close_and_leave_for_a_space(cx: &mut gpui::TestAppContext) {
         workspace.arrange(&a, &b, Side::Right, cx);
         assert!(workspace.tab_strip().is_empty(), "both went to the space");
 
-        workspace.leave_space();
-        workspace.open_tab(a.clone(), Opening::Kept, cx);
-        workspace.close_pane(&a, cx);
-        assert!(workspace.tabs.is_none());
+        let id = workspace.active_space().expect("open").id.clone();
+        workspace.close_slot(&crate::model::workspace::Slot::Space { space: id }, cx);
+        assert!(workspace.strip().is_empty());
         assert!(workspace.arranged().is_none());
+        assert_eq!(
+            workspace.spaces.len(),
+            1,
+            "closing its tab leaves the space"
+        );
+    });
+}
+
+/// A space made over the entry in front takes that entry's place in the
+/// strip, and closed down to one entry it hands its place to the survivor.
+#[gpui::test]
+fn a_space_is_a_tab_of_the_strip(cx: &mut gpui::TestAppContext) {
+    use crate::model::workspace::{Opening, Slot};
+    let scratch = Scratch::new("space-tab");
+    let (workspace, a, b) = two_boards(&scratch, cx);
+    workspace.update(cx, |workspace, cx| {
+        workspace.new_board(0, "Third".into(), "THR", cx).ok();
+        let c = workspace.board_member(0, 0).expect("a member");
+        workspace.open_tab(a.clone(), Opening::Kept, cx);
+        workspace.open_tab(c.clone(), Opening::Kept, cx);
+        workspace.front_tab(&Slot::Entry(a.clone()), cx);
+
+        workspace.arrange(&a, &b, Side::Right, cx);
+        let id = workspace.active_space().expect("open").id.clone();
+        assert_eq!(
+            workspace.strip(),
+            [Slot::Space { space: id.clone() }, Slot::Entry(c.clone())]
+        );
+
+        workspace.close_pane(&b, cx);
+        assert!(workspace.spaces.is_empty(), "one entry is no arrangement");
+        assert_eq!(
+            workspace.strip(),
+            [Slot::Entry(a.clone()), Slot::Entry(c.clone())]
+        );
+        assert_eq!(workspace.front_slot(), Some(&Slot::Entry(a.clone())));
     });
 }

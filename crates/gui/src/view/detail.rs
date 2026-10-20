@@ -671,14 +671,39 @@ impl Cydonia {
         };
         let _arranged = panes.is_some();
         let main = match (library, panes) {
-            (_, Some(panes)) => div()
-                .flex_1()
-                .min_h_0()
-                .min_w_0()
-                .relative()
-                .flex()
-                .flex_col()
-                .child(panes),
+            // The strip on top, and under it the entry or the space in front.
+            // Floating, the strip is on the chrome and runs as wide as the
+            // cards do.
+            (_, Some(panes)) => match floating {
+                true => div(),
+                false => bezel::ui::window::content(false, cx),
+            }
+            .flex_1()
+            .min_h_0()
+            .min_w_0()
+            .relative()
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .flex_none()
+                    .when(floating, |strip| strip.mx(px(Theme::CONTENT_INSET / 2.)))
+                    .child(
+                        self.strip
+                            .clone()
+                            .cached(gpui::StyleRefinement::default().w_full()),
+                    ),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .min_w_0()
+                    .relative()
+                    .flex()
+                    .flex_col()
+                    .child(panes),
+            ),
             (library, None) => self.lone_card(library, window, cx),
         };
         // The one panel the window has, under whatever is showing: a space's

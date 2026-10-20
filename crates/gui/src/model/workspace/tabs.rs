@@ -1,14 +1,16 @@
-//! The window's strip of tabs: what it shows while no space is open.
+//! The window's strip: its tabs, each on one entry or on a space.
 //!
 //! A continuation of [`Workspace`]'s one `impl`, the way [`super::spaces`] is.
 //!
-//! Held as a [`Space`] of one pane that is never written to the shelf, and
-//! saved in `state.toml` instead — see [`Workspace::arranged`].
+//! Saved in `state.toml`. A space's tab names the space by id; the space
+//! itself stays on the shelf, and closing its tab takes it off the strip
+//! alone.
 use super::*;
 use artifact::{
     kind::Kind,
     space::{Member, Node, Space},
 };
+use serde::{Deserialize, Serialize};
 
 /// How an entry opens in the window's strip — see [`Workspace::open_tab`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -19,19 +21,68 @@ pub enum Opening {
     Kept,
 }
 
-impl Workspace {
-    /// What the window is arranged by: the open space, or else its own tabs.
-    /// Nothing where no space is open and no tab is either.
-    pub fn arranged(&self) -> Option<&Space> {
-        self.active_space().or(self.tabs.as_ref())
+/// One tab of the window's strip.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Slot {
+    /// One entry, or an app.
+    Entry(Member),
+    /// A space, by its id.
+    Space { space: String },
+}
+
+impl Slot {
+    /// The entry it is on. Nothing for a space.
+    pub fn entry(&self) -> Option<&Member> {
+        match self {
+            Self::Entry(member) => Some(member),
+            Self::Space { .. } => None,
+        }
     }
 
-    /// The window's tabs, in strip order. Empty where none is open.
-    pub fn tab_strip(&self) -> Vec<Member> {
-        self.tabs
+    /// The space it is on, by id. Nothing for an entry.
+    pub fn space(&self) -> Option<&str> {
+        match self {
+            Self::Space { space } => Some(space),
+            Self::Entry(_) => None,
+        }
+    }
+}
+
+impl Workspace {
+    /// The window's tabs, in strip order.
+    pub fn strip(&self) -> &[Slot] {
+        &self.strip
+    }
+
+    /// The tab in front: the one recorded, where the strip still holds it,
+    /// or else its first.
+    pub fn front_slot(&self) -> Option<&Slot> {
+        self.front
             .as_ref()
-            .map(|tabs| tabs.tree.stack())
-            .unwrap_or_default()
+            .filter(|front| self.strip.contains(front))
+            .or_else(|| self.strip.first())
+    }
+
+    /// What the window lays out under its strip: the space in front, or the
+    /// entry in front as a layout of one. Nothing where no tab is open.
+    pub fn arranged(&self) -> Option<Space> {
+        match self.front_slot()? {
+            Slot::Space { .. } => self.active_space().cloned(),
+            Slot::Entry(member) => Some(Space {
+                id: String::new(),
+                touched: 0,
+                name: String::new(),
+                zoomed: None,
+                focused: None,
+                tree: Node::leaf(member.clone()),
+            }),
+        }
+    }
+
+    /// The entries the strip holds as tabs of their own, in strip order.
+    pub fn tab_strip(&self) -> Vec<Member> {
+        self.strip.iter().filter_map(Slot::entry).cloned().collect()
     }
 
     /// The tab the next opening replaces rather than adds to — see
@@ -48,35 +99,65 @@ impl Workspace {
     /// the tab in front.
     pub fn open_tab(&mut self, member: Member, opening: Opening, cx: &mut Context<Self>) {
         let keep = opening == Opening::Kept;
-        let mut strip = self.tab_strip();
-        let front = self.tabs.as_ref().and_then(|tabs| tabs.tree.front());
-        if !strip.contains(&member) {
+        let slot = Slot::Entry(member.clone());
+        if !self.strip.contains(&slot) {
             let preview = match keep {
                 true => None,
                 false => self
                     .preview
                     .take()
-                    .filter(|preview| strip.contains(preview)),
+                    .map(Slot::Entry)
+                    .and_then(|preview| self.strip.iter().position(|tab| *tab == preview)),
             };
             match preview {
-                Some(preview) => {
-                    let at = strip.iter().position(|tab| *tab == preview).unwrap_or(0);
-                    strip[at] = member.clone();
-                }
-                None => {
-                    let at = front
-                        .and_then(|front| strip.iter().position(|tab| *tab == front))
-                        .map_or(strip.len(), |at| at + 1);
-                    strip.insert(at, member.clone());
-                }
+                Some(at) => self.strip[at] = slot.clone(),
+                None => self.insert_slot(slot.clone()),
             }
             if !keep {
-                self.preview = Some(member.clone());
+                self.preview = Some(member);
             }
         } else if keep && self.preview.as_ref() == Some(&member) {
             self.preview = None;
         }
-        self.set_strip(strip, Some(member));
+        self.front = Some(slot);
+        self.save();
+        cx.notify();
+    }
+
+    /// Put the space with `id` in front of the strip, adding its tab after the
+    /// tab in front where the strip does not hold it yet.
+    pub(super) fn open_space_tab(&mut self, id: &str) {
+        let slot = Slot::Space {
+            space: id.to_owned(),
+        };
+        if !self.strip.contains(&slot) {
+            self.insert_slot(slot.clone());
+        }
+        self.front = Some(slot);
+    }
+
+    /// Bring a tab the strip holds to its front.
+    pub fn front_tab(&mut self, slot: &Slot, cx: &mut Context<Self>) {
+        if self.strip.contains(slot) && self.front.as_ref() != Some(slot) {
+            self.front = Some(slot.clone());
+            self.save();
+            cx.notify();
+        }
+    }
+
+    /// Move the tab `moving` to where `to` sits in the strip.
+    pub fn reorder_slot(&mut self, moving: &Slot, to: &Slot, cx: &mut Context<Self>) {
+        let (Some(from), Some(at)) = (
+            self.strip.iter().position(|tab| tab == moving),
+            self.strip.iter().position(|tab| tab == to),
+        ) else {
+            return;
+        };
+        if from == at {
+            return;
+        }
+        let moved = self.strip.remove(from);
+        self.strip.insert(at, moved);
         self.save();
         cx.notify();
     }
@@ -103,100 +184,111 @@ impl Workspace {
         edited
     }
 
-    /// Take `member` out of the window's strip. The last one out leaves the
-    /// window on no tab.
-    pub fn close_tab(&mut self, member: &Member, cx: &mut Context<Self>) {
-        let strip = self.tab_strip();
-        if !strip.contains(member) {
+    /// Take a tab off the strip. The one in front hands the front to its
+    /// neighbour, to its left or, for the first, to its right.
+    pub fn close_slot(&mut self, slot: &Slot, cx: &mut Context<Self>) {
+        let Some(at) = self.strip.iter().position(|tab| tab == slot) else {
             return;
-        }
-        if self.preview.as_ref() == Some(member) {
+        };
+        if slot.entry() == self.preview.as_ref() {
             self.preview = None;
         }
-        let front = self
-            .tabs
-            .as_ref()
-            .and_then(|tabs| tabs.tree.front())
-            .filter(|front| front != member);
-        let strip = strip.into_iter().filter(|tab| tab != member).collect();
-        self.set_strip(strip, front);
+        let front = self.front_slot().cloned();
+        self.strip.remove(at);
+        if front.as_ref() == Some(slot) {
+            self.front = self
+                .strip
+                .get(at.saturating_sub(1))
+                .or_else(|| self.strip.first())
+                .cloned();
+        }
         self.save();
         cx.notify();
     }
 
-    /// Take every member `gone` names out of the window's strip, as
-    /// [`Self::close_tab`] does one.
-    pub(super) fn drop_tabs(&mut self, gone: &[Member], cx: &mut Context<Self>) {
-        let strip = self.tab_strip();
-        if !strip.iter().any(|tab| gone.contains(tab)) {
-            return;
+    /// Take the entry `member`'s tab off the strip.
+    pub fn close_tab(&mut self, member: &Member, cx: &mut Context<Self>) {
+        self.close_slot(&Slot::Entry(member.clone()), cx);
+    }
+
+    /// Put `slot` in `taken`'s place in the strip, in front where `taken` was.
+    pub(super) fn replace_slot(&mut self, taken: &Slot, slot: Slot) {
+        let front = self.front_slot() == Some(taken);
+        match self.strip.iter().position(|tab| tab == taken) {
+            Some(at) => self.strip[at] = slot.clone(),
+            None => self.insert_slot(slot.clone()),
         }
+        self.strip.dedup();
+        if front {
+            self.front = Some(slot);
+        }
+    }
+
+    /// Take every entry `gone` names off the strip, as [`Self::close_tab`]
+    /// does one.
+    pub(super) fn drop_tabs(&mut self, gone: &[Member], cx: &mut Context<Self>) {
         for member in gone {
             self.close_tab(member, cx);
         }
     }
 
-    /// The window's strip as `strip`, with `front` in front where it holds it.
-    pub(super) fn set_strip(&mut self, strip: Vec<Member>, front: Option<Member>) {
-        let mut strip = strip.into_iter();
-        let Some(first) = strip.next() else {
-            self.tabs = None;
-            self.preview = None;
-            return;
-        };
-        let tree = Node::Leaf {
-            ratio: 1.,
-            entry: first,
-            tabs: strip.collect(),
-            front,
-        };
-        match &mut self.tabs {
-            Some(tabs) => tabs.tree = tree,
-            None => {
-                self.tabs = Some(Space {
-                    id: String::new(),
-                    touched: 0,
-                    name: String::new(),
-                    zoomed: None,
-                    focused: None,
-                    tree,
-                })
-            }
-        }
+    /// A tab after the one in front, or at the end where none is.
+    fn insert_slot(&mut self, slot: Slot) {
+        let at = self
+            .front_slot()
+            .and_then(|front| self.strip.iter().position(|tab| tab == front))
+            .map_or(self.strip.len(), |at| at + 1);
+        self.strip.insert(at, slot);
     }
 
     /// The tabs `state.toml` holds, or else the entry the active project last
-    /// showed.
+    /// showed — and the space the window was on, where it holds no tab for
+    /// it. Tabs on what has since gone are left out.
     pub(super) fn restore_tabs(
         &mut self,
-        tabs: Option<Vec<Member>>,
-        front: Option<Member>,
+        tabs: Option<Vec<Slot>>,
+        front: Option<Slot>,
+        space: Option<String>,
         cx: &App,
     ) {
-        let tabs = tabs.unwrap_or_else(|| {
+        let mut strip = tabs.unwrap_or_else(|| {
             self.landed()
-                .map(|(project, entry)| Member::new(project, entry.kind, entry.id.clone()))
+                .map(|(project, entry)| {
+                    Slot::Entry(Member::new(project, entry.kind, entry.id.clone()))
+                })
                 .into_iter()
                 .collect()
         });
-        let tabs: Vec<Member> = tabs
+        let mut front = front;
+        if let Some(space) = space {
+            let slot = Slot::Space { space };
+            if !strip.contains(&slot) {
+                strip.push(slot.clone());
+                front = Some(slot);
+            }
+        }
+        self.strip = strip
             .into_iter()
-            .filter(|member| match member {
-                Member::App { app } => self.apps.iter().any(|held| held.id == *app),
-                Member::Entry(_) => self.showing_of(member, cx).is_some(),
+            .filter(|slot| match slot {
+                Slot::Space { space } => self.space_ix(space).is_some(),
+                Slot::Entry(Member::App { app }) => self.apps.iter().any(|held| held.id == *app),
+                Slot::Entry(member) => self.showing_of(member, cx).is_some(),
             })
             .collect();
-        self.set_strip(tabs, front);
+        self.front = front;
         self.save();
     }
 
     /// Bring the window's front tab up and put the project's selection on it.
     pub(super) fn bring_up_tabs(&mut self, cx: &mut Context<Self>) {
-        let Some(front) = self.tabs.as_ref().and_then(|tabs| tabs.tree.front()) else {
-            return;
-        };
-        if let Some((project, showing)) = self.showing_of(&front, cx) {
-            self.select_showing(project, showing, cx);
+        match self.front_slot().cloned() {
+            Some(Slot::Entry(member)) => {
+                if let Some((project, showing)) = self.showing_of(&member, cx) {
+                    self.select_showing(project, showing, cx);
+                }
+            }
+            Some(Slot::Space { .. }) => self.bring_up_space(cx),
+            None => {}
         }
     }
 }

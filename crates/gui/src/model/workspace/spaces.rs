@@ -11,6 +11,7 @@
 //!
 //! There is no `new_space` a menu calls: a space is made by dragging a
 //! second entry onto the one already open — see [`Workspace::arrange`].
+use super::tabs::Slot;
 use super::*;
 use crate::model::spaces::{Shelf, Store as _};
 use artifact::{
@@ -43,13 +44,19 @@ impl Showing {
 }
 
 impl Workspace {
-    /// The space the window is arranged by, if one is open.
+    /// Where the space whose tab is in front of the strip is listed.
+    pub fn space(&self) -> Option<usize> {
+        self.space_ix(self.front_slot()?.space()?)
+    }
+
+    /// The space whose tab is in front of the strip.
     pub fn active_space(&self) -> Option<&Space> {
-        self.spaces.get(self.space?)
+        self.spaces.get(self.space()?)
     }
 
     pub fn active_space_mut(&mut self) -> Option<&mut Space> {
-        self.spaces.get_mut(self.space?)
+        let ix = self.space()?;
+        self.spaces.get_mut(ix)
     }
 
     /// Put `spaces` in the order `ids` names them, with anything that list
@@ -118,9 +125,7 @@ impl Workspace {
         self.spaces.iter().position(|space| space.id == id)
     }
 
-    /// Carry a space to another place in the list. `space` follows the one
-    /// it points at rather than the index it sits on, the way `active` does
-    /// for projects — see [`Workspace::move_project`].
+    /// Carry a space to another place in the list.
     pub fn move_space(&mut self, id: &str, to: usize, cx: &mut Context<Self>) {
         let Some(from) = self.space_ix(id) else {
             return;
@@ -130,12 +135,6 @@ impl Workspace {
         }
         let space = self.spaces.remove(from);
         self.spaces.insert(to, space);
-        self.space = self.space.map(|at| match at {
-            at if at == from => to,
-            at if from < to && (from..=to).contains(&at) => at - 1,
-            at if to < from && (to..=from).contains(&at) => at + 1,
-            at => at,
-        });
         self.save();
         cx.notify();
     }
@@ -143,16 +142,14 @@ impl Workspace {
     /// Read every space back off disk. Called at launch, since nothing else
     /// writes them.
     pub fn reload_spaces(&mut self, cx: &mut Context<Self>) {
-        let open = self.active_space().map(|space| space.id.clone());
         let order: Vec<String> = self.spaces.iter().map(|at| at.id.clone()).collect();
         self.spaces = Self::in_order(Shelf::all(), &order);
-        self.space = open.and_then(|id| self.spaces.iter().position(|at| at.id == id));
         cx.notify();
     }
 
-    /// Show a space. The projects its panes are in are opened if they are not
-    /// already — an arrangement is a working context, and half of one is not
-    /// what was asked for.
+    /// Show a space: its tab in front of the strip. The projects its panes are
+    /// in are opened if they are not already — an arrangement is a working
+    /// context, and half of one is not what was asked for.
     pub fn open_space(&mut self, ix: usize, cx: &mut Context<Self>) {
         let Some(space) = self.spaces.get(ix) else {
             return;
@@ -164,26 +161,22 @@ impl Workspace {
             .filter(|path| !self.projects.iter().any(|open| open.path == *path))
             .filter(|path| path.is_dir())
             .collect();
+        let id = space.id.clone();
         for path in wanted {
             self.open_project(path, cx);
         }
-        self.space = Some(ix);
+        self.open_space_tab(&id);
         self.bring_up_space(cx);
         self.save();
         cx.notify();
     }
 
-    /// Leave the arrangement, which is what opening any single entry does.
-    pub fn leave_space(&mut self) {
-        self.space = None;
-    }
-
     /// Put `arriving` beside `target`, making the space that holds them if
     /// there is not one yet.
     ///
-    /// This is the whole of how a space is born: the first drag onto a pane
-    /// mints one over the entry already there, and every drag after it lands
-    /// in the same space.
+    /// This is the whole of how a space is born: the first drag onto the edge
+    /// of an entry in front mints one over it, in its tab's place, and every
+    /// drag after it lands in the same space.
     pub fn arrange(
         &mut self,
         target: &Member,
@@ -191,8 +184,8 @@ impl Workspace {
         side: Side,
         cx: &mut Context<Self>,
     ) -> Option<usize> {
-        let at = match self.space {
-            Some(at) if at < self.spaces.len() => at,
+        let at = match self.space() {
+            Some(at) => at,
             // The first drag. The space starts as the pane that was there,
             // which is what the arrival is being put beside.
             _ => {
@@ -213,74 +206,23 @@ impl Workspace {
             return None;
         }
         Shelf::save(space);
-        self.space = Some(at);
+        let id = space.id.clone();
+        self.replace_slot(
+            &Slot::Entry(target.clone()),
+            Slot::Space { space: id.clone() },
+        );
+        self.open_space_tab(&id);
         self.drop_tabs(&[target.clone(), arriving.clone()], cx);
         self.save();
         cx.notify();
         Some(at)
     }
 
-    /// Put `members` into the space with this id, as tabs of the pane its
-    /// first entry is in, or into a new space over the first of them for
-    /// `None`. Each leaves whatever other space it was in. Answers the
-    /// space's index.
-    pub fn gather(
-        &mut self,
-        space: Option<&str>,
-        members: &[Member],
-        cx: &mut Context<Self>,
-    ) -> Option<usize> {
-        let keep = match space {
-            Some(id) => id.to_owned(),
-            None => {
-                let made = Shelf::create("", members.first()?.clone())?;
-                let id = made.id.clone();
-                self.spaces.insert(0, made);
-                self.space = self.space.map(|open| open + 1);
-                id
-            }
-        };
-        for member in members {
-            // By id, because an eviction can take a space with it.
-            self.evict_from_spaces(member, &keep, cx);
-            let at = self.space_ix(&keep)?;
-            let space = &mut self.spaces[at];
-            let target = space.entries().into_iter().next()?;
-            if target != *member && space.stack(&target, member) {
-                Shelf::save(space);
-            }
-        }
-        self.save();
-        cx.notify();
-        self.space_ix(&keep)
-    }
-
-    /// Move a tab to where `to` sits in the strip of the pane holding both.
-    pub fn reorder_tab(&mut self, moving: &Member, to: &Member, cx: &mut Context<Self>) {
-        self.edit_space(cx, |space| space.reorder(moving, to));
-    }
-
-    /// Put an arriving entry into the pane holding `target`, as a tab — a
-    /// drop on a pane's bar rather than on its edge. With no space open, it
-    /// joins the window's strip.
-    pub fn stack_pane(&mut self, target: &Member, arriving: &Member, cx: &mut Context<Self>) {
-        if target == arriving {
-            return;
-        }
-        let Some(at) = self.space.filter(|at| *at < self.spaces.len()) else {
-            self.evict_from_spaces(arriving, "", cx);
-            self.open_tab(arriving.clone(), super::Opening::Kept, cx);
-            return;
-        };
-        // An entry is in one space at a time, the same rule [`Self::arrange`]
-        // follows for the same reason. By id, because an eviction can take a
-        // space with it.
-        let keep = self.spaces[at].id.clone();
-        self.evict_from_spaces(target, &keep, cx);
-        self.evict_from_spaces(arriving, &keep, cx);
-        self.space = self.spaces.iter().position(|space| space.id == keep);
-        self.save();
-        self.edit_space(cx, |space| space.stack(target, arriving));
+    /// Open an arriving entry as a tab of the strip — a drop on a pane but not
+    /// on its edge. It leaves any space it was in.
+    pub fn join_strip(&mut self, arriving: &Member, cx: &mut Context<Self>) {
+        self.evict_from_spaces(arriving, "", cx);
+        self.open_tab(arriving.clone(), super::Opening::Kept, cx);
     }
 
     /// Take an entry out of every space but the one named.
@@ -326,9 +268,14 @@ impl Workspace {
         self.arranged()?.front_of(entry)
     }
 
-    /// Bring a tab to the front of its pane.
+    /// Bring a tab forward: in its pane of the space in front, or else in the
+    /// strip.
     pub fn set_front(&mut self, tab: &Member, cx: &mut Context<Self>) {
-        self.edit_space(cx, |space| space.set_front(tab));
+        if self.active_space().is_some_and(|space| space.contains(tab)) {
+            self.edit_space(cx, |space| space.set_front(tab));
+        } else {
+            self.front_tab(&Slot::Entry(tab.clone()), cx);
+        }
     }
 
     /// Record the pane on `entry` as the open space's focused one. Writes the
@@ -373,24 +320,24 @@ impl Workspace {
         self.edit_space(cx, |space| space.relocate(entry, target, side));
     }
 
-    /// Close one pane, or one of its tabs. With no space open, a tab of the
-    /// window's strip.
+    /// Close one pane of the space in front, or with an entry in front, that
+    /// entry's tab.
     ///
     /// Closing down to one entry closes the space: an arrangement of one thing
     /// is not an arrangement, and leaving the file behind would put a row in
     /// the sidebar for something the window is no longer doing. Entries, not
-    /// panes: a pane of two tabs beside a pane of one is still an arrangement
-    /// once that pane goes, and stays a space holding both tabs.
+    /// panes: a leaf stacking two entries beside a pane of one is still an
+    /// arrangement once that pane goes.
     ///
-    /// The entry that would have been left alone opens in front of the
-    /// window's strip, and is returned. Nothing while the arrangement survives,
-    /// which leaves the panes to say what they show.
+    /// The entry that would have been left alone takes the space's tab, and is
+    /// returned. Nothing while the arrangement survives, which leaves the
+    /// panes to say what they show.
     pub fn close_pane(
         &mut self,
         entry: &Member,
         cx: &mut Context<Self>,
     ) -> Option<(Member, Showing)> {
-        let Some(space) = self.active_space() else {
+        let Some(space) = self.active_space().filter(|space| space.contains(entry)) else {
             self.close_tab(entry, cx);
             return None;
         };
@@ -400,17 +347,20 @@ impl Workspace {
             self.edit_space(cx, |space| space.remove(entry));
             return None;
         }
+        let id = space.id.clone();
         let survivor = space
             .entries()
             .into_iter()
             .find(|member| member != entry)
             .and_then(|member| Some((member.clone(), self.showing_of(&member, cx)?)));
-
-        if let Some(at) = self.space {
-            self.delete_space(at, cx);
+        if let Some((member, _)) = &survivor {
+            self.replace_slot(
+                &Slot::Space { space: id.clone() },
+                Slot::Entry(member.clone()),
+            );
         }
+        self.delete_space_id(&id, cx);
         let (member, (project, showing)) = survivor?;
-        self.open_tab(member.clone(), super::Opening::Kept, cx);
         self.select_showing(project, showing.clone(), cx);
         Some((member, showing))
     }
@@ -448,8 +398,8 @@ impl Workspace {
         let archived: Vec<Member> = self
             .spaces
             .iter()
-            .chain(&self.tabs)
             .flat_map(Space::entries)
+            .chain(self.tab_strip())
             .filter(|member| self.archived(member, cx))
             .collect();
         for member in archived {
@@ -504,11 +454,9 @@ impl Workspace {
         if ix >= self.spaces.len() {
             return;
         }
-        Shelf::remove(&self.spaces.remove(ix).id);
-        self.space = self
-            .space
-            .filter(|open| *open != ix)
-            .map(|open| if open > ix { open - 1 } else { open });
+        let id = self.spaces.remove(ix).id;
+        Shelf::remove(&id);
+        self.close_slot(&Slot::Space { space: id }, cx);
         self.save();
         cx.notify();
     }
@@ -837,18 +785,12 @@ impl Workspace {
         }
     }
 
-    /// Change the open space, or the window's strip where none is open, and
-    /// write it back if the change took.
+    /// Change the open space and write it back, if the change took.
     fn edit_space(&mut self, cx: &mut Context<Self>, edit: impl FnOnce(&mut Space) -> bool) {
-        if let Some(space) = self.space.and_then(|ix| self.spaces.get_mut(ix)) {
-            if edit(space) {
-                Shelf::save(space);
-                cx.notify();
-            }
-            return;
-        }
-        if self.tabs.as_mut().is_some_and(edit) {
-            self.save();
+        if let Some(space) = self.active_space_mut()
+            && edit(space)
+        {
+            Shelf::save(space);
             cx.notify();
         }
     }

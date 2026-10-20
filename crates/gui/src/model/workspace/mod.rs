@@ -59,7 +59,7 @@ mod spaces;
 mod tabs;
 pub use sessions::ArticleChange;
 pub use spaces::Showing;
-pub use tabs::Opening;
+pub use tabs::{Opening, Slot};
 mod order;
 mod projects;
 pub mod references;
@@ -157,10 +157,9 @@ pub struct Workspace {
     /// showing. The window's rather than a project's: a space can hold panes
     /// from several — see [`spaces`].
     pub spaces: Vec<artifact::space::Space>,
-    pub space: Option<usize>,
-    /// The window's own strip of tabs, shown while no space is open — see
-    /// [`tabs`]. Nothing where no tab is open.
-    pub tabs: Option<artifact::space::Space>,
+    /// The window's tabs, and which is in front — see [`tabs`].
+    strip: Vec<Slot>,
+    front: Option<Slot>,
     /// The tab the next opening replaces — see [`Workspace::open_tab`].
     /// Runtime only.
     preview: Option<artifact::space::Member>,
@@ -233,8 +232,8 @@ impl Workspace {
                 <crate::model::spaces::Shelf as crate::model::spaces::Store>::all(),
                 &state.spaces,
             ),
-            space: None,
-            tabs: None,
+            strip: Vec::new(),
+            front: None,
             preview: None,
             folded_spaces: state.folded_spaces.iter().cloned().collect(),
             space_order: state.space_order,
@@ -245,17 +244,12 @@ impl Workspace {
             apps_watch: None,
         };
         this.app_recorded(cx);
-        // The arrangement the window closed on, before any entry is opened:
-        // `open_last_entry` is a project's answer and a space spans them.
-        this.space = state
-            .space
-            .and_then(|id| this.spaces.iter().position(|space| space.id == id));
         for ix in restore {
             this.restore_sessions(ix, cx);
             this.watch_project(ix, cx);
         }
         this.open_last_entry(cx);
-        this.restore_tabs(state.tabs, state.front, cx);
+        this.restore_tabs(state.tabs, state.front, state.space, cx);
         this.bring_up_tabs(cx);
         this.bring_up_space(cx);
         this.load_agent_icons(cx);
@@ -318,8 +312,8 @@ impl Workspace {
             window: self.window,
             commands: self.recent_commands.clone(),
             release: self.release.clone(),
-            tabs: Some(self.tab_strip()),
-            front: self.tabs.as_ref().and_then(|tabs| tabs.tree.front()),
+            tabs: Some(self.strip.clone()),
+            front: self.front_slot().cloned(),
         });
     }
 
