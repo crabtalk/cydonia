@@ -12,7 +12,11 @@ use bezel::{
         actions, prelude::*, px,
     },
     theme::Theme,
-    ui::{context_menu::ContextMenu, input::TextField, popover},
+    ui::{
+        context_menu::{ContextMenu, Place},
+        input::TextField,
+        popover,
+    },
 };
 
 /// Claimed on the panel's fields, so `enter` files it.
@@ -115,8 +119,14 @@ impl Tab {
         cx.notify();
     }
 
-    /// The panel, hung under the name that opens it.
-    pub(crate) fn info_panel(&self, board: &str, cx: &mut Context<Self>) -> Option<AnyElement> {
+    /// The panel, hung under what opens it: left edges aligned under a
+    /// pane's name, right edges under a lone tab's corner.
+    pub(crate) fn info_panel(
+        &self,
+        board: &str,
+        place: Place,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let info = self.info.as_ref().filter(|info| info.board == board)?;
         let theme = Theme::of(cx).clone();
         let card = popover::popover_card(&theme)
@@ -149,10 +159,10 @@ impl Tab {
                 cx.stop_propagation();
             }))
             .into_any_element();
-        Some(popover::anchored_menu_below(
-            SharedString::from("board-info"),
-            card,
-            None,
-        ))
+        let id = SharedString::from("board-info");
+        Some(match place {
+            Place::BelowEnd => popover::anchored_menu_below_end(id, card, None),
+            _ => popover::anchored_menu_below(id, card, None),
+        })
     }
 }

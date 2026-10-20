@@ -1,15 +1,18 @@
-//! A tab's title row, over what it shows: what it is on, the field that
-//! renames it, a board's identity panel, an article's comments, and the
-//! `···` holding the entry's menu — and, in a space, the pane's.
+//! A pane's title row in a space, over what it shows: what it is on, the
+//! field that renames it, a board's identity panel, an article's comments,
+//! and the `···` holding the entry's menu and the pane's. A tab holding one
+//! entry has no title row: its name and `···` are the strip's, and its comments
+//! and board panel stand in its top right corner.
 
 use super::{Tab, TabMenu, header::Naming};
+use crate::model::workspace::Slot;
 use crate::view::{
     kit::menu,
     sidebar::Renaming,
     window::{entry::Host, reach::InWindow as _, root},
 };
 use bezel::{
-    gpui::{AnyElement, Context, FontWeight, SharedString, Window, div, prelude::*, px},
+    gpui::{AnyElement, App, Context, FontWeight, SharedString, Window, div, prelude::*, px},
     theme::{TextStyle, Theme, Typeset},
     ui::{
         context_menu::{ContextMenu, Place},
@@ -20,13 +23,52 @@ use bezel::{
 };
 
 impl Tab {
+    /// Whether this tab is the strip's front tab on its own, not a pane of a
+    /// space.
+    pub(crate) fn lone(&self, cx: &App) -> bool {
+        self.workspace.read(cx).front_slot() == Some(&Slot::Entry(self.entry.clone()))
+    }
+
+    /// A lone tab's corner, over its content: an article's comments and a
+    /// board's identity panel, under the strip's `···` that opens the panel.
+    pub(crate) fn corner(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let comments = self
+            .article_shown(cx)
+            .map(|view| view.read(cx).comments.clone());
+        let panel = self
+            .info
+            .as_ref()
+            .map(|info| info.board.clone())
+            .and_then(|board| self.info_panel(&board, Place::BelowEnd, cx));
+        if comments.is_none() && panel.is_none() {
+            return None;
+        }
+        Some(
+            div()
+                .absolute()
+                .top_0()
+                .right_0()
+                .h(px(root::HEADER_HEIGHT))
+                .px(px(root::HEADER_INSET))
+                .flex()
+                .flex_row()
+                .items_center()
+                .children(comments)
+                .children(panel)
+                .into_any_element(),
+        )
+    }
+
     /// The row: the entry's name, or the field renaming it, and what acts on
-    /// it. Nothing for an entry that has gone.
+    /// it. Nothing for an entry that has gone, or for a lone tab.
     pub(crate) fn title_row(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
+        if self.lone(cx) {
+            return None;
+        }
         let theme = Theme::of(cx).clone();
         let toolbar = self
             .root
@@ -114,7 +156,11 @@ impl Tab {
                     .text_color(theme.text_muted)
                     .child(format!("#{number}"))
             }))
-            .children(board.as_deref().and_then(|id| self.info_panel(id, cx)));
+            .children(
+                board
+                    .as_deref()
+                    .and_then(|id| self.info_panel(id, Place::Below, cx)),
+            );
         let menu = toolbar.entry.map(|entry| {
             let open = self.menu.key() == Some(&TabMenu::Entry);
             let button = menu::button(

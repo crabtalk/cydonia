@@ -1,7 +1,7 @@
 //! The window's strip: a tab for each entry and space the window holds, and
 //! the window's own controls at its ends — past the lights, the fold while the
-//! sidebar is shut, the `+`, the right panel's toggle and the right caption
-//! buttons.
+//! sidebar is shut, the `+`, the front tab's `···`, the right panel's toggle
+//! and the right caption buttons.
 
 use crate::{
     model::workspace::{Slot, Workspace},
@@ -12,7 +12,7 @@ use crate::{
             rename::{NameEvent, NameField},
         },
         pane::arrangement,
-        sidebar::{Dragged, Renaming, Row},
+        sidebar::{Dragged, Renaming},
         window::{
             chrome,
             entry::Host,
@@ -21,7 +21,6 @@ use crate::{
         },
     },
 };
-use artifact::space::Member;
 use bezel::{
     gpui::{
         self, Context, Entity, MouseButton, SharedString, WeakEntity, Window, div, prelude::*, px,
@@ -47,10 +46,10 @@ const BAR_GAP: f32 = 2.;
 pub(crate) enum StripMenu {
     /// The `+`: what to start in a tab of its own.
     Add,
-    /// An entry's tab, right-pressed: its entry's own menu.
-    Tab(Member),
-    /// A space's tab, right-pressed, by the space's id.
-    Space(String),
+    /// A tab, right-pressed: its entry's own menu, or its space's.
+    Tab(Slot),
+    /// The `···` at the strip's end: the front tab's menu.
+    Front,
 }
 
 /// The window's strip. Drawn `.cached(...)`: it observes the workspace, and
@@ -60,8 +59,8 @@ pub(crate) struct Strip {
     root: WeakEntity<Cydonia>,
     reorder: tabs::Reorder<Dragged>,
     menu: ContextMenu<Self, StripMenu>,
-    /// The space whose tab holds the name field, by its id.
-    renaming: Option<String>,
+    /// The tab holding the name field, and what it renames.
+    renaming: Option<(Slot, Renaming)>,
     name_field: Entity<NameField>,
     /// Whether the pointer is over the strip: its `+` takes room there only
     /// then.
@@ -81,14 +80,13 @@ impl Strip {
         cx.observe(&workspace, |_, _, cx| cx.notify()).detach();
         let name_field = cx.new(NameField::new);
         cx.subscribe(&name_field, |this, _, event: &NameEvent, cx| {
-            let Some(id) = this.renaming.take() else {
+            let Some((_, what)) = this.renaming.take() else {
                 return;
             };
             if let NameEvent::Named(name) = event {
                 let name = name.clone();
-                this.workspace.update(cx, |workspace, cx| {
-                    Renaming::Space(id).commit(name, workspace, cx)
-                });
+                this.workspace
+                    .update(cx, |workspace, cx| what.commit(name, workspace, cx));
             }
             cx.notify();
         })
@@ -115,13 +113,49 @@ impl Strip {
         }
     }
 
-    /// Put the name field on the tab of the space with `id`.
-    pub(crate) fn start_rename(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
-        let label = Renaming::Space(id.clone()).label(self.workspace.read(cx), cx);
+    /// Put the name field on `slot`'s tab, renaming `what`.
+    pub(crate) fn start_rename(
+        &mut self,
+        slot: Slot,
+        what: Renaming,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let label = what.label(self.workspace.read(cx), cx);
         self.name_field
             .update(cx, |field, cx| field.start(label, Case::Mixed, window, cx));
-        self.renaming = Some(id);
+        self.renaming = Some((slot, what));
         cx.notify();
+    }
+
+    /// The rows of `slot`'s menu: its entry's own, or the row renaming its
+    /// space.
+    fn slot_rows(
+        slot: Slot,
+    ) -> impl FnOnce(&mut Cydonia, &mut Window, &mut Context<Cydonia>) -> Vec<(Item, menu::Act<Cydonia>)>
+    {
+        move |root, _, cx| match slot {
+            Slot::Entry(member) => root
+                .member_toolbar(&member, cx)
+                .and_then(|toolbar| toolbar.entry)
+                .map(|entry| {
+                    root.entry_rows(Host::Tab(member.clone()), &entry.row, entry.archived, cx)
+                })
+                .unwrap_or_default(),
+            Slot::Space { space } => vec![menu::row::<Cydonia>(
+                Item::action("Rename").with_icon(icons::text::SquarePen),
+                move |root, window, cx| {
+                    let (slot, what) = (
+                        Slot::Space {
+                            space: space.clone(),
+                        },
+                        Renaming::Space(space.clone()),
+                    );
+                    root.strip
+                        .update(cx, |strip, cx| strip.start_rename(slot, what, window, cx));
+                },
+            )],
+        }
     }
 
     /// Open `menu` at `place` with the rows the window builds for it, or shut
@@ -170,7 +204,8 @@ impl Strip {
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
         let workspace = self.workspace.read(cx);
-        let (key, label, entry) = match slot {
+        let renaming = self.renaming.as_ref().is_some_and(|(at, _)| at == slot);
+        let (key, label, menu) = match slot {
             Slot::Entry(member) => {
                 let toolbar = self
                     .root
@@ -186,22 +221,24 @@ impl Strip {
                     .unwrap_or_default();
                 let title = toolbar
                     .as_ref()
+                    .filter(|_| !renaming)
                     .map(|toolbar| toolbar.title.clone())
                     .unwrap_or_default();
                 let mut label = tabs::Label::new(title);
                 // A number is the badge rather than part of the name: the name
                 // truncates and the reference has to survive that.
-                if let Some(number) = toolbar.as_ref().and_then(|toolbar| toolbar.number) {
+                if let Some(number) = toolbar
+                    .as_ref()
+                    .and_then(|toolbar| toolbar.number)
+                    .filter(|_| !renaming)
+                {
                     label = label.with_badge(format!("{project}#{number}"));
                 }
-                let entry: Option<(Row, bool)> = toolbar
-                    .as_ref()
-                    .and_then(|toolbar| toolbar.entry.as_ref())
-                    .map(|entry| (entry.row.clone(), entry.archived));
-                (arrangement::key_of(member), label, entry)
+                let menu = toolbar.is_some_and(|toolbar| toolbar.entry.is_some());
+                (arrangement::key_of(member), label, menu)
             }
             Slot::Space { space } => {
-                let name = match self.renaming.as_ref() == Some(space) {
+                let name = match renaming {
                     true => String::new(),
                     false => workspace
                         .space_ix(space)
@@ -212,7 +249,7 @@ impl Strip {
                 (
                     SharedString::from(format!("space::{space}")),
                     tabs::Label::new(name).with_icon(icons::layout::LayoutDashboard),
-                    None,
+                    true,
                 )
             }
         };
@@ -240,19 +277,18 @@ impl Strip {
                     });
                 }
             }));
-        let el = match (slot, entry) {
-            (Slot::Entry(member), Some((row, archived))) => {
-                let menu_key = StripMenu::Tab(member.clone());
+        let el = match menu {
+            true => {
+                let menu_key = StripMenu::Tab(slot.clone());
                 el.on_mouse_down(
                     MouseButton::Right,
                     cx.listener({
-                        let (menu_key, member) = (menu_key.clone(), member.clone());
+                        let (menu_key, slot) = (menu_key.clone(), slot.clone());
                         move |this, press: &gpui::MouseDownEvent, window, cx| {
-                            let (row, host) = (row.clone(), Host::Tab(member.clone()));
                             this.toggle_menu(
                                 menu_key.clone(),
                                 Place::At(press.position),
-                                move |root, _, cx| root.entry_rows(host, &row, archived, cx),
+                                Self::slot_rows(slot.clone()),
                                 window,
                                 cx,
                             );
@@ -267,46 +303,9 @@ impl Strip {
                     cx,
                 ))
             }
-            (Slot::Space { space }, _) => {
-                let menu_key = StripMenu::Space(space.clone());
-                let renaming = self.renaming.as_ref() == Some(space);
-                el.on_mouse_down(
-                    MouseButton::Right,
-                    cx.listener({
-                        let (menu_key, space) = (menu_key.clone(), space.clone());
-                        move |this, press: &gpui::MouseDownEvent, window, cx| {
-                            let space = space.clone();
-                            this.toggle_menu(
-                                menu_key.clone(),
-                                Place::At(press.position),
-                                move |_, _, _| {
-                                    vec![menu::row::<Cydonia>(
-                                        Item::action("Rename").with_icon(icons::text::SquarePen),
-                                        move |root, window, cx| {
-                                            let space = space.clone();
-                                            root.strip.update(cx, |strip, cx| {
-                                                strip.start_rename(space, window, cx)
-                                            });
-                                        },
-                                    )]
-                                },
-                                window,
-                                cx,
-                            );
-                        }
-                    }),
-                )
-                .children(renaming.then(|| self.name_field.clone()))
-                .children(self.menu.render_for(
-                    &menu_key,
-                    "strip-space-menu-card",
-                    |this| &mut this.menu,
-                    window,
-                    cx,
-                ))
-            }
-            _ => el,
+            false => el,
         };
+        let el = el.children(renaming.then(|| self.name_field.clone()));
         el.child(
             tabs::close(theme, key, tabs::Close::OnHover)
                 .tooltip(move |window, cx| Tooltip::text("Close tab", window, cx))
@@ -321,6 +320,47 @@ impl Strip {
                     }
                 })),
         )
+    }
+
+    /// The `···` at the strip's end, holding the front tab's menu. Always
+    /// there while a tab is, so the controls past it keep their places.
+    fn front_button(
+        &self,
+        front: Slot,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let open = self.menu.key() == Some(&StripMenu::Front);
+        let button = menu::button(
+            "strip-front-menu",
+            icons::layout::Ellipsis,
+            menu::Reveal::Always,
+            open,
+            cx,
+        )
+        .on_click(cx.listener(move |this, _, window, cx| {
+            cx.stop_propagation();
+            this.toggle_menu(
+                StripMenu::Front,
+                Place::BelowEnd,
+                Self::slot_rows(front.clone()),
+                window,
+                cx,
+            );
+        }));
+        ContextMenu::trigger(
+            button,
+            |this: &mut Self| &mut this.menu,
+            StripMenu::Front,
+            cx,
+        )
+        .children(self.menu.render_for(
+            &StripMenu::Front,
+            "strip-front-card",
+            |this| &mut this.menu,
+            window,
+            cx,
+        ))
     }
 
     /// The `+`, revealed while the pointer is over the strip: the sidebar's
@@ -491,6 +531,11 @@ impl Render for Strip {
             )
             .children(project.map(|project| self.add_button(project, window, cx)))
             .child(grip)
+            .children(
+                front
+                    .clone()
+                    .map(|front| self.front_button(front, window, cx)),
+            )
             .children(
                 self.last
                     .then(|| changes_toggle("Show right panel", Painter::of(cx), Theme::of(cx))),
