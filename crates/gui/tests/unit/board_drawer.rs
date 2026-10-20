@@ -784,8 +784,8 @@ fn list_rows_open_drawer_and_group_controls_stay_independent(cx: &mut TestAppCon
         })
     });
     settle(&mut cx);
-    // Under the tab's title row.
-    let top = crate::view::window::root::HEADER_HEIGHT;
+    // A lone tab has no title row: the board starts at its top.
+    let top = 0.;
     let first = point(
         px(180.),
         px(top + LIST_HEADING_HEIGHT + LIST_ROW_HEIGHT / 2.),
@@ -986,8 +986,8 @@ fn list_cards_drop_into_a_collapsed_group_without_unfolding(cx: &mut TestAppCont
             })
         });
         settle(&mut cx);
-        // Under the tab's title row.
-        let top = crate::view::window::root::HEADER_HEIGHT;
+        // A lone tab has no title row: the board starts at its top.
+        let top = 0.;
         let source = point(
             px(180.),
             px(top + LIST_HEADING_HEIGHT + LIST_ROW_HEIGHT / 2.),

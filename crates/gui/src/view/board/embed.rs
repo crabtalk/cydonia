@@ -12,7 +12,7 @@ use bezel::{
     },
     theme::{TextStyle, Theme, Typeset as _},
 };
-use markdown::render::fence_band;
+use markdown::fence::fence_band;
 use std::{path::PathBuf, rc::Rc};
 
 pub(crate) struct CardEmbed {

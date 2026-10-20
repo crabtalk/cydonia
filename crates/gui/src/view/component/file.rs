@@ -855,7 +855,7 @@ impl Render for FileView {
                             return;
                         };
                         let doc = markdown::parse_with(this.field.read(cx).content(), &cx.marks());
-                        let text = markdown::selectable::copied(&doc, selection);
+                        let text = markdown::render::selectable::copied(&doc, selection);
                         if !text.is_empty() {
                             cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
                         }

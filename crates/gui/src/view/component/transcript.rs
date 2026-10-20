@@ -44,7 +44,7 @@ use bezel::{
 use cydonia_acp::proto::ToolKind;
 use markdown::{
     Doc, Selection,
-    selectable::{self, Pointer},
+    render::selectable::{self, Pointer},
 };
 mod follow;
 pub(crate) mod gallery;

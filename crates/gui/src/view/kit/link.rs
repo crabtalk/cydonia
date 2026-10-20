@@ -52,7 +52,8 @@ use bezel::{
 use editor::{SlashAction, SlashAt, SlashItem, SlashRow};
 use markdown::{
     AppExt as _, BlockKind, Form, Link,
-    render::{Editing, fence_band, fence_panel},
+    fence::{fence_band, fence_panel},
+    render::Editing,
 };
 
 pub(crate) use artifact::reference::SCHEME;

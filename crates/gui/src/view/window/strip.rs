@@ -40,6 +40,8 @@ use bezel::{
 
 /// Between the controls in the strip.
 const BAR_GAP: f32 = 2.;
+/// The room the window is dragged by beside a track of tabs.
+const GRIP_WIDTH: f32 = 32.;
 
 /// Which of the strip's menus is up.
 #[derive(Clone, PartialEq, Eq)]
@@ -452,6 +454,7 @@ impl Render for Strip {
                 (Dragged::Tab(slot.clone()), el)
             })
             .collect();
+        let tracked = strip.len() > 1 || self.renaming.is_some();
         let mut model = tabs::Strip::new();
         for slot in &strip {
             model.open(Dragged::Tab(slot.clone()));
@@ -514,23 +517,39 @@ impl Render for Strip {
                     .child(controls)
                     .into_any_element()
             }))
-            // The tabs in a strip of their own, which scrolls sideways once
+            // The tabs on a track of their own, which scrolls sideways once
             // they no longer fit: the controls keep their places while it does.
-            .child(
-                self.reorder
-                    .bar("window-tabs", &model, tabs)
-                    .on_reorder(cx.listener(move |this, moved: &tabs::Move, _, cx| {
-                        if let (Some(moving), Some(to)) =
-                            (strip.get(moved.from).cloned(), strip.get(moved.to).cloned())
-                        {
-                            this.workspace.update(cx, |workspace, cx| {
-                                workspace.reorder_slot(&moving, &to, cx)
-                            });
-                        }
-                    })),
-            )
+            // One tab has no track, back while its name is typed.
+            .when(tracked, |el| {
+                el.child(
+                    self.reorder
+                        .bar("window-tabs", &model, tabs)
+                        .on_track(match floating {
+                            true => tabs::Track::Bare,
+                            false => tabs::Track::Bordered,
+                        })
+                        .on_reorder(cx.listener(move |this, moved: &tabs::Move, _, cx| {
+                            if let (Some(moving), Some(to)) =
+                                (strip.get(moved.from).cloned(), strip.get(moved.to).cloned())
+                            {
+                                this.workspace.update(cx, |workspace, cx| {
+                                    workspace.reorder_slot(&moving, &to, cx)
+                                });
+                            }
+                        })),
+                )
+            })
             .children(project.map(|project| self.add_button(project, window, cx)))
-            .child(grip)
+            .child(match tracked {
+                true => div()
+                    .flex_none()
+                    .w(px(GRIP_WIDTH))
+                    .h_full()
+                    .flex()
+                    .child(grip)
+                    .into_any_element(),
+                false => grip,
+            })
             .children(
                 front
                     .clone()

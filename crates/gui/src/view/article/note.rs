@@ -16,7 +16,7 @@ use bezel::{
     theme::{TextStyle, Theme, Typeset},
     ui::scroll as scrollbars,
 };
-use markdown::selectable;
+use markdown::render::selectable;
 use std::{path::PathBuf, rc::Rc};
 
 /// The most an open note's thread grows before it scrolls.

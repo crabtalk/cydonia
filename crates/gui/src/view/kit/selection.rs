@@ -1,12 +1,12 @@
 //! One text selection across a set of read-only texts, each drawn with
-//! [`markdown::selectable`] under a key of its own: which text holds the
+//! [`markdown::render::selectable`] under a key of its own: which text holds the
 //! selection, what of it, and the press that is extending it.
 
 use bezel::{
     gpui::{App, Context, FocusHandle, Subscription, Window},
     ui::input::{Granularity, drag_selection},
 };
-use markdown::{BlockLayouts, Cursor, Doc, Selection, selectable::Pointer};
+use markdown::{BlockLayouts, Cursor, Doc, Selection, render::selectable::Pointer};
 use std::{cell::RefCell, collections::HashMap, hash::Hash, ops::Range, rc::Rc};
 
 /// The selection over the texts keyed by `K`. One at a time: a press in

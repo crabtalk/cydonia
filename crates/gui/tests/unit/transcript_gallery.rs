@@ -6,7 +6,7 @@ fn images_keep_send_order_and_are_separate_from_selectable_text() {
         document("Before\n\n![](/tmp/one.png)\n\nBetween\n\n![](/tmp/two.png)\n\nAfter");
     assert_eq!(images, ["/tmp/one.png", "/tmp/two.png"]);
     assert_eq!(
-        markdown::selectable::copied(&doc, markdown::Selection::all(&doc)),
+        markdown::render::selectable::copied(&doc, markdown::Selection::all(&doc)),
         "Before\nBetween\nAfter"
     );
 }
