@@ -397,6 +397,7 @@ impl Workspace {
         cx: &mut App,
         mut edit: impl FnMut(&mut Board) -> T,
     ) -> Option<T> {
+        self.keep_edited(Kind::Board, id);
         for open in &mut self.projects {
             let store = open.store();
             let Some(held) = open.boards.iter().find(|held| held.id == id) else {

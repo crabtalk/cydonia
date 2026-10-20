@@ -5,6 +5,7 @@
 //! caret, selection and composition, a select's open menu, scroll, focus and
 //! hover. The app hears a committed change as an event.
 
+use crate::model::workspace::Opening;
 use crate::{
     model::{
         apps::{
@@ -18,7 +19,7 @@ use crate::{
         window::root::{Cydonia, LoadApp},
     },
 };
-use artifact::{app::Loaded, kind::Kind, space::Member};
+use artifact::{app::Loaded, space::Member};
 use bezel::{
     gpui::{
         self, AnyElement, Context, ElementId, Entity, EntityInputHandler as _, ImageSource,
@@ -50,14 +51,15 @@ const RADIUS: f32 = 8.;
 
 impl Cydonia {
     /// Open the app `id`: the space holding it, or the pane in front.
-    pub(crate) fn open_app(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn open_app(
+        &mut self,
+        id: &str,
+        opening: Opening,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.commit(cx);
-        if self.enter_member(Some(Member::app(id)), window, cx) {
-            return;
-        }
-        self.workspace
-            .update(cx, |workspace, cx| workspace.open_app(id, cx));
-        self.leaf().update(cx, |pane, _| pane.kind = Kind::App);
+        self.enter_member(Member::app(id), opening, window, cx);
         cx.notify();
     }
 
@@ -65,7 +67,7 @@ impl Cydonia {
     pub(crate) fn open_recorded(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.workspace
             .update(cx, |workspace, cx| workspace.app_recorded(cx));
-        self.open_app(id, window, cx);
+        self.open_app(id, Opening::Kept, window, cx);
     }
 
     /// Load the crate in a folder the person picks, and open it.

@@ -36,8 +36,6 @@ pub(crate) enum Reveal {
 /// Which of the window's own menus is open.
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) enum Menu {
-    /// The `···` in the band over the window's one pane.
-    Header,
     /// The agents on offer under `New session`, on the screen a project with
     /// nothing open shows — see [`crate::view::window::root::Cydonia::launch`].
     Launch,
@@ -171,49 +169,6 @@ impl Cydonia {
         cx: &Context<Self>,
     ) -> E {
         ContextMenu::trigger(el, |this: &mut Self| &mut this.menu, menu, cx)
-    }
-
-    /// Whether `menu` is the one up.
-    pub(crate) fn menu_open(&self, menu: &Menu) -> bool {
-        self.menu.key() == Some(menu)
-    }
-
-    /// A `···` or `+` that opens `menu` below itself, revealed on the row's
-    /// hover. `group` is the hover group that reveals it; `None` for a trigger
-    /// that stands on its own, as the pane header's does.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn menu_button(
-        &self,
-        id: impl Into<SharedString>,
-        group: Option<&'static str>,
-        mark: impl Into<Icon>,
-        menu: Menu,
-        place: Place,
-        rows: Rows,
-        cx: &Context<Self>,
-    ) -> Stateful<Div> {
-        // Resolved during render, never in a hover style: GPUI can resolve
-        // hover differently in prepaint and paint.
-        let reveal = match group {
-            None => Reveal::Always,
-            Some(group) => Reveal::Group(group),
-        };
-        let button = button(id, mark, reveal, self.menu_open(&menu), cx).on_click({
-            let menu = menu.clone();
-            let rows: std::rc::Rc<Rows> = std::rc::Rc::new(rows);
-            cx.listener(move |this, _, window, cx| {
-                cx.stop_propagation();
-                let rows = rows.clone();
-                this.toggle_menu(
-                    menu.clone(),
-                    place,
-                    move |this, window, cx| rows(this, window, cx),
-                    window,
-                    cx,
-                );
-            })
-        });
-        self.menu_trigger(button, menu, cx)
     }
 
     /// The menu `menu`, placed, while it is on screen: what its trigger hangs

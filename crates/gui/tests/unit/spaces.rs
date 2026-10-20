@@ -582,8 +582,8 @@ fn stacking_an_arranged_entry_moves_it(cx: &mut gpui::TestAppContext) {
 /// With no space open, a tab dropped on the one pane showing starts the space:
 /// one pane, holding both.
 #[gpui::test]
-fn stacking_onto_a_lone_pane_starts_a_space(cx: &mut gpui::TestAppContext) {
-    let scratch = Scratch::new("stack-lone");
+fn stacking_onto_the_windows_strip_adds_a_tab(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("stack-strip");
     cx.update(|cx| bezel::theme::Theme::install(bezel::theme::Appearance::Light, cx));
     let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));
 
@@ -594,19 +594,17 @@ fn stacking_onto_a_lone_pane_starts_a_space(cx: &mut gpui::TestAppContext) {
         }
         let a = workspace.board_member(0, 0).expect("a member");
         let b = workspace.board_member(0, 1).expect("a member");
-        assert!(workspace.active_space().is_none());
+        workspace.open_tab(a.clone(), crate::model::workspace::Opening::Kept, cx);
 
         workspace.stack_pane(&a, &b, cx);
 
-        let space = workspace.active_space().expect("a space started");
-        assert_eq!(space.leaves(), 1, "one pane");
+        assert!(workspace.active_space().is_none(), "no space started");
+        assert_eq!(workspace.tab_strip(), vec![a.clone(), b.clone()]);
         assert_eq!(workspace.stack_of(&a), vec![a.clone(), b.clone()]);
 
-        // Onto itself it is nothing, and starts nothing.
-        workspace.leave_space();
-        let spaces = workspace.spaces.len();
+        // Onto itself it is nothing.
         workspace.stack_pane(&a, &a, cx);
-        assert_eq!(workspace.spaces.len(), spaces);
+        assert_eq!(workspace.tab_strip(), vec![a.clone(), b.clone()]);
     });
 }
 
@@ -1189,5 +1187,71 @@ fn a_loaded_app_keeps_its_place_with_developer_mode_off(cx: &mut gpui::TestAppCo
         assert_eq!(workspace.listed_apps(cx).count(), 0);
         assert!(workspace.program("hello", cx).is_none());
         assert!(workspace.active_space().expect("open").contains(&app));
+    });
+}
+
+// ── the window's strip ──────────────────────────────────────────
+
+/// Opened as a preview, an entry takes the preview tab's place; kept, it lands
+/// beside the tab in front and leaves the preview where it is.
+#[gpui::test]
+fn a_preview_is_replaced_and_a_kept_tab_is_not(cx: &mut gpui::TestAppContext) {
+    use crate::model::workspace::Opening;
+    let scratch = Scratch::new("tab-preview");
+    let (workspace, a, b) = two_boards(&scratch, cx);
+    workspace.update(cx, |workspace, cx| {
+        workspace.new_board(0, "Third".into(), "THREE", cx).ok();
+        let c = workspace.board_member(0, 0).expect("a member");
+
+        workspace.open_tab(a.clone(), Opening::Preview, cx);
+        workspace.open_tab(b.clone(), Opening::Preview, cx);
+        assert_eq!(workspace.tab_strip(), vec![b.clone()], "b took a's place");
+        assert_eq!(workspace.preview_tab(), Some(&b));
+
+        workspace.open_tab(c.clone(), Opening::Kept, cx);
+        assert_eq!(workspace.tab_strip(), vec![b.clone(), c.clone()]);
+        assert_eq!(workspace.preview_tab(), Some(&b), "the preview stays one");
+
+        workspace.keep_tab(&b, cx);
+        workspace.open_tab(a.clone(), Opening::Preview, cx);
+        assert_eq!(
+            workspace.tab_strip(),
+            vec![b.clone(), c.clone(), a.clone()],
+            "with no preview left, a lands after the tab in front"
+        );
+    });
+}
+
+/// An entry written to while it is the preview is kept.
+#[gpui::test]
+fn an_edited_preview_is_kept(cx: &mut gpui::TestAppContext) {
+    use crate::model::workspace::Opening;
+    let scratch = Scratch::new("tab-edited");
+    let (workspace, a, _) = two_boards(&scratch, cx);
+    workspace.update(cx, |workspace, cx| {
+        workspace.open_tab(a.clone(), Opening::Preview, cx);
+        workspace.write_board(a.id(), cx, |board| board.add_column("Doing").id.clone());
+        assert_eq!(workspace.preview_tab(), None);
+    });
+}
+
+/// The last tab out leaves the window on none, and an entry put into a space
+/// leaves the strip.
+#[gpui::test]
+fn tabs_close_and_leave_for_a_space(cx: &mut gpui::TestAppContext) {
+    use crate::model::workspace::Opening;
+    let scratch = Scratch::new("tab-close");
+    let (workspace, a, b) = two_boards(&scratch, cx);
+    workspace.update(cx, |workspace, cx| {
+        workspace.open_tab(a.clone(), Opening::Kept, cx);
+        workspace.open_tab(b.clone(), Opening::Kept, cx);
+        workspace.arrange(&a, &b, Side::Right, cx);
+        assert!(workspace.tab_strip().is_empty(), "both went to the space");
+
+        workspace.leave_space();
+        workspace.open_tab(a.clone(), Opening::Kept, cx);
+        workspace.close_pane(&a, cx);
+        assert!(workspace.tabs.is_none());
+        assert!(workspace.arranged().is_none());
     });
 }

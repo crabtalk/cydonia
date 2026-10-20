@@ -7,6 +7,7 @@ pub mod info;
 mod send;
 
 use crate::model::language::Grammars as _;
+use crate::model::workspace::Opening;
 use crate::view::kit::menu;
 use crate::{
     model::{session::ChatSession, workspace::Workspace},
@@ -24,7 +25,6 @@ use crate::{
         window::root::{Cydonia, NewBoard},
     },
 };
-use artifact::kind::Kind;
 use artifact::{
     board::{Card, Page, View},
     space::{Entry, Member},
@@ -937,8 +937,7 @@ fn card_orb<V: 'static>(
                 .on_click(move |_, window, cx| {
                     cx.stop_propagation();
                     let _ = root.update(cx, |root, cx| {
-                        root.select_session(session, window, cx);
-                        root.show_pane(Kind::Session, cx);
+                        root.select_session(session, Opening::Preview, window, cx);
                     });
                 })
         })
@@ -1048,12 +1047,6 @@ fn card_action(name: &'static str, id: &str, glyph: &'static [u8], cx: &App) -> 
 }
 
 impl Cydonia {
-    pub fn show_pane(&mut self, pane: Kind, cx: &mut Context<Self>) {
-        self.commit(cx);
-        self.leaf().update(cx, |leaf, _| leaf.kind = pane);
-        cx.notify();
-    }
-
     /// The menu's New Board. The sidebar's `+` names a project by the heading
     /// it sits under; the menu bar has only the one in front. Both raise the
     /// dialog that names it — see [`Cydonia::ask_new_board`].
@@ -1073,17 +1066,15 @@ impl Cydonia {
         &mut self,
         project: usize,
         ix: usize,
+        opening: Opening,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.commit(cx);
-        let member = self.workspace.read(cx).board_member(project, ix);
-        if self.enter_member(member, window, cx) {
+        let Some(member) = self.workspace.read(cx).board_member(project, ix) else {
             return;
-        }
-        self.workspace
-            .update(cx, |workspace, cx| workspace.open_board(project, ix, cx));
-        self.leaf().update(cx, |pane, _| pane.kind = Kind::Board);
+        };
+        self.enter_member(member, opening, window, cx);
         self.reveal_applied_match(cx);
         cx.notify();
     }
@@ -1123,15 +1114,17 @@ impl Cydonia {
     /// What `on`'s pane holds that its board view `view` draws by — see
     /// [`PaneState`].
     pub(crate) fn pane_state(&self, on: Option<&Member>, view: EntityId, cx: &App) -> PaneState {
-        self.leaf_of(on, cx).read(cx).pane_state(view, cx)
+        self.leaf_of(on, cx)
+            .map(|pane| pane.read(cx).pane_state(view, cx))
+            .unwrap_or_default()
     }
 
     /// A press on a board the drawer and the cards did not take — see
     /// [`Tab::board_pressed`].
     fn board_pressed(&mut self, on: Option<&Member>, window: &mut Window, cx: &mut Context<Self>) {
-        self.leaf_of(on, cx)
-            .clone()
-            .update(cx, |pane, cx| pane.board_pressed(window, cx));
+        if let Some(pane) = self.leaf_of(on, cx).cloned() {
+            pane.update(cx, |pane, cx| pane.board_pressed(window, cx));
+        }
     }
 
     /// File every pane's open card, then enter `on`'s pane and put its drawer
@@ -1146,9 +1139,9 @@ impl Cydonia {
         if let Some(on) = on {
             self.focus_pane(&on.clone(), window, cx);
         }
-        self.leaf_of(on, cx)
-            .clone()
-            .update(cx, |pane, cx| pane.drop_drawer(cx));
+        if let Some(pane) = self.leaf_of(on, cx).cloned() {
+            pane.update(cx, |pane, cx| pane.drop_drawer(cx));
+        }
     }
 
     /// File whatever is open before leaving it. Every way out of a pane goes
@@ -1222,9 +1215,9 @@ impl Cydonia {
         if let Some(on) = on {
             self.focus_pane(on, window, cx);
         }
-        self.leaf_of(on, cx)
-            .clone()
-            .update(cx, |pane, cx| pane.open_page(board, page, window, cx));
+        if let Some(pane) = self.leaf_of(on, cx).cloned() {
+            pane.update(cx, |pane, cx| pane.open_page(board, page, window, cx));
+        }
         cx.notify();
     }
 

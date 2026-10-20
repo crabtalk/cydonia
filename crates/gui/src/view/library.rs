@@ -6,6 +6,7 @@
 //! place of whatever the panes show, and is put away by going to any entry —
 //! see [`Cydonia::enter_member`].
 
+use crate::model::workspace::Opening;
 use crate::{
     model::{
         settings::Features,
@@ -704,7 +705,7 @@ impl Library {
         let (reference, row) = (self.drawn_reference(row, cx), row.clone());
         self.defer_window(window, cx, move |root, window, cx| match reference {
             Some(reference) => root.peek(None, &reference, window, cx),
-            None => root.open_row(&row, window, cx),
+            None => root.open_row(&row, Opening::Preview, window, cx),
         });
     }
 

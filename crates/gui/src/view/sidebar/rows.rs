@@ -6,6 +6,7 @@ use super::{
     ROW_HEIGHT, ROW_PILL, Renaming, Row, SessionRow, Sidebar, SidebarMenu, TITLE_LINE, Working,
     key_of, on_disk, row, row_frame, row_label, tint,
 };
+use crate::model::workspace::Opening;
 use crate::model::{state, workspace::Showing};
 use crate::view::{
     component::transcript,
@@ -553,7 +554,7 @@ impl Sidebar {
             .on_click(cx.listener(move |this, _, window, cx| {
                 let open = open.clone();
                 this.defer_window(window, cx, move |root, window, cx| {
-                    root.open_row(&open, window, cx)
+                    root.open_row(&open, Opening::Preview, window, cx)
                 });
             }))
             .into_any_element()
@@ -590,7 +591,7 @@ impl Sidebar {
         .on_click(cx.listener(move |this, _, window, cx| {
             let open = open.clone();
             this.defer_window(window, cx, move |root, window, cx| {
-                root.open_row(&open, window, cx)
+                root.open_row(&open, Opening::Preview, window, cx)
             });
         }))
         .into_any_element()

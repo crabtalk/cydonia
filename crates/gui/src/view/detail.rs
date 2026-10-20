@@ -1,5 +1,6 @@
 //! The detail column and its floating plan, permission, and composer controls.
 
+use crate::model::workspace::Opening;
 use crate::view::kit::menu::{self, Menu};
 use crate::view::kit::text::ShownPath as _;
 use crate::{
@@ -19,8 +20,7 @@ use artifact::{session::chat::ChatItem, space::Member};
 use bezel::{
     gpui::{
         self, AnyElement, App, Axis, Context, Div, DragMoveEvent, Empty, FocusHandle,
-        Focusable as _, Pixels, Point, SharedString, Stateful, StyleRefinement, Window, div,
-        prelude::*, px,
+        Focusable as _, Pixels, Point, SharedString, Stateful, Window, div, prelude::*, px,
     },
     motion::{Fade, Painter},
     theme::Theme,
@@ -257,21 +257,6 @@ pub fn agent_missing(agent: Option<&str>) -> String {
     }
 }
 
-/// The same said in one line, for the strip that stands under a transcript.
-///
-/// It names the place, where [`adrift`] does not: the empty state has a button
-/// under it and the strip has only itself, so the destination has to be in the
-/// words rather than on a control beneath them.
-pub fn adrift_line(agent: &str, others: bool) -> String {
-    let missing = agent_missing(Some(agent));
-    match others {
-        true => format!(
-            "{missing} — open a session on an agent that is, or install it again in Settings › Agents."
-        ),
-        false => format!("{missing} — install one in Settings › Agents."),
-    }
-}
-
 impl Cydonia {
     /// Where the window's shell opens: under a space, the project the first
     /// pane is in; the session's working directory when a chat is in front —
@@ -373,14 +358,14 @@ impl Cydonia {
     /// it on the shut panel is leaving it nowhere.
     #[cfg(feature = "desktop")]
     fn focus_after_terminal(&self, window: &mut Window, cx: &mut Context<Self>) {
-        match self.showing(cx) == Some(Kind::Session) {
-            true => window.focus(&self.composer_focus_handle(cx), cx),
-            false => window.focus(&self.focus, cx),
-        }
+        let composer = self
+            .composer_focus_handle(cx)
+            .filter(|_| self.showing(cx) == Some(Kind::Session));
+        window.focus(composer.as_ref().unwrap_or(&self.focus), cx);
     }
 
-    pub fn composer_focus_handle(&self, cx: &App) -> FocusHandle {
-        self.leaf().read(cx).composer.focus_handle(cx)
+    pub fn composer_focus_handle(&self, cx: &App) -> Option<FocusHandle> {
+        Some(self.leaf()?.read(cx).composer.focus_handle(cx))
     }
 
     fn submit(
@@ -447,15 +432,14 @@ impl Cydonia {
     /// swapping one out from under a transcript.
     pub(crate) fn pick_agent(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         let entry = self.workspace.read(cx).settings.agents.get(ix).cloned();
-        if let Some(entry) = entry {
-            // A session that does not exist yet is in no arrangement — it has
-            // no file, so a space has nothing to name it by. `None` is that
-            // said plainly, and leaving the space is what puts the window
-            // where the new session is about to be.
-            self.enter_member(None, window, cx);
-            self.show_pane(Kind::Session, cx);
-            self.workspace
-                .update(cx, |workspace, cx| workspace.new_session(entry, None, cx));
+        let Some(entry) = entry else {
+            return;
+        };
+        let id = self
+            .workspace
+            .update(cx, |workspace, cx| workspace.new_session(entry, None, cx));
+        if let Some(id) = id {
+            self.select_session(id, Opening::Kept, window, cx);
         }
     }
 
@@ -477,9 +461,8 @@ impl Cydonia {
             .iter()
             .map(|pane| pane.read(cx).thread_article(cx))
             .collect();
-        // The session each pane is on: its own where a space put it there,
-        // and whatever the project is on for the single pane. A pane showing
-        // an article is on the article's.
+        // The session each tab is on. A tab showing an article is on the
+        // article's.
         let pointed: Vec<Pointing> = self
             .leaves
             .iter()
@@ -494,17 +477,12 @@ impl Cydonia {
                         _ => point,
                     };
                 }
-                let id = match &pane.read(cx).entry {
-                    Some(entry) => {
-                        workspace
-                            .showing_of(entry, cx)
-                            .and_then(|(_, showing)| match showing {
-                                Showing::Session(id) => Some(id),
-                                _ => None,
-                            })
-                    }
-                    None => workspace.active_id(),
-                };
+                let id = workspace
+                    .showing_of(&pane.read(cx).entry, cx)
+                    .and_then(|(_, showing)| match showing {
+                        Showing::Session(id) => Some(id),
+                        _ => None,
+                    });
                 Pointing::of(id.and_then(|id| workspace.session(id, cx)), &agents, cx)
             })
             .collect();
@@ -595,123 +573,55 @@ impl Cydonia {
         });
     }
 
-    /// Whether the single pane has something of `kind` to show.
-    fn lone_ready(&self, kind: Kind, cx: &App) -> bool {
-        let workspace = self.workspace.read(cx);
-        if kind == Kind::App {
-            return workspace
-                .app
-                .as_deref()
-                .is_some_and(|id| workspace.program(id, cx).is_some());
-        }
-        let Some(open) = workspace.active_project() else {
-            return kind == Kind::Session;
-        };
-        match kind {
-            Kind::Session => true,
-            Kind::Board => open.board.is_some(),
-            Kind::Article => open
-                .article
-                .and_then(|at| open.articles.get(at))
-                .is_some_and(|article| article.document.is_some()),
-            Kind::Table => open
-                .table
-                .and_then(|at| workspace.page_in(workspace.active?, at))
-                .is_some(),
-            Kind::App => unreachable!("answered above"),
-        }
-    }
-
-    pub(crate) fn detail(
+    /// The card the library or the launch view stands in, under the window's
+    /// band — see [`Cydonia::window_band`]. Flat, the band is drawn over the
+    /// card's top; floating, it is on the chrome over the card.
+    fn lone_card(
         &mut self,
+        library: Option<gpui::Entity<crate::view::library::Library>>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement + use<> {
-        let theme = Theme::of(cx).clone();
+    ) -> Div {
         let floating = self.workspace.read(cx).settings.appearance.floating;
-        // The library stands in for every pane, and is framed as a lone one:
-        // the band over it, the drawer a card opens in, and no composer.
-        let library = self.library.is_some();
-        let showing = self.showing(cx).filter(|_| !library);
-        let arranged = self.workspace.read(cx).active_space().is_some() && !library;
-        // A space arranges several entries, so it draws its own panes. One
-        // entry open on its own is the single pane below.
-        let panes = match library {
-            true => self.library.clone().map(|library| {
-                library
-                    .cached(
-                        gpui::StyleRefinement::default()
-                            .flex_1()
-                            .min_h_0()
-                            .flex()
-                            .flex_col(),
-                    )
-                    .into_any_element()
-            }),
-            false => self.panes(window, cx),
+        let body = match library.clone() {
+            Some(library) => library
+                .cached(
+                    gpui::StyleRefinement::default()
+                        .flex_1()
+                        .min_h_0()
+                        .flex()
+                        .flex_col(),
+                )
+                .into_any_element(),
+            None => self.launch(window, cx),
         };
-        let body = match panes {
-            Some(panes) => panes,
-            // An entry can be named and not yet loaded — an article holds no
-            // document until it is opened. The front door stands in for the
-            // moment in between.
-            None => match showing.filter(|kind| self.lone_ready(*kind, cx)) {
-                None => self.launch(window, cx),
-                Some(_) => self
-                    .leaf()
-                    .clone()
-                    .cached(StyleRefinement::default().flex().flex_col().size_full())
-                    .into_any_element(),
-            },
+        // The library's drawer, under the band like the body. A pane draws its
+        // own.
+        let drawer = match library {
+            Some(_) => self.drawer_layer(None, window, cx),
+            None => Vec::new(),
         };
-
-        let content = div()
-            .flex_1()
-            .min_h_0()
-            .flex()
-            .flex_col()
-            .overflow_hidden()
-            // The band is drawn over the column, so the room it needs is taken
-            // here. Held on the pane rather than inside each pane's scroll,
-            // which is where it wants to end up — `../desktop` reserves it
-            // inside the scroll so content slides under the glass, and doing
-            // that means every pane's own scroll box, not this one div.
-            //
-            // A space takes none of it: its panes carry a bar each, and the
-            // one at the top left keeps clear of the lights itself. Floating,
-            // the band is on the chrome over the card and takes none either.
-            .when(!arranged && !floating, |el| el.pt(px(root::HEADER_HEIGHT)))
-            .child(body);
-
-        // A space's panes are cards of their own; anything else is one.
-        let main = match arranged {
-            true => div(),
-            false => bezel::ui::window::content(floating, cx),
-        };
-        let main = main
+        let card = bezel::ui::window::content(floating, cx)
             .flex_1()
             .min_h_0()
             .min_w_0()
             .relative()
             .flex()
             .flex_col()
-            .child(content)
-            // After the content, so it draws over it. A space has no band of
-            // its own: one title over several panes would name whichever is in
-            // front and say nothing about the rest.
-            .children((!arranged && !floating).then(|| self.pane_header(window, cx)));
-        // The library's drawer, under the band like the pane's body. A pane
-        // draws its own.
-        let drawer = match library {
-            true => self.drawer_layer(None, window, cx),
-            false => Vec::new(),
-        };
-        let main = main
-            .when(!arranged, |main| {
-                main.capture_any_mouse_down(cx.listener(|this, _, _, _| this.pressed_pane = None))
-            })
-            .when(!drawer.is_empty(), |main| {
-                main.child(
+            .capture_any_mouse_down(cx.listener(|this, _, _, _| this.pressed_pane = None))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .overflow_hidden()
+                    .when(!floating, |el| el.pt(px(root::HEADER_HEIGHT)))
+                    .child(body),
+            )
+            .children((!floating).then(|| self.window_band(window, cx)))
+            .when(!drawer.is_empty(), |card| {
+                card.child(
                     div()
                         .absolute()
                         .top(px(match floating {
@@ -724,6 +634,53 @@ impl Cydonia {
                         .children(drawer),
                 )
             });
+        match floating {
+            false => card,
+            true => div()
+                .flex_1()
+                .min_h_0()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .child(
+                    div()
+                        .relative()
+                        .flex_none()
+                        .h(px(root::HEADER_HEIGHT))
+                        .mx(px(Theme::CONTENT_INSET / 2.))
+                        .child(self.window_band(window, cx)),
+                )
+                .child(card),
+        }
+    }
+
+    pub(crate) fn detail(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let theme = Theme::of(cx).clone();
+        let floating = self.workspace.read(cx).settings.appearance.floating;
+        // The library stands in for every pane, framed as the launch view is:
+        // one card under the window's band, the drawer a card opens in, and no
+        // composer.
+        let library = self.library.clone();
+        let panes = match library {
+            Some(_) => None,
+            None => self.panes(window, cx),
+        };
+        let _arranged = panes.is_some();
+        let main = match (library, panes) {
+            (_, Some(panes)) => div()
+                .flex_1()
+                .min_h_0()
+                .min_w_0()
+                .relative()
+                .flex()
+                .flex_col()
+                .child(panes),
+            (library, None) => self.lone_card(library, window, cx),
+        };
         // The one panel the window has, under whatever is showing: a space's
         // panes included, which is what the right panel cannot do.
         #[cfg(feature = "desktop")]
@@ -793,12 +750,7 @@ impl Cydonia {
                             cx.notify();
                         },
                     ))
-                    // One pane takes a drop on its edge too: that is where
-                    // the first space comes from.
-                    .child(match arranged {
-                        true => main.into_any_element(),
-                        false => self.lone_pane(main.into_any_element(), cx),
-                    })
+                    .child(main)
                     .children(changes.clone().filter(|_| beside).map(|panel| {
                         bezel::ui::window::content(floating, cx)
                             .relative()
@@ -856,37 +808,16 @@ impl Cydonia {
         if !floating {
             return panels.into_any_element();
         }
-        // Floating, the band is a strip of the chrome over the card, so the
-        // card starts in one place whether the sidebar is open or not, and the
-        // lights stand on the chrome. A space's panes draw their bars on the
-        // chrome over their own cards. The cards leave the column half the
-        // inset to pad itself by.
+        // Floating, the cards leave the column half the inset to pad itself by.
         div()
             .flex_1()
             .min_w_0()
             .min_h_0()
             .flex()
             .flex_col()
-            .when(!arranged, |column| {
-                column.child(
-                    div()
-                        .relative()
-                        .flex_none()
-                        .h(px(root::HEADER_HEIGHT))
-                        .child(self.pane_header(window, cx)),
-                )
-            })
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .min_h_0()
-                    .flex()
-                    .flex_col()
-                    .px(px(Theme::CONTENT_INSET / 2.))
-                    .pb(px(Theme::CONTENT_INSET / 2.))
-                    .child(panels),
-            )
+            .px(px(Theme::CONTENT_INSET / 2.))
+            .pb(px(Theme::CONTENT_INSET / 2.))
+            .child(panels)
             .into_any_element()
     }
 }
@@ -1232,7 +1163,7 @@ impl Cydonia {
         on: Option<&Member>,
         cx: &App,
     ) -> Option<gpui::Entity<transcript::SessionView>> {
-        self.leaf_of(on, cx).read(cx).session_shown(cx)
+        self.leaf_of(on, cx)?.read(cx).session_shown(cx)
     }
 
     /// The view of the session `member` names in the pane showing it.
@@ -1245,7 +1176,7 @@ impl Cydonia {
         self.leaves
             .iter()
             .map(|pane| pane.read(cx))
-            .filter(|pane| pane.entry.as_ref() == Some(member))
+            .filter(|pane| pane.entry == *member)
             .flat_map(|pane| pane.sessions.iter())
             .find(|view| view.read(cx).session == id)
             .cloned()
@@ -1269,7 +1200,7 @@ impl Cydonia {
     pub(crate) fn reveal_session_turn(&mut self, id: u64, turn: usize, cx: &mut Context<Self>) {
         self.sync_items(cx);
         if let Some(view) = self
-            .session_view_of(self.leaf().read(cx).entry.clone().as_ref(), cx)
+            .session_view_of(self.focused_entry(cx).as_ref(), cx)
             .filter(|view| view.read(cx).session == id)
         {
             view.read(cx).state.reveal_turn(turn);
@@ -1280,8 +1211,8 @@ impl Cydonia {
     /// Answers whether there was anything.
     pub(crate) fn copy_transcript_selection(&mut self, cx: &mut Context<Self>) -> bool {
         self.leaf()
-            .clone()
-            .update(cx, |pane, cx| pane.copy_transcript_selection(cx))
+            .cloned()
+            .is_some_and(|pane| pane.update(cx, |pane, cx| pane.copy_transcript_selection(cx)))
     }
 
     /// The queue under session `id`'s transcript in `on`'s pane — see
@@ -1293,7 +1224,7 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        self.leaf_of(on, cx).clone().update(cx, |pane, cx| {
+        self.leaf_of(on, cx).cloned()?.update(cx, |pane, cx| {
             pane.queue(id, window, cx)
                 .map(IntoElement::into_any_element)
         })

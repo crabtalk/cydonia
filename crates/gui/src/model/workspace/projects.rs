@@ -169,6 +169,13 @@ impl Workspace {
         if ix >= self.projects.len() {
             return;
         }
+        let path = self.projects[ix].path.clone();
+        let gone: Vec<_> = self
+            .tab_strip()
+            .into_iter()
+            .filter(|member| member.project() == Some(path.as_path()))
+            .collect();
+        self.drop_tabs(&gone, cx);
         self.projects.remove(ix);
         self.active = self.active.and_then(|active| {
             let next = if active > ix { active - 1 } else { active };

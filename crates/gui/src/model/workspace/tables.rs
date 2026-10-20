@@ -113,6 +113,7 @@ impl Workspace {
         let Some(column) = self.column_name(key, at) else {
             return;
         };
+        self.keep_edited(Kind::Table, key);
         let value = match text.is_empty() {
             true => serde_json::Value::Null,
             false => serde_json::Value::String(text),

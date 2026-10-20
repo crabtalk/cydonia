@@ -274,6 +274,7 @@ fn file_menu() -> Vec<MenuItem> {
         ));
     }
     file.extend([
+        MenuItem::action("New Tab", crate::view::modals::palette::NewTab),
         MenuItem::separator(),
         MenuItem::action("New Board", NewBoard),
         MenuItem::action("New Article", NewArticle),
@@ -349,6 +350,7 @@ impl Cydonia {
 
         root.on_action(cx.listener(Self::toggle_sidebar_action))
             .on_action(cx.listener(Self::toggle_search))
+            .on_action(cx.listener(Self::new_tab))
             .on_action(cx.listener(Self::open_project_action))
             .on_action(cx.listener(Self::open_settings_action))
             .on_action(cx.listener(Self::install_app_action))

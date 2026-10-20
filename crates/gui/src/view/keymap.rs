@@ -66,6 +66,7 @@ pub enum Command {
     OpenSettings,
     NewSession,
     NewSessionNext,
+    NewTab,
     NewBoard,
     NewArticle,
     NewTable,
@@ -113,10 +114,11 @@ impl Menu {
 }
 
 impl Command {
-    pub const ALL: [Self; 25] = [
+    pub const ALL: [Self; 26] = [
         Self::OpenSettings,
         Self::NewSession,
         Self::NewSessionNext,
+        Self::NewTab,
         Self::NewBoard,
         Self::NewArticle,
         Self::NewTable,
@@ -147,6 +149,7 @@ impl Command {
             Self::OpenSettings => "open_settings",
             Self::NewSession => "new_session",
             Self::NewSessionNext => "new_session_next",
+            Self::NewTab => "new_tab",
             Self::NewBoard => "new_board",
             Self::NewArticle => "new_article",
             Self::NewTable => "new_table",
@@ -178,6 +181,7 @@ impl Command {
             Self::OpenSettings => "Settings…",
             Self::NewSession => "New Session",
             Self::NewSessionNext => "New Session on Next Agent",
+            Self::NewTab => "New Tab",
             Self::NewBoard => "New Board",
             Self::NewArticle => "New Article",
             Self::NewTable => "New Table",
@@ -208,6 +212,7 @@ impl Command {
             Self::OpenSettings => Menu::App,
             Self::NewSession
             | Self::NewSessionNext
+            | Self::NewTab
             | Self::NewBoard
             | Self::NewArticle
             | Self::NewTable
@@ -245,6 +250,8 @@ impl Command {
             // ⌘N's other agent: the chord a second agent needs, since ⌘N
             // stays with whoever the project last talked to.
             Self::NewSessionNext => "alt-secondary-n",
+            // What every browser opens a tab on.
+            Self::NewTab => "secondary-t",
             Self::NewBoard
             | Self::NewArticle
             | Self::NewTable
@@ -285,6 +292,16 @@ impl Command {
             Self::OpenSettings => KeyBinding::new(chord, OpenSettings, context),
             Self::NewSession => KeyBinding::new(chord, NewSession, context),
             Self::NewSessionNext => KeyBinding::new(chord, NewSessionNext, context),
+            // Everywhere but the right and bottom panels, which hold ⌘T for a
+            // shell of their own.
+            Self::NewTab => KeyBinding::new(
+                chord,
+                super::modals::palette::NewTab,
+                Some(match NATIVE {
+                    true => "!SessionPanel && !BottomTerminalPanel",
+                    false => "!SessionPanel && !BottomTerminalPanel && !CydoniaTerminal",
+                }),
+            ),
             Self::NewBoard => KeyBinding::new(chord, NewBoard, context),
             Self::NewArticle => KeyBinding::new(chord, NewArticle, context),
             Self::NewTable => KeyBinding::new(chord, NewTable, context),

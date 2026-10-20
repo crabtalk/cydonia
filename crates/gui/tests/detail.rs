@@ -4,7 +4,7 @@
 use cydonia_acp::proto::PermissionOptionKind;
 use cydonia_gui::{
     model::session::Choice,
-    view::detail::{adrift, adrift_line, agent_missing, alert},
+    view::detail::{adrift, agent_missing, alert},
 };
 
 fn choice(id: &str, kind: PermissionOptionKind) -> Choice {
@@ -102,17 +102,6 @@ fn a_first_session_is_offered_the_install_alone() {
     let line = adrift(None, false);
     assert!(line.contains("Install one"), "{line}");
     assert!(!line.contains("either"), "nothing was stranded: {line}");
-}
-
-/// The strip under a transcript carries no button, so the line has to say
-/// where the install is.
-#[test]
-fn the_strip_names_where_to_go() {
-    for others in [true, false] {
-        let line = adrift_line("claude", others);
-        assert!(line.starts_with("claude is not installed"), "{line}");
-        assert!(line.contains("Settings › Agents"), "{line}");
-    }
 }
 
 mod panel_sizing {

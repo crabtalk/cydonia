@@ -115,17 +115,6 @@ pub struct Project {
 }
 
 impl Project {
-    /// The entry of `kind` this project has selected.
-    pub fn selected(&self, kind: Kind) -> Option<Showing> {
-        Some(match kind {
-            Kind::Session => Showing::Session(self.active?),
-            Kind::Board => Showing::Board(self.boards.get(self.board?)?.id.clone()),
-            Kind::Article => Showing::Article(self.articles.get(self.article?)?.id.clone()),
-            Kind::Table => Showing::Table(self.tables.get(self.table?)?.key.clone()),
-            Kind::App => return None,
-        })
-    }
-
     pub fn new(path: PathBuf, cx: &mut App) -> Self {
         let mut this = Self {
             boards: store::open(&path)

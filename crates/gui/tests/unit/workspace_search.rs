@@ -36,7 +36,7 @@ fn workspace_search_keeps_results_beyond_the_palette_limit(cx: &mut gpui::TestAp
     let window = cx
         .add_window(|window, cx| Cydonia::new(Default::default(), Default::default(), window, cx));
     window
-        .update(cx, |this, _, cx| {
+        .update(cx, |this, window, cx| {
             this.workspace.update(cx, |workspace, cx| {
                 let mut project = crate::model::project::Project::new(root.clone(), cx);
                 project.expanded = false;
@@ -73,14 +73,9 @@ fn workspace_search_keeps_results_beyond_the_palette_limit(cx: &mut gpui::TestAp
                 this.search.read(cx).rows(cx).unwrap().len(),
                 crate::view::modals::palette::SHOWN + 1
             );
-            this.workspace.update(cx, |workspace, cx| {
-                workspace.active = Some(0);
-                workspace.projects[0].article = Some(0);
-                workspace.projects[0].articles[0].open(cx);
-            });
-            this.leaf()
-                .clone()
-                .update(cx, |pane, _| pane.kind = artifact::kind::Kind::Article);
+            this.workspace
+                .update(cx, |workspace, _| workspace.active = Some(0));
+            this.open_article(0, 0, crate::model::workspace::Opening::Preview, window, cx);
             this.sync_items(cx);
             let editor = this.pane_editor(cx).unwrap();
             let matches = crate::view::pane::find::hits(
@@ -89,10 +84,13 @@ fn workspace_search_keeps_results_beyond_the_palette_limit(cx: &mut gpui::TestAp
             );
             assert_eq!(matches.len(), 2);
             editor.update(cx, |editor, cx| editor.select(matches[1], cx));
-            this.leaf().clone().update(cx, |pane, _| pane.find_at = 1);
+            this.leaf()
+                .unwrap()
+                .clone()
+                .update(cx, |pane, _| pane.find_at = 1);
             this.reveal_applied_match(cx);
             assert_eq!(editor.read(cx).selection(), matches[0]);
-            assert_eq!(this.leaf().read(cx).find_at, 0);
+            assert_eq!(this.leaf().unwrap().read(cx).find_at, 0);
             this.search.update(cx, |search, _| {
                 search.applied.as_mut().unwrap().filter = Some(Kind::Board)
             });
@@ -128,6 +126,7 @@ impl gpui::Render for SearchControls {
                 .child(
                     div().relative().flex_1().h(px(200.)).children(
                         root.leaf()
+                            .unwrap()
                             .clone()
                             .update(cx, |pane, cx| pane.search_pill(cx)),
                     ),
@@ -138,14 +137,25 @@ impl gpui::Render for SearchControls {
 
 #[gpui::test]
 fn applied_board_search_has_visible_working_exit_controls(cx: &mut gpui::TestAppContext) {
+    use artifact::project::Project as _;
     use bezel::gpui::{Modifiers, MouseButton, VisualTestContext, size};
+    let dir = std::env::temp_dir().join(format!("cydonia-search-exit-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    fs::Project::new(&dir)
+        .create_board("Work", "WORK", artifact::board::View::Lanes)
+        .unwrap();
     cx.update(|cx| Theme::install(bezel::theme::Appearance::Dark, cx));
     let window = cx.add_window(|window, cx| {
         let root = cx.new(|cx| Cydonia::new(Default::default(), Default::default(), window, cx));
         root.update(cx, |root, cx| {
-            root.leaf()
-                .clone()
-                .update(cx, |pane, _| pane.kind = artifact::kind::Kind::Board)
+            root.workspace.update(cx, |workspace, cx| {
+                workspace
+                    .projects
+                    .push(crate::model::project::Project::new(dir.clone(), cx));
+                workspace.active = Some(0);
+            });
+            root.open_board(0, 0, crate::model::workspace::Opening::Preview, window, cx);
         });
         cx.observe(&root, |_, _, cx| cx.notify()).detach();
         SearchControls(root)
@@ -164,7 +174,7 @@ fn applied_board_search_has_visible_working_exit_controls(cx: &mut gpui::TestApp
                 root.search
                     .update(cx, |search, cx| search.apply(query.unwrap(), None, cx));
                 root.push_finds(cx);
-                assert!(!root.leaf().read(cx).find(cx).text().is_empty());
+                assert!(!root.leaf().unwrap().read(cx).find(cx).text().is_empty());
             })
         });
         cx.run_until_parked();
@@ -175,7 +185,7 @@ fn applied_board_search_has_visible_working_exit_controls(cx: &mut gpui::TestApp
         assert_eq!(applied_bounds.size, size(px(240.), px(26.)));
         cx.update(|_, cx| {
             root.update(cx, |root, cx| {
-                root.leaf().clone().update(cx, |pane, cx| {
+                root.leaf().unwrap().clone().update(cx, |pane, cx| {
                     pane.finding = true;
                     pane.find_field
                         .update(cx, |field, cx| field.set_content("local query", cx));
@@ -187,7 +197,7 @@ fn applied_board_search_has_visible_working_exit_controls(cx: &mut gpui::TestApp
         assert_eq!(cx.debug_bounds("search-pill").unwrap(), applied_bounds);
         cx.update(|_, cx| {
             root.update(cx, |root, cx| {
-                root.leaf().clone().update(cx, |pane, cx| {
+                root.leaf().unwrap().clone().update(cx, |pane, cx| {
                     pane.finding = false;
                     cx.notify();
                 });
@@ -200,7 +210,15 @@ fn applied_board_search_has_visible_working_exit_controls(cx: &mut gpui::TestApp
         cx.run_until_parked();
         cx.update(|_, cx| {
             assert!(root.read(cx).search.read(cx).query().is_none());
-            assert!(root.read(cx).leaf().read(cx).find(cx).text().is_empty());
+            assert!(
+                root.read(cx)
+                    .leaf()
+                    .unwrap()
+                    .read(cx)
+                    .find(cx)
+                    .text()
+                    .is_empty()
+            );
         });
         assert!(cx.debug_bounds("search-pill").is_none());
     }

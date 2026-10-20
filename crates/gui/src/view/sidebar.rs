@@ -381,7 +381,7 @@ pub(crate) enum Group {
 pub(crate) enum Light {
     /// In the focused pane: the one row that says where you are.
     Focused,
-    /// In another pane of the open space.
+    /// In another tab the window holds.
     Shown,
     Off,
 }
@@ -404,62 +404,32 @@ impl Light {
 pub(crate) struct Lit {
     /// The library stands over every pane.
     pub(crate) library: bool,
-    /// The focused pane's entry, in a space.
+    /// The focused tab's entry.
     pub(crate) focused: Option<Member>,
-    /// The kind the pane in front shows.
-    pub(crate) showing: Option<Kind>,
+    /// Every entry the window's arrangement holds.
+    pub(crate) open: Vec<Member>,
 }
 
 impl Lit {
-    /// Whether the pane in front is on this entry. Never while the library
+    /// Whether the focused tab is on this entry. Never while the library
     /// stands over the panes.
-    pub(crate) fn in_front(&self, entry: &Row, workspace: &Workspace) -> bool {
-        if self.library || workspace.active_space().is_some() {
-            return false;
-        }
-        let showing = match entry {
-            Row::Entry { showing, .. } => showing,
-            Row::App(id) => {
-                return self.showing == Some(Kind::App) && workspace.app.as_ref() == Some(id);
-            }
-            Row::Group(_) | Row::Archive(_) | Row::Heading(_) => return false,
-        };
-        let Some((project, ix)) = entry.located(workspace) else {
-            return false;
-        };
-        if workspace.active != Some(project) {
-            return false;
-        }
-        let open = &workspace.projects[project];
-        let pane = self.showing;
-        match showing {
-            Showing::Session(id) => pane == Some(Kind::Session) && open.active == Some(*id),
-            Showing::Board(_) => pane == Some(Kind::Board) && open.board == Some(ix),
-            Showing::Article(_) => pane == Some(Kind::Article) && open.article == Some(ix),
-            Showing::Table(_) => pane == Some(Kind::Table) && open.table == Some(ix),
-        }
+    pub(crate) fn in_front(&self, entry: &Row, workspace: &Workspace, cx: &App) -> bool {
+        self.light(entry, workspace, cx) == Light::Focused
     }
 
     /// How a row's entry stands to what the window is showing — see
-    /// [`Light`]. In a space, the focused pane's entry is the lit one and the
-    /// others it shows are [`Light::Shown`]; on one entry alone, that entry.
+    /// [`Light`].
     pub(crate) fn light(&self, row: &Row, workspace: &Workspace, cx: &App) -> Light {
         // The library stands over every pane, so no row is what is on screen.
         if self.library {
             return Light::Off;
         }
-        let Some(space) = workspace.active_space() else {
-            return match self.in_front(row, workspace) {
-                true => Light::Focused,
-                false => Light::Off,
-            };
-        };
         let Some(member) = row.member(workspace, cx) else {
             return Light::Off;
         };
         if self.focused.as_ref() == Some(&member) {
             Light::Focused
-        } else if space.entries().contains(&member) {
+        } else if self.open.contains(&member) {
             Light::Shown
         } else {
             Light::Off

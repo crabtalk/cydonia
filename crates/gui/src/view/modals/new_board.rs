@@ -6,6 +6,7 @@
 //! moment the key is free is the moment before there are any, and that is this
 //! one.
 
+use crate::model::workspace::Opening;
 use crate::{
     model::workspace::Workspace,
     view::{
@@ -81,10 +82,7 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) {
         self.commit(cx);
-        // One editor at a time, as [`Cydonia::open_info`] keeps it.
         self.close_menu(cx);
-        self.renaming = None;
-        self.info = None;
         let workspace = self.workspace.clone();
         let root = cx.entity().downgrade();
         self.toggle_modal(window, cx, |_, cx| {
@@ -164,7 +162,7 @@ impl NewBoard {
                 let into = self.into.clone();
                 let _ = self.root.update(cx, |root, cx| match into.zip(member) {
                     Some((pane, member)) => root.add_tab(&pane, member, window, cx),
-                    None => root.open_board(project, ix, window, cx),
+                    None => root.open_board(project, ix, Opening::Kept, window, cx),
                 });
                 cx.emit(DismissEvent);
             }

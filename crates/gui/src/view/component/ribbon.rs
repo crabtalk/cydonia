@@ -344,7 +344,7 @@ impl Tab {
             start..from + source[from..to].trim_end().len(),
         );
         let workspace = self.workspace.read(cx);
-        let article = workspace.article_of(self.entry.as_ref(), cx)?;
+        let article = workspace.article_of(Some(&self.entry), cx)?;
         let chip = article.number.and_then(|number| {
             let project = &workspace.projects[workspace.article_at(&article.path)?.0];
             let name = reference::project_name(&project.path)?;
@@ -445,10 +445,7 @@ impl Tab {
         if !workspace.settings.features.threads() {
             return None;
         }
-        if self.entry.is_none() && self.kind != artifact::kind::Kind::Article {
-            return None;
-        }
-        Some(workspace.article_of(self.entry.as_ref(), cx)?.path.clone())
+        Some(workspace.article_of(Some(&self.entry), cx)?.path.clone())
     }
 
     // ── chrome ───────────────────────────────────────────────────
@@ -713,16 +710,16 @@ impl Cydonia {
     /// Note on the focused pane that the pointer is choosing a run — see
     /// [`Tab::set_selecting`].
     pub(crate) fn set_selecting(&mut self, selecting: bool, cx: &mut Context<Self>) {
-        self.leaf()
-            .clone()
-            .update(cx, |pane, cx| pane.set_selecting(selecting, cx));
+        if let Some(pane) = self.leaf().cloned() {
+            pane.update(cx, |pane, cx| pane.set_selecting(selecting, cx));
+        }
     }
 
     /// Put the focused pane's bar back to rest — see [`Tab::rest_ribbon`].
     pub(crate) fn rest_ribbon(&mut self, cx: &mut Context<Self>) {
-        self.leaf()
-            .clone()
-            .update(cx, |pane, cx| pane.rest_ribbon(cx));
+        if let Some(pane) = self.leaf().cloned() {
+            pane.update(cx, |pane, cx| pane.rest_ribbon(cx));
+        }
     }
 }
 

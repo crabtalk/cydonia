@@ -17,54 +17,40 @@ use artifact::{
 use bezel::gpui::{App, AppContext as _, Context, Entity};
 
 impl Tab {
-    /// The entry of `kind` the pane shows: its own, or for the pane a window
-    /// with no space open shows, what the project in front is pointed at.
-    fn shown_of(&self, kind: Kind, cx: &App) -> Option<Entry> {
-        if let Some(member) = &self.entry {
-            return member.entry().filter(|entry| entry.kind == kind).cloned();
-        }
-        let workspace = self.workspace.read(cx);
-        let project = workspace.active?;
-        let open = workspace.projects.get(project)?;
-        let member = match kind {
-            Kind::Board => workspace.board_member(project, open.board?),
-            Kind::Article => workspace.article_member(project, open.article?),
-            Kind::Table => workspace.table_member(project, open.table?),
-            Kind::App | Kind::Session => None,
-        };
-        member?.entry().cloned()
+    /// The entry of `kind` the tab shows.
+    fn shown_of(&self, kind: Kind) -> Option<Entry> {
+        self.entry
+            .entry()
+            .filter(|entry| entry.kind == kind)
+            .cloned()
     }
 
-    /// The app the pane shows: its own, or for the pane a window with no space
-    /// open shows, the one the workspace is pointed at.
-    fn shown_app(&self, cx: &App) -> Option<String> {
+    /// The app the tab shows.
+    fn shown_app(&self) -> Option<String> {
         match &self.entry {
-            Some(Member::App { app }) => Some(app.clone()),
-            Some(Member::Entry(_)) => None,
-            None => self.workspace.read(cx).app.clone(),
+            Member::App { app } => Some(app.clone()),
+            Member::Entry(_) => None,
         }
     }
 
     /// The session the pane shows.
     pub(crate) fn shown_session(&self, cx: &App) -> Option<u64> {
-        self.workspace
-            .read(cx)
-            .session_id_of(self.entry.as_ref(), cx)
+        self.workspace.read(cx).session_id_of(Some(&self.entry), cx)
     }
 
     /// Make the views for what the pane is about to draw.
     pub(crate) fn sync_items(&mut self, cx: &mut Context<Self>) {
-        if let Some(board) = self.shown_of(Kind::Board, cx) {
+        if let Some(board) = self.shown_of(Kind::Board) {
             self.board_view(board, cx);
         }
-        if let Some(article) = self.shown_of(Kind::Article, cx) {
+        if let Some(article) = self.shown_of(Kind::Article) {
             let view = self.article_view(article, cx);
             view.update(cx, |view, cx| view.ensure_editor(cx));
         }
-        if let Some(table) = self.shown_of(Kind::Table, cx) {
+        if let Some(table) = self.shown_of(Kind::Table) {
             self.table_view(table, cx);
         }
-        if let Some(app) = self.shown_app(cx) {
+        if let Some(app) = self.shown_app() {
             self.app_view(app, cx);
         }
         if let Some(session) = self.shown_session(cx) {
@@ -80,7 +66,7 @@ impl Tab {
         let (workspace, root, pane) = (
             self.workspace.clone(),
             self.root.clone(),
-            self.entry.clone(),
+            Some(self.entry.clone()),
         );
         let (docs, sort, find) = (
             self.card_docs.clone(),
@@ -95,7 +81,7 @@ impl Tab {
 
     /// The board view the pane draws, where it shows a board.
     pub(crate) fn board_shown(&self, cx: &App) -> Option<Entity<BoardView>> {
-        let board = self.shown_of(Kind::Board, cx)?;
+        let board = self.shown_of(Kind::Board)?;
         self.boards
             .iter()
             .find(|view| view.read(cx).board == board)
@@ -124,7 +110,7 @@ impl Tab {
 
     /// The article view the pane draws, where it shows an article.
     pub(crate) fn article_shown(&self, cx: &App) -> Option<Entity<ArticleView>> {
-        let article = self.shown_of(Kind::Article, cx)?;
+        let article = self.shown_of(Kind::Article)?;
         self.articles
             .iter()
             .find(|view| view.read(cx).article == article)
@@ -144,7 +130,7 @@ impl Tab {
 
     /// The table view the pane draws, where it shows a table.
     pub(crate) fn table_shown(&self, cx: &App) -> Option<Entity<TableView>> {
-        let table = self.shown_of(Kind::Table, cx)?;
+        let table = self.shown_of(Kind::Table)?;
         self.tables
             .iter()
             .find(|view| view.read(cx).table == table)
@@ -164,7 +150,7 @@ impl Tab {
 
     /// The app view the pane draws, where it shows an app.
     pub(crate) fn app_shown(&self, cx: &App) -> Option<Entity<AppView>> {
-        let app = self.shown_app(cx)?;
+        let app = self.shown_app()?;
         self.apps
             .iter()
             .find(|view| view.read(cx).app == app)
@@ -183,7 +169,7 @@ impl Tab {
         let (workspace, root, pane) = (
             self.workspace.clone(),
             self.root.clone(),
-            self.entry.clone(),
+            Some(self.entry.clone()),
         );
         let find = self.find(cx);
         let view = cx.new(|cx| SessionView::new(id, pane, Drawn::Pane, 0., workspace, root, cx));

@@ -630,12 +630,7 @@ impl Render for Panel {
             self.focus(window, cx);
         }
         let theme = Theme::of(cx).clone();
-        // Floating, the window's top right is the chrome over the panel's card.
-        let floating = self
-            .workspace
-            .upgrade()
-            .is_some_and(|workspace| workspace.read(cx).settings.appearance.floating);
-        let right = !floating && chrome::has(CaptionSide::Right, window, cx);
+        let right = chrome::has(CaptionSide::Right, window, cx);
         let launchers = self.launchers();
         let popup = self
             .menu
@@ -798,7 +793,7 @@ impl Render for Panel {
             .child(
                 crate::view::window::root::band()
                     .gap(px(6.))
-                    // At the window's top right while it is up, but floating.
+                    // At the window's top right while it is up.
                     .when(right, |band| band.pr_0())
                     .child(
                         self.reorder
@@ -1122,7 +1117,9 @@ impl Cydonia {
     ) {
         self.set_changes_open(!self.changes_open, cx);
         if !self.changes_open {
-            window.focus(&self.composer_focus_handle(cx), cx);
+            if let Some(focus) = self.composer_focus_handle(cx) {
+                window.focus(&focus, cx);
+            }
         } else {
             self.sync_changes(window, cx);
             if let Some(panel) = self.changes.clone() {

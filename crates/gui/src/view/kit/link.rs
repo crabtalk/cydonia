@@ -14,6 +14,7 @@
 
 pub mod mention;
 
+use crate::model::workspace::Opening;
 use std::{path::PathBuf, rc::Rc};
 
 use crate::{
@@ -512,7 +513,7 @@ impl Cydonia {
             )
             .on_click(cx.listener(move |this, _, window, cx| match block {
                 Some(block) => this.open_passage(&row, block, window, cx),
-                None => this.open_row(&row, window, cx),
+                None => this.open_row(&row, Opening::Preview, window, cx),
             }))
             .into_any_element()
     }
@@ -525,7 +526,7 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_row(row, window, cx);
+        self.open_row(row, Opening::Preview, window, cx);
         let editor = self.pane_editor(cx);
         if let Some(editor) = editor {
             let at = markdown::Selection::at(markdown::Cursor::new(block, markdown::Part::Body, 0));
@@ -776,9 +777,9 @@ impl Cydonia {
                     .icon_button(icons::layout::Maximize, ButtonStyle::Ghost, None)
                     .id(SharedString::from(format!("session-card-open-{id}")))
                     .flex_none()
-                    .on_click(
-                        cx.listener(move |this, _, window, cx| this.select_session(id, window, cx)),
-                    ),
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.select_session(id, Opening::Preview, window, cx)
+                    })),
             )
             .into_any_element()
     }
@@ -916,7 +917,7 @@ impl Cydonia {
                 },
             ))
             .on_click(cx.listener(move |this, _, window, cx| {
-                this.select_session(id, window, cx);
+                this.select_session(id, Opening::Preview, window, cx);
                 this.reveal_session_turn(id, from, cx);
             }));
         div()

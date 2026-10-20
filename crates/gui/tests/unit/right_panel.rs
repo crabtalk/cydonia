@@ -2,6 +2,7 @@
 //! everything open in it.
 
 use super::*;
+use crate::model::workspace::Opening;
 use crate::model::{settings::Settings, state};
 use artifact::kind::Kind;
 use bezel::gpui;
@@ -89,11 +90,7 @@ fn an_article_and_a_board_in_one_project_share_its_panel(cx: &mut gpui::TestAppC
                 workspace.new_article(cx);
                 workspace.new_board(0, "First".into(), "ONE", cx).ok();
             });
-            root.workspace
-                .update(cx, |workspace, cx| workspace.open_article(0, 0, cx));
-            root.leaf()
-                .clone()
-                .update(cx, |pane, _| pane.kind = Kind::Article);
+            root.open_article(0, 0, Opening::Preview, window, cx);
             assert_eq!(root.showing(cx), Some(Kind::Article));
 
             // The panel opens on an article, which up to 0.1.11 it would not.
@@ -108,11 +105,7 @@ fn an_article_and_a_board_in_one_project_share_its_panel(cx: &mut gpui::TestAppC
 
             // The board in the same project is the same directory, so it is
             // the same panel rather than a second one.
-            root.workspace
-                .update(cx, |workspace, cx| workspace.open_board(0, 0, cx));
-            root.leaf()
-                .clone()
-                .update(cx, |pane, _| pane.kind = Kind::Board);
+            root.open_board(0, 0, Opening::Preview, window, cx);
             assert_eq!(root.showing(cx), Some(Kind::Board));
             root.sync_changes(window, cx);
 
@@ -144,11 +137,7 @@ fn a_second_project_gets_a_panel_of_its_own(cx: &mut gpui::TestAppContext) {
                 workspace.open_project(one.clone(), cx);
                 workspace.new_article(cx);
             });
-            root.workspace
-                .update(cx, |workspace, cx| workspace.open_article(0, 0, cx));
-            root.leaf()
-                .clone()
-                .update(cx, |pane, _| pane.kind = Kind::Article);
+            root.open_article(0, 0, Opening::Preview, window, cx);
             root.show_changes(window, cx);
             let first = root.changes.clone().expect("a panel");
 
@@ -163,11 +152,7 @@ fn a_second_project_gets_a_panel_of_its_own(cx: &mut gpui::TestAppContext) {
                 .iter()
                 .position(|open| open.path == two)
                 .expect("the second project");
-            root.workspace
-                .update(cx, |workspace, cx| workspace.open_article(project, 0, cx));
-            root.leaf()
-                .clone()
-                .update(cx, |pane, _| pane.kind = Kind::Article);
+            root.open_article(project, 0, Opening::Preview, window, cx);
             root.sync_changes(window, cx);
 
             assert!(
@@ -183,11 +168,7 @@ fn a_second_project_gets_a_panel_of_its_own(cx: &mut gpui::TestAppContext) {
             assert_eq!(root.right_panels.len(), 2);
 
             // Back to the first, which comes up as it was left.
-            root.workspace
-                .update(cx, |workspace, cx| workspace.open_article(0, 0, cx));
-            root.leaf()
-                .clone()
-                .update(cx, |pane, _| pane.kind = Kind::Article);
+            root.open_article(0, 0, Opening::Preview, window, cx);
             root.sync_changes(window, cx);
             assert!(root.changes_open, "left up, so it comes back up");
             assert_eq!(root.changes.as_ref(), Some(&first));

@@ -56,8 +56,10 @@ mod articles;
 mod boards;
 mod labels;
 mod spaces;
+mod tabs;
 pub use sessions::ArticleChange;
 pub use spaces::Showing;
+pub use tabs::Opening;
 mod order;
 mod projects;
 pub mod references;
@@ -156,6 +158,12 @@ pub struct Workspace {
     /// from several — see [`spaces`].
     pub spaces: Vec<artifact::space::Space>,
     pub space: Option<usize>,
+    /// The window's own strip of tabs, shown while no space is open — see
+    /// [`tabs`]. Nothing where no tab is open.
+    pub tabs: Option<artifact::space::Space>,
+    /// The tab the next opening replaces — see [`Workspace::open_tab`].
+    /// Runtime only.
+    preview: Option<artifact::space::Member>,
     /// Spaces whose members the sidebar hides, by id.
     folded_spaces: std::collections::HashSet<String>,
     /// The order the sidebar lists each space's members in, by space id.
@@ -168,8 +176,6 @@ pub struct Workspace {
     release: Option<crate::model::version::Version>,
     /// Every app on this machine, by id — see [`apps`].
     pub apps: Vec<crate::model::apps::HeldApp>,
-    /// Which app the pane a window with no space open shows.
-    pub app: Option<String>,
     /// The watch on the apps' records and loaded folders.
     apps_watch: Option<crate::model::watch::Watch>,
 }
@@ -228,13 +234,14 @@ impl Workspace {
                 &state.spaces,
             ),
             space: None,
+            tabs: None,
+            preview: None,
             folded_spaces: state.folded_spaces.iter().cloned().collect(),
             space_order: state.space_order,
             folded_sections: state.folded_sections.iter().cloned().collect(),
             recent_commands: state.commands,
             release: state.release,
             apps: Vec::new(),
-            app: None,
             apps_watch: None,
         };
         this.app_recorded(cx);
@@ -248,6 +255,8 @@ impl Workspace {
             this.watch_project(ix, cx);
         }
         this.open_last_entry(cx);
+        this.restore_tabs(state.tabs, state.front, cx);
+        this.bring_up_tabs(cx);
         this.bring_up_space(cx);
         this.load_agent_icons(cx);
         this.refresh_door();
@@ -309,6 +318,8 @@ impl Workspace {
             window: self.window,
             commands: self.recent_commands.clone(),
             release: self.release.clone(),
+            tabs: Some(self.tab_strip()),
+            front: self.tabs.as_ref().and_then(|tabs| tabs.tree.front()),
         });
     }
 

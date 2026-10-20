@@ -125,6 +125,14 @@ pub struct State {
     /// path and name — see [`crate::view::window::menubar::Command::key`].
     #[serde(default)]
     pub commands: Vec<String>,
+    /// The window's tabs, in strip order — see
+    /// [`crate::model::workspace::Workspace::tabs`]. Nothing in a file written
+    /// before tabs, which lands on the active project's `last`.
+    #[serde(default)]
+    pub tabs: Option<Vec<artifact::space::Member>>,
+    /// The tab in front. One the strip no longer holds, or none, is its first.
+    #[serde(default)]
+    pub front: Option<artifact::space::Member>,
 }
 
 /// Where the main window stands, in the platform's logical pixels. For a
@@ -190,6 +198,8 @@ pub fn restore() -> State {
         folded_sections: stored.folded_sections,
         window: stored.window,
         commands: stored.commands,
+        tabs: stored.tabs,
+        front: stored.front,
     }
 }
 

@@ -7,6 +7,7 @@ pub mod footer;
 pub mod header;
 pub mod items;
 pub mod tab;
+pub mod title;
 
 pub(crate) use tab::{Tab, TabMenu};
 
@@ -174,7 +175,7 @@ impl Pane {
         let front = self.front(cx);
         self.tabs
             .iter()
-            .find(|tab| tab.read(cx).entry.as_ref() == Some(&front))
+            .find(|tab| tab.read(cx).entry == front)
             .cloned()
     }
 
@@ -247,7 +248,7 @@ impl Pane {
             && self
                 .tabs
                 .iter()
-                .any(|held| held.read(cx).entry.as_ref() == Some(tab) && held.read(cx).focused);
+                .any(|held| held.read(cx).entry == *tab && held.read(cx).focused);
         let key = arrangement::key_of(tab);
         let title = SharedString::from(
             toolbar
@@ -276,10 +277,18 @@ impl Pane {
             .and_then(|toolbar| toolbar.entry.as_ref())
             .map(|entry| (entry.row.clone(), entry.archived));
         let menu_key = BarMenu::Tab(tab.clone());
+        // The tab the next opening replaces reads in italic until it is kept.
+        let preview = self.workspace.read(cx).preview_tab() == Some(tab);
         tabs::tab(theme, key.clone(), label, state)
+            .when(preview, |tab| tab.italic())
             .on_click(cx.listener({
                 let (on, shown) = (self.name.clone(), tab.clone());
-                move |this, _, window, cx| {
+                move |this, click: &gpui::ClickEvent, window, cx| {
+                    // A second press keeps a preview tab.
+                    if click.click_count() > 1 {
+                        this.workspace
+                            .update(cx, |workspace, cx| workspace.keep_tab(&shown, cx));
+                    }
                     let (on, shown) = (on.clone(), shown.clone());
                     this.defer_window(window, cx, move |root, window, cx| {
                         root.show_tab(&on, &shown, window, cx)
@@ -383,6 +392,11 @@ impl Pane {
         } = self.seat;
         let key = arrangement::key_of(&self.name);
         let stack = self.stack(cx);
+        let several = self
+            .workspace
+            .read(cx)
+            .arranged()
+            .is_some_and(|space| space.leaves() > 1);
         let front = self.front(cx);
         // The lights are the window's and are drawn over whatever is at its
         // top left, so their clearance is taken by the pane that lands there
@@ -524,13 +538,9 @@ impl Pane {
                 )
             }))
             .child(grip)
-            // The article in front's comments, beside the pane's `···`.
-            .children(
-                self.front_tab(cx)
-                    .and_then(|tab| tab.read(cx).article_shown(cx))
-                    .map(|view| view.read(cx).comments.clone()),
-            )
-            .child({
+            // What can be done to a pane is zoom it and move it, which needs a
+            // pane beside it.
+            .children(several.then(|| {
                 let name = self.name.clone();
                 self.bar_button(
                     SharedString::from(format!("pane-menu-{key}")),
@@ -540,7 +550,7 @@ impl Pane {
                     window,
                     cx,
                 )
-            })
+            }))
             // The band's right-panel button, on the pane at the window's top
             // right — which is `last` only while the panel is down.
             .children(

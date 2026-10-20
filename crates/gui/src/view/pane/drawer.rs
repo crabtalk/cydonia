@@ -5,6 +5,7 @@
 //! holds is a [`Peek`].
 
 use super::Tab;
+use crate::model::workspace::Opening;
 use crate::view::window::reach::InWindow as _;
 use crate::{
     model::workspace::{Showing, references::Part},
@@ -425,10 +426,8 @@ impl Tab {
                 .capture_any_mouse_down({
                     let root = self.root.clone();
                     move |_, window, cx| {
-                        if let Some(on) = &focus_on {
-                            root.update(cx, |root, cx| root.focus_pane(on, window, cx))
-                                .ok();
-                        }
+                        root.update(cx, |root, cx| root.focus_pane(&focus_on, window, cx))
+                            .ok();
                     }
                 })
                 .on_mouse_down(gpui::MouseButton::Left, {
@@ -602,9 +601,9 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.leaf_of(on, cx)
-            .clone()
-            .update(cx, |pane, cx| pane.close_drawer(window, cx));
+        if let Some(pane) = self.leaf_of(on, cx).cloned() {
+            pane.update(cx, |pane, cx| pane.close_drawer(window, cx));
+        }
     }
 
     /// Hold the rows of every table a drawer shows, so its preview has a page
@@ -651,7 +650,10 @@ impl Cydonia {
             }
             return;
         }
-        if self.leaf_of(on, cx).read(cx).peeks(reference) {
+        if self
+            .leaf_of(on, cx)
+            .is_some_and(|pane| pane.read(cx).peeks(reference))
+        {
             return self.close_drawer(on, window, cx);
         }
         // An article or a board a pane already shows opens in that pane.
@@ -663,7 +665,7 @@ impl Cydonia {
             }
         );
         if paned && self.on_screen(&named.row, cx) {
-            return self.open_row(&named.row, window, cx);
+            return self.open_row(&named.row, Opening::Preview, window, cx);
         }
         match &named.row {
             Row::Entry {
@@ -710,9 +712,9 @@ impl Cydonia {
             reference: reference.to_owned(),
             session,
         };
-        self.leaf_of(on, cx)
-            .clone()
-            .update(cx, |pane, cx| pane.open_entry(entry, window, cx));
+        if let Some(pane) = self.leaf_of(on, cx).cloned() {
+            pane.update(cx, |pane, cx| pane.open_entry(entry, window, cx));
+        }
         cx.notify();
     }
 
@@ -723,7 +725,9 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
-        let pane = self.leaf_of(on, cx).clone();
+        let Some(pane) = self.leaf_of(on, cx).cloned() else {
+            return Vec::new();
+        };
         let peek = pane
             .read(cx)
             .drawer_shown(cx)
@@ -810,7 +814,7 @@ impl Cydonia {
                 },
                 Rc::new(
                     move |this: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
-                        this.select_session(id, window, cx)
+                        this.select_session(id, Opening::Preview, window, cx)
                     },
                 ),
             ),
@@ -820,7 +824,7 @@ impl Cydonia {
                     self.excerpt_body(id, turns, None, window, cx),
                     Rc::new(
                         move |this: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
-                            this.select_session(id, window, cx);
+                            this.select_session(id, Opening::Preview, window, cx);
                             this.reveal_session_turn(id, from, cx);
                         },
                     ),
@@ -864,7 +868,7 @@ impl Cydonia {
                     body,
                     Rc::new(
                         move |this: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
-                            this.open_row(&row, window, cx)
+                            this.open_row(&row, Opening::Preview, window, cx)
                         },
                     ),
                 )

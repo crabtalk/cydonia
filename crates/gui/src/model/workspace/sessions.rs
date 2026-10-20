@@ -90,8 +90,7 @@ impl Workspace {
     }
 
     /// The member that names a session wherever it is open — what finds the
-    /// pane holding it. Nothing for one with no file yet: a space names its
-    /// members by file, and a session has none until its first turn.
+    /// tab holding it. Nothing for one with no record id yet.
     pub fn member_of_session(&self, id: u64, cx: &App) -> Option<artifact::space::Member> {
         self.member_of(self.project_of(id)?, super::Showing::Session(id), cx)
     }
@@ -315,6 +314,9 @@ impl Workspace {
         let Some(record) = record else {
             return;
         };
+        if let Some(minted) = self.session(id, cx).and_then(|chat| chat.record.clone()) {
+            self.keep_edited(Kind::Session, &minted);
+        }
         if let (Some(record), Some(ix)) = (record, self.project_of(id)) {
             self.note_landing(ix, Kind::Session, record, cx);
         }

@@ -6,6 +6,7 @@ pub mod confirm;
 pub mod desktop;
 pub mod install_app;
 pub mod new_board;
+pub mod no_agent;
 pub mod palette;
 #[cfg(not(feature = "desktop"))]
 pub mod settings;

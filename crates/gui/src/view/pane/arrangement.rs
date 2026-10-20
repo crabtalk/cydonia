@@ -15,7 +15,6 @@ use crate::{
         window::root::{Cydonia, NewSession},
     },
 };
-use artifact::kind::Kind;
 use artifact::space::{Axis as Split, Member, Node, Side, Space};
 use bezel::{
     gpui::{
@@ -42,14 +41,14 @@ pub struct SeamDrag {
 }
 
 impl Cydonia {
-    /// The space the window is arranged by, taken whole: the tree is walked
+    /// What the window is arranged by, taken whole — see
+    /// [`crate::model::workspace::Workspace::arranged`]. The tree is walked
     /// while the workspace is drawn from, so it is cloned out first.
     pub(crate) fn arrangement(&self, cx: &App) -> Option<Space> {
-        self.workspace.read(cx).active_space().cloned()
+        self.workspace.read(cx).arranged().cloned()
     }
 
-    /// The panes of the open space, or nothing where none is open and the
-    /// window is showing one entry.
+    /// The panes the window is arranged in, or nothing where no tab is open.
     pub(crate) fn panes(
         &mut self,
         window: &mut Window,
@@ -247,12 +246,10 @@ impl Cydonia {
                 .position(|pane| stack.contains(&pane.read(cx).name))
                 .or_else(|| {
                     self.panes.iter().position(|pane| {
-                        pane.read(cx).tabs.iter().any(|tab| {
-                            tab.read(cx)
-                                .entry
-                                .as_ref()
-                                .is_some_and(|entry| stack.contains(entry))
-                        })
+                        pane.read(cx)
+                            .tabs
+                            .iter()
+                            .any(|tab| stack.contains(&tab.read(cx).entry))
                     })
                 }) {
                 Some(at) => self.panes.remove(at),
@@ -267,7 +264,7 @@ impl Cydonia {
                 .filter_map(|tab| {
                     self.leaves
                         .iter()
-                        .find(|leaf| leaf.read(cx).entry.as_ref() == Some(tab))
+                        .find(|leaf| leaf.read(cx).entry == *tab)
                         .cloned()
                 })
                 .collect();
@@ -298,8 +295,7 @@ impl Cydonia {
         }
     }
 
-    /// Whether a pane draws the entry `row` names: the front tab of a pane of
-    /// the open space, or the single pane.
+    /// Whether a pane draws the entry `row` names: the front tab of a pane.
     pub(crate) fn on_screen(&self, row: &Row, cx: &App) -> bool {
         let Row::Entry { project, showing } = row else {
             return false;
@@ -309,30 +305,14 @@ impl Cydonia {
             return false;
         }
         let workspace = self.workspace.read(cx);
-        if let Some(space) = workspace.active_space() {
-            let Some(at) = workspace.project_at(project) else {
-                return false;
-            };
-            return space.tree.fronts().iter().any(|front| {
-                workspace
-                    .showing_of(front, cx)
-                    .is_some_and(|(open, shown)| open == at && &shown == showing)
-            });
-        }
-        let Some(open) = workspace
-            .active_project()
-            .filter(|open| &open.path == project)
-        else {
+        let (Some(space), Some(at)) = (workspace.arranged(), workspace.project_at(project)) else {
             return false;
         };
-        let Some(ix) = open.ix_of(showing) else {
-            return false;
-        };
-        match (self.showing(cx), showing) {
-            (Some(Kind::Article), Showing::Article(_)) => open.article == Some(ix),
-            (Some(Kind::Board), Showing::Board(_)) => open.board == Some(ix),
-            _ => false,
-        }
+        space.tree.fronts().iter().any(|front| {
+            workspace
+                .showing_of(front, cx)
+                .is_some_and(|(open, shown)| open == at && &shown == showing)
+        })
     }
 
     /// Move `moving` to `to`'s place in their pane's strip. `false`, and
@@ -398,28 +378,6 @@ impl Cydonia {
         cx.notify();
     }
 
-    /// What the single pane is showing, as a member.
-    pub(crate) fn lone_member(&self, cx: &App) -> Option<Member> {
-        self.workspace
-            .read(cx)
-            .active
-            .zip(self.showing(cx))
-            .and_then(|(project, pane)| self.member_showing(project, pane, cx))
-    }
-
-    /// The single entry's column, header included, as a pane a drop lands on:
-    /// over the header it makes the two tabs, and on an edge the space that
-    /// puts them side by side.
-    pub(crate) fn lone_pane(&self, column: AnyElement, cx: &App) -> AnyElement {
-        match self.lone_member(cx) {
-            Some(on) => self
-                .dock
-                .pane(on, px(crate::view::window::root::HEADER_HEIGHT), column)
-                .into_any_element(),
-            None => column,
-        }
-    }
-
     /// The member a carried item names, once it has landed.
     fn dropped(&mut self, item: &Dragged, cx: &mut Context<Self>) -> Option<Member> {
         match item {
@@ -479,20 +437,13 @@ impl Cydonia {
         Some(arriving)
     }
 
-    /// The member that names what a single pane is on.
-    fn member_showing(&self, project: usize, pane: Kind, cx: &App) -> Option<Member> {
-        let workspace = self.workspace.read(cx);
-        let showing = workspace.projects.get(project)?.selected(pane)?;
-        workspace.member_of(project, showing, cx)
-    }
-
     /// What the `···` on a pane's bar offers: what can be done to the *pane*.
     ///
     /// Nothing about the entry it is on — no rename, no archive, no delete.
     /// Those act on a thing that has its own row in the sidebar and its own
-    /// band when it is opened on its own, and `../desktop`'s rule for a `···`
-    /// is that it carries only what has no affordance elsewhere. A delete one
-    /// click from the moves would also be a delete nobody meant.
+    /// title row in the tab, and `../desktop`'s rule for a `···` is that it
+    /// carries only what has no affordance elsewhere. A delete one click from
+    /// the moves would also be a delete nobody meant.
     ///
     /// Closing is not here either: it keeps the button on the bar.
     pub(crate) fn pane_rows(&self, entry: &Member, cx: &App) -> Vec<(Item, menu::Act)> {
@@ -587,10 +538,7 @@ impl Cydonia {
             .map(|space| space.entries())
             .unwrap_or_default();
         let kept = self
-            .leaf()
-            .read(cx)
-            .entry
-            .clone()
+            .focused_entry(cx)
             .filter(|focused| focused != entry)
             .or_else(|| next.clone())
             .or_else(|| {
@@ -602,9 +550,8 @@ impl Cydonia {
             })
             .or_else(|| entries.iter().rev().find(|tab| *tab != entry).cloned());
         self.tab_history.retain(|tab| tab != entry);
-        // The entry left when this close took the space with it. Without
-        // putting the pane on its kind the window drops back to whatever the
-        // single pane was last showing, which is not what was on screen.
+        // The entry left when this close took the space with it, which opened
+        // in the window's strip — see [`Workspace::close_pane`].
         let alone = self
             .workspace
             .update(cx, |workspace, cx| workspace.close_pane(entry, cx));
@@ -613,22 +560,17 @@ impl Cydonia {
         {
             self.set_front(&pane, next, cx);
         }
-        // The pane left alone is the one to keep, not the one just closed:
-        // [`Cydonia::sync_leaves`] keeps whichever leaf is focused when it
-        // finds no space, and the focus is still on the pane going away.
-        if let Some((member, _)) = &alone
-            && let Some(at) = self
-                .leaves
-                .iter()
-                .position(|leaf| leaf.read(cx).entry.as_ref() == Some(member))
-        {
-            self.focused = at;
-        }
         self.sync_leaves(window, cx);
-        if let Some((_, showing)) = alone {
-            self.show_pane(showing.kind(), cx);
-        }
-        if let Some(entry) = kept.or_else(|| self.leaf().read(cx).entry.clone()) {
+        let landing = alone
+            .map(|(member, _)| member)
+            .or(kept)
+            .filter(|member| {
+                self.leaves
+                    .iter()
+                    .any(|leaf| leaf.read(cx).entry == *member)
+            })
+            .or_else(|| self.focused_entry(cx));
+        if let Some(entry) = landing {
             self.focused = usize::MAX;
             self.focus_pane(&entry, window, cx);
         }
@@ -651,7 +593,7 @@ impl Cydonia {
         if panes.len() < 2 {
             return;
         }
-        let here = self.leaf().read(cx).entry.clone();
+        let here = self.focused_entry(cx);
         let at = here
             .and_then(|front| {
                 let stack = self.workspace.read(cx).stack_of(&front);
@@ -675,7 +617,7 @@ impl Cydonia {
     /// Close the tab in front — and with it the pane, where it was the pane's
     /// last. The keyboard's half of the `×` on a tab.
     pub(crate) fn close_focused_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(entry) = self.leaf().read(cx).entry.clone() else {
+        let Some(entry) = self.focused_entry(cx) else {
             return;
         };
         self.close_pane(&entry, window, cx);
@@ -703,7 +645,7 @@ impl Cydonia {
 
     /// Stand the pane in front over the others, or put it back.
     pub(crate) fn zoom_focused_pane(&mut self, cx: &mut Context<Self>) {
-        let Some(entry) = self.leaf().read(cx).entry.clone() else {
+        let Some(entry) = self.focused_entry(cx) else {
             return;
         };
         self.workspace.update(cx, |workspace, cx| {
@@ -712,8 +654,8 @@ impl Cydonia {
         cx.notify();
     }
 
-    /// Open a space: the window is arranged by it until another entry is
-    /// opened on its own.
+    /// Open a space: the window is arranged by it until an entry no space
+    /// holds is opened.
     pub(crate) fn open_space(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         self.library = None;
         self.workspace.update(cx, |workspace, cx| {

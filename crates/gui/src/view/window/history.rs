@@ -6,6 +6,7 @@
 //! Going back is going to that entry, wherever it is shown now, scrolled to
 //! where it was left; or to the library, narrowed as it was left.
 
+use crate::model::workspace::Opening;
 use artifact::space::Member;
 use bezel::{
     gpui::{Context, Div, IntoElement, ListOffset, Pixels, Point, Window, div, prelude::*},
@@ -78,18 +79,13 @@ impl History {
 }
 
 impl Cydonia {
-    /// What the window is on: the library while it is up, else the entry in
-    /// focus — the focused pane's in a space, the single pane's otherwise.
+    /// What the window is on: the library while it is up, else the focused
+    /// tab's entry.
     fn focused_place(&self, cx: &Context<Self>) -> Option<Place> {
         if self.library.is_some() {
             return Some(Place::Library);
         }
-        self.leaf()
-            .read(cx)
-            .entry
-            .clone()
-            .or_else(|| self.lone_member(cx))
-            .map(Place::Entry)
+        self.focused_entry(cx).map(Place::Entry)
     }
 
     /// Note what the window is on, and step the history when it changed.
@@ -234,7 +230,7 @@ impl Cydonia {
             self.history.stepping = true;
             match (row, next.at.clone()) {
                 (Some(row), _) => {
-                    self.open_row(&row, window, cx);
+                    self.open_row(&row, Opening::Preview, window, cx);
                     self.restore(&next, cx);
                 }
                 (None, Some(Position::Library(shelf))) => self.open_library(shelf, window, cx),

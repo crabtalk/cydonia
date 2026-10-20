@@ -3,6 +3,7 @@
 //! Every edit runs through the one field, the way the board's cards do — a
 //! field per cell would mint an entity for every value on screen.
 
+use crate::model::workspace::Opening;
 use crate::{
     data::ColType,
     model::workspace::Workspace,
@@ -11,7 +12,6 @@ use crate::{
         window::root::{Cydonia, NewTable},
     },
 };
-use artifact::kind::Kind;
 use artifact::space::{Entry, Member};
 use bezel::ui::scroll as scrollbars;
 use bezel::{
@@ -104,7 +104,7 @@ impl Cydonia {
             .workspace
             .update(cx, |workspace, cx| workspace.new_table(cx));
         if let Some(ix) = ix {
-            self.open_table(project, ix, window, cx);
+            self.open_table(project, ix, Opening::Kept, window, cx);
         }
     }
 
@@ -112,23 +112,21 @@ impl Cydonia {
         &mut self,
         project: usize,
         ix: usize,
+        opening: Opening,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.commit(cx);
-        let member = self.workspace.read(cx).table_member(project, ix);
-        if self.enter_member(member, window, cx) {
+        let Some(member) = self.workspace.read(cx).table_member(project, ix) else {
             return;
-        }
-        self.workspace
-            .update(cx, |workspace, cx| workspace.open_table(project, ix, cx));
-        self.leaf().update(cx, |pane, _| pane.kind = Kind::Table);
+        };
+        self.enter_member(member, opening, window, cx);
         cx.notify();
     }
 
     /// The table view `on`'s pane draws, where it shows a table.
     pub(crate) fn table_view_of(&self, on: Option<&Member>, cx: &App) -> Option<Entity<TableView>> {
-        self.leaf_of(on, cx).read(cx).table_shown(cx)
+        self.leaf_of(on, cx)?.read(cx).table_shown(cx)
     }
 
     /// Every table view the panes hold.

@@ -166,9 +166,7 @@ impl Tab {
 
     /// What the pane shows, as its find reaches it.
     fn shown_kind(&self) -> Kind {
-        self.entry
-            .as_ref()
-            .map_or(self.kind, artifact::space::Member::kind)
+        self.entry.kind()
     }
 
     /// How many hits the find finds in what the pane shows.
@@ -192,7 +190,7 @@ impl Tab {
             return;
         }
         self.finding = true;
-        let placeholder = match self.kind {
+        let placeholder = match self.shown_kind() {
             Kind::Board => "find a card…",
             _ => "find…",
         };
@@ -440,27 +438,27 @@ impl Cydonia {
     /// Opening a filtered entry starts at its first match, not its saved
     /// viewport.
     pub(crate) fn reveal_applied_match(&mut self, cx: &mut Context<Self>) {
-        self.leaf()
-            .clone()
-            .update(cx, |pane, cx| pane.reveal_applied_match(cx));
+        if let Some(leaf) = self.leaf().cloned() {
+            leaf.update(cx, |pane, cx| pane.reveal_applied_match(cx));
+        }
     }
 
     pub(crate) fn find_card(&mut self, _: &FindCard, window: &mut Window, cx: &mut Context<Self>) {
-        self.leaf()
-            .clone()
-            .update(cx, |pane, cx| pane.find_card(window, cx));
+        if let Some(leaf) = self.leaf().cloned() {
+            leaf.update(cx, |pane, cx| pane.find_card(window, cx));
+        }
     }
 
     pub(crate) fn find_next(&mut self, _: &FindNext, _: &mut Window, cx: &mut Context<Self>) {
-        self.leaf()
-            .clone()
-            .update(cx, |pane, cx| pane.step_find(1, cx));
+        if let Some(leaf) = self.leaf().cloned() {
+            leaf.update(cx, |pane, cx| pane.step_find(1, cx));
+        }
     }
 
     pub(crate) fn find_prev(&mut self, _: &FindPrev, _: &mut Window, cx: &mut Context<Self>) {
-        self.leaf()
-            .clone()
-            .update(cx, |pane, cx| pane.step_find(-1, cx));
+        if let Some(leaf) = self.leaf().cloned() {
+            leaf.update(cx, |pane, cx| pane.step_find(-1, cx));
+        }
     }
 }
 

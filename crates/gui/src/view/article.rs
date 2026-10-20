@@ -4,6 +4,7 @@ pub mod comments;
 mod note;
 pub mod thread;
 
+use crate::model::workspace::Opening;
 use crate::view::kit::menu;
 use crate::{
     model::palette::Washes,
@@ -23,8 +24,7 @@ use crate::{
         window::root::{Cydonia, NewArticle},
     },
 };
-use artifact::kind::Kind;
-use artifact::space::{Entry, Member};
+use artifact::space::Entry;
 use bezel::ui::scroll as scrollbars;
 use bezel::ui::surface::{self, Surfaced as _};
 use bezel::{
@@ -461,7 +461,7 @@ impl Cydonia {
             .workspace
             .update(cx, |workspace, cx| workspace.new_article(cx));
         if let Some(ix) = ix {
-            self.open_article(project, ix, window, cx);
+            self.open_article(project, ix, Opening::Kept, window, cx);
         }
     }
 
@@ -471,19 +471,19 @@ impl Cydonia {
         &mut self,
         project: usize,
         ix: usize,
+        opening: Opening,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.commit(cx);
-        let member = self.workspace.read(cx).article_member(project, ix);
-        if self.enter_member(member.clone(), window, cx) {
+        let Some(member) = self.workspace.read(cx).article_member(project, ix) else {
             return;
-        }
-        self.workspace
-            .update(cx, |workspace, cx| workspace.open_article(project, ix, cx));
-        let pane = self.leaf().clone();
-        pane.update(cx, |pane, _| pane.kind = Kind::Article);
-        let editor = member.and_then(Member::into_entry).and_then(|member| {
+        };
+        self.enter_member(member.clone(), opening, window, cx);
+        let Some(pane) = self.leaf().cloned() else {
+            return;
+        };
+        let editor = member.into_entry().and_then(|member| {
             let view = pane.update(cx, |pane, cx| pane.article_view(member, cx));
             view.update(cx, |view, cx| view.ensure_editor(cx));
             view.read(cx).editor().cloned()
@@ -506,12 +506,10 @@ impl Cydonia {
         cx.notify();
     }
 
-    /// The article the focused pane is on. A window with no space open has no
-    /// member to name, and falls back to what its project is pointed at.
+    /// The article the focused tab is on.
     pub(crate) fn pane_doc<'a>(&self, cx: &'a App) -> Option<&'a crate::model::article::Article> {
-        self.workspace
-            .read(cx)
-            .article_of(self.leaf().read(cx).entry.as_ref(), cx)
+        let entry = self.focused_entry(cx)?;
+        self.workspace.read(cx).article_of(Some(&entry), cx)
     }
 
     /// The same by its file — the one address every write to an article is
@@ -532,7 +530,7 @@ impl Cydonia {
 
     /// The editor of the article the focused pane shows.
     pub(crate) fn pane_editor(&self, cx: &App) -> Option<Entity<editor::Editor>> {
-        self.leaf()
+        self.leaf()?
             .read(cx)
             .article_shown(cx)?
             .read(cx)
@@ -554,8 +552,10 @@ impl Cydonia {
             return;
         };
         editor.update(cx, |editor, cx| editor.toggle_source(cx));
-        let pane = self.leaf().read(cx);
-        let finding = pane.finding && pane.find_field.read(cx).focus_handle(cx).is_focused(window);
+        let finding = self.leaf().is_some_and(|pane| {
+            let pane = pane.read(cx);
+            pane.finding && pane.find_field.read(cx).focus_handle(cx).is_focused(window)
+        });
         if !finding {
             window.focus(&editor.focus_handle(cx), cx);
         }
@@ -569,7 +569,7 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(view) = self.leaf().read(cx).article_shown(cx) {
+        if let Some(view) = self.leaf().and_then(|pane| pane.read(cx).article_shown(cx)) {
             view.update(cx, |view, cx| view.toggle_outline_menu(window, cx));
         }
     }
