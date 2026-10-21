@@ -13,19 +13,19 @@ use crate::view::kit::dialog::{answers, dialog};
 #[cfg(feature = "desktop")]
 use crate::{agent::Listing, model::update, view::window::root::traffic_lights};
 use crate::{model::workspace::Workspace, view::window::root::HEADER_HEIGHT};
-use bezel::ui::scroll as scrollbars;
 #[cfg(not(target_os = "linux"))]
 use bezel::{gpui::Focusable as _, ui::popover};
 use bezel::{
     gpui::{
-        AnyElement, App, Context, ElementId, Entity, Render, SharedString, Window, div, prelude::*,
-        px,
+        AnyElement, App, Context, Div, ElementId, Entity, Render, SharedString, Window, div,
+        prelude::*, px,
     },
     motion::{Fade, Painter},
     theme::{TextStyle, Theme, Typeset},
     ui::{
         icons,
         input::{Shape, TextField},
+        scroll as scrollbars,
         widgets::{Content, Controls, Layout, Scaffolding},
     },
 };
@@ -569,6 +569,16 @@ impl SettingsWindow {
             )
             .into_any_element()
     }
+}
+
+/// A quiet line where a row would be.
+pub(super) fn note(theme: &Theme, copy: &'static str, first: bool) -> Div {
+    theme.card_row(first).child(
+        div()
+            .text_style(TextStyle::Callout)
+            .text_color(theme.text_muted)
+            .child(copy),
+    )
 }
 
 /// A row's title over a line of explanation, filling the row's free width.

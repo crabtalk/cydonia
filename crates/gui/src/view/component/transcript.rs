@@ -10,9 +10,10 @@ use crate::{
     model::{session::ChatSession, workspace::Workspace},
     view::{
         kit::{
-            bubble,
+            bubble, orb,
             selection::Selections,
-            text::{elapsed, tokens},
+            stamp,
+            text::{self, elapsed, tokens},
             watch::Watch,
         },
         pane::find::{self, Find, Searchable},
@@ -27,13 +28,12 @@ use artifact::{
 };
 
 use bezel::{
-    agent::orbs::{OrbSize, OrbState, engine::Frame, orb_element},
+    agent::orbs::engine::Frame,
     gpui::{
         AnyElement, App, Bounds, ClipboardItem, Context, CursorStyle, Empty, Entity,
         HitboxBehavior, Pixels, SharedString, Task, WeakEntity, Window, canvas, div, prelude::*,
         px,
     },
-    motion::Painter,
     theme::{TextStyle, Theme, Typeset, ink},
     ui::{
         icons, scroll,
@@ -50,8 +50,7 @@ mod follow;
 pub(crate) mod gallery;
 use std::{
     cell::{Cell, RefCell},
-    collections::{HashMap, HashSet, hash_map::DefaultHasher},
-    hash::{Hash, Hasher},
+    collections::{HashMap, HashSet},
     ops::Range,
     rc::Rc,
     time::Duration,
@@ -94,17 +93,6 @@ pub(crate) const MARK_AWAY: f32 = 0.16;
 
 /// How much of a question its mark's tooltip carries.
 const ASKED_MAX: usize = 80;
-
-/// What the orb is drawn on: 30 frames a second while a turn is in flight,
-/// claimed for a third of a second at a time and renewed by the render it
-/// drives. A turn that ends stops rendering the row, the claim lapses, and the
-/// app's clock parks itself.
-const ORB_FPS: f32 = 30.;
-const ORB_LEASE: Duration = Duration::from_millis(300);
-
-/// The still frame an orb holds where motion is turned off — the engine's own
-/// convention, and a pose rather than the empty t = 0 arrangement.
-const ORB_STILL: f32 = 0.6;
 
 /// How far a title's head — the word that names the call — may run before the
 /// rest of the line has to start truncating.
@@ -352,9 +340,9 @@ impl State {
         let (ix, selection) = self.selection.held()?;
         let item = chat.items.get(ix)?;
         let doc = if matches!(item, ChatItem::User(_)) {
-            gallery::document(item_text(item)?).0
+            gallery::document(item.text()?).0
         } else {
-            markdown::parse(item_text(item)?)
+            markdown::parse(item.text()?)
         };
         let text = selectable::copied(&doc, selection);
         (!text.is_empty()).then_some(text)
@@ -390,14 +378,6 @@ impl State {
             offset: None,
         }));
         self.list.scroll_to(ix);
-    }
-}
-
-/// Text available for selection and copying.
-fn item_text(item: &ChatItem) -> Option<&str> {
-    match item {
-        ChatItem::User(text) | ChatItem::Agent(text) | ChatItem::Notice { text, .. } => Some(text),
-        _ => None,
     }
 }
 
@@ -1467,13 +1447,10 @@ fn zone(
         let copied = text.clone();
         let id = chat.id;
         let copy_done = hold.state.copy_feedback.contains_key(&first);
-        let timestamp = chat.sent_at.get(&first).and_then(|seconds| {
-            chrono::DateTime::from_timestamp(i64::try_from(*seconds).ok()?, 0).map(|time| {
-                time.with_timezone(&chrono::Local)
-                    .format("%-I:%M %p")
-                    .to_string()
-            })
-        });
+        let timestamp = chat
+            .sent_at
+            .get(&first)
+            .and_then(|seconds| stamp::clock(u128::from(*seconds) * 1000));
         zone = zone.child(
             div()
                 .group(group.clone())
@@ -1756,8 +1733,7 @@ fn work_header(
     let theme = Theme::of(cx).clone();
     let label = match steps {
         0 => "Thought".to_owned(),
-        1 => "Worked · 1 step".to_owned(),
-        n => format!("Worked · {n} steps"),
+        n => format!("Worked · {}", text::count(n, "step", "steps")),
     };
     div()
         .id(("work", at))
@@ -2041,7 +2017,7 @@ fn process(
 /// Hashing what was *asked* gets the variety a random pick would, and keeps it
 /// for as long as the question is on screen.
 fn verb(question: &str) -> &'static str {
-    WORKING[asked_hash(question) % WORKING.len()]
+    WORKING[orb::asked_hash(question) % WORKING.len()]
 }
 
 pub fn working_word(chat: &ChatSession) -> &'static str {
@@ -2050,67 +2026,9 @@ pub fn working_word(chat: &ChatSession) -> &'static str {
         .iter()
         .rev()
         .find(|item| matches!(item, ChatItem::User(_)))
-        .and_then(item_text)
+        .and_then(ChatItem::text)
         .unwrap_or_default();
     verb(question)
-}
-
-/// Which orb a session's turn in flight wears, off the same hash for the same
-/// reason: a shape rerolled per frame would be twelve loaders playing at once,
-/// and one picked per place would have the sidebar and the transcript showing
-/// the same turn as two different things.
-///
-/// The word and the shape are picked apart rather than paired — there are
-/// forty of one and twelve of the other, and pairing them would cost the words
-/// their variety.
-pub fn orb_of(chat: &ChatSession) -> OrbState {
-    // The turn in flight opened at the last thing asked — which is where
-    // `turns` starts one too, and 0 for a session that was never asked
-    // anything.
-    let at = chat
-        .items
-        .iter()
-        .rposition(|item| matches!(item, ChatItem::User(_)))
-        .unwrap_or(0);
-    let question = chat.items.get(at).and_then(item_text).unwrap_or_default();
-    orb_for(question)
-}
-
-/// The same choice, made from any text — a card's own words, where there is no
-/// session and so no question to make it from.
-///
-/// Stable for the same text: an orb that changed shape between frames would
-/// read as the work changing.
-pub fn orb_for(asked: &str) -> OrbState {
-    OrbState::ALL_STATES[asked_hash(asked) % OrbState::ALL_STATES.len()]
-}
-
-/// That orb, drawn, at the time the turn has been running — unbounded, which
-/// is what the engine wants, and starting from nothing every turn.
-///
-/// The orb paints one frame of a clock it does not keep, so this asks for the
-/// frames itself. The claim is renewed by the render it drives rather than
-/// held anywhere, so it lapses on its own the moment the orb stops being
-/// drawn.
-pub fn orb<V: 'static>(
-    state: OrbState,
-    since: Duration,
-    frame: &Rc<RefCell<Frame>>,
-    cx: &mut Context<V>,
-) -> AnyElement {
-    Painter::of(cx).lease(ORB_FPS, ORB_LEASE, cx);
-    let t = match cx.reduce_motion() {
-        true => ORB_STILL,
-        false => since.as_secs_f32(),
-    };
-    orb_element(state, OrbSize::Inline, t, frame).into_any_element()
-}
-
-/// The question, as a number to pick with.
-fn asked_hash(question: &str) -> usize {
-    let mut hash = DefaultHasher::new();
-    question.hash(&mut hash);
-    hash.finish() as usize
 }
 
 /// What the turn has cost so far, quieter than the word it follows. Absent
@@ -2145,16 +2063,19 @@ fn working(
     cx: &mut Context<ChatSession>,
 ) -> AnyElement {
     let theme = Theme::of(cx).clone();
-    let asked = chat.items.get(at).and_then(item_text).unwrap_or_default();
-    let state = orb_of(chat);
-    let since = chat.elapsed().unwrap_or_default();
+    let asked = chat
+        .items
+        .get(at)
+        .and_then(ChatItem::text)
+        .unwrap_or_default();
+    let (state, since) = (orb::of(chat), chat.elapsed().unwrap_or_default());
     div()
         .flex()
         .flex_row()
         .items_center()
         .gap(px(8.))
         .pb(px(28.))
-        .child(orb(state, since, &hold.state.orb, cx))
+        .child(orb::draw(state, since, &hold.state.orb, cx))
         .child(
             div()
                 .text_style(TextStyle::Callout)

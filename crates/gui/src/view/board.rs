@@ -6,14 +6,17 @@ pub mod embed;
 pub mod info;
 mod send;
 
-use crate::model::language::Grammars as _;
-use crate::model::workspace::Opening;
-use crate::view::kit::menu;
 use crate::{
-    model::{session::ChatSession, workspace::Workspace},
+    model::{
+        language::Grammars as _,
+        session::ChatSession,
+        workspace::{Opening, Workspace},
+    },
     view::{
-        component::transcript,
         kit::{
+            add,
+            menu::{self, MenuHost},
+            orb,
             rename::{NameEvent, NameField},
             text::CardTitle,
             watch::Watch,
@@ -27,11 +30,11 @@ use crate::{
 };
 use artifact::{
     board::{Card, Page, View},
+    reference::Reference,
     space::{Entry, Member},
 };
-use bezel::agent::orbs::engine::Frame;
-use bezel::ui::scroll as scrollbars;
 use bezel::{
+    agent::orbs::engine::Frame,
     gpui::{
         self, AnyElement, App, ClipboardItem, Context, Div, Entity, EntityId, Focusable as _,
         FontWeight, KeyBinding, Pixels, ScrollHandle, SharedString, Stateful, WeakEntity, Window,
@@ -44,9 +47,10 @@ use bezel::{
         icons,
         input::{self, Shape, TextField},
         menu::Item,
+        scroll as scrollbars,
         scroll::{self, Axes, FollowState, Scroller},
         tooltip::Tooltip,
-        widgets::Buttons,
+        widgets::{Buttons, Layout as _},
     },
 };
 use editor::{Editor, EditorEvent};
@@ -61,10 +65,6 @@ use std::{
 /// Claimed on top of `TextField`, so `enter` files the card here and stays a
 /// newline in every other multi-line field.
 const KEY_CONTEXT: &str = "CydoniaCard";
-
-/// The find field's own, so `escape` puts the bar away and stays whatever it is
-/// everywhere else.
-pub(crate) const FIND_CONTEXT: &str = "CydoniaBoardFind";
 
 const COLUMN_WIDTH: f32 = 272.;
 
@@ -114,10 +114,7 @@ const BLOCKED_CHIP_HEIGHT: f32 = 16.;
 static SINCE: std::sync::LazyLock<web_time::Instant> =
     std::sync::LazyLock::new(web_time::Instant::now);
 
-actions!(
-    cydonia_board,
-    [CommitCard, DismissCard, FindCard, DismissFind]
-);
+actions!(cydonia_board, [CommitCard, DismissCard]);
 
 /// Keep one neighbouring lane ready on either side of the viewport.
 fn visible_lanes(offset: Pixels, width: Pixels, count: usize) -> std::ops::Range<usize> {
@@ -144,19 +141,7 @@ pub fn bindings() -> Vec<KeyBinding> {
         KeyBinding::new("enter", CommitCard, ctx),
         KeyBinding::new("shift-enter", input::InsertNewline, ctx),
         KeyBinding::new("escape", DismissCard, ctx),
-        KeyBinding::new("escape", DismissFind, Some(FIND_CONTEXT)),
     ]
-}
-
-/// The board's find field — one per pane, so two boards side by side are
-/// narrowed separately.
-pub fn find_field(cx: &mut App) -> Entity<TextField> {
-    cx.new(|cx| {
-        TextField::new(cx)
-            .with_frame(false)
-            .with_key_context(FIND_CONTEXT)
-            .with_placeholder("find a card…")
-    })
 }
 
 /// Does this card answer the query? Matched against what a card is named by:
@@ -571,14 +556,12 @@ impl Marks {
 /// A card's mark, read off the model with the card: the thinking orb the
 /// sidebar's session row and the transcript already use while the card is
 /// busy, and the linked session's `#number` while it is not.
-struct Working {
+struct CardMark {
     busy: bool,
     /// The linked session's project entry number, for the idle mark.
     number: Option<u64>,
     session: Option<(u64, String)>,
-    state: bezel::agent::orbs::OrbState,
-    since: std::time::Duration,
-    frame: Rc<RefCell<Frame>>,
+    orb: orb::Working,
 }
 
 /// One list and one follow per lane, minted the first time the lane is drawn.
@@ -774,7 +757,7 @@ struct Slot<'a> {
 
 /// Which of a board view's menus is up.
 #[derive(Clone, PartialEq, Eq)]
-enum BoardMenu {
+pub(crate) enum BoardMenu {
     /// A lane's `···`, by column id.
     Lane(String),
     /// A card's `···`, by card id.
@@ -873,54 +856,56 @@ fn card_session<'a>(card: &Card, workspace: &'a Workspace, cx: &'a App) -> Optio
 /// Read out of the model before the card is built — the sidebar's
 /// [`SessionRow`] rule, and for the same reason: the orb leases the frame
 /// clock, which wants the app mutably.
-fn card_working(card: &Card, chat: Option<&ChatSession>, marks: &Marks) -> Option<Working> {
+fn card_working(card: &Card, chat: Option<&ChatSession>, marks: &Marks) -> Option<CardMark> {
     let session = chat.map(|chat| (chat.id, chat.label()));
     let number = chat.and_then(|chat| chat.number);
     if !card.busy {
-        return chat.map(|chat| Working {
+        return chat.map(|chat| CardMark {
             busy: false,
             number,
             session,
-            state: transcript::orb_for(&card.text),
-            since: SINCE.elapsed(),
-            frame: chat.mark.clone(),
+            orb: orb::Working {
+                state: orb::of_text(&card.text),
+                since: SINCE.elapsed(),
+                frame: chat.mark.clone(),
+            },
         });
     }
     match chat.filter(|chat| chat.streaming) {
-        Some(chat) => Some(Working {
+        Some(chat) => Some(CardMark {
             busy: true,
             number,
             session,
-            state: transcript::orb_of(chat),
-            since: chat.elapsed().unwrap_or_default(),
-            frame: chat.mark.clone(),
+            orb: orb::Working::of(chat),
         }),
         // Busy without a streaming session uses the board’s animation clock.
-        None => Some(Working {
+        None => Some(CardMark {
             busy: true,
             number,
             session,
-            state: transcript::orb_for(&card.text),
-            since: SINCE.elapsed(),
-            frame: marks.of(&card.id),
+            orb: orb::Working {
+                state: orb::of_text(&card.text),
+                since: SINCE.elapsed(),
+                frame: marks.of(&card.id),
+            },
         }),
     }
 }
 fn card_orb<V: 'static>(
-    at: Working,
+    at: CardMark,
     root: WeakEntity<Cydonia>,
     sessions: bool,
     cx: &mut Context<V>,
 ) -> AnyElement {
     let theme = Theme::of(cx).clone();
     let orb = match at.busy {
-        true => transcript::orb(at.state, at.since, &at.frame, cx),
+        true => at.orb.draw(cx),
         false => div()
             .text_style(TextStyle::Caption)
             .font_family(theme.font_mono.clone())
             .text_color(theme.text_faint)
             .child(match at.number {
-                Some(number) => format!("#{number}"),
+                Some(number) => Reference::entry(None, number, None).to_string(),
                 None => "#".into(),
             })
             .into_any_element(),
@@ -972,7 +957,7 @@ fn list_row_cells<V: 'static>(
     handle: Option<String>,
     text: &str,
     tags: &Tags,
-    working: Option<Working>,
+    working: Option<CardMark>,
     docs: &Docs,
     root: &WeakEntity<Cydonia>,
     sessions: bool,
@@ -1007,18 +992,40 @@ fn list_row_cells<V: 'static>(
     cells.extend(working.map(|at| card_orb(at, root.clone(), sessions, cx)));
     cells
 }
+/// The frame of a lane's heading in the list.
+fn list_heading_frame<E: Styled>(el: E) -> E {
+    el.flex_none()
+        .h(px(LIST_HEADING_HEIGHT))
+        .px(px(BOARD_INSET))
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(6.))
+        .text_style(TextStyle::Subheadline)
+}
+
+/// The frame of a card's row in the list.
+fn list_row_frame<E: Styled>(el: E, theme: &Theme) -> E {
+    el.flex_none()
+        .h(px(LIST_ROW_HEIGHT))
+        .px(px(BOARD_INSET))
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(8.))
+        .border_b_1()
+        .border_color(theme.border.opacity(0.3))
+}
+
 /// A lane's heading in the list: the chevron saying whether it is folded,
 /// its name and its count.
 fn lane_title(folded: bool, name: String, count: String, theme: &Theme) -> [AnyElement; 3] {
     [
-        icons::icon(if folded {
-            icons::arrows::ChevronRight
-        } else {
-            icons::arrows::ChevronDown
-        })
-        .size(px(12.))
-        .text_color(theme.text_faint)
-        .into_any_element(),
+        theme
+            .disclosure(!folded)
+            .size(px(12.))
+            .text_color(theme.text_faint)
+            .into_any_element(),
         div()
             .min_w_0()
             .text_ellipsis()
@@ -1284,15 +1291,7 @@ impl Cydonia {
                 continue;
             };
             rows.push(
-                div()
-                    .flex_none()
-                    .h(px(LIST_HEADING_HEIGHT))
-                    .px(px(BOARD_INSET))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(6.))
-                    .text_style(TextStyle::Subheadline)
+                list_heading_frame(div())
                     .children(lane_title(folded, name, held.to_string(), &theme))
                     .into_any_element(),
             );
@@ -1319,38 +1318,31 @@ impl Cydonia {
                 };
                 let (pane, board) = (on.cloned(), member.clone());
                 rows.push(
-                    theme
-                        .ghost(SharedString::from(format!("board-peek-row-{id}")))
-                        .flex_none()
-                        .h(px(LIST_ROW_HEIGHT))
-                        .px(px(BOARD_INSET))
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap(px(8.))
-                        .border_b_1()
-                        .border_color(theme.border.opacity(0.3))
-                        .children(list_row_cells(
-                            handle,
-                            &text,
-                            &tags,
-                            working,
-                            &self.card_docs,
-                            &root,
-                            sessions,
+                    list_row_frame(
+                        theme.ghost(SharedString::from(format!("board-peek-row-{id}"))),
+                        &theme,
+                    )
+                    .children(list_row_cells(
+                        handle,
+                        &text,
+                        &tags,
+                        working,
+                        &self.card_docs,
+                        &root,
+                        sessions,
+                        cx,
+                    ))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        cx.stop_propagation();
+                        this.open_page(
+                            pane.as_ref(),
+                            board.clone(),
+                            Page::Card(id.clone()),
+                            window,
                             cx,
-                        ))
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            cx.stop_propagation();
-                            this.open_page(
-                                pane.as_ref(),
-                                board.clone(),
-                                Page::Card(id.clone()),
-                                window,
-                                cx,
-                            );
-                        }))
-                        .into_any_element(),
+                        );
+                    }))
+                    .into_any_element(),
                 );
             }
         }
@@ -1978,30 +1970,16 @@ impl BoardView {
             cx.listener(move |this, _, window, cx| {
                 cx.stop_propagation();
                 let rows = rows.clone();
-                ContextMenu::toggle(
-                    this,
-                    |this| &mut this.menu,
+                this.toggle_menu(
                     menu.clone(),
                     ContextPlace::Below,
-                    move |this, window, cx| menu::chooser(rows(this, window, cx)),
+                    move |this, window, cx| rows(this, window, cx),
                     window,
                     cx,
                 );
             })
         });
-        ContextMenu::trigger(el, |this: &mut Self| &mut this.menu, menu, cx)
-    }
-
-    /// `menu`, placed, while it is on screen.
-    fn menu_here(
-        &self,
-        menu: &BoardMenu,
-        id: impl Into<SharedString>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        self.menu
-            .render_for(menu, id, |this| &mut this.menu, window, cx)
+        self.menu_trigger(el, menu, cx)
     }
 
     fn board_key(&self, project: usize, board_at: usize, cx: &App) -> Option<BoardKey> {
@@ -2797,28 +2775,20 @@ impl BoardView {
         // Nothing to write into a narrowed lane: a card that does not
         // answer the query would be filed and vanish in one gesture.
         let add = (!folded && cards.is_empty() && query.trim().is_empty()).then(|| {
-            theme
-                .ghost(SharedString::from(format!("list-add-card-{id}")))
-                .flex_none()
-                .h(px(LIST_ROW_HEIGHT))
-                .px(px(BOARD_INSET))
-                .py(px(6.))
-                .gap(px(6.))
-                .child(
-                    icons::icon(icons::math::Plus)
-                        .size(px(12.))
-                        .text_color(theme.text_faint),
-                )
-                .child(
-                    div()
-                        .text_style(TextStyle::Callout)
-                        .text_color(theme.text_faint)
-                        .child("Add a card"),
-                )
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.edit(Editing::New(Place::End, written.clone()), window, cx);
-                }))
-                .into_any_element()
+            add::row(
+                SharedString::from(format!("list-add-card-{id}")),
+                "Add a card",
+                theme.text_faint,
+                &theme,
+            )
+            .flex_none()
+            .h(px(LIST_ROW_HEIGHT))
+            .px(px(BOARD_INSET))
+            .py(px(6.))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.edit(Editing::New(Place::End, written.clone()), window, cx);
+            }))
+            .into_any_element()
         });
         let heading = div()
             .id(SharedString::from(format!("list-group-{id}")))
@@ -2858,17 +2828,11 @@ impl BoardView {
     ) -> Stateful<Div> {
         let Tally { held, shown } = tally;
         let theme = Theme::of(cx).clone();
-        let row = div()
-            .id(SharedString::from(format!("list-group-header-{id}")))
-            .relative()
-            .flex_none()
-            .h(px(LIST_HEADING_HEIGHT))
-            .px(px(BOARD_INSET))
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(6.))
-            .text_style(TextStyle::Subheadline);
+        let row = list_heading_frame(
+            div()
+                .id(SharedString::from(format!("list-group-header-{id}")))
+                .relative(),
+        );
         if self.renaming.as_deref() == Some(id) {
             return row.child(self.name_field.clone());
         }
@@ -3049,16 +3013,8 @@ impl BoardView {
                     cx.notify();
                 }
             }))
-            .flex_none()
+            .map(|row| list_row_frame(row, &theme))
             .relative()
-            .h(px(LIST_ROW_HEIGHT))
-            .px(px(BOARD_INSET))
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(8.))
-            .border_b_1()
-            .border_color(theme.border.opacity(0.3))
             .when(selected || matched, |el| el.bg(theme.accent.opacity(0.08)))
             .cursor_pointer()
             .hover(|el| {
@@ -3106,23 +3062,10 @@ impl BoardView {
     fn new_column_row(&self, on: &str, cx: &mut Context<Self>) -> AnyElement {
         let on = on.to_owned();
         let theme = Theme::of(cx).clone();
-        theme
-            .ghost("list-add-column")
+        add::row("list-add-column", "Add a column", theme.text_faint, &theme)
             .flex_none()
             .px(px(BOARD_INSET))
             .py(px(8.))
-            .gap(px(6.))
-            .child(
-                icons::icon(icons::math::Plus)
-                    .size(px(12.))
-                    .text_color(theme.text_faint),
-            )
-            .child(
-                div()
-                    .text_style(TextStyle::Callout)
-                    .text_color(theme.text_faint)
-                    .child("Add a column"),
-            )
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.new_column(&on, window, cx);
             }))
@@ -3373,27 +3316,19 @@ impl BoardView {
             LaneRow::Add => {
                 let theme = Theme::of(cx).clone();
                 let written = at.column.to_owned();
-                theme
-                    .ghost(SharedString::from(format!("add-card-{}", at.column)))
-                    .flex_none()
-                    .px(px(8.))
-                    .py(px(6.))
-                    .gap(px(6.))
-                    .child(
-                        icons::icon(icons::math::Plus)
-                            .size(px(12.))
-                            .text_color(theme.text_faint),
-                    )
-                    .child(
-                        div()
-                            .text_style(TextStyle::Callout)
-                            .text_color(theme.text_faint)
-                            .child("Add a card"),
-                    )
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.edit(Editing::New(Place::End, written.clone()), window, cx);
-                    }))
-                    .into_any_element()
+                add::row(
+                    SharedString::from(format!("add-card-{}", at.column)),
+                    "Add a card",
+                    theme.text_faint,
+                    &theme,
+                )
+                .flex_none()
+                .px(px(8.))
+                .py(px(6.))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.edit(Editing::New(Place::End, written.clone()), window, cx);
+                }))
+                .into_any_element()
             }
         };
         div()
@@ -3502,23 +3437,10 @@ impl BoardView {
             .w(px(COLUMN_WIDTH))
             .h_full()
             .child(
-                theme
-                    .ghost("add-column")
+                add::row("add-column", "Add a column", theme.text_faint, &theme)
                     .flex_none()
                     .px(px(8.))
                     .py(px(6.))
-                    .gap(px(6.))
-                    .child(
-                        icons::icon(icons::math::Plus)
-                            .size(px(12.))
-                            .text_color(theme.text_faint),
-                    )
-                    .child(
-                        div()
-                            .text_style(TextStyle::Callout)
-                            .text_color(theme.text_faint)
-                            .child("Add a column"),
-                    )
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.new_column(&on, window, cx);
                     })),
@@ -3732,6 +3654,18 @@ impl BoardView {
             )
             .on_mouse_down_out(cx.listener(|this, _, _, cx| this.commit_edit(cx)))
             .into_any_element()
+    }
+}
+
+impl MenuHost for BoardView {
+    type Key = BoardMenu;
+
+    fn menu(&self) -> &ContextMenu<Self, BoardMenu> {
+        &self.menu
+    }
+
+    fn menu_mut(&mut self) -> &mut ContextMenu<Self, BoardMenu> {
+        &mut self.menu
     }
 }
 

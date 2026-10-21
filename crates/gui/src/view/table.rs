@@ -3,17 +3,18 @@
 //! Every edit runs through the one field, the way the board's cards do — a
 //! field per cell would mint an entity for every value on screen.
 
-use crate::model::workspace::Opening;
 use crate::{
     data::ColType,
-    model::workspace::Workspace,
+    model::workspace::{Opening, Workspace},
     view::{
-        kit::menu,
+        kit::{
+            add,
+            menu::{self, MenuHost},
+        },
         window::root::{Cydonia, NewTable},
     },
 };
 use artifact::space::{Entry, Member};
-use bezel::ui::scroll as scrollbars;
 use bezel::{
     gpui::{
         self, AnyElement, App, Context, Div, Entity, Focusable as _, KeyBinding, SharedString,
@@ -25,7 +26,7 @@ use bezel::{
         icons,
         input::{Shape, TextField},
         menu::Item,
-        table,
+        scroll as scrollbars, table,
         widgets::Buttons,
     },
 };
@@ -232,6 +233,18 @@ pub(crate) struct TableView {
     menu: ContextMenu<Self, usize>,
 }
 
+impl MenuHost for TableView {
+    type Key = usize;
+
+    fn menu(&self) -> &ContextMenu<Self, usize> {
+        &self.menu
+    }
+
+    fn menu_mut(&mut self) -> &mut ContextMenu<Self, usize> {
+        &mut self.menu
+    }
+}
+
 impl TableView {
     pub(crate) fn new(
         table: Entry,
@@ -434,21 +447,17 @@ impl TableView {
         )
         .on_click(cx.listener(move |this, _, window, cx| {
             cx.stop_propagation();
-            ContextMenu::toggle(
-                this,
-                |this| &mut this.menu,
+            this.toggle_menu(
                 ix,
                 Place::Below,
-                move |_, _, _| menu::chooser(Self::column_rows(ix, kind)),
+                move |_, _, _| Self::column_rows(ix, kind),
                 window,
                 cx,
             );
         }));
-        let button = ContextMenu::trigger(button, |this: &mut Self| &mut this.menu, ix, cx)
-            .children(
-                self.menu
-                    .render_for(&ix, id, |this| &mut this.menu, window, cx),
-            );
+        let button = self
+            .menu_trigger(button, ix, cx)
+            .children(self.menu_here(&ix, id, window, cx));
         table::header_cell(&theme, shape, None)
             .line_height(px(LINE))
             .id(("heading", ix))
@@ -644,23 +653,10 @@ impl Render for TableView {
                     .pb(px(20.))
                     .child(body)
                     .child(
-                        theme
-                            .ghost("add-row")
+                        add::row("add-row", "New row", theme.text_muted, &theme)
                             .mt(px(6.))
                             .px(px(10.))
                             .py(px(7.))
-                            .gap(px(6.))
-                            .child(
-                                icons::icon(icons::math::Plus)
-                                    .size(px(12.))
-                                    .text_color(theme.text_faint),
-                            )
-                            .child(
-                                div()
-                                    .text_style(TextStyle::Callout)
-                                    .text_color(theme.text_muted)
-                                    .child("New row"),
-                            )
                             .on_click(cx.listener(|this, _, window, cx| this.add_row(window, cx))),
                     )
                     .map(|pane| {

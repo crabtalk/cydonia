@@ -4,13 +4,11 @@ pub mod comments;
 mod note;
 pub mod thread;
 
-use crate::model::workspace::Opening;
-use crate::view::kit::menu;
 use crate::{
-    model::palette::Washes,
     model::{
         article,
-        workspace::{Showing, Workspace},
+        palette::Washes,
+        workspace::{Opening, Showing, Workspace},
     },
     view::{
         component::{
@@ -18,15 +16,16 @@ use crate::{
             margin::{self, Glide, Margin, Slot},
             transcript::{MARK_AWAY, MARK_READING, MARK_VISIBLE},
         },
-        kit::labels::{LabelHost, Labels, Target},
+        kit::{
+            labels::{LabelHost, Labels, Target},
+            menu::{self, MenuHost},
+        },
         pane::find::{self, Find, Searchable},
         sidebar::Row,
         window::root::{Cydonia, NewArticle},
     },
 };
 use artifact::space::Entry;
-use bezel::ui::scroll as scrollbars;
-use bezel::ui::surface::{self, Surfaced as _};
 use bezel::{
     gpui::{
         self, AnyElement, App, Context, CursorStyle, Div, Entity, Focusable as _, KeyBinding,
@@ -40,13 +39,13 @@ use bezel::{
         icons,
         input::TextField,
         menu::Item,
-        popover,
+        popover, scroll as scrollbars,
+        surface::{self, Surfaced as _},
         tooltip::Tooltip,
         widgets::{ButtonStyle, Buttons as _, Status as _},
     },
 };
-use editor::AppExt as _;
-use editor::{EditorEvent, Mode};
+use editor::{AppExt as _, EditorEvent, Mode};
 use markdown::AppExt as _;
 use std::{
     cell::{Cell, RefCell},
@@ -633,7 +632,7 @@ impl Cydonia {
 
 /// Which of an article view's menus is up.
 #[derive(Clone, PartialEq, Eq)]
-enum ArticleMenu {
+pub(crate) enum ArticleMenu {
     Outline,
 }
 
@@ -683,6 +682,18 @@ pub(crate) struct ArticleView {
     /// since one comment is open at a time.
     follow_up: Entity<TextField>,
     _editor: Option<Subscription>,
+}
+
+impl MenuHost for ArticleView {
+    type Key = ArticleMenu;
+
+    fn menu(&self) -> &ContextMenu<Self, ArticleMenu> {
+        &self.menu
+    }
+
+    fn menu_mut(&mut self) -> &mut ContextMenu<Self, ArticleMenu> {
+        &mut self.menu
+    }
 }
 
 impl ArticleView {
@@ -802,12 +813,10 @@ impl ArticleView {
             return;
         };
         self.outline_hovered = false;
-        ContextMenu::toggle(
-            self,
-            |this| &mut this.menu,
+        self.toggle_menu(
             ArticleMenu::Outline,
             Place::AboveEnd,
-            move |_, _, cx| menu::chooser(outline_rows(&editor, cx)),
+            move |_, _, cx| outline_rows(&editor, cx),
             window,
             cx,
         );
@@ -1276,12 +1285,7 @@ impl ArticleView {
                 .bottom(px(16.))
                 .right(px(16.))
                 .child(watch)
-                .child(ContextMenu::trigger(
-                    trigger,
-                    |this: &mut Self| &mut this.menu,
-                    ArticleMenu::Outline,
-                    cx,
-                ))
+                .child(self.menu_trigger(trigger, ArticleMenu::Outline, cx))
                 .into_any_element(),
         )
     }

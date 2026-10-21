@@ -30,14 +30,17 @@ use crate::{
         detail::{Pointing, composer_agents},
         kit::{
             icon::kind_icon,
-            text::{ShownPath as _, untitled},
+            text::{KindName as _, ShownPath as _, untitled},
         },
         modals::palette::Linked,
         sidebar::Row,
         window::root::Cydonia,
     },
 };
-use artifact::{kind::Kind, reference::Span};
+use artifact::{
+    kind::Kind,
+    reference::{Reference, Span},
+};
 use bezel::{
     gpui::{
         self, AnyElement, App, Context, MouseButton, SharedString, Window, div, prelude::*, px,
@@ -435,13 +438,7 @@ impl Cydonia {
     pub(crate) fn entry_row(&self, named: Named, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let title = named.row.label(self.workspace.read(cx), cx);
-        let kind = match named.kind {
-            Kind::Session => "Session",
-            Kind::Article => "Article",
-            Kind::Board => "Board",
-            Kind::Table => "Table",
-            Kind::App => "App",
-        };
+        let kind = named.kind.label();
         let columns = match &named.row {
             Row::Entry {
                 project,
@@ -578,8 +575,8 @@ impl Cydonia {
         let title = row.label(self.workspace.read(cx), cx);
         let block = passage.blocks.start;
         let named = match passage.label.as_str() {
-            "" => format!("#{number}"),
-            label => format!("#{number} · {label}"),
+            "" => Reference::entry(None, number, None).to_string(),
+            label => format!("{} · {label}", Reference::entry(None, number, None)),
         };
         fence_band(&theme)
             .id(SharedString::from(format!(
@@ -1068,7 +1065,7 @@ fn session_label(theme: &Theme, title: &str, caption: String) -> [AnyElement; 2]
             .text_ellipsis()
             .text_style(TextStyle::Subheadline)
             .text_color(theme.text)
-            .child(untitled(title, "Untitled session"))
+            .child(untitled(title, Kind::Session.untitled()))
             .into_any_element(),
         div()
             .flex_none()

@@ -8,18 +8,18 @@
 use super::{Tab, TabMenu, header::Naming};
 use crate::view::{
     component::panel::changes_toggle,
-    kit::{icon, menu, rename::Renaming},
+    kit::{
+        icon,
+        menu::{self, MenuHost as _},
+        rename::Renaming,
+    },
     window::{chrome, entry::Host, reach::InWindow as _, root},
 };
+use artifact::reference::Reference;
 use bezel::{
     gpui::{AnyElement, Context, FontWeight, SharedString, Window, div, prelude::*, px},
     theme::{TextStyle, Theme, Typeset},
-    ui::{
-        context_menu::{ContextMenu, Place},
-        icons,
-        tooltip::Tooltip,
-        widgets::Content as _,
-    },
+    ui::{context_menu::Place, icons, tooltip::Tooltip, widgets::Content as _},
 };
 
 /// The hover group a title row is, which its tools show on — the ones other
@@ -131,7 +131,7 @@ impl Tab {
                     .text_style(TextStyle::Caption)
                     .font_weight(FontWeight::NORMAL)
                     .text_color(theme.text_muted)
-                    .child(format!("#{number}"))
+                    .child(Reference::entry(None, number, None).to_string())
             }))
             .children(board.as_deref().and_then(|id| self.info_panel(id, cx)));
         let menu = toolbar.entry.map(|entry| {
@@ -153,14 +153,8 @@ impl Tab {
                         cx,
                     );
                 }));
-            ContextMenu::trigger(button, |this: &mut Self| &mut this.menu, TabMenu::Entry, cx)
-                .children(self.menu.render_for(
-                    &TabMenu::Entry,
-                    "tab-entry-menu-card",
-                    |this| &mut this.menu,
-                    window,
-                    cx,
-                ))
+            self.menu_trigger(button, TabMenu::Entry, cx)
+                .children(self.menu_here(&TabMenu::Entry, "tab-entry-menu-card", window, cx))
         });
         // In a space beside another pane: it stands over them, or goes back.
         let zoom = self
@@ -221,19 +215,8 @@ impl Tab {
                         );
                     }));
                 Some(
-                    ContextMenu::trigger(
-                        button,
-                        |this: &mut Self| &mut this.menu,
-                        TabMenu::Move,
-                        cx,
-                    )
-                    .children(self.menu.render_for(
-                        &TabMenu::Move,
-                        "tab-move-menu-card",
-                        |this| &mut this.menu,
-                        window,
-                        cx,
-                    )),
+                    self.menu_trigger(button, TabMenu::Move, cx)
+                        .children(self.menu_here(&TabMenu::Move, "tab-move-menu-card", window, cx)),
                 )
             }
         };
@@ -309,14 +292,8 @@ impl Tab {
                     cx,
                 );
             }));
-        ContextMenu::trigger(button, |this: &mut Self| &mut this.menu, TabMenu::Stack, cx)
-            .children(self.menu.render_for(
-                &TabMenu::Stack,
-                "tab-stack-menu-card",
-                |this| &mut this.menu,
-                window,
-                cx,
-            ))
+        self.menu_trigger(button, TabMenu::Stack, cx)
+            .children(self.menu_here(&TabMenu::Stack, "tab-stack-menu-card", window, cx))
             .into_any_element()
     }
 

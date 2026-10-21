@@ -13,6 +13,7 @@ use bezel::{
         context_menu::{ContextMenu, Place},
         icons, popover, surface,
         tooltip::Tooltip,
+        widgets,
     },
 };
 use markdown::PictureMenu;
@@ -352,27 +353,7 @@ impl Preview {
         };
         let dots = (self.images.len() > 1).then(|| {
             div().flex().children((0..self.images.len()).map(|index| {
-                div()
-                    .id(("preview-dot", index))
-                    .debug_selector(move || format!("preview-dot-{index}"))
-                    .size(px(24.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .cursor_pointer()
-                    .tooltip(move |window, cx| {
-                        Tooltip::text(format!("Image {}", index + 1), window, cx)
-                    })
-                    .child(
-                        div()
-                            .size(px(6.))
-                            .rounded_full()
-                            .bg(if index == self.selected {
-                                theme.text
-                            } else {
-                                theme.text_faint.opacity(0.4)
-                            }),
-                    )
+                page_dot("preview-dot", index, index == self.selected, &theme)
                     .on_click(cx.listener(move |this, _, _, cx| this.select(index, cx)))
             }))
         });
@@ -468,4 +449,27 @@ impl Render for Preview {
             },
         )
     }
+}
+
+/// The dot standing for image `index` of several, the one shown filled, named
+/// `name` with its index.
+pub(crate) fn page_dot(
+    name: &'static str,
+    index: usize,
+    shown: bool,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id((name, index))
+        .debug_selector(move || format!("{name}-{index}"))
+        .size(px(24.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .cursor_pointer()
+        .tooltip(move |window, cx| Tooltip::text(format!("Image {}", index + 1), window, cx))
+        .child(widgets::status_dot(match shown {
+            true => theme.text,
+            false => theme.text_faint.opacity(0.4),
+        }))
 }

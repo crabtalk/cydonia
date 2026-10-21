@@ -14,9 +14,9 @@
 //! then bold, italic, strikethrough, code, a highlight (`==text==`,
 //! [`editor::HIGHLIGHT_MARK`]) and a link.
 
-use crate::view::kit::menu;
 use crate::view::{
     component::composer,
+    kit::menu::{self, MenuHost as _},
     pane::{Tab, TabMenu},
     window::root::Cydonia,
 };
@@ -29,7 +29,7 @@ use bezel::{
     motion,
     theme::{TextStyle, Theme, Typeset},
     ui::{
-        context_menu::{ContextMenu, Place},
+        context_menu::Place,
         icons::{self, Icon},
         input::TextField,
         menu::Item,
@@ -670,25 +670,17 @@ impl Tab {
                 move |this, _, window, cx| {
                     cx.stop_propagation();
                     let current = current.clone();
-                    ContextMenu::toggle(
-                        this,
-                        |this| &mut this.menu,
+                    this.toggle_menu(
                         TabMenu::Turn,
                         Place::Below,
-                        move |_, _, _| menu::chooser(Self::turn_rows(current)),
+                        move |_, _, _| Self::turn_rows(current),
                         window,
                         cx,
                     );
                 }
             }))
-            .children(self.menu.render_for(
-                &TabMenu::Turn,
-                "ribbon-turn-card",
-                |this| &mut this.menu,
-                window,
-                cx,
-            ));
-        ContextMenu::trigger(button, |this: &mut Self| &mut this.menu, TabMenu::Turn, cx)
+            .children(self.menu_here(&TabMenu::Turn, "ribbon-turn-card", window, cx));
+        self.menu_trigger(button, TabMenu::Turn, cx)
     }
 
     /// Every block the run could be turned into — the editor's own vocabulary,

@@ -4,7 +4,6 @@ use crate::model::git::{
     self, Change, Repository,
     preview::{Kind, Preview},
 };
-use bezel::ui::scroll as scrollbars;
 use bezel::{
     gpui::{
         self, AnyElement, ClipboardItem, Context, HighlightStyle, Hsla, Pixels, Render,
@@ -14,7 +13,9 @@ use bezel::{
     theme::{TextStyle, Theme, Typeset},
     ui::{
         icons::{self, Icon},
+        scroll as scrollbars,
         tooltip::Tooltip,
+        widgets::Layout as _,
     },
 };
 use std::{collections::HashSet, ops::Range, path::PathBuf, sync::Arc, time::Duration};
@@ -533,14 +534,11 @@ impl Changes {
                     .text_style(TextStyle::Subheadline)
                     .text_color(theme.text_muted)
                     .child(
-                        icons::icon(if collapsed {
-                            icons::arrows::ChevronRight
-                        } else {
-                            icons::arrows::ChevronDown
-                        })
-                        .size(px(12.))
-                        .flex_none()
-                        .text_color(theme.text_muted),
+                        theme
+                            .disclosure(!collapsed)
+                            .size(px(12.))
+                            .flex_none()
+                            .text_color(theme.text_muted),
                     )
                     .child(
                         div()

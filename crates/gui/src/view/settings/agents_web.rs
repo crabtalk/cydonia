@@ -1,10 +1,10 @@
 //! The agents section without the `desktop` feature: no registry to list and
 //! nothing to install into, so the section says where that happens.
 
-use crate::view::settings::SettingsWindow;
+use crate::view::settings::{SettingsWindow, note};
 use bezel::{
-    gpui::{AnyElement, Context, Window, div, prelude::*},
-    theme::{TextStyle, Theme, Typeset},
+    gpui::{AnyElement, Context, Window, prelude::*},
+    theme::Theme,
     ui::widgets::Scaffolding as _,
 };
 
@@ -26,17 +26,12 @@ impl SettingsWindow {
         let theme = Theme::of(cx).clone();
         theme
             .group_box()
-            .child(
-                theme.card_row(true).child(
-                    div()
-                        .text_style(TextStyle::Callout)
-                        .text_color(theme.text_muted)
-                        .child(
-                            "Agents are installed and run by the desktop app. This demo \
-                             has one stand-in, Demo agent, which answers every session.",
-                        ),
-                ),
-            )
+            .child(note(
+                &theme,
+                "Agents are installed and run by the desktop app. This demo has one \
+                     stand-in, Demo agent, which answers every session.",
+                true,
+            ))
             .into_any_element()
     }
 }

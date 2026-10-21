@@ -1,6 +1,6 @@
 //! Numbers and names as the app writes them in a line of text.
 
-use artifact::board::Card;
+use artifact::{board::Card, kind::Kind};
 use std::{path::Path, time::Duration};
 
 /// The longest a [`CardTitle::short_title`] runs, in characters, ahead of its
@@ -20,11 +20,12 @@ pub(crate) fn grouped(n: u64) -> String {
     out
 }
 
-/// `n` words, as a reader counts them out.
-pub(crate) fn word_count(n: usize) -> String {
+/// `n` of a thing, its thousands grouped, named `one` or `many` as the count
+/// takes it: `1 entry`, `1,204 entries`.
+pub(crate) fn count(n: usize, one: &str, many: &str) -> String {
     match n {
-        1 => "1 word".to_owned(),
-        _ => format!("{} words", grouped(n as u64)),
+        1 => format!("1 {one}"),
+        _ => format!("{} {many}", grouped(n as u64)),
     }
 }
 
@@ -58,7 +59,37 @@ pub(crate) fn untitled(title: &str, fallback: &str) -> String {
     }
 }
 
-/// The titles a card is shown under, read off its text.
+/// How an entry's kind is named in a line of text.
+pub(crate) trait KindName {
+    /// `Session`, `Board`.
+    fn label(self) -> &'static str;
+
+    /// What an entry of this kind is called while it has no title.
+    fn untitled(self) -> &'static str;
+}
+
+impl KindName for Kind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Session => "Session",
+            Self::Article => "Article",
+            Self::Board => "Board",
+            Self::Table => "Table",
+            Self::App => "App",
+        }
+    }
+
+    fn untitled(self) -> &'static str {
+        match self {
+            Self::Session => "Untitled session",
+            Self::Article => "Untitled article",
+            Self::Board => "Untitled board",
+            Self::Table => "Untitled table",
+            Self::App => "Untitled app",
+        }
+    }
+}
+
 /// How a path reads on screen.
 pub(crate) trait ShownPath {
     /// The path, with `~` for a home directory nobody needs spelled out.
@@ -77,6 +108,7 @@ impl ShownPath for Path {
     }
 }
 
+/// The titles a card is shown under, read off its text.
 pub(crate) trait CardTitle {
     /// The one line a card is listed under.
     fn title(&self) -> String;

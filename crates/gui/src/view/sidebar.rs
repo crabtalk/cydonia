@@ -15,7 +15,8 @@ use crate::{
     },
     view::{
         kit::{
-            menu::{self, Act},
+            menu::{self, Act, MenuHost},
+            orb,
             rename::{Rename, Renaming},
             watch::Watch,
         },
@@ -25,7 +26,6 @@ use crate::{
 };
 use artifact::{kind::Kind, space::Member};
 use bezel::{
-    agent::orbs::{OrbState, engine::Frame},
     gpui::{
         self, AnyElement, App, Context, Div, Empty, Entity, Hsla, ListAlignment, ListOffset,
         ListState, SharedString, Stateful, Subscription, Task, WeakEntity, Window, div, prelude::*,
@@ -41,7 +41,6 @@ use bezel::{
     },
 };
 use std::{
-    cell::RefCell,
     collections::HashMap,
     path::{Path, PathBuf},
     rc::Rc,
@@ -96,14 +95,7 @@ struct SessionRow {
     /// The turn in flight, as the orb needs it: which of the twelve, how long
     /// it has been running, and the buffer it paints into. `None` when nothing
     /// is in flight, which is what puts the agent's own mark back.
-    working: Option<Working>,
-}
-
-/// A session's orb, read off the model with the row.
-struct Working {
-    state: OrbState,
-    since: Duration,
-    frame: Rc<RefCell<Frame>>,
+    working: Option<orb::Working>,
 }
 
 /// What the sidebar shows of a session — what moving redraws it.
@@ -879,25 +871,6 @@ impl Sidebar {
 
     /// Open `menu` at `place` with the rows `rows` builds, or shut it where it
     /// is the one up. The rows act on the window.
-    fn toggle_menu(
-        &mut self,
-        menu: SidebarMenu,
-        place: MenuPlace,
-        rows: impl FnOnce(&mut Self, &mut Context<Self>) -> Vec<(Item, Act)>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        ContextMenu::toggle(
-            self,
-            |this| &mut this.menu,
-            menu,
-            place,
-            |this, _, cx| menu::chooser(Self::through(rows(this, cx))),
-            window,
-            cx,
-        );
-    }
-
     fn menu_open(&self, menu: &SidebarMenu) -> bool {
         self.menu.key() == Some(menu)
     }
@@ -936,26 +909,13 @@ impl Sidebar {
                 this.toggle_menu(
                     menu.clone(),
                     place,
-                    move |this, cx| rows(this, cx),
+                    move |this, _, cx| Self::through(rows(this, cx)),
                     window,
                     cx,
                 );
             })
         });
-        ContextMenu::trigger(button, |this: &mut Self| &mut this.menu, menu, cx)
-    }
-
-    /// The menu `menu`, placed, while it is on screen: what its trigger hangs
-    /// beside itself.
-    fn menu_here(
-        &self,
-        menu: &SidebarMenu,
-        id: impl Into<SharedString>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        self.menu
-            .render_for(menu, id, |this| &mut this.menu, window, cx)
+        self.menu_trigger(button, menu, cx)
     }
 
     /// The rows of an entry's menu, as the window builds them for a row here.
@@ -1296,6 +1256,18 @@ impl Sidebar {
                 workspace.set_pinned(project, pins, cx);
             }
         });
+    }
+}
+
+impl MenuHost for Sidebar {
+    type Key = SidebarMenu;
+
+    fn menu(&self) -> &ContextMenu<Self, SidebarMenu> {
+        &self.menu
+    }
+
+    fn menu_mut(&mut self) -> &mut ContextMenu<Self, SidebarMenu> {
+        &mut self.menu
     }
 }
 

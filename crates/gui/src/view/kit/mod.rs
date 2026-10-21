@@ -1,5 +1,6 @@
 //! Cydonia's own pieces that more than one screen draws with.
 
+pub mod add;
 pub mod bubble;
 pub mod dialog;
 pub mod document;
@@ -10,6 +11,7 @@ pub mod layout;
 pub mod link;
 pub mod menu;
 pub mod new;
+pub mod orb;
 pub mod rename;
 pub mod selection;
 pub mod stamp;

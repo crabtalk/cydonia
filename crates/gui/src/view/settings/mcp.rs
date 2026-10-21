@@ -9,12 +9,12 @@
 
 use crate::{
     model::workspace::Workspace,
-    view::settings::{SettingsWindow, Switch, labelled},
+    view::settings::{SettingsWindow, Switch, labelled, note},
 };
 use bezel::{
-    gpui::{AnyElement, ClipboardItem, Context, div, prelude::*},
+    gpui::{AnyElement, ClipboardItem, Context, prelude::*},
     motion::{Fade, Painter},
-    theme::{TextStyle, Theme, Typeset},
+    theme::Theme,
     ui::{
         icons,
         widgets::{ButtonStyle, Buttons, Scaffolding},
@@ -77,11 +77,10 @@ impl SettingsWindow {
             .group_box()
             .children(Door::ALL.map(|switch| self.mcp_switch(switch, cx)))
             .children(quiet.then(|| {
-                theme.card_row(false).child(
-                    div()
-                        .text_style(TextStyle::Callout)
-                        .text_color(theme.text_muted)
-                        .child("Sessions is off in Features, so nothing runs to reach it."),
+                note(
+                    &theme,
+                    "Sessions is off in Features, so nothing runs to reach it.",
+                    false,
                 )
             }))
             .children(self.mcp_address(cx))

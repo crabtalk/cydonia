@@ -5,10 +5,13 @@ use crate::{
     model::workspace::{Showing, Workspace},
     view::{
         app, article,
-        board::{self, DismissFind, info::BoardInfo},
+        board::{self, info::BoardInfo},
         component::{composer::Composer, ribbon::Ribbon, transcript},
-        kit::{rename::Rename, watch::Watch},
-        pane::Edge,
+        kit::{menu::MenuHost, rename::Rename, watch::Watch},
+        pane::{
+            Edge,
+            find::{self, DismissFind},
+        },
         table,
         window::{reach::InWindow, root::Cydonia},
     },
@@ -130,7 +133,7 @@ impl Tab {
         composer: Entity<Composer>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let find_field = board::find_field(cx);
+        let find_field = find::find_field(cx);
         // What the pane draws is read off the model, and a cached pane draws
         // again only when told.
         cx.observe(&workspace, |_, _, cx| cx.notify()).detach();
@@ -287,6 +290,18 @@ impl Tab {
                 })
                 .ok()
         })
+    }
+}
+
+impl MenuHost for Tab {
+    type Key = TabMenu;
+
+    fn menu(&self) -> &ContextMenu<Self, TabMenu> {
+        &self.menu
+    }
+
+    fn menu_mut(&mut self) -> &mut ContextMenu<Self, TabMenu> {
+        &mut self.menu
     }
 }
 

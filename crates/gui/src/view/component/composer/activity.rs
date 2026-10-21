@@ -1,6 +1,11 @@
 use super::*;
-use crate::model::session::{ChatSession, Connection};
-use crate::view::{component::transcript, kit::text::elapsed};
+use crate::{
+    model::session::{ChatSession, Connection},
+    view::{
+        component::transcript,
+        kit::{orb, text::elapsed},
+    },
+};
 use artifact::session::chat::{ChatItem, ToolStatus};
 use bezel::agent::orbs::OrbState;
 use std::time::Duration;
@@ -57,7 +62,7 @@ impl Activity {
                 .unwrap_or(chat.last_activity)
         };
         Some(Self {
-            orb: transcript::orb_of(chat),
+            orb: orb::of(chat),
             word: transcript::working_word(chat),
             connecting,
             turn_started: chat.turn_started.unwrap_or(chat.last_activity),
@@ -155,7 +160,7 @@ impl Composer {
                                 cx.notify();
                             }
                         }))
-                        .child(transcript::orb(
+                        .child(orb::draw(
                             activity.orb,
                             activity.turn_started.elapsed(),
                             &self.activity_frame,

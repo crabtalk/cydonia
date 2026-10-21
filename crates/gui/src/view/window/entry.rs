@@ -369,7 +369,7 @@ impl Cydonia {
             && let Some(article) = self.pane_doc(cx)
         {
             if let Some(words) = article.words() {
-                about.push(menu::note(text::word_count(words)));
+                about.push(menu::note(text::count(words, "word", "words")));
             }
             about.push(menu::note(format!(
                 "Edited {}",

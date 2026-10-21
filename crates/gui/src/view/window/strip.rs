@@ -7,7 +7,8 @@ use crate::{
     view::{
         component::panel::changes_toggle,
         kit::{
-            icon, menu,
+            icon,
+            menu::{self, MenuHost},
             rename::{Rename, Renaming},
         },
         pane::arrangement,
@@ -20,6 +21,7 @@ use crate::{
         },
     },
 };
+use artifact::reference::Reference;
 use bezel::{
     gpui::{
         self, Context, Entity, MouseButton, SharedString, WeakEntity, Window, div, prelude::*, px,
@@ -162,7 +164,8 @@ impl Strip {
                     .and_then(|toolbar| toolbar.number)
                     .filter(|_| !renaming)
                 {
-                    label = label.with_badge(format!("{project}#{number}"));
+                    label = label
+                        .with_badge(Reference::entry(Some(&project), number, None).to_string());
                 }
                 let menu = toolbar.is_some_and(|toolbar| toolbar.entry.is_some());
                 (arrangement::key_of(member), label, menu)
@@ -226,10 +229,9 @@ impl Strip {
                         }
                     }),
                 )
-                .children(self.menu.render_for(
+                .children(self.menu_here(
                     &menu_key,
                     "strip-tab-menu-card",
-                    |this| &mut this.menu,
                     window,
                     cx,
                 ))
@@ -237,6 +239,18 @@ impl Strip {
             false => el,
         };
         el.children(renaming.then(|| self.rename.field.clone()))
+    }
+}
+
+impl MenuHost for Strip {
+    type Key = StripMenu;
+
+    fn menu(&self) -> &ContextMenu<Self, StripMenu> {
+        &self.menu
+    }
+
+    fn menu_mut(&mut self) -> &mut ContextMenu<Self, StripMenu> {
+        &mut self.menu
     }
 }
 

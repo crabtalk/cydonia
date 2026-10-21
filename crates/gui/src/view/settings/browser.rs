@@ -10,7 +10,7 @@ use crate::{
 };
 use ::browser::{DataStore, Usage};
 use bezel::{
-    gpui::{AnyElement, Context, Task, div, prelude::*, px},
+    gpui::{AnyElement, Context, Div, Stateful, Task, div, prelude::*, px},
     theme::{TextStyle, Theme, Typeset},
     ui::widgets::{ButtonStyle, Buttons, Controls, Scaffolding},
 };
@@ -95,22 +95,11 @@ impl SettingsWindow {
         theme
             .card_row(false)
             .child(labelled(&theme, "Home page", home, true))
-            .child(
-                theme
-                    .ghost("browser-home")
-                    .flex_none()
-                    .px(px(10.))
-                    .py(px(3.))
-                    .border_1()
-                    .border_color(theme.border)
-                    .bg(theme.input_bg)
-                    .text_style(TextStyle::Callout)
-                    .text_color(theme.text)
-                    .child("Change…")
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.edit_field(settings::Field::BrowserHome, current.clone(), window, cx)
-                    })),
-            )
+            .child(change_button("browser-home", &theme).on_click(cx.listener(
+                move |this, _, window, cx| {
+                    this.edit_field(settings::Field::BrowserHome, current.clone(), window, cx)
+                },
+            )))
             .into_any_element()
     }
 
@@ -176,25 +165,16 @@ impl SettingsWindow {
                 true,
             ))
             .child(
-                theme
-                    .ghost("browser-blocked")
-                    .flex_none()
-                    .px(px(10.))
-                    .py(px(3.))
-                    .border_1()
-                    .border_color(theme.border)
-                    .bg(theme.input_bg)
-                    .text_style(TextStyle::Callout)
-                    .text_color(theme.text)
-                    .child("Change…")
-                    .on_click(cx.listener(move |this, _, window, cx| {
+                change_button("browser-blocked", &theme).on_click(cx.listener(
+                    move |this, _, window, cx| {
                         this.edit_field(
                             settings::Field::BrowserBlocked,
                             current.clone(),
                             window,
                             cx,
                         )
-                    })),
+                    },
+                )),
             )
             .into_any_element()
     }
@@ -353,4 +333,19 @@ impl SettingsWindow {
         self.workspace
             .update(cx, |workspace, cx| workspace.set_browser_home(home, cx));
     }
+}
+
+/// The "Change…" button at a row's end that opens the row's field.
+fn change_button(id: &'static str, theme: &Theme) -> Stateful<Div> {
+    theme
+        .ghost(id)
+        .flex_none()
+        .px(px(10.))
+        .py(px(3.))
+        .border_1()
+        .border_color(theme.border)
+        .bg(theme.input_bg)
+        .text_style(TextStyle::Callout)
+        .text_color(theme.text)
+        .child("Change…")
 }

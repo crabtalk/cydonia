@@ -5,18 +5,16 @@
 //! holds is a [`Peek`].
 
 use super::Tab;
-use crate::model::workspace::Opening;
-use crate::view::window::reach::InWindow as _;
 use crate::{
-    model::workspace::{Showing, references::Part},
+    model::workspace::{Opening, Showing, references::Part},
     view::{
         board::{BoardView, DrawerAt, PaneState},
         kit::watch::Watch,
         sidebar::Row,
-        window::root::Cydonia,
+        window::{reach::InWindow as _, root::Cydonia},
     },
 };
-use artifact::{board::Page, space::Member};
+use artifact::{board::Page, reference::Reference, space::Member};
 use bezel::{
     gpui::{
         self, AnyElement, App, Context, Div, Entity, EntityId, FocusHandle, KeyBinding, Pixels,
@@ -813,7 +811,7 @@ impl Cydonia {
                 .into_any_element(),
             div()
                 .font_family(theme.font_mono.clone())
-                .child(format!("#{}", named.number))
+                .child(Reference::entry(None, named.number, None).to_string())
                 .into_any_element(),
         ];
         let (body, open): (AnyElement, OpenIn) = match (session, named.part.clone()) {

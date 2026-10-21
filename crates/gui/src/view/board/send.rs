@@ -10,7 +10,7 @@ use crate::{
         component::composer,
         kit::{
             icon::session_icon,
-            menu,
+            menu::{self, MenuHost as _},
             new::{self, New},
         },
     },
@@ -26,7 +26,7 @@ const RECENT: usize = 8;
 
 /// What a ▶ sends.
 #[derive(Clone, PartialEq, Eq)]
-pub(super) enum Sent {
+pub(crate) enum Sent {
     /// A card, by id.
     Card(String),
     /// The cards of a lane, by column id.

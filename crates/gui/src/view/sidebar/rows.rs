@@ -3,8 +3,8 @@
 
 use super::{
     BUTTON_SIZE, DETAIL_LINE, EXTENDED_PAD, Group, Heading, MenuRows, PINNED_BLEED, ROW_GAP,
-    ROW_HEIGHT, ROW_PILL, Row, SessionRow, Sidebar, SidebarMenu, TITLE_LINE, Working, key_of,
-    on_disk, row, row_frame, row_label, tint,
+    ROW_HEIGHT, ROW_PILL, Row, SessionRow, Sidebar, SidebarMenu, TITLE_LINE, key_of, on_disk, row,
+    row_frame, row_label, tint,
 };
 use crate::{
     model::{
@@ -12,13 +12,13 @@ use crate::{
         workspace::{Opening, Showing},
     },
     view::{
-        component::transcript,
         keymap::{self, Command},
         kit::{
-            menu::{self, Act},
+            menu::{self, Act, MenuHost},
             new::{self, New},
+            orb,
             rename::Renaming,
-            stamp,
+            stamp, text,
         },
         modals::palette::{Filter, ToggleSearch},
         search::Search,
@@ -113,7 +113,7 @@ impl Sidebar {
                             this.toggle_menu(
                                 SidebarMenu::Entry(row.clone()),
                                 MenuPlace::At(press.position),
-                                move |this, cx| this.entry_rows(&row, cx),
+                                move |this, _, cx| Self::through(this.entry_rows(&row, cx)),
                                 window,
                                 cx,
                             );
@@ -336,28 +336,24 @@ impl Sidebar {
         // note has to be here too — read stale, a right press would swallow.
         // A space's opens from the row around it, as an entry's does.
         let head = match &group {
-            Group::Project(path) => bezel::ui::context_menu::ContextMenu::trigger(
-                head,
-                |this: &mut Self| &mut this.menu,
-                SidebarMenu::Project(path.clone()),
-                cx,
-            )
-            .on_mouse_down(
-                MouseButton::Right,
-                cx.listener({
-                    let path = path.clone();
-                    move |this, press: &gpui::MouseDownEvent, window, cx| {
+            Group::Project(path) => self
+                .menu_trigger(head, SidebarMenu::Project(path.clone()), cx)
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener({
                         let path = path.clone();
-                        this.toggle_menu(
-                            SidebarMenu::Project(path.clone()),
-                            MenuPlace::At(press.position),
-                            move |this, cx| this.project_rows(&path, cx),
-                            window,
-                            cx,
-                        );
-                    }
-                }),
-            ),
+                        move |this, press: &gpui::MouseDownEvent, window, cx| {
+                            let path = path.clone();
+                            this.toggle_menu(
+                                SidebarMenu::Project(path.clone()),
+                                MenuPlace::At(press.position),
+                                move |this, _, cx| Self::through(this.project_rows(&path, cx)),
+                                window,
+                                cx,
+                            );
+                        }
+                    }),
+                ),
             Group::Space(_) => head,
         };
         match pinned {
@@ -377,11 +373,7 @@ impl Sidebar {
         Some(SessionRow {
             id: chat.id,
             icon: workspace.agent_icon(&chat.entry.name),
-            working: chat.streaming.then(|| Working {
-                state: transcript::orb_of(chat),
-                since: chat.elapsed().unwrap_or_default(),
-                frame: chat.mark.clone(),
-            }),
+            working: chat.streaming.then(|| orb::Working::of(chat)),
         })
     }
 
@@ -433,9 +425,7 @@ impl Sidebar {
                     // and widening the column for it would move every label in
                     // the sidebar to make room for a row that is only
                     // sometimes working.
-                    Some(working) => {
-                        transcript::orb(working.state, working.since, &working.frame, cx)
-                    }
+                    Some(working) => working.draw(cx),
                     None => match session.icon {
                         Some(icon) => icons::icon(icon)
                             .size(px(14.))
@@ -893,10 +883,7 @@ impl Sidebar {
         rows.extend(counts.into_iter().map(|(label, count)| {
             let item = Item::action(label.clone())
                 .checked(picked.as_deref() == Some(label.as_str()))
-                .with_description(match count {
-                    1 => "1 entry".to_owned(),
-                    n => format!("{n} entries"),
-                });
+                .with_description(text::count(count, "entry", "entries"));
             pick(Some(label), item)
         }));
         Some(menu::submenu(

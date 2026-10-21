@@ -11,7 +11,7 @@ use crate::{
     view::{
         kit::{
             icon::{kind_icon, session_icon},
-            text::{CardTitle, untitled},
+            text::{CardTitle, KindName as _, untitled},
         },
         sidebar::Row,
     },
@@ -21,8 +21,10 @@ use artifact::{
     kind::Kind,
     reference::{self, Prefix, Reference, Target},
 };
-use bezel::gpui::{App, Global, SharedString};
-use bezel::ui::icons::Icon;
+use bezel::{
+    gpui::{App, Global, SharedString},
+    ui::icons::Icon,
+};
 use editor::Mention;
 use markdown::Preview;
 use std::path::Path;
@@ -112,7 +114,7 @@ pub(crate) fn read(workspace: &Workspace, cx: &App) -> Linkables {
                 labels: chat.labels.clone(),
                 ..linkable(
                     session_icon(chat, workspace),
-                    untitled(&chat.title, "Untitled session"),
+                    untitled(&chat.title, Kind::Session.untitled()),
                     format!("Session · {} · {}", chat.entry.name, shown(number)),
                     number,
                     chat.touched(),
@@ -128,7 +130,7 @@ pub(crate) fn read(workspace: &Workspace, cx: &App) -> Linkables {
                 labels: article.labels.clone(),
                 ..linkable(
                     kind_icon(Kind::Article),
-                    untitled(&article.title, "Untitled article"),
+                    untitled(&article.title, Kind::Article.untitled()),
                     format!("Article · {}", shown(number)),
                     number,
                     article.touched,
@@ -151,7 +153,7 @@ pub(crate) fn read(workspace: &Workspace, cx: &App) -> Linkables {
                 labels: board.labels.clone(),
                 ..linkable(
                     kind_icon(Kind::Board),
-                    untitled(&board.name, "Untitled board"),
+                    untitled(&board.name, Kind::Board.untitled()),
                     about,
                     number,
                     board.touched,
@@ -546,7 +548,7 @@ fn card_mention(carded: &Carded) -> Mention {
         description: Some(SharedString::from(format!(
             "{} · {}",
             carded.card.short_title(),
-            untitled(&carded.board.name, "Untitled board")
+            untitled(&carded.board.name, Kind::Board.untitled())
         ))),
         url: carded.reference().link(),
     }
@@ -565,14 +567,7 @@ pub(crate) fn preview(url: &str, cx: &App) -> Option<Preview> {
             ..Preview::default()
         });
     };
-    let fallback = match resolved.kind {
-        Kind::Session => "Untitled session",
-        Kind::Article => "Untitled article",
-        Kind::Board => "Untitled board",
-        Kind::Table => "Untitled table",
-        Kind::App => "Untitled app",
-    };
-    let title = untitled(&resolved.title, fallback);
+    let title = untitled(&resolved.title, resolved.kind.untitled());
     let title = match resolved.part {
         Some(Part::Turns(turns)) if turns.from == turns.to => format!("{title} · turn {turns}"),
         Some(Part::Turns(turns)) => format!("{title} · turns {turns}"),

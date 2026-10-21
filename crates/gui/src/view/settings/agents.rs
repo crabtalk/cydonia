@@ -4,7 +4,11 @@
 use crate::{
     agent::{self, Listing},
     model::settings,
-    view::{kit::dialog::answers, settings::SettingsWindow, window::menubar},
+    view::{
+        kit::dialog::answers,
+        settings::{SettingsWindow, note},
+        window::menubar,
+    },
 };
 use bezel::{
     gpui::{AnyElement, Context, Focusable as _, SharedString, Window, div, prelude::*, px},
@@ -664,7 +668,7 @@ impl SettingsWindow {
         let Some(listings) = self.listings.as_ref() else {
             return theme
                 .group_box()
-                .child(self.note("Reading the agent catalogue…", true, cx))
+                .child(note(&theme, "Reading the agent catalogue…", true))
                 .into_any_element();
         };
         if listings.is_empty() {
@@ -748,7 +752,7 @@ impl SettingsWindow {
                     .flex_1()
                     .min_h_0()
                     .child(self.search_row(cx))
-                    .children(empty.then(|| self.note("No matches.", true, cx)))
+                    .children(empty.then(|| note(&theme, "No matches.", true)))
                     // Only the rows the viewport reaches are built, so the
                     // layout engine is handed a screenful rather than the
                     // registry.
@@ -836,19 +840,5 @@ impl SettingsWindow {
                 Some(self.agent_row(ix, listings.get(ix)?, heads && nth == 0, cx))
             })
             .collect()
-    }
-
-    /// A quiet line where a row would be: still reading, or nothing to read.
-    fn note(&self, copy: &'static str, first: bool, cx: &mut Context<Self>) -> AnyElement {
-        let theme = Theme::of(cx).clone();
-        theme
-            .card_row(first)
-            .child(
-                div()
-                    .text_style(TextStyle::Callout)
-                    .text_color(theme.text_muted)
-                    .child(copy),
-            )
-            .into_any_element()
     }
 }

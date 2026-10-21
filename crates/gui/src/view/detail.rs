@@ -1,22 +1,22 @@
 //! The detail column and its floating plan, permission, and composer controls.
 
-use crate::model::workspace::Opening;
-use crate::view::kit::menu::{self, Menu};
-use crate::view::kit::text::ShownPath as _;
 use crate::{
     model::{
         session::{ChatSession, Choice, Command, Usage},
         session_preferences::{self, Offers},
-        workspace::{ArticleChange, Showing, Workspace},
+        workspace::{ArticleChange, Opening, Showing, Workspace},
     },
     view::{
         component::{composer, transcript},
-        kit::new::{self, New},
+        kit::{
+            menu::{self, Menu, MenuHost as _},
+            new::{self, New},
+            text::ShownPath as _,
+        },
         window::root::{self, Cydonia, NewArticle, NewBoard, NewSession, NewTable},
     },
 };
-use artifact::kind::Kind;
-use artifact::{session::chat::ChatItem, space::Member};
+use artifact::{kind::Kind, session::chat::ChatItem, space::Member};
 use bezel::{
     gpui::{
         self, AnyElement, App, Axis, Context, Div, DragMoveEvent, Empty, FocusHandle,

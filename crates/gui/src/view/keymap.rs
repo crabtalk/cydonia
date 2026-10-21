@@ -25,13 +25,15 @@ use crate::{
         board,
         board::info,
         component::{composer, ribbon},
-        pane::find::{FindNext, FindPrev},
+        pane::find::{FindCard, FindNext, FindPrev},
         table,
-        window::menubar,
-        window::root::{
-            self, CloseProject, GoBack, GoForward, InstallApp, LoadApp, NewArticle, NewBoard,
-            NewSession, NewSessionNext, NewTable, NextEntry, OpenFiles, OpenProject, OpenReview,
-            OpenSettings, PrevEntry, ToggleChanges, ToggleSidebar, ToggleTerminal,
+        window::{
+            menubar,
+            root::{
+                self, CloseProject, GoBack, GoForward, InstallApp, LoadApp, NewArticle, NewBoard,
+                NewSession, NewSessionNext, NewTable, NextEntry, OpenFiles, OpenProject,
+                OpenReview, OpenSettings, PrevEntry, ToggleChanges, ToggleSidebar, ToggleTerminal,
+            },
         },
     },
 };
@@ -323,7 +325,7 @@ impl Command {
             Self::Search => KeyBinding::new(chord, super::modals::palette::ToggleSearch, context),
             Self::FindCard => KeyBinding::new(
                 chord,
-                board::FindCard,
+                FindCard,
                 Some(match NATIVE {
                     true => "!SessionPanel",
                     false => "!SessionPanel && !CydoniaTerminal",

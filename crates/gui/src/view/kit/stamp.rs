@@ -2,6 +2,9 @@
 
 use chrono::Datelike as _;
 
+/// The time of day, as every stamp writes it.
+const CLOCK: &str = "%-I:%M %p";
+
 /// A millisecond stamp as coarse as still says something: the time today, the
 /// day this year, the date before that. Empty for none.
 pub(crate) fn coarse(ms: u128) -> String {
@@ -10,11 +13,16 @@ pub(crate) fn coarse(ms: u128) -> String {
     };
     let now = chrono::Local::now();
     let format = match () {
-        _ if at.date_naive() == now.date_naive() => "%-I:%M %p",
+        _ if at.date_naive() == now.date_naive() => CLOCK,
         _ if at.year() == now.year() => "%b %-d",
         _ => "%b %-d, %Y",
     };
     at.format(format).to_string()
+}
+
+/// The time of day a millisecond stamp names: `2:14 PM`. Nothing for none.
+pub(crate) fn clock(ms: u128) -> Option<String> {
+    Some(local(ms)?.format(CLOCK).to_string())
 }
 
 /// A millisecond stamp in words a sentence can carry: "today at 2:14 PM",

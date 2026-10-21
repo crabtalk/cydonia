@@ -6,18 +6,17 @@
 //! place of whatever the panes show, and is put away by going to any entry —
 //! see [`Cydonia::enter_member`].
 
-use crate::model::workspace::Opening;
 use crate::{
     model::{
         settings::Features,
-        workspace::{Showing, Workspace},
+        workspace::{Opening, Showing, Workspace},
     },
     view::{
         kit::{
             icon::kind_icon,
             labels::{LabelHost, Labels},
-            menu::{self, Act},
-            stamp,
+            menu::{self, Act, MenuHost},
+            stamp, text,
             watch::Watch,
         },
         modals::confirm::Doomed,
@@ -25,7 +24,7 @@ use crate::{
         window::{entry::Host, reach::InWindow, root::Cydonia},
     },
 };
-use artifact::{archive::Archived, kind::Kind};
+use artifact::{archive::Archived, kind::Kind, reference::Reference};
 use bezel::{
     gpui::{
         self, AnyElement, App, AppContext as _, Context, Div, Entity, Pixels, SharedString,
@@ -127,14 +126,12 @@ impl Tab {
 
     /// `n` of what this tab lists, as a count reads: `1 article`, `3 boards`.
     fn count(self, n: usize, archived: bool) -> String {
-        let noun = match n {
-            1 => self.kind().key().to_owned(),
-            _ => format!("{}s", self.kind().key()),
+        let key = self.kind().key();
+        let noun = match archived {
+            true => format!("archived {key}"),
+            false => key.to_owned(),
         };
-        match archived {
-            true => format!("{n} archived {noun}"),
-            false => format!("{n} {noun}"),
-        }
+        text::count(n, &noun, &format!("{noun}s"))
     }
 
     /// Whether this tab shows labels, and so is filtered and labelled by them.
@@ -479,7 +476,9 @@ impl Library {
                         None,
                     ),
                     _ => (
-                        facts.number.map(|n| SharedString::from(format!("#{n}"))),
+                        facts.number.map(|n| {
+                            SharedString::from(Reference::entry(None, n, None).to_string())
+                        }),
                         facts.number,
                     ),
                 };
@@ -719,7 +718,7 @@ impl Library {
         let open = &workspace.projects[workspace.project_at(project)?];
         let number = open.facts(showing, cx)?.number?;
         let name = artifact::reference::project_name(project)?;
-        Some(artifact::reference::Reference::entry(Some(&name), number, None).to_string())
+        Some(Reference::entry(Some(&name), number, None).to_string())
     }
 
     // ── chrome ───────────────────────────────────────────────────
@@ -1397,48 +1396,15 @@ impl Library {
     }
 }
 
-impl Library {
-    /// Open `menu` at `place` with the rows `rows` builds, or shut it where it
-    /// is the one up.
-    fn toggle_menu(
-        &mut self,
-        menu: LibraryMenu,
-        place: Place,
-        rows: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) -> Vec<(MenuItem, Act<Self>)>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        ContextMenu::toggle(
-            self,
-            |this| &mut this.menu,
-            menu,
-            place,
-            |this, window, cx| menu::chooser(rows(this, window, cx)),
-            window,
-            cx,
-        );
+impl MenuHost for Library {
+    type Key = LibraryMenu;
+
+    fn menu(&self) -> &ContextMenu<Self, LibraryMenu> {
+        &self.menu
     }
 
-    /// `el`, noting each press for `menu` — see [`ContextMenu::trigger`].
-    fn menu_trigger<E: gpui::StatefulInteractiveElement>(
-        &self,
-        el: E,
-        menu: LibraryMenu,
-        cx: &Context<Self>,
-    ) -> E {
-        ContextMenu::trigger(el, |this: &mut Self| &mut this.menu, menu, cx)
-    }
-
-    /// The menu `menu`, placed, while it is on screen.
-    fn menu_here(
-        &self,
-        menu: &LibraryMenu,
-        id: impl Into<SharedString>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        self.menu
-            .render_for(menu, id, |this| &mut this.menu, window, cx)
+    fn menu_mut(&mut self) -> &mut ContextMenu<Self, LibraryMenu> {
+        &mut self.menu
     }
 }
 

@@ -4,8 +4,11 @@
 //!
 //! Listed only while a backup exists.
 
-use crate::view::component::file::external;
-use crate::view::settings::{self, SettingsWindow, labelled};
+use crate::view::{
+    component::file::external,
+    kit::text,
+    settings::{self, SettingsWindow, labelled},
+};
 use artifact::backup::Backup;
 #[cfg(feature = "desktop")]
 use bezel::theme::{TextStyle, Typeset};
@@ -61,10 +64,8 @@ impl SettingsWindow {
             let taken: chrono::DateTime<chrono::Local> = taken.into();
             meta.insert(0, taken.format("%Y-%m-%d %H:%M").to_string());
         }
-        match backup.projects.len() {
-            0 => {}
-            1 => meta.push("1 project".into()),
-            n => meta.push(format!("{n} projects")),
+        if !backup.projects.is_empty() {
+            meta.push(text::count(backup.projects.len(), "project", "projects"));
         }
         if !backup.config.is_empty() {
             meta.push("settings".into());

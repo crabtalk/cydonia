@@ -237,7 +237,7 @@ fn menus(cx: &App) -> Vec<Menu> {
             // [`crate::view::keymap::Command::PlainText`].
             MenuItem::action("Plain Text", TogglePlainText),
             MenuItem::action("Outline", ToggleOutline),
-            MenuItem::action("Find", crate::view::board::FindCard),
+            MenuItem::action("Find", crate::view::pane::find::FindCard),
             MenuItem::action("Find Next", crate::view::pane::find::FindNext),
             MenuItem::action("Find Previous", crate::view::pane::find::FindPrev),
             MenuItem::action("Search", crate::view::modals::palette::ToggleSearch),
