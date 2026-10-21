@@ -10,6 +10,7 @@
 //! On macOS AppKit paints the lights. In a browser both are inert: the page
 //! owns the frame the window sits in.
 
+use crate::view::window::root;
 use bezel::{
     gpui::{AnyElement, App, ElementId, Window, WindowDecorations, div, prelude::*},
     ui::{
@@ -20,6 +21,49 @@ use bezel::{
 
 const NATIVE: bool = cfg!(any(target_os = "macos", target_family = "wasm"));
 const WEB: bool = cfg!(target_family = "wasm");
+
+/// Which of the window's top corners a row along its top edge reaches: the
+/// left one under the lights or the left caption buttons, the right one under
+/// the right caption buttons.
+#[derive(Clone, Copy)]
+pub struct Corners {
+    pub left: bool,
+    pub right: bool,
+}
+
+impl Corners {
+    /// The row's leading inset: flush with the left caption buttons, past the
+    /// lights, or `inside` where the row does not reach the left corner.
+    pub fn lead(self, inside: f32, window: &Window, cx: &App) -> f32 {
+        match self.left {
+            false => inside,
+            true if has(CaptionSide::Left, window, cx) => 0.,
+            true => root::toolbar_inset(window, cx),
+        }
+    }
+
+    /// Whether caption buttons stand at the row's right end, flush with the
+    /// window's edge.
+    pub fn flush_right(self, window: &Window, cx: &App) -> bool {
+        self.right && has(CaptionSide::Right, window, cx)
+    }
+
+    /// The caption buttons at the row's start, where it reaches the left
+    /// corner.
+    pub fn left_caption(self, window: &Window, cx: &App) -> Option<AnyElement> {
+        self.left
+            .then(|| caption(CaptionSide::Left, window, cx))
+            .flatten()
+    }
+
+    /// The caption buttons at the row's end, where it reaches the right
+    /// corner.
+    pub fn right_caption(self, window: &Window, cx: &App) -> Option<AnyElement> {
+        self.right
+            .then(|| caption(CaptionSide::Right, window, cx))
+            .flatten()
+    }
+}
 
 /// The caption buttons for `side`, or nothing where [`has`] says none.
 pub fn caption(side: CaptionSide, window: &Window, cx: &App) -> Option<AnyElement> {

@@ -8,7 +8,7 @@ use crate::{
     view::search::Search,
 };
 use artifact::kind::Kind;
-use bezel::gpui::App;
+use bezel::gpui::{App, Entity};
 use std::collections::HashMap;
 
 /// One entry of a project, with what the list can be ordered by.
@@ -28,10 +28,11 @@ pub(crate) struct List<'a> {
 }
 
 impl<'a> List<'a> {
-    pub(crate) fn new(workspace: &'a Workspace, search: &'a Search, cx: &'a App) -> Self {
+    /// The list `workspace` holds, under the search `search` has applied.
+    pub(crate) fn new(workspace: &Entity<Workspace>, search: &Entity<Search>, cx: &'a App) -> Self {
         Self {
-            workspace,
-            search,
+            workspace: workspace.read(cx),
+            search: search.read(cx),
             cx,
         }
     }

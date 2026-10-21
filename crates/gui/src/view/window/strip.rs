@@ -8,10 +8,10 @@ use crate::{
         component::panel::changes_toggle,
         kit::{
             icon, menu,
-            rename::{NameEvent, NameField},
+            rename::{Rename, Renaming},
         },
         pane::arrangement,
-        sidebar::{Dragged, Renaming},
+        sidebar::Dragged,
         window::{
             chrome,
             entry::Host,
@@ -24,15 +24,12 @@ use bezel::{
     gpui::{
         self, Context, Entity, MouseButton, SharedString, WeakEntity, Window, div, prelude::*, px,
     },
-    motion::Painter,
     theme::Theme,
     ui::{
         context_menu::{ContextMenu, Place},
         icons,
-        input::Case,
         menu::Item,
         tabs,
-        titlebar::CaptionSide,
     },
 };
 
@@ -55,9 +52,8 @@ pub(crate) struct Strip {
     root: WeakEntity<Cydonia>,
     reorder: tabs::Reorder<Dragged>,
     menu: ContextMenu<Self, StripMenu>,
-    /// The tab holding the name field, and what it renames.
-    renaming: Option<(Slot, Renaming)>,
-    name_field: Entity<NameField>,
+    /// The name field, on the tab of the space it renames.
+    rename: Rename,
     sidebar_open: bool,
     /// Whether the right panel is up, which the toggle at the strip's end
     /// says.
@@ -71,26 +67,13 @@ impl Strip {
         cx: &mut Context<Self>,
     ) -> Self {
         cx.observe(&workspace, |_, _, cx| cx.notify()).detach();
-        let name_field = cx.new(NameField::new);
-        cx.subscribe(&name_field, |this, _, event: &NameEvent, cx| {
-            let Some((_, what)) = this.renaming.take() else {
-                return;
-            };
-            if let NameEvent::Named(name) = event {
-                let name = name.clone();
-                this.workspace
-                    .update(cx, |workspace, cx| what.commit(name, workspace, cx));
-            }
-            cx.notify();
-        })
-        .detach();
+        let rename = Rename::new(workspace.clone(), |this: &mut Self| &mut this.rename, cx);
         Self {
             workspace,
             root,
             reorder: tabs::Reorder::new(),
             menu: ContextMenu::default(),
-            renaming: None,
-            name_field,
+            rename,
             sidebar_open: true,
             panel_open: false,
         }
@@ -105,18 +88,9 @@ impl Strip {
         }
     }
 
-    /// Put the name field on `slot`'s tab, renaming `what`.
-    pub(crate) fn start_rename(
-        &mut self,
-        slot: Slot,
-        what: Renaming,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let label = what.label(self.workspace.read(cx), cx);
-        self.name_field
-            .update(cx, |field, cx| field.start(label, Case::Mixed, window, cx));
-        self.renaming = Some((slot, what));
+    /// Put the name field on the tab of the space `id`.
+    fn rename_space(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.rename.start(Renaming::Space(id), window, cx);
         cx.notify();
     }
 
@@ -137,50 +111,12 @@ impl Strip {
             Slot::Space { space } => vec![menu::row::<Cydonia>(
                 Item::action("Rename").with_icon(icons::text::SquarePen),
                 move |root, window, cx| {
-                    let (slot, what) = (
-                        Slot::Space {
-                            space: space.clone(),
-                        },
-                        Renaming::Space(space.clone()),
-                    );
+                    let id = space.clone();
                     root.strip
-                        .update(cx, |strip, cx| strip.start_rename(slot, what, window, cx));
+                        .update(cx, |strip, cx| strip.rename_space(id, window, cx));
                 },
             )],
         }
-    }
-
-    /// Open `menu` at `place` with the rows the window builds for it, or shut
-    /// it where it is the one up.
-    fn toggle_menu(
-        &mut self,
-        menu: StripMenu,
-        place: Place,
-        rows: impl FnOnce(
-            &mut Cydonia,
-            &mut Window,
-            &mut Context<Cydonia>,
-        ) -> Vec<(Item, menu::Act<Cydonia>)>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(rows) = self
-            .root
-            .update(cx, |root, cx| Self::through(rows(root, window, cx)))
-            .ok()
-        else {
-            return;
-        };
-        let rows = std::cell::RefCell::new(Some(rows));
-        ContextMenu::toggle(
-            self,
-            |this| &mut this.menu,
-            menu,
-            place,
-            move |_, _, _| menu::chooser(rows.borrow_mut().take().unwrap_or_default()),
-            window,
-            cx,
-        );
     }
 
     /// One tab: its kind's mark and its name. A right press opens its menu: an
@@ -195,7 +131,10 @@ impl Strip {
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
         let workspace = self.workspace.read(cx);
-        let renaming = self.renaming.as_ref().is_some_and(|(at, _)| at == slot);
+        let renaming = matches!(
+            (slot, &self.rename.what),
+            (Slot::Space { space }, Some(Renaming::Space(at))) if at == space
+        );
         let (key, label, menu) = match slot {
             Slot::Entry(member) => {
                 let toolbar = self
@@ -205,9 +144,8 @@ impl Strip {
                 // A number is a project's own, and the strip can hold entries
                 // of several — so the tab says which project it is counted in.
                 let project = workspace
-                    .projects
-                    .iter()
-                    .find(|open| Some(open.path.as_path()) == member.project())
+                    .member_project(member)
+                    .and_then(|at| workspace.projects.get(at))
                     .map(|open| open.name())
                     .unwrap_or_default();
                 let title = toolbar
@@ -233,8 +171,7 @@ impl Strip {
                 let name = match renaming {
                     true => String::new(),
                     false => workspace
-                        .space_ix(space)
-                        .and_then(|ix| workspace.spaces.get(ix))
+                        .space_by_id(space)
                         .map(|space| space.label().to_owned())
                         .unwrap_or_default(),
                 };
@@ -278,7 +215,8 @@ impl Strip {
                     cx.listener({
                         let (menu_key, slot) = (menu_key.clone(), slot.clone());
                         move |this, press: &gpui::MouseDownEvent, window, cx| {
-                            this.toggle_menu(
+                            this.window_menu(
+                                |this| &mut this.menu,
                                 menu_key.clone(),
                                 Place::At(press.position),
                                 Self::slot_rows(slot.clone()),
@@ -298,7 +236,7 @@ impl Strip {
             }
             false => el,
         };
-        el.children(renaming.then(|| self.name_field.clone()))
+        el.children(renaming.then(|| self.rename.field.clone()))
     }
 }
 
@@ -316,18 +254,21 @@ impl Render for Strip {
         let front = workspace.front_slot().cloned();
         let floating = workspace.settings.appearance.floating;
         let spaces_listed = workspace.settings.appearance.spaces_in_sidebar;
-        // The lights are the window's and are drawn over whatever is at its
-        // top left. Fullscreen has none.
+        // The window's top left is the sidebar's while it is open.
         let fold = !self.sidebar_open;
-        let left = fold && chrome::has(CaptionSide::Left, window, cx);
-        let right = chrome::has(CaptionSide::Right, window, cx);
-        // The row runs edge to edge; its tabs start where the cards below do.
-        let lead = match self.sidebar_open {
-            _ if left => 0.,
-            false => root::toolbar_inset(window, cx),
-            true if floating => root::card_gap(floating),
-            true => root::HEADER_INSET,
+        let corners = chrome::Corners {
+            left: fold,
+            right: true,
         };
+        // The row runs edge to edge; its tabs start where the cards below do.
+        let lead = corners.lead(
+            match floating {
+                true => root::card_gap(floating),
+                false => root::HEADER_INSET,
+            },
+            window,
+            cx,
+        );
         let (fold_controls, grip) = match self.root.upgrade() {
             Some(root) => root.update(cx, |root, cx| {
                 (
@@ -345,7 +286,7 @@ impl Render for Strip {
             })
             .collect();
         // No tabs while the sidebar lists the spaces: it says what is open.
-        let tracked = !spaces_listed && (strip.len() > 1 || self.renaming.is_some());
+        let tracked = !spaces_listed && (strip.len() > 1 || self.rename.what.is_some());
         let mut model = tabs::Strip::new();
         for slot in &strip {
             model.open(Dragged::Tab(slot.clone()));
@@ -361,15 +302,11 @@ impl Render for Strip {
             .w_full()
             .gap(px(BAR_GAP))
             .pl(px(lead))
-            .when(right, |el| el.pr_0())
+            .when(corners.flush_right(window, cx), |el| el.pr_0())
             // Under the whole row: any of it no control stands on moves the
             // window, as a titlebar does.
             .child(div().absolute().inset_0().flex().child(grip))
-            .children(
-                left.then(|| chrome::caption(CaptionSide::Left, window, cx))
-                    .flatten()
-                    .map(|caption| shield(caption.into_any_element())),
-            )
+            .children(corners.left_caption(window, cx).map(shield))
             // The fold belongs to whichever column runs along the window's left
             // edge, so with the sidebar gone it is the strip's.
             .children(fold_controls.map(|controls| {
@@ -406,21 +343,8 @@ impl Render for Strip {
                 false => div().flex_1(),
             })
             .child(shield(
-                changes_toggle(
-                    match self.panel_open {
-                        true => "Hide right panel",
-                        false => "Show right panel",
-                    },
-                    Painter::of(cx),
-                    Theme::of(cx),
-                )
-                .into_any_element(),
+                changes_toggle(self.panel_open, cx).into_any_element(),
             ))
-            .children(
-                right
-                    .then(|| chrome::caption(CaptionSide::Right, window, cx))
-                    .flatten()
-                    .map(|caption| shield(caption.into_any_element())),
-            )
+            .children(corners.right_caption(window, cx).map(shield))
     }
 }

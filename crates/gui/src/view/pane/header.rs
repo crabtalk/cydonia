@@ -1,19 +1,21 @@
 //! What a tab names its entry by, and the window's band over the screens that
 //! stand where the panes would be.
 
-use crate::model::workspace::Showing;
-use crate::view::{
-    component::panel::changes_toggle,
-    sidebar::Row,
-    window::chrome,
-    window::root::{self, Cydonia},
+use crate::{
+    model::workspace::Showing,
+    view::{
+        component::panel::changes_toggle,
+        sidebar::Row,
+        window::{
+            chrome,
+            root::{self, Cydonia},
+        },
+    },
 };
 use artifact::space::Member;
 use bezel::{
     gpui::{AnyElement, App, Context, FontWeight, Window, div, prelude::*, px},
-    motion::Painter,
     theme::{TextStyle, Theme, Typeset},
-    ui::titlebar::CaptionSide,
 };
 /// What a tab puts in its strip and its title row.
 pub(crate) struct Toolbar {
@@ -102,14 +104,10 @@ impl Cydonia {
     /// right panel's toggle and the right caption buttons.
     pub(crate) fn window_band(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        let right = chrome::has(CaptionSide::Right, window, cx);
         // The window's top left is the sidebar's while it is open.
-        let left = !self.sidebar_open && chrome::has(CaptionSide::Left, window, cx);
-        // The lights belong to the window, not a pane, so their clearance is
-        // taken here and nowhere a pane can see it.
-        let inset = match self.sidebar_open {
-            true => root::HEADER_INSET,
-            false => root::toolbar_inset(window, cx),
+        let corners = chrome::Corners {
+            left: !self.sidebar_open,
+            right: true,
         };
         let title = self.library.is_some().then(|| {
             div()
@@ -126,14 +124,9 @@ impl Cydonia {
             .left_0()
             .right_0()
             .gap(px(8.))
-            // Past the lights, which are the window's and are drawn over
-            // whatever is at its top left.
-            .pl(px(if left { 0. } else { inset }))
-            .when(right, |band| band.pr_0())
-            .children(
-                left.then(|| chrome::caption(CaptionSide::Left, window, cx))
-                    .flatten(),
-            )
+            .pl(px(corners.lead(root::HEADER_INSET, window, cx)))
+            .when(corners.flush_right(window, cx), |band| band.pr_0())
+            .children(corners.left_caption(window, cx))
             // The fold belongs to whichever column runs along the window's
             // left edge, so with the sidebar gone it is this one's.
             .children((!self.sidebar_open).then(|| self.fold_controls(cx)))
@@ -142,22 +135,11 @@ impl Cydonia {
             .children(
                 // Nothing to open it on where there is no directory in front
                 // — see [`Cydonia::shell_cwd`].
-                self.shell_cwd(cx).is_some().then(|| {
-                    changes_toggle(
-                        match self.changes_open {
-                            true => "Hide right panel",
-                            false => "Show right panel",
-                        },
-                        Painter::of(cx),
-                        Theme::of(cx),
-                    )
-                }),
+                self.shell_cwd(cx)
+                    .is_some()
+                    .then(|| changes_toggle(self.changes_open, cx)),
             )
-            .children(
-                right
-                    .then(|| chrome::caption(CaptionSide::Right, window, cx))
-                    .flatten(),
-            )
+            .children(corners.right_caption(window, cx))
             .into_any_element()
     }
 }

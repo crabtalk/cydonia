@@ -1489,60 +1489,48 @@ fn set_key(table_name: &str, key: &str, value: impl Into<toml_edit::Value>) -> R
     })
 }
 
-/// Move the watch's bounce in the file, in milliseconds.
-pub fn set_watch_bounce(ms: u64) -> Result<()> {
+/// One key at the file's root, written to the file.
+fn set_root_key(key: &str, value: impl Into<toml_edit::Value>) -> Result<()> {
+    let value = value.into();
     Here::edit(|doc| {
-        doc["watch_bounce"] = toml_edit::value(ms as i64);
+        doc[key] = toml_edit::value(value);
         Ok(true)
     })
+}
+
+/// Move the watch's bounce in the file, in milliseconds.
+pub fn set_watch_bounce(ms: u64) -> Result<()> {
+    set_root_key("watch_bounce", ms as i64)
 }
 
 /// Switch the release check on or off in the file.
 pub fn set_auto_update(on: bool) -> Result<()> {
-    Here::edit(|doc| {
-        doc["auto_update"] = toml_edit::value(on);
-        Ok(true)
-    })
+    set_root_key("auto_update", on)
 }
 
 /// Switch developer mode on or off in the file.
 pub fn set_developer_mode(on: bool) -> Result<()> {
-    Here::edit(|doc| {
-        doc["developer_mode"] = toml_edit::value(on);
-        Ok(true)
-    })
+    set_root_key("developer_mode", on)
 }
 
 /// Switch the finished-turn notification on or off in the file.
 pub fn set_notify_turns(on: bool) -> Result<()> {
-    Here::edit(|doc| {
-        doc["notify_turns"] = toml_edit::value(on);
-        Ok(true)
-    })
+    set_root_key("notify_turns", on)
 }
 
 /// Switch downloading pasted web pictures on or off in the file.
 pub fn set_download_web_images(on: bool) -> Result<()> {
-    Here::edit(|doc| {
-        doc["download_web_images"] = toml_edit::value(on);
-        Ok(true)
-    })
+    set_root_key("download_web_images", on)
 }
 
 /// Switch the composer under a drawer's session on or off in the file.
 pub fn set_drawer_composer(on: bool) -> Result<()> {
-    Here::edit(|doc| {
-        doc["drawer_composer"] = toml_edit::value(on);
-        Ok(true)
-    })
+    set_root_key("drawer_composer", on)
 }
 
 /// Switch pasting pictures in source mode on or off in the file.
 pub fn set_paste_images_in_source(on: bool) -> Result<()> {
-    Here::edit(|doc| {
-        doc["paste_images_in_source"] = toml_edit::value(on);
-        Ok(true)
-    })
+    set_root_key("paste_images_in_source", on)
 }
 
 /// Write down that this agent's source was agreed to. Called before the

@@ -95,15 +95,7 @@ impl Store for Disk {
             .flatten()
             .map(|entry| entry.path())
             .filter(|path| path.extension().is_some_and(|ext| ext == "toml"))
-            .filter_map(|path| {
-                let body = std::fs::read_to_string(&path).ok()?;
-                let mut space: Space = toml::from_str(&body).ok()?;
-                space.touched = stamp::of(&path);
-                if space.id.is_empty() {
-                    space.id = path.file_stem()?.to_str()?.to_owned();
-                }
-                Some(space)
-            })
+            .filter_map(|path| Self::read(path.file_stem()?.to_str()?))
             .collect();
         spaces.sort_by_key(|space| std::cmp::Reverse(space.touched));
         spaces

@@ -50,7 +50,8 @@ pub(crate) struct Pane {
     root: WeakEntity<Cydonia>,
     /// The tab on the entry, once the window has made it.
     pub(crate) tab: Option<Entity<Tab>>,
-    pub(crate) edge: Edge,
+    /// Its title row is part of the window's top row — see [`Edge::top`].
+    pub(crate) top: bool,
 }
 
 impl Pane {
@@ -71,7 +72,7 @@ impl Pane {
             workspace,
             root,
             tab: None,
-            edge: Edge::default(),
+            top: false,
         }
     }
 }
@@ -92,9 +93,7 @@ impl Render for Pane {
         let root = self.root.clone();
         let workspace = self.workspace.read(cx);
         let floating = workspace.settings.appearance.floating;
-        let stacked = workspace
-            .active_space()
-            .is_some_and(|space| space.stack_of(&self.entry).len() > 1);
+        let stacked = workspace.stack_of(&self.entry).len() > 1;
         // The focused pane's card has the stronger edge.
         let strong = theme.border_strong;
         div()
@@ -142,7 +141,7 @@ impl Render for Pane {
                 match floating {
                     true => bezel::ui::window::content(true, cx)
                         .when(self.focused(cx), |card| card.border_color(strong))
-                        .when(self.edge.top, |card| card.mt_0()),
+                        .when(self.top, |card| card.mt_0()),
                     false => div(),
                 }
                 .relative()

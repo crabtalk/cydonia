@@ -7,11 +7,15 @@ use super::browser::Browser;
 #[cfg(feature = "desktop")]
 use super::terminal::{DirectoryChanged, Exited, Terminal};
 use super::{changes::Changes, file::FileView, files::Files};
-use crate::model::{settings::PanelTabs, workspace::Workspace};
-use crate::view::modals::desktop::DesktopOnly;
-use crate::view::window::{
-    chrome,
-    root::{Cydonia, ToggleChanges},
+use crate::{
+    model::{settings::PanelTabs, workspace::Workspace},
+    view::{
+        modals::desktop::DesktopOnly,
+        window::{
+            chrome,
+            root::{Cydonia, ToggleChanges},
+        },
+    },
 };
 use bezel::{
     gpui::{
@@ -929,16 +933,8 @@ impl Render for Panel {
                             .children(popup),
                     )
                     .when(self.on_top, |band| {
-                        band.child(changes_toggle(
-                            "Hide right panel",
-                            Painter::of(cx),
-                            Theme::of(cx),
-                        ))
-                        .children(chrome::caption(
-                            CaptionSide::Right,
-                            window,
-                            cx,
-                        ))
+                        band.child(changes_toggle(true, cx))
+                            .children(chrome::caption(CaptionSide::Right, window, cx))
                     }),
             )
             .when_some(self.closing, |panel, id| {
@@ -1346,18 +1342,18 @@ mod right_panel_tests;
 
 /// The control that hides and shows the right panel, at the window's top
 /// right whether it is up or down.
-pub(crate) fn changes_toggle(
-    label: &'static str,
-    painter: Painter,
-    theme: &Theme,
-) -> impl IntoElement + use<> {
+pub(crate) fn changes_toggle<T: 'static>(open: bool, cx: &Context<T>) -> impl IntoElement + use<T> {
+    let label = match open {
+        true => "Hide right panel",
+        false => "Show right panel",
+    };
     // The column it acts on, which is this one: a left-panel glyph on the
     // right panel's own hide button pointed at the wrong side of the window.
-    theme
+    Theme::of(cx)
         .icon_button(
             icons::layout::PanelRight,
             ButtonStyle::Ghost,
-            Some(Fade::new(painter, "toggle-changes")),
+            Some(Fade::new(Painter::of(cx), "toggle-changes")),
         )
         .id("toggle-changes")
         .flex_none()

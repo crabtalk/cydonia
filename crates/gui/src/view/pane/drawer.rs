@@ -44,11 +44,29 @@ pub fn bindings() -> Vec<KeyBinding> {
 }
 
 /// What a pane's drawer holds.
+#[derive(Clone)]
 pub(crate) enum Peek {
     /// The card or the description open in one of the pane's board views —
     /// see [`BoardView::open`].
     Page(Entity<BoardView>),
     Entry(Entry),
+}
+
+impl Peek {
+    /// What the drawer draws: the board view's open page, or what
+    /// `entry_face` draws for an entry, scrolled by `scroll`.
+    pub(crate) fn face<V: 'static>(
+        self,
+        scroll: &ScrollHandle,
+        window: &mut Window,
+        cx: &mut Context<V>,
+        entry_face: impl FnOnce(&Entry, &ScrollHandle, &mut Window, &mut Context<V>) -> Option<Face>,
+    ) -> Option<Face> {
+        match self {
+            Self::Page(view) => view.update(cx, |view, cx| view.page_face(window, cx)),
+            Self::Entry(entry) => entry_face(&entry, scroll, window, cx),
+        }
+    }
 }
 
 /// An entry opened from a `cydonia://` link, or from the library.
@@ -728,19 +746,16 @@ impl Cydonia {
         let Some(pane) = self.leaf_of(on, cx).cloned() else {
             return Vec::new();
         };
-        let peek = pane
+        let Some((peek, scroll)) = pane
             .read(cx)
             .drawer_shown(cx)
-            .map(|drawer| match &drawer.peek {
-                Peek::Page(view) => Err(view.clone()),
-                Peek::Entry(entry) => Ok((entry.clone(), drawer.scroll.clone())),
-            });
-        let face = match peek {
-            None => None,
-            Some(Err(view)) => view.update(cx, |view, cx| view.page_face(window, cx)),
-            Some(Ok((entry, scroll))) => Some(self.entry_face(&entry, on, &scroll, window, cx)),
+            .map(|drawer| (drawer.peek.clone(), drawer.scroll.clone()))
+        else {
+            return Vec::new();
         };
-        let Some(face) = face else {
+        let Some(face) = peek.face(&scroll, window, cx, |entry, scroll, window, cx| {
+            Some(self.entry_face(entry, on, scroll, window, cx))
+        }) else {
             return Vec::new();
         };
         pane.update(cx, |pane, cx| pane.drawer_layer(face, cx))

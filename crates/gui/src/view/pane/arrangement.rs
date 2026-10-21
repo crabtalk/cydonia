@@ -4,13 +4,15 @@
 //! The tree is [`artifact::space::Node`] — see there for what the shape
 //! means. This is only how it lands on the window.
 
-use crate::model::workspace::Slot;
-use crate::view::kit::{icon, menu};
-use crate::view::pane::{Edge, Pane};
-use crate::view::{
-    component::divider,
-    sidebar::{Dragged, Row},
-    window::root::Cydonia,
+use crate::{
+    model::workspace::Slot,
+    view::{
+        component::divider,
+        kit::{icon, menu},
+        pane::{Edge, Pane},
+        sidebar::{Dragged, Row},
+        window::root::Cydonia,
+    },
 };
 use artifact::space::{Axis as Split, Member, Node, Side, Space};
 use bezel::{
@@ -22,7 +24,7 @@ use bezel::{
     theme::Theme,
     ui::{docking, icons, menu::Item},
 };
-use std::collections::HashMap;
+use std::{borrow::Cow, collections::HashMap};
 use web_time::Instant;
 
 /// The least of a split a pane may be squeezed to. A pane thinner than this
@@ -60,10 +62,9 @@ pub(crate) struct Places {
 }
 
 impl Cydonia {
-    /// What the window is arranged by, taken whole — see
-    /// [`crate::model::workspace::Workspace::arranged`]. The tree is walked
-    /// while the workspace is drawn from, so it is cloned out first.
-    pub(crate) fn arrangement(&self, cx: &App) -> Option<Space> {
+    /// What the window is arranged by — see
+    /// [`crate::model::workspace::Workspace::arranged`].
+    pub(crate) fn arrangement<'a>(&self, cx: &'a App) -> Option<Cow<'a, Space>> {
         self.workspace.read(cx).arranged()
     }
 
@@ -73,7 +74,8 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        let space = self.arrangement(cx)?;
+        // The tree is walked while the window is drawn into.
+        let space = self.arrangement(cx)?.into_owned();
         let places = self.pane_places.clone();
         let measured = canvas(
             move |bounds, _, _| places.borrow_mut().space = Some(bounds),
@@ -328,7 +330,7 @@ impl Cydonia {
     /// space, or the strip's entry in front — and drop the rest, and hand each
     /// its tab.
     pub(crate) fn sync_panes(&mut self, cx: &mut Context<Self>) {
-        let Some(space) = self.arrangement(cx) else {
+        let Some(space) = self.arrangement(cx).map(Cow::into_owned) else {
             self.panes.clear();
             return;
         };
@@ -379,12 +381,15 @@ impl Cydonia {
     /// Tell each pane where it stands against the window's top edge — see
     /// [`Edge`].
     pub(crate) fn sync_edges(&mut self, cx: &mut Context<Self>) {
-        let top = match (self.panes_on_top(cx), self.arrangement(cx)) {
-            (true, Some(space)) => match space.zoomed() {
-                Some(zoomed) => vec![zoomed],
-                None => space.tree.top_fronts(),
-            },
-            _ => Vec::new(),
+        let top = match self.panes_on_top(cx) {
+            true => self
+                .arrangement(cx)
+                .map(|space| match space.zoomed() {
+                    Some(zoomed) => vec![zoomed],
+                    None => space.tree.top_fronts(),
+                })
+                .unwrap_or_default(),
+            false => Vec::new(),
         };
         let on_top = !top.is_empty();
         if let Some(panel) = self.changes.clone()
@@ -404,9 +409,9 @@ impl Cydonia {
                 lights: !sidebar_open && entry == left,
                 toggle: !panel_open && entry == right,
             };
-            if pane.read(cx).edge != edge {
+            if pane.read(cx).top != edge.top {
                 pane.update(cx, |pane, cx| {
-                    pane.edge = edge;
+                    pane.top = edge.top;
                     cx.notify();
                 });
             }
@@ -456,14 +461,8 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) {
         self.remember_front(entry);
-        // Before the focus moves: a pane the space has gained since the last
-        // frame has no leaf yet, and [`Cydonia::focus_pane`] moves nothing it
-        // cannot find.
-        self.sync_leaves(window, cx);
-        self.focused = usize::MAX;
-        self.focus_pane(entry, window, cx);
+        self.refocus(entry, window, cx);
         self.reveal_applied_match(cx);
-        cx.notify();
     }
 
     /// The member a carried item names, once it has landed.
@@ -482,14 +481,12 @@ impl Cydonia {
                 .member_toolbar(member, cx)
                 .map(|toolbar| toolbar.title)
                 .unwrap_or_default(),
-            Dragged::Tab(Slot::Space { space }) => {
-                let workspace = self.workspace.read(cx);
-                workspace
-                    .space_ix(space)
-                    .and_then(|ix| workspace.spaces.get(ix))
-                    .map(|space| space.label().to_owned())
-                    .unwrap_or_default()
-            }
+            Dragged::Tab(Slot::Space { space }) => self
+                .workspace
+                .read(cx)
+                .space_by_id(space)
+                .map(|space| space.label().to_owned())
+                .unwrap_or_default(),
         }
     }
 
@@ -517,10 +514,7 @@ impl Cydonia {
             Some(side) => workspace.arrange(target, &arriving, side, cx),
             None => workspace.stack_pane(target, &arriving, cx),
         });
-        self.sync_leaves(window, cx);
-        self.focused = usize::MAX;
-        self.focus_pane(&arriving, window, cx);
-        cx.notify();
+        self.refocus(&arriving, window, cx);
         Some(arriving)
     }
 
@@ -574,8 +568,12 @@ impl Cydonia {
             return Vec::new();
         };
         let front = space.front_of(entry);
-        let mut rows: Vec<_> = space
-            .stack_of(entry)
+        let stack = space.stack_of(entry);
+        let behind = stack
+            .iter()
+            .find(|held| Some(*held) != front.as_ref())
+            .cloned();
+        let mut rows: Vec<_> = stack
             .into_iter()
             .map(|held| {
                 let title = self
@@ -593,10 +591,6 @@ impl Cydonia {
         // Out of the stack: to a tab of its own on the strip, or, with the
         // spaces in the sidebar and no strip drawn, to a pane of its own
         // beside this one.
-        let behind = space
-            .stack_of(entry)
-            .into_iter()
-            .find(|held| Some(held) != front.as_ref());
         let out = match (front, workspace.settings.appearance.spaces_in_sidebar) {
             (Some(front), false) => Some(menu::row::<Self>(
                 Item::action("Move to a tab of its own").with_icon(icons::layout::PanelTop),
@@ -638,12 +632,7 @@ impl Cydonia {
         let Some(entry) = self.focused_entry(cx) else {
             return;
         };
-        let stack = self
-            .workspace
-            .read(cx)
-            .active_space()
-            .map(|space| space.stack_of(&entry))
-            .unwrap_or_default();
+        let stack = self.workspace.read(cx).stack_of(&entry);
         let Some(at) = stack.iter().position(|held| *held == entry) else {
             return;
         };
@@ -756,8 +745,7 @@ impl Cydonia {
             })
             .or_else(|| self.focused_entry(cx));
         if let Some(entry) = landing {
-            self.focused = usize::MAX;
-            self.focus_pane(&entry, window, cx);
+            self.refocus(&entry, window, cx);
         }
         cx.notify();
     }
@@ -784,8 +772,7 @@ impl Cydonia {
         let Some(pane) = panes.get(landing).cloned() else {
             return;
         };
-        self.focused = usize::MAX;
-        self.focus_pane(&pane, window, cx);
+        self.refocus(&pane, window, cx);
     }
 
     /// Close the focused pane. The keyboard's half of the `×` in its title row.
@@ -811,8 +798,7 @@ impl Cydonia {
         else {
             return;
         };
-        self.focused = usize::MAX;
-        self.focus_pane(&pane, window, cx);
+        self.refocus(&pane, window, cx);
     }
 
     /// Stand the pane in front over the others, or put it back.
@@ -830,7 +816,6 @@ impl Cydonia {
         self.workspace.update(cx, |workspace, cx| {
             workspace.open_space(ix, cx);
         });
-        self.sync_leaves(window, cx);
         // The focus lands on the pane the space last had focused, or else the
         // first it lays out, at its top left.
         let front = self
@@ -838,9 +823,9 @@ impl Cydonia {
             .read(cx)
             .active_space()
             .and_then(|space| space.focused_front());
-        if let Some(entry) = front {
-            self.focused = usize::MAX;
-            self.focus_pane(&entry, window, cx);
+        match front {
+            Some(entry) => self.refocus(&entry, window, cx),
+            None => self.sync_leaves(window, cx),
         }
         cx.notify();
     }
@@ -855,11 +840,7 @@ impl Cydonia {
         self.library = None;
         self.workspace
             .update(cx, |workspace, cx| workspace.join_strip(&arriving, cx));
-        self.remember_front(&arriving);
-        self.sync_leaves(window, cx);
-        self.focused = usize::MAX;
-        self.focus_pane(&arriving, window, cx);
-        cx.notify();
+        self.show_pane(&arriving, window, cx);
     }
 
     /// Put the seam after `at` where the pointer left it.

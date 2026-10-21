@@ -822,7 +822,7 @@ fn list_rows_open_drawer_and_group_controls_stay_independent(cx: &mut TestAppCon
             .columns[0]
             .collapsed
     }));
-    assert!(cx.update(|_, cx| root.read(cx).leaf().unwrap().read(cx).renaming.is_none()));
+    assert!(cx.update(|_, cx| root.read(cx).leaf().unwrap().read(cx).rename.what.is_none()));
     click("list-group-add", &mut cx);
     assert!(cx.update(|_, cx| matches!(
         view(&root, cx).read(cx).editing,

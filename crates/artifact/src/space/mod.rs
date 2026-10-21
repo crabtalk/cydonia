@@ -128,11 +128,10 @@ fn first<T>() -> Option<T> {
     None
 }
 
-/// A leaf taking half of whatever it is put in — what a pane divided in two
-/// leaves on each side of the new seam.
-fn half<T>(entry: T) -> Node<T> {
+/// A leaf taking `ratio` of whatever it is put in.
+fn sized<T>(entry: T, ratio: f64) -> Node<T> {
     Node::Leaf {
-        ratio: 0.5,
+        ratio,
         entry,
         tabs: Vec::new(),
         front: None,
@@ -382,16 +381,17 @@ impl<T: Clone + PartialEq> Node<T> {
     /// order tabs arrived in, and one that reshuffled itself would move the
     /// tab under the pointer out from under it.
     pub fn stack_onto(&mut self, target: &T, arriving: &T) -> bool {
-        match self {
-            Self::Leaf { entry, tabs, .. } => {
-                if !(entry == target || tabs.contains(target)) {
-                    return false;
-                }
-                if entry != arriving && !tabs.contains(arriving) {
-                    tabs.push(arriving.clone());
-                }
-                true
+        if self.holds(target) {
+            let held = self.holds(arriving);
+            if let Self::Leaf { tabs, .. } = self
+                && !held
+            {
+                tabs.push(arriving.clone());
             }
+            return true;
+        }
+        match self {
+            Self::Leaf { .. } => false,
             Self::Split { children, .. } => children
                 .iter_mut()
                 .any(|child| child.stack_onto(target, arriving)),
@@ -427,8 +427,8 @@ impl<T: Clone + PartialEq> Node<T> {
             // The arrival takes the side it was dropped on, so the pane that
             // was already there does not jump across the new seam.
             let children = match side.after() {
-                true => vec![kept, half(arriving.clone())],
-                false => vec![half(arriving.clone()), kept],
+                true => vec![kept, sized(arriving.clone(), 0.5)],
+                false => vec![sized(arriving.clone(), 0.5), kept],
             };
             *self = Self::Split {
                 ratio,
@@ -448,9 +448,10 @@ impl<T: Clone + PartialEq> Node<T> {
                 // the other half: every other child keeps its share.
                 let share = children[at].ratio() / 2.;
                 children[at].set_ratio(share);
-                let mut arrived = Node::leaf(arriving.clone());
-                arrived.set_ratio(share);
-                children.insert(at + usize::from(side.after()), arrived);
+                children.insert(
+                    at + usize::from(side.after()),
+                    sized(arriving.clone(), share),
+                );
                 return true;
             }
             // Across the split's own direction, so the pane divides in place.
@@ -646,13 +647,19 @@ impl<T: Clone + PartialEq> Node<T> {
         true
     }
 
+    /// Whether the pane on `entry` can move to `target`'s edge: both are
+    /// here, and they are different entries.
+    pub fn relocatable(&self, entry: &T, target: &T) -> bool {
+        entry != target && self.contains(entry) && self.contains(target)
+    }
+
     /// Move a pane already here to another pane's edge.
     ///
     /// Taken out before it is put back, so the split it leaves collapses the
     /// way it would have if the pane had been closed — a pane dragged out of a
     /// pair does not leave the seam it was holding.
     pub fn relocate(&mut self, entry: &T, target: &T, side: Side) -> bool {
-        if entry == target || !self.contains(entry) || !self.contains(target) {
+        if !self.relocatable(entry, target) {
             return false;
         }
         self.remove(entry);
@@ -871,7 +878,7 @@ impl Space {
     /// Move a pane already here to another pane's edge — see
     /// [`Node::relocate`].
     pub fn relocate(&mut self, entry: &Member, target: &Member, side: Side) -> bool {
-        if entry == target || !self.contains(entry) || !self.contains(target) {
+        if !self.tree.relocatable(entry, target) {
             return false;
         }
         self.leaving(std::slice::from_ref(entry));
@@ -905,19 +912,19 @@ impl Space {
     /// The entries the pane holding this one draws, in stack order. Empty for
     /// an entry no pane here is on.
     pub fn stack_of(&self, entry: &Member) -> Vec<Member> {
-        let Some(path) = self.tree.path_to(entry) else {
-            return Vec::new();
-        };
-        self.tree
-            .at_path(&path)
+        self.pane_holding(entry)
             .map(Node::stack)
             .unwrap_or_default()
     }
 
     /// The tab the pane holding this entry shows — see [`Node::front`].
     pub fn front_of(&self, entry: &Member) -> Option<Member> {
-        let path = self.tree.path_to(entry)?;
-        self.tree.at_path(&path)?.front()
+        self.pane_holding(entry)?.front()
+    }
+
+    /// The pane holding this entry.
+    fn pane_holding(&self, entry: &Member) -> Option<&Node<Member>> {
+        self.tree.at_path(&self.tree.path_to(entry)?)
     }
 
     /// Bring a tab to the front of its pane — see [`Node::set_front`].

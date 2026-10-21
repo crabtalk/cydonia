@@ -13,6 +13,7 @@
 use super::{Showing, Workspace};
 use crate::model::state;
 use bezel::gpui::{App, Context};
+use std::{collections::BTreeMap, path::PathBuf};
 
 impl Workspace {
     /// What `state.toml` calls the entry a pane would be put on.
@@ -35,24 +36,27 @@ impl Workspace {
     /// those above the arrangement rather than below it: a new entry that
     /// appeared under the fold would be one nobody saw arrive.
     pub fn rank_of(&self, project: usize, showing: Showing, cx: &App) -> Option<usize> {
-        let path = &self.projects.get(project)?.path;
-        let entry = self.entry_of(project, showing, cx)?;
-        self.order
-            .get(path)?
-            .iter()
-            .position(|held| held.kind == entry.kind && held.id == entry.id)
+        self.rank_in(&self.order, project, showing, cx)
     }
 
     /// Where an entry sits among the pins, and `None` for one that is not
     /// pinned. What puts the pinned rows above the rest, in an order of their
     /// own.
     pub fn pin_rank(&self, project: usize, showing: Showing, cx: &App) -> Option<usize> {
+        self.rank_in(&self.pinned, project, showing, cx)
+    }
+
+    /// Where an entry sits in its project's list of `ranks`.
+    fn rank_in(
+        &self,
+        ranks: &BTreeMap<PathBuf, Vec<state::Entry>>,
+        project: usize,
+        showing: Showing,
+        cx: &App,
+    ) -> Option<usize> {
         let path = &self.projects.get(project)?.path;
         let entry = self.entry_of(project, showing, cx)?;
-        self.pinned
-            .get(path)?
-            .iter()
-            .position(|held| held.kind == entry.kind && held.id == entry.id)
+        ranks.get(path)?.iter().position(|held| *held == entry)
     }
 
     pub fn is_pinned(&self, project: usize, showing: Showing, cx: &App) -> bool {
@@ -73,7 +77,7 @@ impl Workspace {
             return;
         };
         let held = self.pinned.entry(open.path.clone()).or_default();
-        held.retain(|pin| !(pin.kind == entry.kind && pin.id == entry.id));
+        held.retain(|pin| *pin != entry);
         if on {
             held.push(entry);
         }
@@ -91,7 +95,7 @@ impl Workspace {
             return;
         };
         if let Some(held) = self.pinned.get_mut(&open.path) {
-            held.retain(|pin| !(pin.kind == entry.kind && pin.id == entry.id));
+            held.retain(|pin| *pin != entry);
         }
         self.save();
     }

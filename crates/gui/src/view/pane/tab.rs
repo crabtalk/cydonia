@@ -7,12 +7,8 @@ use crate::{
         app, article,
         board::{self, DismissFind, info::BoardInfo},
         component::{composer::Composer, ribbon::Ribbon, transcript},
-        kit::{
-            rename::{NameEvent, NameField},
-            watch::Watch,
-        },
+        kit::{rename::Rename, watch::Watch},
         pane::Edge,
-        sidebar::Renaming,
         table,
         window::{reach::InWindow, root::Cydonia},
     },
@@ -111,9 +107,8 @@ pub(crate) struct Tab {
     /// field it puts up — see [`crate::view::component::ribbon`].
     pub(crate) ribbon: Ribbon,
     pub(crate) menu: ContextMenu<Self, TabMenu>,
-    /// What the title row's name field is attached to, and the field itself.
-    pub(crate) renaming: Option<Renaming>,
-    pub(crate) name_field: Entity<NameField>,
+    /// The title row's name field.
+    pub(crate) rename: Rename,
     /// The board identity panel, while it is open — see
     /// [`crate::view::board::info::BoardInfo`].
     pub(crate) info: Option<BoardInfo>,
@@ -145,12 +140,7 @@ impl Tab {
             }
         })
         .detach();
-        let name_field = cx.new(NameField::new);
-        cx.subscribe(&name_field, |this, _, event: &NameEvent, cx| match event {
-            NameEvent::Named(name) => this.commit_name(name.clone(), cx),
-            NameEvent::Dismissed => this.dismiss_name(cx),
-        })
-        .detach();
+        let rename = Rename::new(workspace.clone(), |this: &mut Self| &mut this.rename, cx);
         Self {
             entry,
             workspace,
@@ -175,8 +165,7 @@ impl Tab {
             applied: None,
             ribbon: Ribbon::new(cx),
             menu: ContextMenu::default(),
-            renaming: None,
-            name_field,
+            rename,
             info: None,
             info_pressed: false,
             sessions_watch: Watch::default(),
@@ -286,20 +275,18 @@ impl Tab {
         cx: &mut Context<Self>,
     ) -> Option<super::drawer::Face> {
         let drawer = self.drawer_shown(cx)?;
-        match &drawer.peek {
-            super::drawer::Peek::Page(view) => view
-                .clone()
-                .update(cx, |view, cx| view.page_face(window, cx)),
-            super::drawer::Peek::Entry(entry) => {
-                let (entry, scroll, on) =
-                    (entry.clone(), drawer.scroll.clone(), self.entry.clone());
-                self.root
-                    .update(cx, |root, cx| {
-                        root.entry_face(&entry, Some(&on), &scroll, window, cx)
-                    })
-                    .ok()
-            }
-        }
+        let (peek, scroll, on) = (
+            drawer.peek.clone(),
+            drawer.scroll.clone(),
+            self.entry.clone(),
+        );
+        peek.face(&scroll, window, cx, |entry, scroll, window, cx| {
+            self.root
+                .update(cx, |root, cx| {
+                    root.entry_face(entry, Some(&on), scroll, window, cx)
+                })
+                .ok()
+        })
     }
 }
 

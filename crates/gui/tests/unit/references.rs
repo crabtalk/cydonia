@@ -2,11 +2,14 @@
 //! the card a handle names, and the entry a number names.
 
 use super::{Part, card, entry, passage};
-use crate::data::{ColType, Column, Data};
-use crate::model::{article::Disk, project::Project, workspace::Showing};
-use artifact::kind::Kind;
-use artifact::project::{Project as _, fs};
-use artifact::reference::{Span, Within};
+use crate::{
+    data::{ColType, Column, Data},
+    model::{article::Disk, project::Project, workspace::Showing},
+};
+use artifact::{
+    project::{Project as _, fs},
+    reference::{Span, Within},
+};
 use bezel::gpui;
 use std::rc::Rc;
 
@@ -96,8 +99,7 @@ fn a_number_names_a_table(cx: &mut gpui::TestAppContext) {
         let project = Project::new(dir.clone(), cx);
         let number = project.tables[0].number.unwrap();
 
-        let (kind, showing, title) = entry(&project, number, cx).unwrap();
-        assert_eq!(kind, Kind::Table);
+        let (showing, title) = entry(&project, number, cx).unwrap();
         assert_eq!(showing, Showing::Table(key));
         assert_eq!(title, "Prices");
         assert!(entry(&project, number + 1, cx).is_none());

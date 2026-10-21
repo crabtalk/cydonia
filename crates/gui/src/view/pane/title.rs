@@ -8,19 +8,15 @@
 use super::{Tab, TabMenu, header::Naming};
 use crate::view::{
     component::panel::changes_toggle,
-    kit::{icon, menu},
-    sidebar::Renaming,
+    kit::{icon, menu, rename::Renaming},
     window::{chrome, entry::Host, reach::InWindow as _, root},
 };
 use bezel::{
     gpui::{AnyElement, Context, FontWeight, SharedString, Window, div, prelude::*, px},
-    motion::Painter,
     theme::{TextStyle, Theme, Typeset},
     ui::{
         context_menu::{ContextMenu, Place},
         icons,
-        input::Case,
-        titlebar::CaptionSide,
         tooltip::Tooltip,
         widgets::Content as _,
     },
@@ -66,28 +62,26 @@ impl Tab {
             .article_shown(cx)
             .map(|view| view.read(cx).comments.clone());
         let edge = self.edge;
-        // The lights are the window's and are drawn over whatever is at its
-        // top left; caption buttons stand flush with the edge they are on.
-        let left = edge.lights && chrome::has(CaptionSide::Left, window, cx);
-        let right = edge.toggle && chrome::has(CaptionSide::Right, window, cx);
-        let lead = match edge.lights {
-            _ if left => 0.,
-            true => root::toolbar_inset(window, cx),
-            false => root::HEADER_INSET,
+        let corners = chrome::Corners {
+            left: edge.lights,
+            right: edge.toggle,
         };
         let row = div()
             .group(TITLE_GROUP)
             .flex_none()
             .h(px(root::CARD_ROW_HEIGHT))
-            .pl(px(lead))
-            .pr(px(if right { 0. } else { root::CARD_EDGE }))
+            .pl(px(corners.lead(root::HEADER_INSET, window, cx)))
+            .pr(px(match corners.flush_right(window, cx) {
+                true => 0.,
+                false => root::CARD_EDGE,
+            }))
             .flex()
             .flex_row()
             .items_center()
             .gap(px(6.));
-        if self.renaming.is_some() {
+        if self.rename.what.is_some() {
             return Some(
-                row.child(div().flex_1().min_w_0().child(self.name_field.clone()))
+                row.child(div().flex_1().min_w_0().child(self.rename.field.clone()))
                     .into_any_element(),
             );
         }
@@ -150,25 +144,14 @@ impl Tab {
                         entry.archived,
                         Host::Tab(this.entry.clone()),
                     );
-                    let tab = cx.entity();
-                    // From the window: its rows read this tab back.
-                    this.defer_window(window, cx, move |root, window, cx| {
-                        let rows = Self::through(root.entry_rows(host, &row, archived, cx));
-                        let rows = std::cell::RefCell::new(Some(rows));
-                        tab.update(cx, |this, cx| {
-                            ContextMenu::toggle(
-                                this,
-                                |this| &mut this.menu,
-                                TabMenu::Entry,
-                                Place::BelowEnd,
-                                move |_, _, _| {
-                                    menu::chooser(rows.borrow_mut().take().unwrap_or_default())
-                                },
-                                window,
-                                cx,
-                            )
-                        });
-                    });
+                    this.window_menu(
+                        |this| &mut this.menu,
+                        TabMenu::Entry,
+                        Place::BelowEnd,
+                        move |root, _, cx| root.entry_rows(host, &row, archived, cx),
+                        window,
+                        cx,
+                    );
                 }));
             ContextMenu::trigger(button, |this: &mut Self| &mut this.menu, TabMenu::Entry, cx)
                 .children(self.menu.render_for(
@@ -227,25 +210,15 @@ impl Tab {
                     .tooltip(|window, cx| Tooltip::text("Move", window, cx))
                     .on_click(cx.listener(|this, _, window, cx| {
                         cx.stop_propagation();
-                        let (entry, tab) = (this.entry.clone(), cx.entity());
-                        // From the window: its rows read this tab back.
-                        this.defer_window(window, cx, move |root, window, cx| {
-                            let rows = Self::through(root.move_rows(&entry, cx));
-                            let rows = std::cell::RefCell::new(Some(rows));
-                            tab.update(cx, |this, cx| {
-                                ContextMenu::toggle(
-                                    this,
-                                    |this| &mut this.menu,
-                                    TabMenu::Move,
-                                    Place::BelowEnd,
-                                    move |_, _, _| {
-                                        menu::chooser(rows.borrow_mut().take().unwrap_or_default())
-                                    },
-                                    window,
-                                    cx,
-                                )
-                            });
-                        });
+                        let entry = this.entry.clone();
+                        this.window_menu(
+                            |this| &mut this.menu,
+                            TabMenu::Move,
+                            Place::BelowEnd,
+                            move |root, _, cx| root.move_rows(&entry, cx),
+                            window,
+                            cx,
+                        );
                     }));
                 Some(
                     ContextMenu::trigger(
@@ -291,29 +264,20 @@ impl Tab {
             }),
             _ => (None, None),
         };
-        let toggle = edge.toggle.then(|| {
-            changes_toggle("Show right panel", Painter::of(cx), Theme::of(cx)).into_any_element()
-        });
+        let toggle = edge.toggle.then(|| changes_toggle(false, cx));
         Some(
-            row.children(
-                left.then(|| chrome::caption(CaptionSide::Left, window, cx))
-                    .flatten(),
-            )
-            .children(fold)
-            .child(name)
-            .children(grip)
-            .children(comments)
-            .children(menu)
-            .children(shift)
-            .children(zoom)
-            .children(close)
-            .children(toggle)
-            .children(
-                right
-                    .then(|| chrome::caption(CaptionSide::Right, window, cx))
-                    .flatten(),
-            )
-            .into_any_element(),
+            row.children(corners.left_caption(window, cx))
+                .children(fold)
+                .child(name)
+                .children(grip)
+                .children(comments)
+                .children(menu)
+                .children(shift)
+                .children(zoom)
+                .children(close)
+                .children(toggle)
+                .children(corners.right_caption(window, cx))
+                .into_any_element(),
         )
     }
 
@@ -322,9 +286,7 @@ impl Tab {
     fn deck(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let workspace = self.workspace.read(cx);
-        let behind = workspace.active_space().map_or(0, |space| {
-            space.stack_of(&self.entry).len().saturating_sub(1)
-        });
+        let behind = workspace.stack_of(&self.entry).len().saturating_sub(1);
         let deck = theme
             .icon_deck(icon::card_icon(&self.entry, workspace, cx), behind)
             .mr(px(6.));
@@ -337,25 +299,15 @@ impl Tab {
             .child(deck)
             .on_click(cx.listener(|this, _, window, cx| {
                 cx.stop_propagation();
-                let (entry, tab) = (this.entry.clone(), cx.entity());
-                // From the window: its rows read this tab back.
-                this.defer_window(window, cx, move |root, window, cx| {
-                    let rows = Self::through(root.stack_rows(&entry, cx));
-                    let rows = std::cell::RefCell::new(Some(rows));
-                    tab.update(cx, |this, cx| {
-                        ContextMenu::toggle(
-                            this,
-                            |this| &mut this.menu,
-                            TabMenu::Stack,
-                            Place::Below,
-                            move |_, _, _| {
-                                menu::chooser(rows.borrow_mut().take().unwrap_or_default())
-                            },
-                            window,
-                            cx,
-                        )
-                    });
-                });
+                let entry = this.entry.clone();
+                this.window_menu(
+                    |this| &mut this.menu,
+                    TabMenu::Stack,
+                    Place::Below,
+                    move |root, _, cx| root.stack_rows(&entry, cx),
+                    window,
+                    cx,
+                );
             }));
         ContextMenu::trigger(button, |this: &mut Self| &mut this.menu, TabMenu::Stack, cx)
             .children(self.menu.render_for(
@@ -375,26 +327,9 @@ impl Tab {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let label = what.label(self.workspace.read(cx), cx);
-        self.name_field
-            .update(cx, |field, cx| field.start(label, Case::Mixed, window, cx));
+        self.rename.start(what, window, cx);
         // One editor at a time — see [`Tab::open_info`].
         self.info = None;
-        self.renaming = Some(what);
-        cx.notify();
-    }
-
-    pub(crate) fn commit_name(&mut self, name: String, cx: &mut Context<Self>) {
-        let Some(what) = self.renaming.take() else {
-            return;
-        };
-        self.workspace
-            .update(cx, |workspace, cx| what.commit(name, workspace, cx));
-        cx.notify();
-    }
-
-    pub(crate) fn dismiss_name(&mut self, cx: &mut Context<Self>) {
-        self.renaming = None;
         cx.notify();
     }
 }

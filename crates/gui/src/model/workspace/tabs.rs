@@ -7,9 +7,10 @@
 use super::*;
 use artifact::{
     kind::Kind,
-    space::{Member, Node, Space},
+    space::{Member, Space},
 };
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 
 /// How an entry opens in the window's strip — see [`Workspace::open_tab`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -65,17 +66,10 @@ impl Workspace {
 
     /// What the window lays out under its strip: the space in front, or the
     /// entry in front as a layout of one. Nothing where no tab is open.
-    pub fn arranged(&self) -> Option<Space> {
+    pub fn arranged(&self) -> Option<Cow<'_, Space>> {
         match self.front_slot()? {
-            Slot::Space { .. } => self.active_space().cloned(),
-            Slot::Entry(member) => Some(Space {
-                id: String::new(),
-                touched: 0,
-                name: String::new(),
-                zoomed: None,
-                focused: None,
-                tree: Node::leaf(member.clone()),
-            }),
+            Slot::Space { .. } => self.active_space().map(Cow::Borrowed),
+            Slot::Entry(member) => Some(Cow::Owned(Space::new(String::new(), "", member.clone()))),
         }
     }
 
@@ -271,8 +265,7 @@ impl Workspace {
             .into_iter()
             .filter(|slot| match slot {
                 Slot::Space { space } => self.space_ix(space).is_some(),
-                Slot::Entry(Member::App { app }) => self.apps.iter().any(|held| held.id == *app),
-                Slot::Entry(member) => self.showing_of(member, cx).is_some(),
+                Slot::Entry(member) => self.lists(member, cx),
             })
             .collect();
         // Every space keeps a tab on the strip.

@@ -601,14 +601,7 @@ impl Cydonia {
     /// Observe every session the workspace holds: the composers follow each
     /// one's own change.
     fn watch_sessions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let chats: Vec<Entity<ChatSession>> = self
-            .workspace
-            .read(cx)
-            .projects
-            .iter()
-            .flat_map(|project| &project.sessions)
-            .map(|held| held.chat.clone())
-            .collect();
+        let chats = self.workspace.read(cx).chat_entities();
         let mut watches = std::mem::take(&mut self.session_watches);
         watches.set_in(&chats, window, cx, |this, _, window, cx| {
             this.model_changed(window, cx)
@@ -632,21 +625,17 @@ impl Cydonia {
             .flex_col()
             // The fold just past the lights, where the window's top row puts
             // it with the sidebar folded.
-            .child(
+            .child({
+                let corners = chrome::Corners {
+                    left: true,
+                    right: false,
+                };
                 band()
-                    .pl(px(toolbar_inset(window, cx)))
-                    .when(
-                        chrome::has(bezel::ui::titlebar::CaptionSide::Left, window, cx),
-                        |band| band.pl_0(),
-                    )
-                    .children(chrome::caption(
-                        bezel::ui::titlebar::CaptionSide::Left,
-                        window,
-                        cx,
-                    ))
+                    .pl(px(corners.lead(0., window, cx)))
+                    .children(corners.left_caption(window, cx))
                     .child(self.fold_controls(cx))
-                    .child(chrome::grip("sidebar-grip", &self.drag, window)),
-            )
+                    .child(chrome::grip("sidebar-grip", &self.drag, window))
+            })
             .child(
                 self.sidebar.clone().cached(
                     gpui::StyleRefinement::default()
@@ -867,11 +856,21 @@ impl Cydonia {
             Slot::Entry(member) => {
                 self.workspace
                     .update(cx, |workspace, cx| workspace.front_tab(slot, cx));
-                self.sync_leaves(window, cx);
-                self.focused = usize::MAX;
-                self.focus_pane(member, window, cx);
+                self.refocus(member, window, cx);
             }
         }
+        cx.notify();
+    }
+
+    /// Bring the leaves up to the arrangement and move the focus to the pane
+    /// on `entry`, putting the project's selection on it even where that pane
+    /// is already the focused leaf.
+    pub(crate) fn refocus(&mut self, entry: &Member, window: &mut Window, cx: &mut Context<Self>) {
+        // A pane the arrangement has gained since the last frame has no leaf
+        // yet, and [`Cydonia::focus_pane`] moves nothing it cannot find.
+        self.sync_leaves(window, cx);
+        self.focused = usize::MAX;
+        self.focus_pane(entry, window, cx);
         cx.notify();
     }
 
@@ -892,7 +891,7 @@ impl Cydonia {
             .iter()
             .position(|leaf| leaf.read(cx).entry == *entry)
         else {
-            // [`Cydonia::show_slot`] and [`Cydonia::show_pane`] park the index past the end to force the
+            // [`Cydonia::refocus`] parks the index past the end to force the
             // selection below, and [`Self::leaf`] clamps — so a miss left here
             // reads as the pane at the end of the space, which is some entry
             // nobody pressed.
@@ -1486,8 +1485,6 @@ impl Render for Cydonia {
         self.sync_leaves(window, cx);
         self.sync_changes(window, cx);
         self.sync_items(cx);
-        self.sync_focus(cx);
-        self.sync_panes(cx);
         self.sync_sidebar(cx);
         self.sync_strip(cx);
         self.sync_edges(cx);

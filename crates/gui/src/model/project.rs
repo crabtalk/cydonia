@@ -359,17 +359,28 @@ impl Project {
     /// The entry a stored id names: a session by its record, every other kind
     /// by its id or key.
     pub fn stored(&self, kind: Kind, id: &str, cx: &App) -> Option<Showing> {
+        let ix = self.stored_ix(kind, id, cx)?;
         Some(match kind {
-            Kind::Session => Showing::Session(
-                self.chats(cx)
-                    .find(|chat| chat.record.as_deref() == Some(id))?
-                    .id,
-            ),
-            Kind::Board => Showing::Board(self.boards[self.board_ix(id)?].id.clone()),
-            Kind::Article => Showing::Article(self.articles[self.article_ix(id)?].id.clone()),
-            Kind::Table => Showing::Table(self.tables[self.table_ix(id)?].key.clone()),
+            Kind::Session => Showing::Session(self.sessions[ix].chat.read(cx).id),
+            Kind::Board => Showing::Board(self.boards[ix].id.clone()),
+            Kind::Article => Showing::Article(self.articles[ix].id.clone()),
+            Kind::Table => Showing::Table(self.tables[ix].key.clone()),
             Kind::App => return None,
         })
+    }
+
+    /// Where the entry a stored id names is listed among its kind.
+    pub fn stored_ix(&self, kind: Kind, id: &str, cx: &App) -> Option<usize> {
+        match kind {
+            Kind::Session => self
+                .sessions
+                .iter()
+                .position(|held| held.chat.read(cx).record.as_deref() == Some(id)),
+            Kind::Board => self.board_ix(id),
+            Kind::Article => self.article_ix(id),
+            Kind::Table => self.table_ix(id),
+            Kind::App => None,
+        }
     }
 
     /// What the entry `showing` names carries, whatever its kind.

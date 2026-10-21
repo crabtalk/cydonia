@@ -96,13 +96,14 @@ impl Workspace {
             Target::Entry { number, within } => (number, within),
             Target::Card { key, handle } => return card(project, key, handle, text, cx),
         };
-        let Some((kind, showing, title)) = entry(project, number, cx) else {
+        let Some((showing, title)) = entry(project, number, cx) else {
             return Err(Error::NotFound {
                 what: "entry",
                 named: text.to_owned(),
             }
             .to_string());
         };
+        let kind = showing.kind();
         reference::fits(text, kind, within).map_err(|e| e.to_string())?;
         let part = match (within, &showing) {
             (None, _) => None,
@@ -175,25 +176,18 @@ impl Workspace {
     }
 }
 
-/// The entry `number` names in `project`: its kind, what shows it, and its
-/// own title.
-fn entry(project: &Project, number: u64, cx: &App) -> Option<(Kind, Showing, String)> {
+/// The entry `number` names in `project`: what shows it, and its own title.
+fn entry(project: &Project, number: u64, cx: &App) -> Option<(Showing, String)> {
     project
         .chats(cx)
         .find(|chat| chat.number == Some(number))
-        .map(|chat| (Kind::Session, Showing::Session(chat.id), chat.title.clone()))
+        .map(|chat| (Showing::Session(chat.id), chat.title.clone()))
         .or_else(|| {
             project
                 .articles
                 .iter()
                 .find(|article| article.number == Some(number))
-                .map(|article| {
-                    (
-                        Kind::Article,
-                        Showing::Article(article.id.clone()),
-                        article.title.clone(),
-                    )
-                })
+                .map(|article| (Showing::Article(article.id.clone()), article.title.clone()))
         })
         .or_else(|| {
             project
@@ -201,26 +195,14 @@ fn entry(project: &Project, number: u64, cx: &App) -> Option<(Kind, Showing, Str
                 .iter()
                 .map(|held| held.board.read(cx))
                 .find(|board| board.number == Some(number))
-                .map(|board| {
-                    (
-                        Kind::Board,
-                        Showing::Board(board.id.clone()),
-                        board.name.clone(),
-                    )
-                })
+                .map(|board| (Showing::Board(board.id.clone()), board.name.clone()))
         })
         .or_else(|| {
             project
                 .tables
                 .iter()
                 .find(|table| table.number == Some(number))
-                .map(|table| {
-                    (
-                        Kind::Table,
-                        Showing::Table(table.key.clone()),
-                        table.name.clone(),
-                    )
-                })
+                .map(|table| (Showing::Table(table.key.clone()), table.name.clone()))
         })
 }
 

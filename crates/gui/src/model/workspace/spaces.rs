@@ -125,6 +125,11 @@ impl Workspace {
         self.spaces.iter().position(|space| space.id == id)
     }
 
+    /// The space with `id`.
+    pub fn space_by_id(&self, id: &str) -> Option<&Space> {
+        self.spaces.iter().find(|space| space.id == id)
+    }
+
     /// Carry a space to another place in the list.
     pub fn move_space(&mut self, id: &str, to: usize, cx: &mut Context<Self>) {
         let Some(from) = self.space_ix(id) else {
@@ -264,18 +269,31 @@ impl Workspace {
             .iter()
             .position(|space| space.id != keep && space.contains(member))
         {
-            if self.spaces[ix].entries().len() <= 2 {
-                self.delete_space(ix, cx);
-                continue;
-            }
             // A space that says it holds the member but will not give it up
             // would spin this loop, so the refusal ends it.
-            if !self.spaces[ix].remove(member) {
+            if !self.leave_space(ix, member, cx) {
                 return;
             }
-            Shelf::save(&mut self.spaces[ix]);
-            cx.notify();
         }
+    }
+
+    /// Take `member` out of the space at `ix` and write it back, or delete the
+    /// space where it holds two entries or fewer. Answers `false` where the
+    /// space does not give the member up.
+    fn leave_space(&mut self, ix: usize, member: &Member, cx: &mut Context<Self>) -> bool {
+        let Some(space) = self.spaces.get_mut(ix) else {
+            return false;
+        };
+        if space.entries().len() <= 2 {
+            self.delete_space(ix, cx);
+            return true;
+        }
+        if !space.remove(member) {
+            return false;
+        }
+        Shelf::save(space);
+        cx.notify();
+        true
     }
 
     /// Bring an entry to the front: of its pane's stack where a space holds
@@ -301,6 +319,14 @@ impl Workspace {
         if space.focus(entry) {
             Shelf::save(space);
         }
+    }
+
+    /// The entries of the open space's pane holding `member`, in stack order.
+    /// Empty where the open space does not hold it.
+    pub fn stack_of(&self, member: &Member) -> Vec<Member> {
+        self.active_space()
+            .map(|space| space.stack_of(member))
+            .unwrap_or_default()
     }
 
     /// The pane across the seam on this side of the one given, if there is one
@@ -358,7 +384,8 @@ impl Workspace {
         // Exactly one entry goes, whether it was a pane's last or one tab of
         // several, so what is left is what the space held less that one.
         if space.entries().len() > 2 {
-            self.edit_space(cx, |space| space.remove(entry));
+            let ix = self.space()?;
+            self.leave_space(ix, entry, cx);
             return None;
         }
         let id = space.id.clone();
@@ -387,21 +414,8 @@ impl Workspace {
     /// is looking at. A space left with one entry is deleted, as there.
     pub fn drop_from_spaces(&mut self, member: &Member, cx: &mut Context<Self>) {
         self.drop_tabs(std::slice::from_ref(member), cx);
-        let Some(ix) = self.space_holding(member) else {
-            return;
-        };
-        let Some(space) = self.spaces.get_mut(ix) else {
-            return;
-        };
-        // Entries, not panes: what is left can be one pane holding tabs, which
-        // is still an arrangement.
-        if space.entries().len() <= 2 {
-            self.delete_space(ix, cx);
-            return;
-        }
-        if space.remove(member) {
-            Shelf::save(space);
-            cx.notify();
+        if let Some(ix) = self.space_holding(member) {
+            self.leave_space(ix, member, cx);
         }
     }
 
@@ -423,34 +437,9 @@ impl Workspace {
     /// Whether the entry a member names is archived. One no open project lists
     /// is not.
     fn archived(&self, member: &Member, cx: &App) -> bool {
-        let Some(open) = self
-            .projects
-            .iter()
-            .find(|open| Some(open.path.as_path()) == member.project())
-        else {
-            return false;
-        };
-        let id = member.id();
-        match member.kind() {
-            Kind::Session => open
-                .sessions
-                .iter()
-                .map(|held| held.chat.read(cx))
-                .any(|chat| chat.closed && chat.record.as_deref() == Some(id)),
-            Kind::Board => open
-                .boards
-                .iter()
-                .any(|held| held.id == id && held.board.read(cx).archived),
-            Kind::Article => open
-                .articles
-                .iter()
-                .any(|article| article.archived && article.id == id),
-            Kind::Table => open
-                .tables
-                .iter()
-                .any(|table| table.archived && table.key == id),
-            Kind::App => false,
-        }
+        self.showing_of(member, cx)
+            .and_then(|(at, showing)| self.projects.get(at)?.facts(&showing, cx))
+            .is_some_and(|facts| facts.archived)
     }
 
     /// Stand one pane over the others, or put it back.
@@ -506,37 +495,24 @@ impl Workspace {
     /// Only for projects that are open: a member in a project this window has
     /// never opened is not missing, only out of reach.
     pub fn prune_spaces(&mut self, cx: &mut Context<Self>) {
-        let mut live: Vec<Member> = Vec::new();
-        for open in &self.projects {
-            let path = open.path.clone();
-            for chat in open.chats(cx) {
-                if let Some(record) = chat.record.clone() {
-                    live.push(Member::new(path.clone(), Kind::Session, record));
-                }
-            }
-            for board in &open.boards {
-                live.push(Member::new(path.clone(), Kind::Board, board.id.clone()));
-            }
-            for article in &open.articles {
-                live.push(Member::new(path.clone(), Kind::Article, article.id.clone()));
-            }
-            for table in &open.tables {
-                live.push(Member::new(path.clone(), Kind::Table, table.key.clone()));
-            }
-        }
-        live.extend(self.apps.iter().map(|held| Member::app(held.id.clone())));
         let open: Vec<PathBuf> = self.projects.iter().map(|open| open.path.clone()).collect();
-        for space in &mut self.spaces {
-            let gone: Vec<Member> = space
-                .entries()
-                .into_iter()
-                .filter(|member| {
-                    member
-                        .project()
-                        .is_none_or(|project| open.iter().any(|at| at == project))
-                        && !live.contains(member)
-                })
-                .collect();
+        let gone: Vec<Vec<Member>> = self
+            .spaces
+            .iter()
+            .map(|space| {
+                space
+                    .entries()
+                    .into_iter()
+                    .filter(|member| {
+                        member
+                            .project()
+                            .is_none_or(|project| open.iter().any(|at| at == project))
+                            && !self.lists(member, cx)
+                    })
+                    .collect()
+            })
+            .collect();
+        for (space, gone) in self.spaces.iter_mut().zip(gone) {
             if !gone.is_empty() && space.prune(&gone) {
                 Shelf::save(space);
             }
@@ -545,20 +521,34 @@ impl Workspace {
         let gone: Vec<Member> = self
             .tab_strip()
             .into_iter()
-            .filter(|member| !live.contains(member))
+            .filter(|member| !self.lists(member, cx))
             .collect();
         self.drop_tabs(&gone, cx);
         cx.notify();
+    }
+
+    /// Where the open project `member` is in is listed, found by the path the
+    /// member names exactly. Nothing for an app.
+    pub fn member_project(&self, member: &Member) -> Option<usize> {
+        self.projects
+            .iter()
+            .position(|open| Some(open.path.as_path()) == member.project())
+    }
+
+    /// Whether what `member` names is here to show: an app that is installed,
+    /// or an entry an open project lists.
+    pub(super) fn lists(&self, member: &Member, cx: &App) -> bool {
+        match member {
+            Member::App { app } => self.apps.iter().any(|held| held.id == *app),
+            Member::Entry(_) => self.showing_of(member, cx).is_some(),
+        }
     }
 
     /// What the member names, and which open project it is in. Nothing for one
     /// whose project is shut, or which has gone since the space named it —
     /// that draws as an empty pane rather than a panic.
     pub fn showing_of(&self, member: &Member, cx: &App) -> Option<(usize, Showing)> {
-        let at = self
-            .projects
-            .iter()
-            .position(|open| Some(open.path.as_path()) == member.project())?;
+        let at = self.member_project(member)?;
         let open = self.projects.get(at)?;
         let showing = open.stored(member.kind(), member.id(), cx)?;
         Some((at, showing))
@@ -603,23 +593,31 @@ impl Workspace {
 
     /// The member naming the board listed at `ix` in `project`.
     pub fn board_member(&self, project: usize, ix: usize) -> Option<Member> {
-        let id = self.projects.get(project)?.boards.get(ix)?.id.clone();
-        self.filed_member(project, Showing::Board(id))
-            .map(Member::from)
+        let open = self.projects.get(project)?;
+        let id = open.boards.get(ix)?.id.clone();
+        Some(Member::new(open.path.clone(), Kind::Board, id))
     }
 
     /// The member naming the article listed at `ix` in `project`.
     pub fn article_member(&self, project: usize, ix: usize) -> Option<Member> {
-        let id = self.projects.get(project)?.articles.get(ix)?.id.clone();
-        self.filed_member(project, Showing::Article(id))
-            .map(Member::from)
+        let open = self.projects.get(project)?;
+        let id = open.articles.get(ix)?.id.clone();
+        Some(Member::new(open.path.clone(), Kind::Article, id))
     }
 
     /// The member naming the table listed at `ix` in `project`.
     pub fn table_member(&self, project: usize, ix: usize) -> Option<Member> {
-        let key = self.projects.get(project)?.tables.get(ix)?.key.clone();
-        self.filed_member(project, Showing::Table(key))
-            .map(Member::from)
+        let open = self.projects.get(project)?;
+        let key = open.tables.get(ix)?.key.clone();
+        Some(Member::new(open.path.clone(), Kind::Table, key))
+    }
+
+    /// Which open project `member` is in, and where it is listed among its
+    /// kind there.
+    fn located_member(&self, member: &Member, cx: &App) -> Option<(usize, usize)> {
+        let at = self.member_project(member)?;
+        let ix = self.projects[at].stored_ix(member.kind(), member.id(), cx)?;
+        Some((at, ix))
     }
 
     /// The board a pane is on, by its place in its project. Named apart from
@@ -641,12 +639,11 @@ impl Workspace {
         let Some(member) = member else {
             return self.active_board(cx);
         };
-        match self.showing_of(member, cx)? {
-            (project, Showing::Board(id)) => {
-                self.board_in(project, self.projects.get(project)?.board_ix(&id)?, cx)
-            }
-            _ => None,
+        if member.kind() != Kind::Board {
+            return None;
         }
+        let (project, ix) = self.located_member(member, cx)?;
+        self.board_in(project, ix, cx)
     }
 
     /// The session one pane is showing, the way [`Self::board_of`] answers
@@ -667,12 +664,11 @@ impl Workspace {
         let Some(member) = member else {
             return self.active_article();
         };
-        match self.showing_of(member, cx)? {
-            (project, Showing::Article(id)) => {
-                self.article_in(project, self.projects.get(project)?.article_ix(&id)?)
-            }
-            _ => None,
+        if member.kind() != Kind::Article {
+            return None;
         }
+        let (project, ix) = self.located_member(member, cx)?;
+        self.article_in(project, ix)
     }
 
     /// The table one pane is showing, the way [`Self::board_of`] answers for a
@@ -681,12 +677,11 @@ impl Workspace {
         let Some(member) = member else {
             return self.active_table();
         };
-        match self.showing_of(member, cx)? {
-            (project, Showing::Table(key)) => {
-                self.table_in(project, self.projects.get(project)?.table_ix(&key)?)
-            }
-            _ => None,
+        if member.kind() != Kind::Table {
+            return None;
         }
+        let (project, ix) = self.located_member(member, cx)?;
+        self.table_in(project, ix)
     }
 
     pub fn article_in(&self, project: usize, ix: usize) -> Option<&Article> {

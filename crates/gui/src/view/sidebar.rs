@@ -7,37 +7,37 @@ mod rows;
 
 pub(crate) use list::List;
 
-use crate::model::{
-    session::ChatSession,
-    settings::Features,
-    workspace::{Showing, Workspace},
-};
-use crate::view::{
-    kit::{
-        menu::{self, Act},
-        rename::{NameEvent, NameField},
-        watch::Watch,
+use crate::{
+    model::{
+        session::ChatSession,
+        settings::Features,
+        workspace::{Showing, Workspace},
     },
-    search::Search,
-    window::{reach::InWindow, root::Cydonia},
+    view::{
+        kit::{
+            menu::{self, Act},
+            rename::{Rename, Renaming},
+            watch::Watch,
+        },
+        search::Search,
+        window::{reach::InWindow, root::Cydonia},
+    },
 };
-use artifact::kind::Kind;
-use artifact::space::Member;
-use bezel::ui::scroll as scrollbars;
+use artifact::{kind::Kind, space::Member};
 use bezel::{
     agent::orbs::{OrbState, engine::Frame},
     gpui::{
-        self, AnyElement, App, AppContext as _, Context, Div, Empty, Entity, Hsla, ListAlignment,
-        ListOffset, ListState, SharedString, Stateful, Subscription, Task, WeakEntity, Window, div,
-        prelude::*, px,
+        self, AnyElement, App, Context, Div, Empty, Entity, Hsla, ListAlignment, ListOffset,
+        ListState, SharedString, Stateful, Subscription, Task, WeakEntity, Window, div, prelude::*,
+        px,
     },
     theme::{self, TextStyle, Theme, Typeset},
     ui::{
         context_menu::{ContextMenu, Place as MenuPlace},
         drag::{self, Carried},
         icons::{self, Icon},
-        input::Case,
         menu::Item,
+        scroll as scrollbars,
     },
 };
 use std::{
@@ -269,11 +269,7 @@ impl Row {
                 }
                 Row::Archive(_) | Row::Heading(_) => return None,
                 Row::App(id) => workspace.program(id, cx)?.read(cx).label(),
-                Row::Group(Group::Space(id)) => workspace
-                    .spaces
-                    .get(workspace.space_ix(id)?)?
-                    .label()
-                    .to_owned(),
+                Row::Group(Group::Space(id)) => workspace.space_by_id(id)?.label().to_owned(),
                 Row::Entry { showing, .. } => {
                     let (project, ix) = self.located(workspace)?;
                     workspace.projects[project]
@@ -473,86 +469,6 @@ pub(crate) fn shown(row: &Row, features: &Features) -> bool {
         Some(Showing::Board(_)) => features.boards,
         Some(Showing::Table(_)) => features.tables,
         Some(Showing::Article(_)) | None => true,
-    }
-}
-
-/// What a name field is attached to. Each entry is held by what identifies it
-/// — a session, a table's key — never by an index: that moves the moment a
-/// neighbour is made or dropped, and the field would follow it onto whichever
-/// entry slid underneath.
-///
-/// No article here: its title is the first line of its own page, which is
-/// where it is written — see [`crate::view::article`]. No board either: a
-/// board is named by its identity panel — see
-/// [`crate::view::pane::tab::Tab::open_info`].
-#[derive(Clone, PartialEq, Eq)]
-pub(crate) enum Renaming {
-    Session(u64),
-    Table(String),
-    /// A space, by its id — auto-named `space-1` until someone gives it a
-    /// name of their own.
-    Space(String),
-}
-
-impl Renaming {
-    /// How `row` is renamed in a field, for the kinds named that way.
-    pub(crate) fn of(row: &Row) -> Option<Self> {
-        match row {
-            Row::Entry {
-                showing: Showing::Session(id),
-                ..
-            } => Some(Self::Session(*id)),
-            Row::Entry {
-                showing: Showing::Table(key),
-                ..
-            } => Some(Self::Table(key.clone())),
-            Row::Group(Group::Space(id)) => Some(Self::Space(id.clone())),
-            Row::Entry {
-                showing: Showing::Article(_) | Showing::Board(_),
-                ..
-            }
-            | Row::App(_)
-            | Row::Group(Group::Project(_))
-            | Row::Archive(_)
-            | Row::Heading(_) => None,
-        }
-    }
-
-    /// The name it has now, which the field opens holding.
-    pub(crate) fn label(&self, workspace: &Workspace, cx: &App) -> String {
-        match self {
-            Self::Session(id) => workspace
-                .session(*id, cx)
-                .map(ChatSession::label)
-                .unwrap_or_default(),
-            Self::Table(key) => workspace
-                .projects
-                .iter()
-                .flat_map(|open| open.tables.iter())
-                .find(|table| table.key == *key)
-                .map(|table| table.name.clone())
-                .unwrap_or_default(),
-            Self::Space(id) => workspace
-                .spaces
-                .iter()
-                .find(|space| space.id == *id)
-                .map(|space| space.name.clone())
-                .unwrap_or_default(),
-        }
-    }
-
-    /// Give it `name`.
-    pub(crate) fn commit(
-        self,
-        name: String,
-        workspace: &mut Workspace,
-        cx: &mut Context<Workspace>,
-    ) {
-        match self {
-            Self::Session(id) => workspace.rename_session(id, name, cx),
-            Self::Table(key) => workspace.rename_table(&key, name, cx),
-            Self::Space(id) => workspace.rename_space(&id, name, cx),
-        }
     }
 }
 
@@ -759,8 +675,7 @@ pub(crate) struct Sidebar {
     menu: ContextMenu<Self, SidebarMenu>,
     /// The row or heading under the pointer, as the menu it would open.
     hovered: Option<SidebarMenu>,
-    renaming: Option<Renaming>,
-    name_field: Entity<NameField>,
+    rename: Rename,
     /// The drag domain of the list: a row moves within it, or out onto a pane.
     pub(crate) sort: drag::Domain<(), Dragged>,
     rail: ListState,
@@ -785,13 +700,9 @@ impl Sidebar {
         search: Entity<Search>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let name_field = cx.new(NameField::new);
+        let rename = Rename::new(workspace.clone(), |this: &mut Self| &mut this.rename, cx);
         #[allow(unused_mut)]
         let mut subscriptions = vec![
-            cx.subscribe(&name_field, |this, _, event: &NameEvent, cx| match event {
-                NameEvent::Named(name) => this.commit_name(name.clone(), cx),
-                NameEvent::Dismissed => this.dismiss_name(cx),
-            }),
             cx.observe(&workspace, |_, _, cx| cx.notify()),
             cx.observe(&search, |_, _, cx| cx.notify()),
         ];
@@ -816,8 +727,7 @@ impl Sidebar {
             lit: Lit::default(),
             menu: ContextMenu::default(),
             hovered: None,
-            renaming: None,
-            name_field,
+            rename,
             sort,
             rail: ListState::new(0, ListAlignment::Top, px(OVERDRAW)),
             measured: Vec::new(),
@@ -832,7 +742,7 @@ impl Sidebar {
 
     /// The list as it stands.
     fn list<'a>(&self, cx: &'a App) -> List<'a> {
-        List::new(self.workspace.read(cx), self.search.read(cx), cx)
+        List::new(&self.workspace, &self.search, cx)
     }
 
     /// The rows drawn: the list's, less the rows of a project or a space whose
@@ -861,14 +771,7 @@ impl Sidebar {
 
     /// Observe every session, redrawing where what its row shows moved.
     fn watch_sessions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let chats: Vec<Entity<ChatSession>> = self
-            .workspace
-            .read(cx)
-            .projects
-            .iter()
-            .flat_map(|project| &project.sessions)
-            .map(|held| held.chat.clone())
-            .collect();
+        let chats = self.workspace.read(cx).chat_entities();
         let mut sessions = std::mem::take(&mut self.sessions);
         sessions.set_in(&chats, window, cx, |this, chat, _, cx| {
             let extended = this.extended(cx);
@@ -1078,24 +981,7 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let label = what.label(self.workspace.read(cx), cx);
-        self.name_field
-            .update(cx, |field, cx| field.start(label, Case::Mixed, window, cx));
-        self.renaming = Some(what);
-        cx.notify();
-    }
-
-    fn commit_name(&mut self, name: String, cx: &mut Context<Self>) {
-        let Some(what) = self.renaming.take() else {
-            return;
-        };
-        self.workspace
-            .update(cx, |workspace, cx| what.commit(name, workspace, cx));
-        cx.notify();
-    }
-
-    fn dismiss_name(&mut self, cx: &mut Context<Self>) {
-        self.renaming = None;
+        self.rename.start(what, window, cx);
         cx.notify();
     }
 

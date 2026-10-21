@@ -3,25 +3,30 @@
 
 use super::{
     BUTTON_SIZE, DETAIL_LINE, EXTENDED_PAD, Group, Heading, MenuRows, PINNED_BLEED, ROW_GAP,
-    ROW_HEIGHT, ROW_PILL, Renaming, Row, SessionRow, Sidebar, SidebarMenu, TITLE_LINE, Working,
-    key_of, on_disk, row, row_frame, row_label, tint,
+    ROW_HEIGHT, ROW_PILL, Row, SessionRow, Sidebar, SidebarMenu, TITLE_LINE, Working, key_of,
+    on_disk, row, row_frame, row_label, tint,
 };
-use crate::model::workspace::Opening;
-use crate::model::{state, workspace::Showing};
-use crate::view::{
-    component::transcript,
-    keymap::{self, Command},
-    kit::{
-        menu::{self, Act},
-        new::{self, New},
-        stamp,
+use crate::{
+    model::{
+        state,
+        workspace::{Opening, Showing},
     },
-    modals::palette::{Filter, ToggleSearch},
-    search::Search,
-    window::{
-        reach::InWindow as _,
-        root::{self, Cydonia, NewSession, OpenProject},
-        section::Section,
+    view::{
+        component::transcript,
+        keymap::{self, Command},
+        kit::{
+            menu::{self, Act},
+            new::{self, New},
+            rename::Renaming,
+            stamp,
+        },
+        modals::palette::{Filter, ToggleSearch},
+        search::Search,
+        window::{
+            reach::InWindow as _,
+            root::{self, Cydonia, NewSession, OpenProject},
+            section::Section,
+        },
     },
 };
 use bezel::{
@@ -41,8 +46,10 @@ use bezel::{
         widgets::{ButtonStyle, Buttons, Content, Layout},
     },
 };
-use std::path::{Path, PathBuf};
-use std::rc::Rc;
+use std::{
+    path::{Path, PathBuf},
+    rc::Rc,
+};
 
 /// A line of an extended row under its name: small, muted, cut to one line.
 fn detail(text: String, theme: &Theme) -> Div {
@@ -156,10 +163,7 @@ impl Sidebar {
                     ),
                     None => return Empty.into_any_element(),
                 },
-                Group::Space(id) => match workspace
-                    .space_ix(id)
-                    .and_then(|ix| workspace.spaces.get(ix))
-                {
+                Group::Space(id) => match workspace.space_by_id(id) {
                     Some(space) => (
                         space.label().to_owned(),
                         workspace.space_folded(&space.id),
@@ -189,9 +193,9 @@ impl Sidebar {
         let reveal = (!held).then_some("group-head");
         let renaming = space_id
             .as_ref()
-            .is_some_and(|id| matches!(&self.renaming, Some(Renaming::Space(at)) if at == id));
+            .is_some_and(|id| matches!(&self.rename.what, Some(Renaming::Space(at)) if at == id));
         let label = match renaming {
-            true => self.name_field.clone().into_any_element(),
+            true => self.rename.field.clone().into_any_element(),
             false => div()
                 .flex_1()
                 .min_w_0()
@@ -468,11 +472,11 @@ impl Sidebar {
         };
         // An article is named at the head of its own page and a board by its
         // identity panel, so neither row is ever a field.
-        let label = match Renaming::of(entry).is_some_and(|at| self.renaming.as_ref() == Some(&at))
-        {
-            true => self.name_field.clone().into_any_element(),
-            false => row_label(facts.label, tint),
-        };
+        let label =
+            match Renaming::of(entry).is_some_and(|at| self.rename.what.as_ref() == Some(&at)) {
+                true => self.rename.field.clone().into_any_element(),
+                false => row_label(facts.label, tint),
+            };
         let open = entry.clone();
         let button = self.archive_button(
             format!("archive-{}", key_of(entry)),
@@ -716,17 +720,17 @@ impl Sidebar {
     /// step below everything still in hand.
     fn archive_divider(&self, project: usize, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        let workspace = self.workspace.read(cx);
-        let open = workspace
-            .projects
-            .get(project)
-            .is_some_and(|open| open.archive_open);
+        let Some(held) = self.workspace.read(cx).projects.get(project) else {
+            return Empty.into_any_element();
+        };
+        let open = held.archive_open;
+        let indent = self.list(cx).indent_of(&Row::Archive(held.path.clone()));
         row(
             ("archive", project),
             "archive-row",
             false,
             false,
-            u8::from(workspace.indent_project_rows),
+            indent,
             &theme,
         )
         .child(theme.disclosure(open).text_color(theme.text_faint))

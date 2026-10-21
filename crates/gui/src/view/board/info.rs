@@ -66,7 +66,7 @@ impl Tab {
         // One editor at a time, and before the lookup: a rename left in flight
         // would otherwise outlive a board that has gone.
         ContextMenu::close(self, |this| &mut this.menu, cx);
-        self.renaming = None;
+        self.rename.what = None;
         let Some((name, key)) = self
             .workspace
             .read(cx)

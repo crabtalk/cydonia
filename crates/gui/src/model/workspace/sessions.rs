@@ -620,6 +620,15 @@ impl Workspace {
             .find_map(|project| project.session_entity(id))
     }
 
+    /// Every open project's sessions, as the entities they are held in.
+    pub fn chat_entities(&self) -> Vec<Entity<ChatSession>> {
+        self.projects
+            .iter()
+            .flat_map(|project| &project.sessions)
+            .map(|held| held.chat.clone())
+            .collect()
+    }
+
     /// Every open project's sessions, read.
     pub fn chats<'a>(&'a self, cx: &'a App) -> impl Iterator<Item = &'a ChatSession> + 'a {
         self.projects

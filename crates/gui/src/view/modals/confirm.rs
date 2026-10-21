@@ -341,8 +341,7 @@ impl Cydonia {
             // A space holds none of what it arranges, so nothing but the
             // arrangement itself goes.
             Row::Group(Group::Space(id)) => workspace
-                .space_ix(id)
-                .map(|ix| &workspace.spaces[ix])
+                .space_by_id(id)
                 .map(|space| {
                     (
                         // Beside the config, not in a project: a space spans

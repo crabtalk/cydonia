@@ -2,10 +2,17 @@
 //! drops it, and a press anywhere else keeps it too — the name typed is the
 //! name meant.
 
+use crate::{
+    model::{
+        session::ChatSession,
+        workspace::{Showing, Workspace},
+    },
+    view::sidebar::{Group, Row},
+};
 use bezel::{
     gpui::{
-        self, Context, Entity, EventEmitter, FocusHandle, Focusable, KeyBinding, MouseButton,
-        Window, actions, div, prelude::*,
+        self, App, Context, Entity, EventEmitter, FocusHandle, Focusable, KeyBinding, MouseButton,
+        Subscription, Window, actions, div, prelude::*,
     },
     ui::input::{Case, TextField},
 };
@@ -28,6 +35,133 @@ pub(crate) enum NameEvent {
     Named(String),
     /// Dropped.
     Dismissed,
+}
+
+/// What a name field is attached to. Each entry is held by what identifies it
+/// — a session, a table's key — never by an index: that moves the moment a
+/// neighbour is made or dropped, and the field would follow it onto whichever
+/// entry slid underneath.
+///
+/// No article here: its title is the first line of its own page, which is
+/// where it is written — see [`crate::view::article`]. No board either: a
+/// board is named by its identity panel — see
+/// [`crate::view::pane::tab::Tab::open_info`].
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) enum Renaming {
+    Session(u64),
+    Table(String),
+    /// A space, by its id — auto-named `space-1` until someone gives it a
+    /// name of their own.
+    Space(String),
+}
+
+impl Renaming {
+    /// How `row` is renamed in a field, for the kinds named that way.
+    pub(crate) fn of(row: &Row) -> Option<Self> {
+        match row {
+            Row::Entry {
+                showing: Showing::Session(id),
+                ..
+            } => Some(Self::Session(*id)),
+            Row::Entry {
+                showing: Showing::Table(key),
+                ..
+            } => Some(Self::Table(key.clone())),
+            Row::Group(Group::Space(id)) => Some(Self::Space(id.clone())),
+            Row::Entry {
+                showing: Showing::Article(_) | Showing::Board(_),
+                ..
+            }
+            | Row::App(_)
+            | Row::Group(Group::Project(_))
+            | Row::Archive(_)
+            | Row::Heading(_) => None,
+        }
+    }
+
+    /// The name it has now, which the field opens holding.
+    pub(crate) fn label(&self, workspace: &Workspace, cx: &App) -> String {
+        match self {
+            Self::Session(id) => workspace
+                .session(*id, cx)
+                .map(ChatSession::label)
+                .unwrap_or_default(),
+            Self::Table(key) => workspace
+                .projects
+                .iter()
+                .flat_map(|open| open.tables.iter())
+                .find(|table| table.key == *key)
+                .map(|table| table.name.clone())
+                .unwrap_or_default(),
+            Self::Space(id) => workspace
+                .space_by_id(id)
+                .map(|space| space.name.clone())
+                .unwrap_or_default(),
+        }
+    }
+
+    /// Give it `name`.
+    pub(crate) fn commit(
+        self,
+        name: String,
+        workspace: &mut Workspace,
+        cx: &mut Context<Workspace>,
+    ) {
+        match self {
+            Self::Session(id) => workspace.rename_session(id, name, cx),
+            Self::Table(key) => workspace.rename_table(&key, name, cx),
+            Self::Space(id) => workspace.rename_space(&id, name, cx),
+        }
+    }
+}
+
+/// A view's name field and what it renames while it is up. A name kept is
+/// committed to the workspace; kept or dropped, the field goes and the view
+/// is notified.
+pub(crate) struct Rename {
+    pub(crate) field: Entity<NameField>,
+    pub(crate) what: Option<Renaming>,
+    workspace: Entity<Workspace>,
+    _named: Subscription,
+}
+
+impl Rename {
+    /// The field for view `V`, which holds it where `held` finds it.
+    pub(crate) fn new<V: 'static>(
+        workspace: Entity<Workspace>,
+        held: fn(&mut V) -> &mut Rename,
+        cx: &mut Context<V>,
+    ) -> Self {
+        let field = cx.new(NameField::new);
+        let named = cx.subscribe(&field, move |this, _, event: &NameEvent, cx| {
+            let rename = held(this);
+            let Some(what) = rename.what.take() else {
+                return;
+            };
+            if let NameEvent::Named(name) = event {
+                let name = name.clone();
+                rename
+                    .workspace
+                    .clone()
+                    .update(cx, |workspace, cx| what.commit(name, workspace, cx));
+            }
+            cx.notify();
+        });
+        Self {
+            field,
+            what: None,
+            workspace,
+            _named: named,
+        }
+    }
+
+    /// Put the field on `what`, holding the name it has now.
+    pub(crate) fn start(&mut self, what: Renaming, window: &mut Window, cx: &mut App) {
+        let label = what.label(self.workspace.read(cx), cx);
+        self.field
+            .update(cx, |field, cx| field.start(label, Case::Mixed, window, cx));
+        self.what = Some(what);
+    }
 }
 
 /// The field a name is typed in.

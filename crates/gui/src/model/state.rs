@@ -29,7 +29,7 @@ pub enum Sort {
 }
 
 /// One remembered entry: which kind, and which of them.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(from = "Written")]
 pub struct Entry {
     pub kind: Kind,
@@ -184,24 +184,11 @@ pub fn restore() -> State {
     State {
         projects,
         active,
-        collapsed: stored.collapsed,
         release: match first {
             true => Some(Version::running()),
             false => stored.release,
         },
-        last: stored.last,
-        order: stored.order,
-        pinned: stored.pinned,
-        sort: stored.sort,
-        space: stored.space,
-        spaces: stored.spaces,
-        folded_spaces: stored.folded_spaces,
-        space_order: stored.space_order,
-        folded_sections: stored.folded_sections,
-        window: stored.window,
-        commands: stored.commands,
-        tabs: stored.tabs,
-        front: stored.front,
+        ..stored
     }
 }
 

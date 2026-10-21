@@ -1,16 +1,20 @@
 //! What the window does to an entry: open it, put it away, delete it, pin
 //! it, name it, and the rows of its menu — whichever view's menu asked.
 
-use crate::model::workspace::{Opening, Showing};
-use crate::view::{
-    article::TogglePlainText,
-    keymap::{self, Command},
-    kit::{menu, stamp, text},
-    sidebar::{Group, Lit, Renaming, Row, on_disk},
-    window::root::Cydonia,
+use crate::{
+    model::workspace::{Opening, Showing},
+    view::{
+        article::TogglePlainText,
+        keymap::{self, Command},
+        kit::{menu, rename::Renaming, stamp, text},
+        sidebar::{Group, Lit, Row, on_disk},
+        window::root::Cydonia,
+    },
 };
-use artifact::board::{Page, View};
-use artifact::space::Member;
+use artifact::{
+    board::{Page, View},
+    space::Member,
+};
 use bezel::{
     gpui::{App, Context, Window},
     ui::{icons, menu::Item},
@@ -45,7 +49,7 @@ impl Cydonia {
 
     /// The sidebar's list as it stands.
     pub(crate) fn list<'a>(&self, cx: &'a App) -> crate::view::sidebar::List<'a> {
-        crate::view::sidebar::List::new(self.workspace.read(cx), self.search.read(cx), cx)
+        crate::view::sidebar::List::new(&self.workspace, &self.search, cx)
     }
 
     /// Open what a row points at — what a keyboard step does with its landing.
@@ -429,13 +433,8 @@ impl Cydonia {
             }
         });
         if let Some(project) = landing_project
-            && let Some(landing) = self
-                .list(cx)
-                .entries(project)
-                .into_iter()
-                .find(|row| !matches!(row, Row::Archive(_)))
+            && let Some(landing) = self.open_top_entry(project, window, cx)
         {
-            self.open_row(&landing, Opening::Preview, window, cx);
             self.sidebar
                 .update(cx, |sidebar, cx| sidebar.reveal(&landing, cx));
         }
@@ -515,7 +514,7 @@ impl Cydonia {
         // back to, and it is remade by dragging one entry onto another.
         if let Row::Group(Group::Space(id)) = entry {
             let workspace = self.workspace.read(cx);
-            let Some(space) = workspace.space_ix(id).map(|ix| &workspace.spaces[ix]) else {
+            let Some(space) = workspace.space_by_id(id) else {
                 return;
             };
             let members: Vec<Row> = space
@@ -593,15 +592,19 @@ impl Cydonia {
     /// falls back to when the entry it was on is put away —
     /// [`crate::view::sidebar::List::entries`] sorts the archived below the
     /// divider, so the first row is one still in hand or the divider itself.
-    fn open_top_entry(&mut self, project: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(top) = self
+    /// Answers the row it opened.
+    fn open_top_entry(
+        &mut self,
+        project: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Row> {
+        let top = self
             .list(cx)
             .entries(project)
             .into_iter()
-            .find(|row| row.showing().is_some())
-        else {
-            return;
-        };
+            .find(|row| row.showing().is_some())?;
         self.open_row(&top, Opening::Preview, window, cx);
+        Some(top)
     }
 }
