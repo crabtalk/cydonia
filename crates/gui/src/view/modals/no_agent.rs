@@ -47,6 +47,7 @@ impl Render for NoAgent {
         let dialog = dialog(
             "no-agent-dialog",
             &theme,
+            false,
             window,
             [
                 popover::dialog_title(&theme, agent_missing(None)).into_any_element(),

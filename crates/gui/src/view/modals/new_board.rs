@@ -170,6 +170,7 @@ impl Render for NewBoard {
         let dialog = dialog(
             "new-board-dialog",
             &theme,
+            false,
             window,
             [
                 popover::dialog_title(&theme, "New board").into_any_element(),

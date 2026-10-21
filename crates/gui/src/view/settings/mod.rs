@@ -689,6 +689,7 @@ impl SettingsWindow {
         Some(dialog(
             "field-dialog",
             &theme,
+            false,
             window,
             [
                 popover::dialog_title(&theme, field.title()).into_any_element(),

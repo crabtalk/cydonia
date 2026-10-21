@@ -13,8 +13,8 @@ use crate::{
 };
 use bezel::{
     gpui::{
-        App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Subscription,
-        Window, div, prelude::*,
+        App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Window, div,
+        prelude::*,
     },
     theme::Theme,
     ui::popover,
@@ -22,9 +22,8 @@ use bezel::{
 
 /// The notes, over the window.
 pub(crate) struct Notes {
-    workspace: Entity<Workspace>,
+    body: Entity<release::Body>,
     focus: FocusHandle,
-    _watch: Subscription,
 }
 
 impl Cydonia {
@@ -58,11 +57,9 @@ impl Cydonia {
 
 impl Notes {
     fn new(workspace: Entity<Workspace>, cx: &mut Context<Self>) -> Self {
-        let _watch = cx.observe(&workspace, |_, _, cx| cx.notify());
         Self {
-            workspace,
+            body: cx.new(|cx| release::Body::new(workspace, cx)),
             focus: cx.focus_handle(),
-            _watch,
         }
     }
 }
@@ -83,7 +80,7 @@ impl Render for Notes {
                 .into_any_element(),
             popover::dialog_body(&theme, release::HEADLINE).into_any_element(),
         ];
-        content.extend(release::body(&theme, &self.workspace, cx));
+        content.push(self.body.clone().into_any_element());
         content.push(
             answers(
                 &theme,
@@ -97,6 +94,7 @@ impl Render for Notes {
         let dialog = dialog(
             "whats-new-dialog",
             &theme,
+            true,
             window,
             content,
             cx.listener(|_, _, _, cx| cx.emit(DismissEvent)),

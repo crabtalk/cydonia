@@ -67,6 +67,7 @@ impl Render for Confirm {
         let dialog = dialog(
             "delete-dialog",
             &theme,
+            false,
             window,
             [popover::dialog_title(&theme, format!("Delete {}?", self.label)).into_any_element()]
                 .into_iter()

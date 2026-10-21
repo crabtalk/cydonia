@@ -1,8 +1,26 @@
 [
   {
+    "version": "0.2.4",
+    "date": "2026-10-22",
+    "nightly": true,
+    "summary": "Each window has one strip of tabs, a tab for each entry and each space, and a pane can hold a stack of entries. Spaces can be listed in the sidebar in place of the tabs.",
+    "new": [
+      "Open entries and spaces as tabs in one strip along the top of the window, reordered by dragging and scrolled sideways once they no longer fit",
+      "Stack entries in one pane by dropping one on a pane's middle. The pane's title row shows the stack as a deck: press it to pick the entry in front or move it out, and step through the stack with ⌃⇥ and ⌃⇧⇥",
+      "List each space with its entries in the sidebar in place of the window's tabs, with Settings › Appearance › Sidebar › Spaces in sidebar. The panes' title rows then run along the top of the window"
+    ],
+    "changed": [
+      "Show a pane's tools in its title row while the pane has the focus or the pointer is over its title row",
+      "Draw the strip's tabs flat in the Flat layout"
+    ],
+    "fixed": [
+      "Open a board an agent makes in the default board view, and its cards with a plain title",
+      "Bring the Settings window forward on ⌘, pressed in it, instead of opening another"
+    ]
+  },
+  {
     "version": "0.2.3",
     "date": "2026-10-18",
-    "nightly": true,
     "summary": "Find entries by their labels from the search palette and @, and fixes to floating tabs, the formatting bar, selections and the Settings window.",
     "new": [
       "Find articles, boards and sessions by their labels in the search palette and @, without typing l: first"
