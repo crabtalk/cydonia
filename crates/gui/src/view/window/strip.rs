@@ -81,7 +81,7 @@ impl Strip {
     /// None while the sidebar lists the spaces: it says what is open.
     pub(crate) fn tracked(&self, cx: &App) -> bool {
         let workspace = self.workspace.read(cx);
-        !workspace.settings.appearance.spaces_in_sidebar
+        workspace.settings.appearance.global_tabs()
             && (workspace.strip().len() > 1 || self.rename.what.is_some())
     }
 
@@ -271,11 +271,12 @@ impl Render for Strip {
         let front = workspace.front_slot().cloned();
         let floating = workspace.settings.appearance.floating;
         let tracked = self.tracked(cx);
+        let global = workspace.settings.appearance.global_tabs();
         // The window's top left is the sidebar's while it is open.
         let corners = chrome::Corners {
             left: !self.sidebar_open,
             right: true,
-            tabs: tracked,
+            tabs: global,
         };
         // The row runs edge to edge; its tabs start where the cards below do.
         let lead = corners.lead(
@@ -304,7 +305,7 @@ impl Render for Strip {
         if let Some(front) = &front {
             model.activate(&Dragged::Tab(front.clone()));
         }
-        chrome::top_band(tracked)
+        chrome::top_band(global)
             .id("window-strip")
             .relative()
             .w_full()

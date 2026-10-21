@@ -41,8 +41,8 @@ const TOGGLE_WIDTH: f32 = Theme::BUTTON_HEIGHT;
 /// Between a corner's controls and the row's own content.
 const CORNER_GAP: f32 = 8.;
 
-/// How tall the window's top band stands: taller while the strip shows its
-/// tabs.
+/// How tall the window's top band stands: taller while the window keeps a
+/// strip of tabs — see [`crate::model::settings::Appearance::global_tabs`].
 pub fn top_height(tabs: bool) -> f32 {
     match tabs {
         true => tabs::TRACK_HEIGHT + 2. * TRACK_GAP,
@@ -50,8 +50,8 @@ pub fn top_height(tabs: bool) -> f32 {
     }
 }
 
-/// The window's top band, `tabs` saying whether the strip shows its tabs,
-/// its contents centred down it.
+/// The window's top band, `tabs` saying whether the window keeps a strip of
+/// tabs, its contents centred down it.
 pub fn top_band(tabs: bool) -> Div {
     root::band().h(px(top_height(tabs)))
 }
@@ -65,8 +65,8 @@ pub fn card(floating: bool, cx: &App) -> Div {
 /// Which of the window's top corners a row along its top edge reaches: the
 /// left one under the lights, the left caption buttons and the sidebar's fold,
 /// the right one under the panel's toggle and the right caption buttons.
-/// `tabs` is whether the strip shows its tabs, which sets the band the lights
-/// are centred down — see [`top_height`].
+/// `tabs` is whether the window keeps a strip of tabs, which sets the band the
+/// lights are centred down — see [`top_height`].
 #[derive(Clone, Copy)]
 pub struct Corners {
     pub left: bool,
@@ -127,20 +127,12 @@ fn caption_width(side: CaptionSide, window: &Window, cx: &App) -> f32 {
 }
 
 impl Cydonia {
-    /// Whether the window's top row is the strip showing its tabs.
-    pub(crate) fn tabs_on_top(&self, cx: &App) -> bool {
-        self.library.is_none()
-            && !self.panes_on_top(cx)
-            && self.workspace.read(cx).arranged().is_some()
-            && self.strip.read(cx).tracked(cx)
-    }
-
     /// The window's corner controls, over whichever row is at its top: the
     /// left caption buttons and the sidebar's fold with back and forward past
     /// the lights, and the panel's toggle and the right caption buttons at
     /// the right.
     pub(crate) fn corner_controls(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
-        let band = top_height(self.tabs_on_top(cx));
+        let band = top_height(self.workspace.read(cx).settings.appearance.global_tabs());
         let toggle = (self.changes.is_some() || self.shell_cwd(cx).is_some())
             .then(|| changes_toggle(self.changes.is_some(), cx));
         let corner = || {

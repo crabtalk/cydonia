@@ -106,7 +106,7 @@ impl Cydonia {
         let corners = chrome::Corners {
             left: !self.sidebar_open,
             right: true,
-            tabs: false,
+            tabs: self.workspace.read(cx).settings.appearance.global_tabs(),
         };
         let title = self.library.is_some().then(|| {
             div()
@@ -117,7 +117,7 @@ impl Cydonia {
                 .text_color(theme.text)
                 .child("Library")
         });
-        chrome::top_band(false)
+        chrome::top_band(corners.tabs)
             .absolute()
             .top_0()
             .left_0()

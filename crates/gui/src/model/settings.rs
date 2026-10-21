@@ -520,6 +520,12 @@ impl Default for Appearance {
 }
 
 impl Appearance {
+    /// Whether the window keeps a strip of tabs for what is open, rather than
+    /// listing the spaces in the sidebar.
+    pub fn global_tabs(&self) -> bool {
+        !self.spaces_in_sidebar
+    }
+
     /// Hand-edited sizes must remain finite and usable before layout sees them.
     pub fn normalize(&mut self) {
         self.text_size = if self.text_size.is_finite() {

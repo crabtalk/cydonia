@@ -646,7 +646,7 @@ impl Cydonia {
         // way: its ends are the window's, as the lights are. None where the
         // panes' title rows are it — see [`Cydonia::sync_edges`].
         let on_top = self.panes_on_top(cx);
-        let height = chrome::top_height(self.tabs_on_top(cx));
+        let height = chrome::top_height(self.workspace.read(cx).settings.appearance.global_tabs());
         let top = (!on_top).then(|| {
             div()
                 .flex_none()

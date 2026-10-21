@@ -624,11 +624,10 @@ impl Cydonia {
             .when(!floating, |column| column.bg(theme.sidebar_bg()))
             .flex()
             .flex_col()
-            .child(chrome::top_band(self.tabs_on_top(cx)).child(chrome::grip(
-                "sidebar-grip",
-                &self.drag,
-                window,
-            )))
+            .child(
+                chrome::top_band(self.workspace.read(cx).settings.appearance.global_tabs())
+                    .child(chrome::grip("sidebar-grip", &self.drag, window)),
+            )
             .child(
                 self.sidebar.clone().cached(
                     gpui::StyleRefinement::default()
@@ -1035,9 +1034,6 @@ impl Cydonia {
             let (workspace, root) = (workspace.clone(), cx.entity().downgrade());
             cx.new(|cx| crate::view::window::strip::Strip::new(workspace, root, cx))
         };
-        // Whether the strip shows its tabs sets the height of the band the
-        // window draws its corner controls and the sidebar's top in.
-        cx.observe(&strip, |_, _, cx| cx.notify()).detach();
         let mut this = Self {
             strip,
             meter: cx.new(Stats::new),
@@ -1487,7 +1483,7 @@ impl Cydonia {
 impl Render for Cydonia {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.track_history(cx);
-        let band = chrome::top_height(self.tabs_on_top(cx));
+        let band = chrome::top_height(self.workspace.read(cx).settings.appearance.global_tabs());
         if self.lights_band != band {
             lights::fit(window, band, cx);
             self.lights_band = band;
