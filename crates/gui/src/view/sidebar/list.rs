@@ -60,15 +60,15 @@ impl<'a> List<'a> {
                 rows.extend(entries);
             }
         }
-        rows
+        self.ungrouped(rows)
     }
 
     /// Every one of a project's entries in the order the sidebar lists them,
     /// before anything is hidden or folded away.
     ///
     /// What a drag rewrites, which is why it is this list and not the one on
-    /// screen: a kind switched off is still in the project, and keeps the
-    /// place it was put.
+    /// screen: a kind switched off and an entry held by a space are both
+    /// still in the project, and both keep the place they were put.
     pub(super) fn ranked(&self, project: usize) -> Vec<Ranked> {
         let (workspace, cx) = (self.workspace, self.cx);
         let Some(open) = workspace.projects.get(project) else {
@@ -153,6 +153,70 @@ impl<'a> List<'a> {
         apps.into_iter().map(|(_, row)| row).collect()
     }
 
+    /// Drop the rows a space holds while the spaces are listed: they are
+    /// listed under it instead, and an entry is in one space at a time — see
+    /// [`Workspace::arrange`] — so this is a tree and not a second copy of the
+    /// list.
+    fn ungrouped(&self, rows: Vec<Row>) -> Vec<Row> {
+        let workspace = self.workspace;
+        if !self.lists_spaces() {
+            return rows;
+        }
+        rows.into_iter()
+            .filter(|row| {
+                row.member(workspace, self.cx)
+                    .and_then(|member| workspace.space_holding(&member))
+                    .is_none()
+            })
+            .collect()
+    }
+
+    /// The rows listed under a group while it is open: a project's own
+    /// entries, or the ones a space arranges.
+    ///
+    /// A space's are in the order the arrangement lays the panes out, so the
+    /// list reads across the window — and only what the space is the holder
+    /// of. One entry is in one space at a time — see [`Workspace::arrange`] —
+    /// and the same answer decides both lists, so a file written before that
+    /// held lists its entry once here rather than twice, and never beside the
+    /// copy [`Self::ungrouped`] took out of the project.
+    fn members(&self, group: &Group) -> Vec<Row> {
+        match group {
+            Group::Project(path) => self
+                .workspace
+                .project_at(path)
+                .map(|ix| self.entries(ix))
+                .unwrap_or_default(),
+            Group::Space(id) => self
+                .space_rows(id)
+                .into_iter()
+                .filter(|row| !self.filtered_out(row))
+                .collect(),
+        }
+    }
+
+    /// The rows a space holds, before any project's label filter.
+    fn space_rows(&self, id: &str) -> Vec<Row> {
+        let workspace = self.workspace;
+        let Some(ix) = workspace.space_ix(id) else {
+            return Vec::new();
+        };
+        let space = &workspace.spaces[ix];
+        workspace
+            .listed_members(space)
+            .iter()
+            .filter(|member| workspace.space_holding(member) == Some(ix))
+            .filter_map(|member| Row::of_member(member, workspace, self.cx))
+            .collect()
+    }
+
+    /// Whether the spaces have a section of their own: switched on, and
+    /// there being one.
+    fn lists_spaces(&self) -> bool {
+        let workspace = self.workspace;
+        workspace.settings.appearance.spaces_in_sidebar && !workspace.spaces.is_empty()
+    }
+
     /// Whether `row` is an entry its project's label filter leaves out.
     fn filtered_out(&self, row: &Row) -> bool {
         let Row::Entry { project, showing } = row else {
@@ -182,24 +246,38 @@ impl<'a> List<'a> {
             .is_some_and(|at| workspace.projects[at].label.is_some())
     }
 
+    /// Whether every row a space holds is left out by a label filter.
+    fn emptied(&self, group: &Group) -> bool {
+        let Group::Space(id) = group else {
+            return false;
+        };
+        let rows = self.space_rows(id);
+        !rows.is_empty() && rows.iter().all(|row| self.filtered_out(row))
+    }
+
     /// Whether a group's rows are folded away under it.
     pub(crate) fn folded(&self, group: &Group) -> bool {
         let workspace = self.workspace;
-        let Group::Project(path) = group;
-        workspace
-            .project_at(path)
-            .is_some_and(|ix| !workspace.projects[ix].expanded)
+        match group {
+            Group::Project(path) => workspace
+                .project_at(path)
+                .is_some_and(|ix| !workspace.projects[ix].expanded),
+            Group::Space(id) => workspace.space_folded(id),
+        }
     }
 
-    /// How far in a row is drawn: one step for a project's rows when that is
-    /// switched on.
+    /// How far in a row is drawn: one step for a project's or an open
+    /// space's rows when that is switched on.
     ///
     /// The indent is the whole of what says a row belongs to the heading above
     /// it. Nothing else is drawn on it — a rule beside it or a wash behind it
     /// is a second way of saying what the offset already says.
     pub(super) fn indent_of(&self, row: &Row) -> u8 {
         match row {
-            Row::Heading(_) | Row::App(_) => 0,
+            // A space is not inside a project — it can hold panes from
+            // several — so its row starts at the column's edge, where the
+            // project headings are.
+            Row::Group(Group::Space(_)) | Row::Heading(_) | Row::App(_) => 0,
             _ => u8::from(self.workspace.indent_project_rows),
         }
     }
@@ -213,9 +291,17 @@ impl<'a> List<'a> {
             .projects
             .iter()
             .map(|open| Group::Project(open.path.clone()));
+        let spaces = workspace
+            .spaces
+            .iter()
+            .map(|space| Group::Space(space.id.clone()));
         // The projects' heading whether or not any are open: it holds the way
-        // to open one.
-        let sections = vec![(Heading::Projects, projects.collect::<Vec<_>>())];
+        // to open one. After the projects, the spaces, because a space is not
+        // inside one.
+        let mut sections = vec![(Heading::Projects, projects.collect::<Vec<_>>())];
+        if self.lists_spaces() {
+            sections.push((Heading::Spaces, spaces.collect()));
+        }
         let apps = self.apps();
         let mut rows = Vec::new();
         if let Some(matches) = self.search.rows(self.cx) {
@@ -223,13 +309,20 @@ impl<'a> List<'a> {
                 let start = rows.len();
                 rows.push(Row::Heading(heading));
                 for group in groups {
-                    let Group::Project(path) = &group;
-                    let members: Vec<_> = workspace
-                        .project_at(path)
-                        .map(|ix| self.ranked(ix))
-                        .unwrap_or_default()
+                    let members = match &group {
+                        Group::Project(path) => self.ungrouped(
+                            workspace
+                                .project_at(path)
+                                .map(|ix| self.ranked(ix))
+                                .unwrap_or_default()
+                                .into_iter()
+                                .map(|e| e.row)
+                                .collect(),
+                        ),
+                        Group::Space(_) => self.members(&group),
+                    };
+                    let members: Vec<_> = members
                         .into_iter()
-                        .map(|e| e.row)
                         .filter(|row| matches.contains(row) && !self.filtered_out(row))
                         .collect();
                     if !members.is_empty() {
@@ -257,14 +350,11 @@ impl<'a> List<'a> {
                 continue;
             }
             for group in groups {
-                let Group::Project(path) = &group;
+                if self.emptied(&group) {
+                    continue;
+                }
                 let open = !self.folded(&group);
-                let members = open.then(|| {
-                    workspace
-                        .project_at(path)
-                        .map(|ix| self.entries(ix))
-                        .unwrap_or_default()
-                });
+                let members = open.then(|| self.members(&group));
                 rows.push(Row::Group(group));
                 rows.extend(members.into_iter().flatten());
             }
@@ -291,27 +381,37 @@ impl<'a> List<'a> {
     }
 
     /// Where each row sits. Entries stay within the region of their project
-    /// they are listed in — the pins, the rest, the archive.
+    /// they are listed in — the pins, the rest, the archive — and a space's
+    /// within that space.
     pub(super) fn row_places(&self, rows: &[Row]) -> HashMap<Row, Place> {
+        let mut group: Option<&Group> = None;
         let mut section = Heading::Projects;
         rows.iter()
             .map(|row| {
                 let kind = match row {
                     Row::Heading(heading) => {
                         section = *heading;
+                        group = None;
                         "heading".into()
                     }
                     Row::Archive(_) => "archive".into(),
                     Row::Group(Group::Project(_)) => "projects".into(),
+                    Row::Group(Group::Space(_)) => "spaces".into(),
                     Row::App(_) => "apps".into(),
-                    Row::Entry { project, .. } => format!(
-                        "entries-{}-{}-{}",
-                        project.display(),
-                        row.pinned(self.workspace, self.cx),
-                        row.archived(self.workspace, self.cx),
-                    )
-                    .into(),
+                    Row::Entry { project, .. } => match group {
+                        Some(Group::Space(id)) => format!("space-{id}").into(),
+                        _ => format!(
+                            "entries-{}-{}-{}",
+                            project.display(),
+                            row.pinned(self.workspace, self.cx),
+                            row.archived(self.workspace, self.cx),
+                        )
+                        .into(),
+                    },
                 };
+                if let Row::Group(at) = row {
+                    group = Some(at);
+                }
                 (row.clone(), Place { kind, section })
             })
             .collect()

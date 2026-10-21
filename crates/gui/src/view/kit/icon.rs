@@ -39,3 +39,14 @@ pub(crate) fn entry_icon(member: &Member, workspace: &Workspace, cx: &App) -> Ic
         _ => kind_icon(member.kind()),
     }
 }
+
+/// The mark the entry `member` names wears on a card of its own, the deck's:
+/// one without a frame where its kind's mark is drawn in one, since the card
+/// is the frame.
+pub(crate) fn card_icon(member: &Member, workspace: &Workspace, cx: &App) -> Icon {
+    match member.kind() {
+        Kind::Board => icons::glyph::Kanban.into(),
+        Kind::Article => icons::glyph::TextAlignStart.into(),
+        Kind::Session | Kind::Table | Kind::App => entry_icon(member, workspace, cx),
+    }
+}

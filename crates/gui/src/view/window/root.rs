@@ -1278,11 +1278,12 @@ impl Cydonia {
     }
 
     /// Step the strip to its next tab, wrapping at the ends. Says whether it
-    /// did — a strip of one tab leaves the chord to the sidebar's list.
+    /// did — a strip of one tab, or one not drawn while the sidebar lists the
+    /// spaces, leaves the chord to the sidebar's list.
     fn cycle_strip(&mut self, step: isize, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let workspace = self.workspace.read(cx);
         let strip = workspace.strip();
-        if strip.len() < 2 {
+        if strip.len() < 2 || workspace.settings.appearance.spaces_in_sidebar {
             return false;
         }
         let at = workspace

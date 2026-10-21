@@ -688,6 +688,69 @@ fn making_an_entry_leaves_the_project_folded(cx: &mut gpui::TestAppContext) {
     });
 }
 
+/// Spaces are listed in hand order once one has been dragged in the sidebar,
+/// and a re-read off disk keeps it — the files carry the time they were
+/// written and nothing else.
+#[gpui::test]
+fn a_space_keeps_the_place_it_was_dragged_to(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("reorder");
+    let (workspace, a, b) = two_boards(&scratch, cx);
+
+    workspace.update(cx, |workspace, cx| {
+        workspace.arrange(&a, &b, Side::Right, cx);
+        // A second space, over two boards the first one does not hold: an
+        // entry is in one space at a time.
+        workspace.new_board(0, "Third".into(), "THR", cx).ok();
+        workspace.new_board(0, "Fourth".into(), "FOU", cx).ok();
+        let c = workspace.board_member(0, 0).expect("a member");
+        let d = workspace.board_member(0, 1).expect("a member");
+        workspace.open_tab(c.clone(), crate::model::workspace::Opening::Kept, cx);
+        workspace.arrange(&c, &d, Side::Right, cx);
+
+        let ids = |workspace: &Workspace| -> Vec<String> {
+            workspace
+                .spaces
+                .iter()
+                .map(|space| space.id.clone())
+                .collect()
+        };
+        let before = ids(workspace);
+        assert_eq!(workspace.space(), Some(0), "the newest is the open one");
+
+        workspace.move_space(&before[0], 1, cx);
+        let moved = vec![before[1].clone(), before[0].clone()];
+        assert_eq!(ids(workspace), moved);
+        assert_eq!(workspace.space(), Some(1), "and it is still the open one");
+
+        workspace.reload_spaces(cx);
+        assert_eq!(ids(workspace), moved, "a re-read is not a re-sort");
+    });
+}
+
+/// A space folds in the sidebar the way a project does, and a fold written to
+/// `state.toml` is the fold the next launch starts with.
+#[gpui::test]
+fn a_space_fold_is_kept_like_a_project_fold(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("fold-space");
+    let (workspace, a, b) = two_boards(&scratch, cx);
+
+    let id = workspace.update(cx, |workspace, cx| {
+        workspace.arrange(&a, &b, Side::Right, cx);
+        let id = workspace.spaces[0].id.clone();
+        assert!(!workspace.space_folded(&id), "open to start");
+        workspace.toggle_space(&id, cx);
+        assert!(workspace.space_folded(&id));
+        id
+    });
+
+    let state = state::State {
+        folded_spaces: vec![id.clone()],
+        ..Default::default()
+    };
+    let restored = cx.new(|cx| Workspace::new(Settings::default(), state, cx));
+    restored.update(cx, |workspace, _| assert!(workspace.space_folded(&id)));
+}
+
 /// A card written in a pane is filed into that pane's board, not into
 /// whichever board its project is pointed at.
 #[gpui::test]

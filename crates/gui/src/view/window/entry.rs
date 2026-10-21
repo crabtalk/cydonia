@@ -87,6 +87,11 @@ impl Cydonia {
                     Showing::Session(_) => {}
                 }
             }
+            Row::Group(Group::Space(id)) => {
+                if let Some(ix) = workspace.space_ix(id) {
+                    self.open_space(ix, window, cx);
+                }
+            }
             Row::App(id) => self.open_app(id, opening, window, cx),
             // A heading over a section, and nothing to open.
             Row::Heading(_) => {}
@@ -417,6 +422,7 @@ impl Cydonia {
                     Showing::Table(_) => workspace.delete_table(project, ix, cx),
                     Showing::Session(_) => {}
                 },
+                (Row::Group(Group::Space(id)), _) => workspace.delete_space_id(id, cx),
                 (Row::App(id), _) => {
                     let _ = workspace.delete_app(id, cx);
                 }
@@ -502,6 +508,31 @@ impl Cydonia {
                     .map(|(project, _)| project)
             })
             .flatten();
+        // A space takes its members with it. Membership is exclusive — an
+        // entry is in one space at a time — so the arrangement owns what it
+        // holds, and putting it away that holds nothing would be putting away
+        // an empty row.
+        //
+        // The arrangement itself is dropped rather than put away: a space
+        // names entries and holds none, so there is nothing in one to come
+        // back to, and it is remade by dragging one entry onto another.
+        if let Row::Group(Group::Space(id)) = entry {
+            let workspace = self.workspace.read(cx);
+            let Some(space) = workspace.space_ix(id).map(|ix| &workspace.spaces[ix]) else {
+                return;
+            };
+            let members: Vec<Row> = space
+                .entries()
+                .iter()
+                .filter_map(|member| Row::of_member(member, workspace, cx))
+                .collect();
+            for member in &members {
+                self.archive_entry(member, archived, window, cx);
+            }
+            self.workspace
+                .update(cx, |workspace, cx| workspace.delete_space_id(id, cx));
+            return;
+        }
         let Row::Entry { project, showing } = entry else {
             return;
         };

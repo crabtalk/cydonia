@@ -279,7 +279,7 @@ impl Tab {
             space.stack_of(&self.entry).len().saturating_sub(1)
         });
         let deck = theme
-            .icon_deck(icon::entry_icon(&self.entry, workspace, cx), behind)
+            .icon_deck(icon::card_icon(&self.entry, workspace, cx), behind)
             .mr(px(6.));
         if behind == 0 {
             return deck.into_any_element();

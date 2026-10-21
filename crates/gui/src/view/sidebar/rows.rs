@@ -1,5 +1,5 @@
-//! The sidebar's lines: a section's heading, a project's heading, an entry,
-//! the archive's divider, and the rows above and below the list.
+//! The sidebar's lines: a section's heading, a project's or a space's heading,
+//! an entry, the archive's divider, and the rows above and below the list.
 
 use super::{
     BUTTON_SIZE, DETAIL_LINE, EXTENDED_PAD, Group, Heading, MenuRows, PINNED_BLEED, ROW_GAP,
@@ -124,7 +124,9 @@ impl Sidebar {
             .child(inner)
     }
 
-    /// A project's heading: a press folds it.
+    /// A project's or a space's heading: a press folds it. A space opens from
+    /// the entries under it, and its heading is never lit — the lit row is the
+    /// entry in the focused pane, see [`super::Lit::light`].
     ///
     /// `pinned` is the copy [`Sidebar::pinned_head`] holds at the top of the
     /// list. It gives up the pill for the column's full width, and takes the
@@ -140,38 +142,75 @@ impl Sidebar {
     ) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let workspace = self.workspace.read(cx);
-        let Group::Project(path) = &group;
-        let Some(project) = workspace
-            .project_at(path)
-            .and_then(|ix| workspace.projects.get(ix))
-        else {
-            return Empty.into_any_element();
-        };
-        let (name, folded): (String, bool) = (project.name(), !project.expanded);
-        let marks: (Icon, Icon) = (icons::files::FolderOpen.into(), icons::files::Folder.into());
+        let (name, folded, marks, space_id): (String, bool, (Icon, Icon), Option<String>) =
+            match &group {
+                Group::Project(path) => match workspace
+                    .project_at(path)
+                    .and_then(|ix| workspace.projects.get(ix))
+                {
+                    Some(project) => (
+                        project.name(),
+                        !project.expanded,
+                        (icons::files::FolderOpen.into(), icons::files::Folder.into()),
+                        None,
+                    ),
+                    None => return Empty.into_any_element(),
+                },
+                Group::Space(id) => match workspace
+                    .space_ix(id)
+                    .and_then(|ix| workspace.spaces.get(ix))
+                {
+                    Some(space) => (
+                        space.label().to_owned(),
+                        workspace.space_folded(&space.id),
+                        (
+                            icons::layout::LayoutFreeform.into(),
+                            icons::layout::LayoutDashboard.into(),
+                        ),
+                        Some(space.id.clone()),
+                    ),
+                    None => return Empty.into_any_element(),
+                },
+            };
         let folded = folded && self.search.read(cx).query().is_none();
         let key = key_of(&Row::Group(group.clone()));
-        let (menu, add) = (
-            SidebarMenu::Project(path.clone()),
-            SidebarMenu::Add(path.clone()),
-        );
+        let (menu, add) = match &group {
+            Group::Project(path) => (
+                SidebarMenu::Project(path.clone()),
+                Some(SidebarMenu::Add(path.clone())),
+            ),
+            Group::Space(_) => (SidebarMenu::Entry(Row::Group(group.clone())), None),
+        };
         // The buttons stay on show while either one's menu is open. They are
         // revealed by the row's hover, and the pointer leaves the row the
         // moment it reaches the card — which took the `+` away from under a
         // menu standing open beside it.
-        let held = self.menu_open(&menu) || self.menu_open(&add);
+        let held = self.menu_open(&menu) || add.as_ref().is_some_and(|add| self.menu_open(add));
         let reveal = (!held).then_some("group-head");
-        let label = div()
-            .flex_1()
-            .min_w_0()
-            .truncate()
-            .text_style(TextStyle::Callout)
-            .font_weight(FontWeight::MEDIUM)
-            .line_height(px(18.))
-            .child(name);
-        let menu_rows: MenuRows = {
-            let path = path.clone();
-            Rc::new(move |this, cx| this.project_rows(&path, cx))
+        let renaming = space_id
+            .as_ref()
+            .is_some_and(|id| matches!(&self.renaming, Some(Renaming::Space(at)) if at == id));
+        let label = match renaming {
+            true => self.name_field.clone().into_any_element(),
+            false => div()
+                .flex_1()
+                .min_w_0()
+                .truncate()
+                .text_style(TextStyle::Callout)
+                .font_weight(FontWeight::MEDIUM)
+                .line_height(px(18.))
+                .child(name)
+                .into_any_element(),
+        };
+        let menu_rows: MenuRows = match &group {
+            Group::Project(path) => {
+                let path = path.clone();
+                Rc::new(move |this, cx| this.project_rows(&path, cx))
+            }
+            Group::Space(_) => {
+                let row = Row::Group(group.clone());
+                Rc::new(move |this, cx| this.entry_rows(&row, cx))
+            }
         };
         let head = div()
             .id(SharedString::from(format!("group-{key}")))
@@ -234,7 +273,10 @@ impl Sidebar {
                     })),
             )
             .child(label)
-            .children(self.label_filter_chip(path, cx))
+            .children(match &group {
+                Group::Project(path) => self.label_filter_chip(path, cx),
+                Group::Space(_) => None,
+            })
             // Ahead of the `+`, which is the one that gets pressed: sorting
             // and the rest are settled once and left alone.
             .child(
@@ -250,23 +292,31 @@ impl Sidebar {
                 // On the trigger, not the row: the card pins to the bottom
                 // left of whatever it is mounted on, and from the row it hangs
                 // off the far side of the sidebar rather than under the `···`.
-                .children(self.project_menu(path, window, cx)),
+                // A space's is drawn by the row around it — see
+                // [`Self::sidebar_row`].
+                .children(match &group {
+                    Group::Project(path) => self.project_menu(path, window, cx),
+                    Group::Space(_) => None,
+                }),
             )
-            .child(
-                self.menu_button(
-                    SharedString::from(format!("group-add-{key}")),
-                    reveal,
-                    icons::math::Plus,
-                    add,
-                    MenuPlace::Below,
-                    Rc::new({
-                        let path = path.clone();
-                        move |this, cx| this.add_rows(&path, cx)
-                    }),
-                    cx,
-                )
-                .children(self.add_menu(path, window, cx)),
-            )
+            .children(match &group {
+                Group::Project(path) => Some(
+                    self.menu_button(
+                        SharedString::from(format!("group-add-{key}")),
+                        reveal,
+                        icons::math::Plus,
+                        SidebarMenu::Add(path.clone()),
+                        MenuPlace::Below,
+                        Rc::new({
+                            let path = path.clone();
+                            move |this, cx| this.add_rows(&path, cx)
+                        }),
+                        cx,
+                    )
+                    .children(self.add_menu(path, window, cx)),
+                ),
+                Group::Space(_) => None,
+            })
             // A press on the copy is a press on where it came from: the list
             // goes back to the heading it is standing in for, rather than
             // folding away what you are reading. Its own mark still folds —
@@ -280,28 +330,32 @@ impl Sidebar {
             }));
         // A project's menu opens on the press rather than the click, so the
         // note has to be here too — read stale, a right press would swallow.
-        let head = bezel::ui::context_menu::ContextMenu::trigger(
-            head,
-            |this: &mut Self| &mut this.menu,
-            SidebarMenu::Project(path.clone()),
-            cx,
-        )
-        .on_mouse_down(
-            MouseButton::Right,
-            cx.listener({
-                let path = path.clone();
-                move |this, press: &gpui::MouseDownEvent, window, cx| {
+        // A space's opens from the row around it, as an entry's does.
+        let head = match &group {
+            Group::Project(path) => bezel::ui::context_menu::ContextMenu::trigger(
+                head,
+                |this: &mut Self| &mut this.menu,
+                SidebarMenu::Project(path.clone()),
+                cx,
+            )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener({
                     let path = path.clone();
-                    this.toggle_menu(
-                        SidebarMenu::Project(path.clone()),
-                        MenuPlace::At(press.position),
-                        move |this, cx| this.project_rows(&path, cx),
-                        window,
-                        cx,
-                    );
-                }
-            }),
-        );
+                    move |this, press: &gpui::MouseDownEvent, window, cx| {
+                        let path = path.clone();
+                        this.toggle_menu(
+                            SidebarMenu::Project(path.clone()),
+                            MenuPlace::At(press.position),
+                            move |this, cx| this.project_rows(&path, cx),
+                            window,
+                            cx,
+                        );
+                    }
+                }),
+            ),
+            Group::Space(_) => head,
+        };
         match pinned {
             // The same token the cluster at the foot of the column mounts on,
             // so the two glasses in the sidebar move together.
@@ -699,6 +753,7 @@ impl Sidebar {
             self.search.read(cx).query().is_none() && workspace.section_folded(heading.key());
         let group: &'static str = match heading {
             Heading::Projects => "projects-heading",
+            Heading::Spaces => "spaces-heading",
             Heading::Apps => "apps-heading",
         };
         let open = matches!(heading, Heading::Projects).then(|| {

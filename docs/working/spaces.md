@@ -15,8 +15,7 @@ An entry dropped on the middle of a pane joins its stack, in front. A pane holdi
 
 ## Spaces
 
-A space is an arrangement of entries, saved and listed in the sidebar with its
-entries grouped under it. One space can span projects.
+A space is an arrangement of entries, saved with a tab of its own on the window's strip. One space can span projects. With **Settings › Appearance › Spaces in sidebar** on, the sidebar lists each space with its entries grouped under it, and leaves those entries out of their projects. The window's tabs are not drawn then, and ⌃⇥ steps through the sidebar's list instead.
 
 ## The panels around them
 

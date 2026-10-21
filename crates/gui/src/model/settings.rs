@@ -223,6 +223,10 @@ pub struct Appearance {
     /// Sidebar entries are three lines: the name, a preview, and the labels
     /// with how long ago the entry was touched.
     pub extended_sidebar: bool,
+    /// The sidebar lists each space with the entries it holds under it, and
+    /// leaves those entries out of their projects; the window's strip draws no
+    /// tabs.
+    pub spaces_in_sidebar: bool,
     /// What is open is drawn on a card over the window's chrome, rather than
     /// flush with it — bezel's `window::content`.
     pub floating: bool,
@@ -489,6 +493,7 @@ impl Default for Appearance {
             board_view: artifact::board::View::List,
             indent_project_rows: true,
             extended_sidebar: false,
+            spaces_in_sidebar: false,
             floating: true,
             content_opacity: CONTENT_OPACITY.0,
             settings_sidebar_fits: false,
@@ -1393,6 +1398,7 @@ fn write_appearance(doc: &mut toml_edit::DocumentMut, appearance: &Appearance) -
     held["board_view"] = toml_edit::value(appearance.board_view.key());
     held["indent_project_rows"] = toml_edit::value(appearance.indent_project_rows);
     held["extended_sidebar"] = toml_edit::value(appearance.extended_sidebar);
+    held["spaces_in_sidebar"] = toml_edit::value(appearance.spaces_in_sidebar);
     held["floating"] = toml_edit::value(appearance.floating);
     held["content_opacity"] = toml_edit::value(f64::from(appearance.content_opacity));
     held["traffic_lights"] = toml_edit::value(appearance.traffic_lights);

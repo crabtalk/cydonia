@@ -163,6 +163,10 @@ pub struct Workspace {
     /// The tab the next opening replaces — see [`Workspace::open_tab`].
     /// Runtime only.
     preview: Option<artifact::space::Member>,
+    /// Spaces whose members the sidebar hides, by id.
+    folded_spaces: std::collections::HashSet<String>,
+    /// The order the sidebar lists each space's members in, by space id.
+    space_order: std::collections::BTreeMap<String, Vec<artifact::space::Member>>,
     /// The sidebar's sections whose rows are hidden, by name.
     folded_sections: std::collections::HashSet<String>,
     /// The palette's commands last run, most recent first.
@@ -231,6 +235,8 @@ impl Workspace {
             strip: Vec::new(),
             front: None,
             preview: None,
+            folded_spaces: state.folded_spaces.iter().cloned().collect(),
+            space_order: state.space_order,
             folded_sections: state.folded_sections.iter().cloned().collect(),
             recent_commands: state.commands,
             release: state.release,
@@ -286,6 +292,18 @@ impl Workspace {
             sort: self.sort.clone(),
             space: self.active_space().map(|space| space.id.clone()),
             spaces: self.spaces.iter().map(|space| space.id.clone()).collect(),
+            folded_spaces: self
+                .spaces
+                .iter()
+                .filter(|space| self.folded_spaces.contains(&space.id))
+                .map(|space| space.id.clone())
+                .collect(),
+            space_order: self
+                .space_order
+                .iter()
+                .filter(|(id, _)| self.spaces.iter().any(|space| &space.id == *id))
+                .map(|(id, order)| (id.clone(), order.clone()))
+                .collect(),
             folded_sections: {
                 let mut folded: Vec<String> = self.folded_sections.iter().cloned().collect();
                 folded.sort();
@@ -360,6 +378,7 @@ impl Workspace {
             board_view: self.board_view,
             indent_project_rows: self.indent_project_rows,
             extended_sidebar: self.settings.appearance.extended_sidebar,
+            spaces_in_sidebar: self.settings.appearance.spaces_in_sidebar,
             floating: self.settings.appearance.floating,
             content_opacity: self.settings.appearance.content_opacity,
             settings_sidebar_fits: self.settings.appearance.settings_sidebar_fits,
@@ -835,6 +854,12 @@ impl Workspace {
 
     pub fn set_extended_sidebar(&mut self, extended: bool, cx: &mut Context<Self>) {
         self.settings.appearance.extended_sidebar = extended;
+        self.save_appearance();
+        cx.notify();
+    }
+
+    pub fn set_spaces_in_sidebar(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.settings.appearance.spaces_in_sidebar = on;
         self.save_appearance();
         cx.notify();
     }

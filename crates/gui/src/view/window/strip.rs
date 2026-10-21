@@ -315,6 +315,7 @@ impl Render for Strip {
         let strip: Vec<Slot> = workspace.strip().to_vec();
         let front = workspace.front_slot().cloned();
         let floating = workspace.settings.appearance.floating;
+        let spaces_listed = workspace.settings.appearance.spaces_in_sidebar;
         // The lights are the window's and are drawn over whatever is at its
         // top left. Fullscreen has none.
         let fold = !self.sidebar_open;
@@ -343,7 +344,8 @@ impl Render for Strip {
                 (Dragged::Tab(slot.clone()), el)
             })
             .collect();
-        let tracked = strip.len() > 1 || self.renaming.is_some();
+        // No tabs while the sidebar lists the spaces: it says what is open.
+        let tracked = !spaces_listed && (strip.len() > 1 || self.renaming.is_some());
         let mut model = tabs::Strip::new();
         for slot in &strip {
             model.open(Dragged::Tab(slot.clone()));

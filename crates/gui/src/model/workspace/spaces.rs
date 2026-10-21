@@ -90,9 +90,53 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Whether a space's members are hidden in the sidebar.
+    pub fn space_folded(&self, id: &str) -> bool {
+        self.folded_spaces.contains(id)
+    }
+
+    /// The space's members in the order the sidebar lists them.
+    pub fn listed_members(&self, space: &artifact::space::Space) -> Vec<Member> {
+        let mut members = space.entries();
+        if let Some(order) = self.space_order.get(&space.id) {
+            members.sort_by_key(|member| order.iter().position(|at| at == member).map(|at| at + 1));
+        }
+        members
+    }
+
+    /// Write down the order the sidebar lists a space's members in.
+    pub fn set_space_order(&mut self, id: &str, order: Vec<Member>, cx: &mut Context<Self>) {
+        self.space_order.insert(id.to_owned(), order);
+        self.save();
+        cx.notify();
+    }
+
+    /// Hide a space's members in the sidebar, or show them again.
+    pub fn toggle_space(&mut self, id: &str, cx: &mut Context<Self>) {
+        if !self.folded_spaces.remove(id) {
+            self.folded_spaces.insert(id.to_owned());
+        }
+        self.save();
+        cx.notify();
+    }
+
     /// Where the space with `id` is listed.
     pub fn space_ix(&self, id: &str) -> Option<usize> {
         self.spaces.iter().position(|space| space.id == id)
+    }
+
+    /// Carry a space to another place in the list.
+    pub fn move_space(&mut self, id: &str, to: usize, cx: &mut Context<Self>) {
+        let Some(from) = self.space_ix(id) else {
+            return;
+        };
+        if from == to || to >= self.spaces.len() {
+            return;
+        }
+        let space = self.spaces.remove(from);
+        self.spaces.insert(to, space);
+        self.save();
+        cx.notify();
     }
 
     /// Read every space back off disk. Called at launch, since nothing else
