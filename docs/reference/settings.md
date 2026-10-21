@@ -20,7 +20,7 @@ that table.
 | --- | --- | --- |
 | `watch_bounce` | — | How long a project's `.cydonia/` must go quiet before the watch re-reads it, in milliseconds |
 | `auto_update` | `true` | Whether Cydonia looks for a new release on its own |
-| `notify_turns` | `true` | Whether a turn finishing in the background is posted to the system |
+| `notify_turns` | `true` | Whether a turn finishing, or an agent asking for permission, in the background is posted to the system |
 
 `auto_update` switches the looking and the fetching, not the swap: a staged
 release waits until a restart is asked for. Off is an app that reaches the

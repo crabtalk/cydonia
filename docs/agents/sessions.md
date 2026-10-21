@@ -58,9 +58,10 @@ Each of these copies a link to turns of the session, such as `cydonia://cydonia#
 
 ## Notifications
 
-When a turn finishes while Cydonia is in the background, the system is told. A
-turn you watched finish is one you already know about, so nothing is posted
-while the app is in front. Turn it off with `notify_turns` in
+When a turn finishes while Cydonia is in the background, the system is told,
+and so it is when an agent stops to ask for permission, since the turn waits on
+your answer. A turn you watched finish is one you already know about, so
+nothing is posted while the app is in front. Turn it off with `notify_turns` in
 [Settings](./../reference/settings.md).
 
 ## What it leaves behind

@@ -1350,18 +1350,25 @@ fn pump(entry: &settings::Agent, launch: Launch, cx: &mut Context<ChatSession>) 
             }
             let streaming = this.update(cx, |chat, cx| {
                 let was_streaming = chat.streaming;
+                let was_asking = chat.permission.is_some();
                 for event in batch {
                     chat.apply(event);
                 }
                 cx.notify();
-                // The turn's end, as the only place that can see it: `apply`
-                // takes no app to speak to, and a session read from outside
-                // cannot tell a turn that has just stopped from one that was
-                // never running.
-                if was_streaming && !chat.streaming {
+                // The turn's end and a prompt's arrival, as the only place that
+                // can see them: `apply` takes no app to speak to, and a session
+                // read from outside cannot tell a turn that has just stopped
+                // from one that was never running.
+                let finished = was_streaming && !chat.streaming;
+                let asking = !was_asking && chat.permission.is_some();
+                if finished || asking {
                     let notify = references::current(cx)
                         .is_some_and(|workspace| workspace.read(cx).settings.notify_turns);
-                    notify::turn_finished(chat, notify, cx);
+                    if asking {
+                        notify::permission_requested(chat, notify, cx);
+                    } else {
+                        notify::turn_finished(chat, notify, cx);
+                    }
                 }
                 chat.streaming
             });
