@@ -527,6 +527,24 @@ fn a_drop_off_the_edge_stacks_the_arrival(cx: &mut gpui::TestAppContext) {
     });
 }
 
+/// An entry taken out of a stack into a pane of its own stands beside the
+/// pane it left, which keeps the rest of the stack.
+#[gpui::test]
+fn a_stacked_entry_splits_out_beside_its_pane(cx: &mut gpui::TestAppContext) {
+    use crate::model::workspace::Opening;
+    let scratch = Scratch::new("split-out");
+    let (workspace, a, b) = two_boards(&scratch, cx);
+    workspace.update(cx, |workspace, cx| {
+        workspace.open_tab(a.clone(), Opening::Kept, cx);
+        workspace.stack_pane(&a, &b, cx).expect("stacked");
+        workspace.relocate_pane(&b, &a, Side::Right, cx);
+        let space = workspace.active_space().expect("a space");
+        assert_eq!(space.leaves(), 2);
+        assert_eq!(space.stack_of(&a), vec![a.clone()]);
+        assert_eq!(space.tree.fronts(), vec![a.clone(), b.clone()]);
+    });
+}
+
 /// A pane put on an article opens it. An article the sidebar has only listed
 /// holds no editor, and a pane handed one draws the front door instead of the
 /// document — which is what a drop onto a pane's bar or its edge used to do.

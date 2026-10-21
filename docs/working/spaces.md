@@ -9,7 +9,7 @@ The window splits into panes, and entries drag between them. Each pane draws fro
 
 ## Tabs
 
-An entry dropped on the middle of a pane joins its stack, in front. A pane holding a stack draws a deck at the head of its title row; a click on the deck lists the stack, to bring another entry to the front or move the one in front to a tab of its own. While the focus is in a pane holding a stack, ⌃⇥ and ⇧⌃⇥ step through the stack instead of the window's tabs, and ⌘1–9 still pick the window's tabs.
+An entry dropped on the middle of a pane joins its stack, in front. A pane holding a stack draws a deck at the head of its title row; a click on the deck lists the stack, to bring another entry to the front or move the one in front to a tab of its own — with **Spaces in sidebar** on, to a pane of its own beside this one. While the focus is in a pane holding a stack, ⌃⇥ and ⇧⌃⇥ step through the stack instead of the window's tabs, and ⌘1–9 still pick the window's tabs.
 
 ⌘W closes a tab in a space. Archiving or deleting the entry a tab shows closes its pane and moves the focus to the top-left pane.
 

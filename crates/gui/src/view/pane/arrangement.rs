@@ -589,14 +589,46 @@ impl Cydonia {
                 })
             })
             .collect();
-        if let Some(front) = front {
-            rows.push(menu::row::<Self>(Item::Separator, |_, _, _| {}));
-            rows.push(menu::row::<Self>(
+        // Out of the stack: to a tab of its own on the strip, or, with the
+        // spaces in the sidebar and no strip drawn, to a pane of its own
+        // beside this one.
+        let behind = space
+            .stack_of(entry)
+            .into_iter()
+            .find(|held| Some(held) != front.as_ref());
+        let out = match (front, workspace.settings.appearance.spaces_in_sidebar) {
+            (Some(front), false) => Some(menu::row::<Self>(
                 Item::action("Move to a tab of its own").with_icon(icons::layout::PanelTop),
                 move |this, window, cx| this.join_strip(front.clone(), window, cx),
-            ));
+            )),
+            (Some(front), true) => behind.map(|behind| {
+                menu::row::<Self>(
+                    Item::action("Move to a pane of its own").with_icon(icons::layout::Columns2),
+                    move |this, window, cx| this.split_out(&front, &behind, window, cx),
+                )
+            }),
+            (None, _) => None,
+        };
+        if let Some(out) = out {
+            rows.push(menu::row::<Self>(Item::Separator, |_, _, _| {}));
+            rows.push(out);
         }
         rows
+    }
+
+    /// Take `entry` out of its pane's stack into a pane of its own to the
+    /// right of the one `beside` stays in, and focus it.
+    fn split_out(
+        &mut self,
+        entry: &Member,
+        beside: &Member,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.workspace.update(cx, |workspace, cx| {
+            workspace.relocate_pane(entry, beside, Side::Right, cx)
+        });
+        self.show_pane(entry, window, cx);
     }
 
     /// Bring the entry `step` along from the focused one in its pane's stack to
