@@ -55,6 +55,7 @@ impl Render for Notice {
         let dialog = dialog(
             "desktop-only-dialog",
             &theme,
+            false,
             window,
             [
                 popover::dialog_title(&theme, format!("{} works in the desktop app", self.what))

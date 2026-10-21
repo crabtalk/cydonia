@@ -56,8 +56,10 @@ mod articles;
 mod boards;
 mod labels;
 mod spaces;
+mod tabs;
 pub use sessions::ArticleChange;
 pub use spaces::Showing;
+pub use tabs::{Opening, Slot};
 mod order;
 mod projects;
 pub mod references;
@@ -114,9 +116,8 @@ pub struct Workspace {
     /// The hue the greys carry, and how much of it.
     pub tint: Tint,
     /// How wide a page that has not been set either way is drawn — see
-    /// [`crate::model::state::State::wide_pages`].
+    /// [`crate::model::settings::Appearance::wide_pages`].
     pub wide_pages: bool,
-    /// Whether an article shows its cover band when it has not said otherwise
     /// How a new board is laid out — see
     /// [`crate::model::settings::Appearance::board_view`].
     pub board_view: artifact::board::View,
@@ -151,11 +152,16 @@ pub struct Workspace {
     /// The main window's last frame, carried so the whole-file rewrite in
     /// [`Self::save`] keeps it.
     window: Option<state::Frame>,
-    /// The arrangements this machine holds, and which one the window is
-    /// showing. The window's rather than a project's: a space can hold panes
-    /// from several — see [`spaces`].
+    /// The arrangements this machine holds. The window's rather than a
+    /// project's: a space can hold panes from several — see [`spaces`]. Which
+    /// one is shown is the strip's `front`.
     pub spaces: Vec<artifact::space::Space>,
-    pub space: Option<usize>,
+    /// The window's tabs, and which is in front — see [`tabs`].
+    strip: Vec<Slot>,
+    front: Option<Slot>,
+    /// The tab the next opening replaces — see [`Workspace::open_tab`].
+    /// Runtime only.
+    preview: Option<artifact::space::Member>,
     /// Spaces whose members the sidebar hides, by id.
     folded_spaces: std::collections::HashSet<String>,
     /// The order the sidebar lists each space's members in, by space id.
@@ -168,8 +174,6 @@ pub struct Workspace {
     release: Option<crate::model::version::Version>,
     /// Every app on this machine, by id — see [`apps`].
     pub apps: Vec<crate::model::apps::HeldApp>,
-    /// Which app the pane a window with no space open shows.
-    pub app: Option<String>,
     /// The watch on the apps' records and loaded folders.
     apps_watch: Option<crate::model::watch::Watch>,
 }
@@ -227,27 +231,25 @@ impl Workspace {
                 <crate::model::spaces::Shelf as crate::model::spaces::Store>::all(),
                 &state.spaces,
             ),
-            space: None,
+            strip: Vec::new(),
+            front: None,
+            preview: None,
             folded_spaces: state.folded_spaces.iter().cloned().collect(),
             space_order: state.space_order,
             folded_sections: state.folded_sections.iter().cloned().collect(),
             recent_commands: state.commands,
             release: state.release,
             apps: Vec::new(),
-            app: None,
             apps_watch: None,
         };
         this.app_recorded(cx);
-        // The arrangement the window closed on, before any entry is opened:
-        // `open_last_entry` is a project's answer and a space spans them.
-        this.space = state
-            .space
-            .and_then(|id| this.spaces.iter().position(|space| space.id == id));
         for ix in restore {
             this.restore_sessions(ix, cx);
             this.watch_project(ix, cx);
         }
         this.open_last_entry(cx);
+        this.restore_tabs(state.tabs, state.front, state.space, cx);
+        this.bring_up_tabs(cx);
         this.bring_up_space(cx);
         this.load_agent_icons(cx);
         this.refresh_door();
@@ -309,6 +311,8 @@ impl Workspace {
             window: self.window,
             commands: self.recent_commands.clone(),
             release: self.release.clone(),
+            tabs: Some(self.strip.clone()),
+            front: self.front_slot().cloned(),
         });
     }
 
@@ -373,6 +377,7 @@ impl Workspace {
             board_view: self.board_view,
             indent_project_rows: self.indent_project_rows,
             extended_sidebar: self.settings.appearance.extended_sidebar,
+            spaces_in_sidebar: self.settings.appearance.spaces_in_sidebar,
             floating: self.settings.appearance.floating,
             content_opacity: self.settings.appearance.content_opacity,
             settings_sidebar_fits: self.settings.appearance.settings_sidebar_fits,
@@ -756,12 +761,6 @@ impl Workspace {
 
     // ── releases ─────────────────────────────────────────────────
 
-    /// Look for releases on our own, or stop looking. The file is what the next
-    /// launch reads; the updater is what runs until then, so both are told.
-    ///
-    /// A release already staged is left alone: this switch is about the looking,
-    /// and throwing away a bundle that is downloaded and verified would be a
-    /// second thing under one name.
     /// Whether a finished turn is worth telling the system about. Written
     /// through to `settings.toml` first, as every switch here is.
     pub fn set_notify_turns(&mut self, on: bool, cx: &mut Context<Self>) {
@@ -798,6 +797,9 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Look for releases on our own, or stop looking. Written to the file the
+    /// next launch reads and told to the running updater. A release already
+    /// staged is left alone.
     pub fn set_auto_update(&mut self, on: bool, cx: &mut Context<Self>) {
         if settings::set_auto_update(on).is_err() {
             return;
@@ -848,6 +850,12 @@ impl Workspace {
 
     pub fn set_extended_sidebar(&mut self, extended: bool, cx: &mut Context<Self>) {
         self.settings.appearance.extended_sidebar = extended;
+        self.save_appearance();
+        cx.notify();
+    }
+
+    pub fn set_spaces_in_sidebar(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.settings.appearance.spaces_in_sidebar = on;
         self.save_appearance();
         cx.notify();
     }
@@ -948,6 +956,7 @@ impl Workspace {
     /// board already made carries its own answer.
     pub fn set_default_board_view(&mut self, view: artifact::board::View, cx: &mut Context<Self>) {
         self.board_view = view;
+        rail::set_board_view(view);
         self.save_appearance();
         cx.notify();
     }

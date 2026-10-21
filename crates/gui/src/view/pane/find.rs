@@ -1,36 +1,48 @@
 //! Finding text in the document a pane shows: an article, or a transcript.
 //!
-//! The board's find narrows its cards instead — see
-//! [`crate::view::board::FindCard`]. Both share the pane's find field and
-//! [`crate::view::pane::Tab::finding`].
+//! The board's find narrows its cards instead — see [`FindCard`]. Both share
+//! the pane's find field and [`crate::view::pane::Tab::finding`].
 //!
 //! Hits are looked for in the rendered text of each block, the text a reader
 //! sees, not in the markdown source.
 
 use super::Tab;
-use crate::view::{
-    board::{self, DismissFind, FindCard},
-    window::{reach::InWindow as _, root::Cydonia},
-};
+use crate::view::window::{reach::InWindow as _, root::Cydonia};
 use artifact::{kind::Kind, search::Query};
 use bezel::{
     gpui::{
-        self, AnyElement, App, Context, Focusable as _, KeyBinding, SharedString, Window, actions,
-        div, prelude::*, px,
+        self, AnyElement, App, Context, Entity, Focusable as _, KeyBinding, SharedString, Window,
+        actions, div, prelude::*, px,
     },
     theme::{TextStyle, Theme, Typeset as _},
-    ui::{icons, tooltip::Tooltip, widgets::Buttons as _},
+    ui::{icons, input::TextField, tooltip::Tooltip, widgets::Buttons as _},
 };
 use markdown::{Annotation, Cursor, Doc, Selection};
 
-actions!(cydonia_find, [FindNext, FindPrev]);
+/// The find field's own, so `escape` puts the bar away and stays whatever it is
+/// everywhere else.
+pub(crate) const FIND_CONTEXT: &str = "CydoniaBoardFind";
+
+actions!(cydonia_find, [FindNext, FindPrev, FindCard, DismissFind]);
 
 pub fn bindings() -> Vec<KeyBinding> {
-    let ctx = Some(board::FIND_CONTEXT);
+    let ctx = Some(FIND_CONTEXT);
     vec![
         KeyBinding::new("enter", FindNext, ctx),
         KeyBinding::new("shift-enter", FindPrev, ctx),
+        KeyBinding::new("escape", DismissFind, ctx),
     ]
+}
+
+/// A pane's find field — one per pane, so two boards side by side are
+/// narrowed separately.
+pub fn find_field(cx: &mut App) -> Entity<TextField> {
+    cx.new(|cx| {
+        TextField::new(cx)
+            .with_frame(false)
+            .with_key_context(FIND_CONTEXT)
+            .with_placeholder("find a card…")
+    })
 }
 
 /// Every match of `query` in `doc`, in document order.
@@ -166,9 +178,7 @@ impl Tab {
 
     /// What the pane shows, as its find reaches it.
     fn shown_kind(&self) -> Kind {
-        self.entry
-            .as_ref()
-            .map_or(self.kind, artifact::space::Member::kind)
+        self.entry.kind()
     }
 
     /// How many hits the find finds in what the pane shows.
@@ -192,7 +202,7 @@ impl Tab {
             return;
         }
         self.finding = true;
-        let placeholder = match self.kind {
+        let placeholder = match self.shown_kind() {
             Kind::Board => "find a card…",
             _ => "find…",
         };
@@ -440,27 +450,27 @@ impl Cydonia {
     /// Opening a filtered entry starts at its first match, not its saved
     /// viewport.
     pub(crate) fn reveal_applied_match(&mut self, cx: &mut Context<Self>) {
-        self.leaf()
-            .clone()
-            .update(cx, |pane, cx| pane.reveal_applied_match(cx));
+        if let Some(leaf) = self.leaf().cloned() {
+            leaf.update(cx, |pane, cx| pane.reveal_applied_match(cx));
+        }
     }
 
     pub(crate) fn find_card(&mut self, _: &FindCard, window: &mut Window, cx: &mut Context<Self>) {
-        self.leaf()
-            .clone()
-            .update(cx, |pane, cx| pane.find_card(window, cx));
+        if let Some(leaf) = self.leaf().cloned() {
+            leaf.update(cx, |pane, cx| pane.find_card(window, cx));
+        }
     }
 
     pub(crate) fn find_next(&mut self, _: &FindNext, _: &mut Window, cx: &mut Context<Self>) {
-        self.leaf()
-            .clone()
-            .update(cx, |pane, cx| pane.step_find(1, cx));
+        if let Some(leaf) = self.leaf().cloned() {
+            leaf.update(cx, |pane, cx| pane.step_find(1, cx));
+        }
     }
 
     pub(crate) fn find_prev(&mut self, _: &FindPrev, _: &mut Window, cx: &mut Context<Self>) {
-        self.leaf()
-            .clone()
-            .update(cx, |pane, cx| pane.step_find(-1, cx));
+        if let Some(leaf) = self.leaf().cloned() {
+            leaf.update(cx, |pane, cx| pane.step_find(-1, cx));
+        }
     }
 }
 

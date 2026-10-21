@@ -1,11 +1,13 @@
-use crate::{model::workspace::Workspace, view::component::image_preview::Preview};
+use crate::{
+    model::workspace::Workspace,
+    view::{component::image_preview::Preview, kit::pager},
+};
 use bezel::{
     gpui::{
         self, Context, Entity, MouseButton, ObjectFit, Pixels, Point, Render, SharedString,
         WeakEntity, Window, div, img, prelude::*, px, relative,
     },
     theme::Theme,
-    ui::tooltip::Tooltip,
 };
 use std::{cell::Cell, path::Path, rc::Rc, sync::Arc};
 
@@ -176,30 +178,21 @@ impl Render for Gallery {
                         .flex()
                         .justify_center()
                         .children((0..self.images.len()).map(|index| {
-                            div()
-                                .id(("image-dot", index))
-                                .debug_selector(move || format!("image-dot-{index}"))
-                                .size(px(24.))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .cursor_pointer()
-                                .tooltip(move |window, cx| {
-                                    Tooltip::text(format!("Image {}", index + 1), window, cx)
-                                })
-                                .child(div().size(px(6.)).rounded_full().bg(
-                                    if index == self.selected {
-                                        theme.text
-                                    } else {
-                                        theme.text_faint.opacity(0.4)
-                                    },
-                                ))
-                                .on_click(cx.listener(move |this, _, _, cx| {
+                            pager::dot(
+                                "image-dot",
+                                index,
+                                index == self.selected,
+                                format!("Image {}", index + 1),
+                                &theme,
+                            )
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
                                     this.selected = index;
                                     this.drag = 0.;
                                     this.press = None;
                                     cx.notify();
-                                }))
+                                },
+                            ))
                         })),
                 )
             })

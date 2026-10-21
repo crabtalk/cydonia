@@ -101,7 +101,9 @@ fn properties_round_trip_and_clear() {
 #[test]
 fn writes_land_and_removals_retire_numbers() {
     let store = memory::Project::new();
-    let mut board = store.create_board("Plans", "").unwrap();
+    let mut board = store
+        .create_board("Plans", "", cydonia_artifact::board::View::Lanes)
+        .unwrap();
     board.name = "Plans, renamed".into();
     store.save_board(&mut board).unwrap();
     assert_eq!(store.board(&board.id).unwrap().name, "Plans, renamed");

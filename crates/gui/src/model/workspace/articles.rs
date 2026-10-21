@@ -269,7 +269,12 @@ impl Workspace {
                         .is_some_and(|document| document.entity_id() == changed)
             })
         });
-        if found.is_some_and(|article| article.write(cx)) {
+        let Some(article) = found else {
+            return;
+        };
+        let id = article.id.clone();
+        let written = article.write(cx);
+        if self.keep_edited(Kind::Article, &id) || written {
             cx.notify();
         }
     }

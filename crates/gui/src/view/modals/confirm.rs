@@ -1,11 +1,13 @@
 //! The question asked before a delete. Raised from the pane header's `···` and
 //! from a card's, so it lives beside neither.
 
-use crate::view::kit::text::ShownPath as _;
 use crate::{
     model::workspace::Showing,
     view::{
-        kit::dialog::{answers, dialog},
+        kit::{
+            dialog::{answers, dialog},
+            text::{self, ShownPath as _},
+        },
         sidebar::{Group, Row},
         window::root::Cydonia,
     },
@@ -65,6 +67,7 @@ impl Render for Confirm {
         let dialog = dialog(
             "delete-dialog",
             &theme,
+            false,
             window,
             [popover::dialog_title(&theme, format!("Delete {}?", self.label)).into_any_element()]
                 .into_iter()
@@ -137,10 +140,7 @@ impl Cydonia {
         if doomed.is_empty() {
             return;
         }
-        let label = match doomed.len() {
-            1 => "1 item".to_owned(),
-            n => format!("{n} items"),
-        };
+        let label = text::count(doomed.len(), "item", "items");
         self.ask(
             Confirm {
                 doomed: Doomed::Many(doomed),
@@ -199,12 +199,10 @@ impl Cydonia {
                 label: format!("the label \u{201c}{name}\u{201d}"),
                 doomed: Doomed::Label(name),
                 goes: None,
-                note: match count {
-                    1 => "It comes off the 1 entry carrying it. This cannot be undone.".to_owned(),
-                    n => {
-                        format!("It comes off the {n} entries carrying it. This cannot be undone.")
-                    }
-                },
+                note: format!(
+                    "It comes off the {} carrying it. This cannot be undone.",
+                    text::count(count, "entry", "entries")
+                ),
                 root: cx.entity().downgrade(),
                 focus: cx.focus_handle(),
             },
@@ -341,8 +339,7 @@ impl Cydonia {
             // A space holds none of what it arranges, so nothing but the
             // arrangement itself goes.
             Row::Group(Group::Space(id)) => workspace
-                .space_ix(id)
-                .map(|ix| &workspace.spaces[ix])
+                .space_by_id(id)
                 .map(|space| {
                     (
                         // Beside the config, not in a project: a space spans

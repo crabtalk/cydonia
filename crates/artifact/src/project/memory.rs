@@ -272,10 +272,16 @@ impl super::Project for Project {
         Some(board)
     }
 
-    fn create_board(&self, name: &str, key: &str) -> super::Result<Board> {
+    fn create_board(
+        &self,
+        name: &str,
+        key: &str,
+        view: crate::board::View,
+    ) -> super::Result<Board> {
         let mut state = self.state();
         let mut board = Board::new(id::mint(), name);
         board.created = stamp::named(&board.id);
+        board.view = view;
         board.key = key::or_derived(key, &board.name, || {
             state
                 .boards

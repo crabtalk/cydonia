@@ -49,7 +49,7 @@ pub fn init(settings: &Settings, cx: &mut App) {
     cx.set_mark_paint(article::mark_paint);
     cx.set_find_paint(article::find_paint);
     cx.set_comment_paint(article::comment_paint);
-    cx.set_mermaid_zoom(markdown::mermaid::Zoom {
+    cx.set_mermaid_zoom(markdown::fence::mermaid::Zoom {
         min: 0.1,
         max: 4.0,
         ..Default::default()

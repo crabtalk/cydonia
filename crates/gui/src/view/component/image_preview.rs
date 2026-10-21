@@ -1,7 +1,10 @@
 //! Shared image-preview frame and controls.
 use crate::{
     model::workspace::Workspace,
-    view::component::file::pictures::{Assets, Pictures},
+    view::{
+        component::file::pictures::{Assets, Pictures},
+        kit::pager,
+    },
 };
 use bezel::{
     gpui::{
@@ -352,28 +355,14 @@ impl Preview {
         };
         let dots = (self.images.len() > 1).then(|| {
             div().flex().children((0..self.images.len()).map(|index| {
-                div()
-                    .id(("preview-dot", index))
-                    .debug_selector(move || format!("preview-dot-{index}"))
-                    .size(px(24.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .cursor_pointer()
-                    .tooltip(move |window, cx| {
-                        Tooltip::text(format!("Image {}", index + 1), window, cx)
-                    })
-                    .child(
-                        div()
-                            .size(px(6.))
-                            .rounded_full()
-                            .bg(if index == self.selected {
-                                theme.text
-                            } else {
-                                theme.text_faint.opacity(0.4)
-                            }),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| this.select(index, cx)))
+                pager::dot(
+                    "preview-dot",
+                    index,
+                    index == self.selected,
+                    format!("Image {}", index + 1),
+                    &theme,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| this.select(index, cx)))
             }))
         });
         // The two ends share the room left over, so the dots stay centred.

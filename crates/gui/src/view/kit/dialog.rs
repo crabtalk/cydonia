@@ -10,19 +10,26 @@ use bezel::{
     },
 };
 
+/// How wide a wide dialog's card is.
+const WIDE: f32 = 480.;
+
 /// What a button does when pressed.
 pub(crate) type Press = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 
-/// `content` on bezel's dialog card over a scrim. A press on the scrim calls
-/// `dismiss`.
+/// `content` on bezel's dialog card over a scrim, [`WIDE`] across where
+/// `wide`. A press on the scrim calls `dismiss`.
 pub(crate) fn dialog(
     id: &'static str,
     theme: &Theme,
+    wide: bool,
     window: &Window,
     content: impl IntoIterator<Item = AnyElement>,
     dismiss: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
 ) -> AnyElement {
-    let card = popover::dialog_card(theme).gap(px(10.)).children(content);
+    let card = popover::dialog_card(theme)
+        .when(wide, |card| card.w(px(WIDE)))
+        .gap(px(10.))
+        .children(content);
     popover::modal(id, window.viewport_size(), card.into_any_element(), dismiss)
 }
 

@@ -54,6 +54,7 @@ fn pending_image_only_message_has_a_gallery_and_retains_preview(cx: &mut gpui::T
                 workspace.projects.push(project);
                 workspace.active = Some(0);
             });
+            root.select_session(1, crate::model::workspace::Opening::Preview, window, cx);
         });
         QueueView(root, 1)
     });
@@ -120,6 +121,7 @@ fn a_queue_is_drawn_only_under_the_session_it_is_waiting_in(cx: &mut gpui::TestA
                 workspace.projects.push(project);
                 workspace.active = Some(0);
             });
+            root.select_session(1, crate::model::workspace::Opening::Preview, window, cx);
         });
         QueueView(root, 1)
     });

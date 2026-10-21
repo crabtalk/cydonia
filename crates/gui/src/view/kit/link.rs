@@ -14,6 +14,7 @@
 
 pub mod mention;
 
+use crate::model::workspace::Opening;
 use std::{path::PathBuf, rc::Rc};
 
 use crate::{
@@ -29,14 +30,17 @@ use crate::{
         detail::{Pointing, composer_agents},
         kit::{
             icon::kind_icon,
-            text::{ShownPath as _, untitled},
+            text::{KindName as _, ShownPath as _, untitled},
         },
         modals::palette::Linked,
         sidebar::Row,
         window::root::Cydonia,
     },
 };
-use artifact::{kind::Kind, reference::Span};
+use artifact::{
+    kind::Kind,
+    reference::{Reference, Span},
+};
 use bezel::{
     gpui::{
         self, AnyElement, App, Context, MouseButton, SharedString, Window, div, prelude::*, px,
@@ -51,7 +55,8 @@ use bezel::{
 use editor::{SlashAction, SlashAt, SlashItem, SlashRow};
 use markdown::{
     AppExt as _, BlockKind, Form, Link,
-    render::{Editing, fence_band, fence_panel},
+    fence::{fence_band, fence_panel},
+    render::Editing,
 };
 
 pub(crate) use artifact::reference::SCHEME;
@@ -433,13 +438,7 @@ impl Cydonia {
     pub(crate) fn entry_row(&self, named: Named, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let title = named.row.label(self.workspace.read(cx), cx);
-        let kind = match named.kind {
-            Kind::Session => "Session",
-            Kind::Article => "Article",
-            Kind::Board => "Board",
-            Kind::Table => "Table",
-            Kind::App => "App",
-        };
+        let kind = named.kind.label();
         let columns = match &named.row {
             Row::Entry {
                 project,
@@ -512,7 +511,7 @@ impl Cydonia {
             )
             .on_click(cx.listener(move |this, _, window, cx| match block {
                 Some(block) => this.open_passage(&row, block, window, cx),
-                None => this.open_row(&row, window, cx),
+                None => this.open_row(&row, Opening::Preview, window, cx),
             }))
             .into_any_element()
     }
@@ -525,7 +524,7 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_row(row, window, cx);
+        self.open_row(row, Opening::Preview, window, cx);
         let editor = self.pane_editor(cx);
         if let Some(editor) = editor {
             let at = markdown::Selection::at(markdown::Cursor::new(block, markdown::Part::Body, 0));
@@ -576,8 +575,8 @@ impl Cydonia {
         let title = row.label(self.workspace.read(cx), cx);
         let block = passage.blocks.start;
         let named = match passage.label.as_str() {
-            "" => format!("#{number}"),
-            label => format!("#{number} · {label}"),
+            "" => Reference::entry(None, number, None).to_string(),
+            label => format!("{} · {label}", Reference::entry(None, number, None)),
         };
         fence_band(&theme)
             .id(SharedString::from(format!(
@@ -776,9 +775,9 @@ impl Cydonia {
                     .icon_button(icons::layout::Maximize, ButtonStyle::Ghost, None)
                     .id(SharedString::from(format!("session-card-open-{id}")))
                     .flex_none()
-                    .on_click(
-                        cx.listener(move |this, _, window, cx| this.select_session(id, window, cx)),
-                    ),
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.select_session(id, Opening::Preview, window, cx)
+                    })),
             )
             .into_any_element()
     }
@@ -916,7 +915,7 @@ impl Cydonia {
                 },
             ))
             .on_click(cx.listener(move |this, _, window, cx| {
-                this.select_session(id, window, cx);
+                this.select_session(id, Opening::Preview, window, cx);
                 this.reveal_session_turn(id, from, cx);
             }));
         div()
@@ -1066,7 +1065,7 @@ fn session_label(theme: &Theme, title: &str, caption: String) -> [AnyElement; 2]
             .text_ellipsis()
             .text_style(TextStyle::Subheadline)
             .text_color(theme.text)
-            .child(untitled(title, "Untitled session"))
+            .child(untitled(title, Kind::Session.untitled()))
             .into_any_element(),
         div()
             .flex_none()

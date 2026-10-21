@@ -223,6 +223,10 @@ pub struct Appearance {
     /// Sidebar entries are three lines: the name, a preview, and the labels
     /// with how long ago the entry was touched.
     pub extended_sidebar: bool,
+    /// The sidebar lists each space with the entries it holds under it, and
+    /// leaves those entries out of their projects; the window's strip draws no
+    /// tabs.
+    pub spaces_in_sidebar: bool,
     /// What is open is drawn on a card over the window's chrome, rather than
     /// flush with it — bezel's `window::content`.
     pub floating: bool,
@@ -489,6 +493,7 @@ impl Default for Appearance {
             board_view: artifact::board::View::List,
             indent_project_rows: true,
             extended_sidebar: false,
+            spaces_in_sidebar: false,
             floating: true,
             content_opacity: CONTENT_OPACITY.0,
             settings_sidebar_fits: false,
@@ -515,6 +520,12 @@ impl Default for Appearance {
 }
 
 impl Appearance {
+    /// Whether the window keeps a strip of tabs for what is open, rather than
+    /// listing the spaces in the sidebar.
+    pub fn global_tabs(&self) -> bool {
+        !self.spaces_in_sidebar
+    }
+
     /// Hand-edited sizes must remain finite and usable before layout sees them.
     pub fn normalize(&mut self) {
         self.text_size = if self.text_size.is_finite() {
@@ -1393,6 +1404,7 @@ fn write_appearance(doc: &mut toml_edit::DocumentMut, appearance: &Appearance) -
     held["board_view"] = toml_edit::value(appearance.board_view.key());
     held["indent_project_rows"] = toml_edit::value(appearance.indent_project_rows);
     held["extended_sidebar"] = toml_edit::value(appearance.extended_sidebar);
+    held["spaces_in_sidebar"] = toml_edit::value(appearance.spaces_in_sidebar);
     held["floating"] = toml_edit::value(appearance.floating);
     held["content_opacity"] = toml_edit::value(f64::from(appearance.content_opacity));
     held["traffic_lights"] = toml_edit::value(appearance.traffic_lights);
@@ -1483,72 +1495,52 @@ fn set_key(table_name: &str, key: &str, value: impl Into<toml_edit::Value>) -> R
     })
 }
 
-/// Move the watch's bounce in the file, in milliseconds.
-pub fn set_watch_bounce(ms: u64) -> Result<()> {
+/// One key at the file's root, written to the file.
+fn set_root_key(key: &str, value: impl Into<toml_edit::Value>) -> Result<()> {
+    let value = value.into();
     Here::edit(|doc| {
-        doc["watch_bounce"] = toml_edit::value(ms as i64);
+        doc[key] = toml_edit::value(value);
         Ok(true)
     })
+}
+
+/// Move the watch's bounce in the file, in milliseconds.
+pub fn set_watch_bounce(ms: u64) -> Result<()> {
+    set_root_key("watch_bounce", ms as i64)
 }
 
 /// Switch the release check on or off in the file.
 pub fn set_auto_update(on: bool) -> Result<()> {
-    Here::edit(|doc| {
-        doc["auto_update"] = toml_edit::value(on);
-        Ok(true)
-    })
+    set_root_key("auto_update", on)
 }
 
 /// Switch developer mode on or off in the file.
 pub fn set_developer_mode(on: bool) -> Result<()> {
-    Here::edit(|doc| {
-        doc["developer_mode"] = toml_edit::value(on);
-        Ok(true)
-    })
+    set_root_key("developer_mode", on)
 }
 
 /// Switch the finished-turn notification on or off in the file.
 pub fn set_notify_turns(on: bool) -> Result<()> {
-    Here::edit(|doc| {
-        doc["notify_turns"] = toml_edit::value(on);
-        Ok(true)
-    })
+    set_root_key("notify_turns", on)
 }
 
 /// Switch downloading pasted web pictures on or off in the file.
 pub fn set_download_web_images(on: bool) -> Result<()> {
-    Here::edit(|doc| {
-        doc["download_web_images"] = toml_edit::value(on);
-        Ok(true)
-    })
+    set_root_key("download_web_images", on)
 }
 
 /// Switch the composer under a drawer's session on or off in the file.
 pub fn set_drawer_composer(on: bool) -> Result<()> {
-    Here::edit(|doc| {
-        doc["drawer_composer"] = toml_edit::value(on);
-        Ok(true)
-    })
+    set_root_key("drawer_composer", on)
 }
 
 /// Switch pasting pictures in source mode on or off in the file.
 pub fn set_paste_images_in_source(on: bool) -> Result<()> {
-    Here::edit(|doc| {
-        doc["paste_images_in_source"] = toml_edit::value(on);
-        Ok(true)
-    })
+    set_root_key("paste_images_in_source", on)
 }
 
-/// Put `agent` in the file, replacing whichever entry already launches it.
-///
-/// `supersedes` is the npm package the agent is published as, which is how an
-/// install claims the hand-written `@latest` entry that shipped as a default
-/// instead of sitting next to it. A replaced entry keeps its own `name`: the
-/// person who wrote it chose that, and only the command underneath has moved.
-/// Write down that this agent's source was agreed to.
-///
-/// Recorded before the install runs, not after: what is being agreed to is the
-/// fetch, and an install that fails is one that was still allowed to try.
+/// Write down that this agent's source was agreed to. Called before the
+/// install runs.
 pub fn trust_agent(id: &str, mark: &str) -> Result<()> {
     Here::edit(|doc| {
         let held = table(doc, "trusted_agents")?;
@@ -1560,6 +1552,11 @@ pub fn trust_agent(id: &str, mark: &str) -> Result<()> {
     })
 }
 
+/// Put `agent` in the file, replacing whichever entry already launches it.
+///
+/// `supersedes` is the npm package the agent is published as: an entry
+/// launching that package is replaced too. A replaced entry keeps its own
+/// `name`.
 pub fn put_agent(agent: &Agent, supersedes: Option<&str>) -> Result<()> {
     Here::edit(|doc| {
         // A freshly generated file serialises no agents as `agents = []`, which

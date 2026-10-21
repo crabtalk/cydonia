@@ -14,9 +14,9 @@
 //! then bold, italic, strikethrough, code, a highlight (`==text==`,
 //! [`editor::HIGHLIGHT_MARK`]) and a link.
 
-use crate::view::kit::menu;
 use crate::view::{
     component::composer,
+    kit::menu::{self, MenuHost as _},
     pane::{Tab, TabMenu},
     window::root::Cydonia,
 };
@@ -29,7 +29,7 @@ use bezel::{
     motion,
     theme::{TextStyle, Theme, Typeset},
     ui::{
-        context_menu::{ContextMenu, Place},
+        context_menu::Place,
         icons::{self, Icon},
         input::TextField,
         menu::Item,
@@ -344,7 +344,7 @@ impl Tab {
             start..from + source[from..to].trim_end().len(),
         );
         let workspace = self.workspace.read(cx);
-        let article = workspace.article_of(self.entry.as_ref(), cx)?;
+        let article = workspace.article_of(Some(&self.entry), cx)?;
         let chip = article.number.and_then(|number| {
             let project = &workspace.projects[workspace.article_at(&article.path)?.0];
             let name = reference::project_name(&project.path)?;
@@ -445,10 +445,7 @@ impl Tab {
         if !workspace.settings.features.threads() {
             return None;
         }
-        if self.entry.is_none() && self.kind != artifact::kind::Kind::Article {
-            return None;
-        }
-        Some(workspace.article_of(self.entry.as_ref(), cx)?.path.clone())
+        Some(workspace.article_of(Some(&self.entry), cx)?.path.clone())
     }
 
     // ── chrome ───────────────────────────────────────────────────
@@ -673,25 +670,17 @@ impl Tab {
                 move |this, _, window, cx| {
                     cx.stop_propagation();
                     let current = current.clone();
-                    ContextMenu::toggle(
-                        this,
-                        |this| &mut this.menu,
+                    this.toggle_menu(
                         TabMenu::Turn,
                         Place::Below,
-                        move |_, _, _| menu::chooser(Self::turn_rows(current)),
+                        move |_, _, _| Self::turn_rows(current),
                         window,
                         cx,
                     );
                 }
             }))
-            .children(self.menu.render_for(
-                &TabMenu::Turn,
-                "ribbon-turn-card",
-                |this| &mut this.menu,
-                window,
-                cx,
-            ));
-        ContextMenu::trigger(button, |this: &mut Self| &mut this.menu, TabMenu::Turn, cx)
+            .children(self.menu_here(&TabMenu::Turn, "ribbon-turn-card", window, cx));
+        self.menu_trigger(button, TabMenu::Turn, cx)
     }
 
     /// Every block the run could be turned into — the editor's own vocabulary,
@@ -713,16 +702,16 @@ impl Cydonia {
     /// Note on the focused pane that the pointer is choosing a run — see
     /// [`Tab::set_selecting`].
     pub(crate) fn set_selecting(&mut self, selecting: bool, cx: &mut Context<Self>) {
-        self.leaf()
-            .clone()
-            .update(cx, |pane, cx| pane.set_selecting(selecting, cx));
+        if let Some(pane) = self.leaf().cloned() {
+            pane.update(cx, |pane, cx| pane.set_selecting(selecting, cx));
+        }
     }
 
     /// Put the focused pane's bar back to rest — see [`Tab::rest_ribbon`].
     pub(crate) fn rest_ribbon(&mut self, cx: &mut Context<Self>) {
-        self.leaf()
-            .clone()
-            .update(cx, |pane, cx| pane.rest_ribbon(cx));
+        if let Some(pane) = self.leaf().cloned() {
+            pane.update(cx, |pane, cx| pane.rest_ribbon(cx));
+        }
     }
 }
 

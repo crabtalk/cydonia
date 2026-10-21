@@ -10,7 +10,7 @@ use crate::{
     model::workspace::Workspace,
     view::{
         component::{composer, ribbon, transcript},
-        detail::{adrift, adrift_line, agent_missing, footer},
+        detail::{adrift, agent_missing, footer},
         window::section::Section,
     },
 };
@@ -26,7 +26,7 @@ use bezel::{
         icons, popover,
         surface::Surfaced as _,
         tooltip::Tooltip,
-        widgets::{ButtonStyle, Buttons, Content, Controls, Status},
+        widgets::{ButtonStyle, Buttons, Content, Controls},
     },
 };
 use cydonia_acp::proto::PermissionOptionKind;
@@ -248,7 +248,7 @@ impl Band {
 impl Tab {
     /// A press on the pane's band: the focus comes to the pane.
     fn press(&self) -> Option<Press> {
-        let on = self.entry.clone()?;
+        let on = self.entry.clone();
         let root = self.root.clone();
         Some(Rc::new(move |window, cx| {
             root.update(cx, |root, cx| root.focus_pane(&on, window, cx))
@@ -292,50 +292,13 @@ impl Tab {
         ))
     }
 
-    /// What stands where the composer would be over a transcript there is no
-    /// longer anywhere to answer into. The strip is the click: it names where
-    /// the agent is installed, and going there is all it has to offer.
-    ///
-    /// Nothing at all where the session has said nothing — [`Self::no_agent`]
-    /// is the whole pane then, and this under it would say it twice.
-    pub(crate) fn adrift_strip(
-        &self,
-        session: Option<u64>,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        let theme = Theme::of(cx).clone();
-        let workspace = self.workspace.read(cx);
-        let chat = workspace
-            .session(session?, cx)
-            .filter(|chat| !chat.unsaid())?;
-        let message = adrift_line(&chat.entry.name, !workspace.settings.agents.is_empty());
-        Some(
-            theme
-                .warning_strip(message)
-                .id("adrift")
-                .mt(px(0.))
-                .cursor_pointer()
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.defer_window(window, cx, |root, window, cx| {
-                        root.open_settings(Section::Agents, window, cx)
-                    });
-                }))
-                .into_any_element(),
-        )
-    }
-
     /// Session `id`'s transcript, or what stands in for it where there is
     /// nothing to show yet or nowhere to send.
     pub(crate) fn conversation(&self, id: Option<u64>, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let workspace = self.workspace.read(cx);
         let Some(chat) = id.and_then(|id| workspace.session(id, cx)) else {
-            // No session, and the pane showing regardless: one was asked for
-            // with no agent to open it on — see [`Tab::asked_session`].
-            return match self.asked_session {
-                true => self.no_agent(None, false, cx),
-                false => div().flex_1().into_any_element(),
-            };
+            return div().flex_1().into_any_element();
         };
         // Nothing has been said yet, so what the session has to show for
         // itself is the directory the agent was started in.

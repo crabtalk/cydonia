@@ -90,7 +90,9 @@ fn disk_finds_articles_boards_and_sessions_without_writing() {
     store
         .create_article("# Notes\nthe \"quoted\" word\n")
         .unwrap();
-    let mut board = store.create_board("Work", "").unwrap();
+    let mut board = store
+        .create_board("Work", "", cydonia_artifact::board::View::Lanes)
+        .unwrap();
     let todo = board.add_column("Todo").id.clone();
     board.add_card(&todo, "find the \"quoted\" card".into());
     store.save_board(&mut board).unwrap();

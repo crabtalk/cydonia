@@ -13,7 +13,6 @@ use crate::{
     },
     view::{kit::link::mention, window::root},
 };
-use bezel::ui::scroll as scrollbars;
 use bezel::{
     gpui::{
         self, AnyElement, App, ClipboardEntry, Context, Entity, EventEmitter, ExternalPaths,
@@ -26,7 +25,7 @@ use bezel::{
         icons::{self, Icon},
         input::{self, Chip, FieldEvent, Shape, TextField},
         menu::{self, Cursor, Hit, Item},
-        popover,
+        popover, scroll as scrollbars,
         surface::{self, Surfaced as _},
         tooltip::Tooltip,
         widgets::Controls as _,
@@ -253,8 +252,8 @@ pub(crate) fn mention_chip(label: &str, url: &str) -> String {
     markdown::serialize(&doc).trim_end().to_owned()
 }
 
-/// A round button beside the pill, the agent mark's size: the tools button,
-/// and the chevron in its place. Its glyph and its surface are the caller's.
+/// A round button beside the pill: the agent's mark, the tools button, and
+/// the chevron in its place. Its glyph and its surface are the caller's.
 fn side_button(id: &'static str, theme: &Theme) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
@@ -1012,16 +1011,7 @@ impl Composer {
     ) -> Option<AnyElement> {
         let agent = self.agent.and_then(|ix| self.agents.get(ix))?.clone();
         let mark = px(root::composer_height() / 2.);
-        let button = div()
-            .id("composer-agent")
-            .debug_selector(|| "composer-agent".into())
-            .size(px(root::composer_height()))
-            .rounded_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .cursor_pointer()
-            .hover(|button| button.bg(theme.element_hover))
+        let button = side_button("composer-agent", theme)
             .child(match agent.icon {
                 Some(icon) => icons::icon(icon)
                     .size(mark)

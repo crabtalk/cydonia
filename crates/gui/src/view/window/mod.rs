@@ -9,3 +9,4 @@ pub mod modal;
 pub mod reach;
 pub mod root;
 pub mod section;
+pub mod strip;

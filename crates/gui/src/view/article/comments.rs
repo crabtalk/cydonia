@@ -2,7 +2,13 @@
 //! how the margin shows the comments, then every one of them.
 
 use super::{ArticleView, MENU_MAX_HEIGHT, MENU_MAX_WIDTH};
-use crate::{model::workspace::Workspace, view::kit::menu};
+use crate::{
+    model::workspace::Workspace,
+    view::{
+        kit::menu::{self, MenuHost},
+        pane::title,
+    },
+};
 use bezel::{
     gpui::{
         AnyElement, App, Context, Entity, Focusable as _, IntoElement, Render, SharedString,
@@ -22,6 +28,18 @@ pub(crate) struct CommentsButton {
     /// The article view it is the button of.
     article: WeakEntity<ArticleView>,
     menu: ContextMenu<Self>,
+}
+
+impl MenuHost for CommentsButton {
+    type Key = ();
+
+    fn menu(&self) -> &ContextMenu<Self, ()> {
+        &self.menu
+    }
+
+    fn menu_mut(&mut self) -> &mut ContextMenu<Self, ()> {
+        &mut self.menu
+    }
 }
 
 impl CommentsButton {
@@ -124,8 +142,7 @@ impl CommentsButton {
         let open: Vec<_> = comments.iter().filter(|c| !c.resolved).map(row).collect();
         let mut resolved: Vec<_> = comments.iter().filter(|c| c.resolved).map(row).collect();
         if !resolved.is_empty() {
-            let heading: menu::Act<Self> = Box::new(|_, _, _, _| {});
-            resolved.insert(0, (Item::Heading("Resolved".into()), heading));
+            resolved.insert(0, menu::heading("Resolved"));
         }
         menu::sections([vec![switch], open, resolved])
     }
@@ -169,7 +186,7 @@ impl CommentsButton {
         let trigger = menu::button(
             format!("comments-{}", path.display()),
             icons::social::MessageCircle,
-            menu::Reveal::Always,
+            menu::Reveal::Group(title::TITLE_GROUP),
             self.menu.showing(&()),
             cx,
         )
@@ -177,22 +194,15 @@ impl CommentsButton {
         .on_click(cx.listener(move |this, _, window, cx| {
             cx.stop_propagation();
             let (path, editor) = (path.clone(), editor.clone());
-            ContextMenu::toggle(
-                this,
-                |this| &mut this.menu,
+            this.toggle_menu(
                 (),
                 Place::BelowEnd,
-                move |this, _, cx| {
-                    menu::chooser(this.comments_rows(project, at, &editor, &path, cx))
-                },
+                move |this, _, cx| this.comments_rows(project, at, &editor, &path, cx),
                 window,
                 cx,
             );
         }))
         .children(card);
-        Some(
-            ContextMenu::trigger(trigger, |this: &mut Self| &mut this.menu, (), cx)
-                .into_any_element(),
-        )
+        Some(self.menu_trigger(trigger, (), cx).into_any_element())
     }
 }

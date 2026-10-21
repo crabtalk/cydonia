@@ -8,7 +8,7 @@ use crate::{
     view::search::Search,
 };
 use artifact::kind::Kind;
-use bezel::gpui::App;
+use bezel::gpui::{App, Entity};
 use std::collections::HashMap;
 
 /// One entry of a project, with what the list can be ordered by.
@@ -28,10 +28,11 @@ pub(crate) struct List<'a> {
 }
 
 impl<'a> List<'a> {
-    pub(crate) fn new(workspace: &'a Workspace, search: &'a Search, cx: &'a App) -> Self {
+    /// The list `workspace` holds, under the search `search` has applied.
+    pub(crate) fn new(workspace: &Entity<Workspace>, search: &Entity<Search>, cx: &'a App) -> Self {
         Self {
-            workspace,
-            search,
+            workspace: workspace.read(cx),
+            search: search.read(cx),
             cx,
         }
     }
@@ -153,12 +154,13 @@ impl<'a> List<'a> {
         apps.into_iter().map(|(_, row)| row).collect()
     }
 
-    /// Drop the rows an open space holds: they are listed under it instead,
-    /// and an entry is in one space at a time — see [`Workspace::arrange`] —
-    /// so this is a tree and not a second copy of the list.
+    /// Drop the rows a space holds while the spaces are listed: they are
+    /// listed under it instead, and an entry is in one space at a time — see
+    /// [`Workspace::arrange`] — so this is a tree and not a second copy of the
+    /// list.
     fn ungrouped(&self, rows: Vec<Row>) -> Vec<Row> {
         let workspace = self.workspace;
-        if workspace.spaces.is_empty() {
+        if !self.lists_spaces() {
             return rows;
         }
         rows.into_iter()
@@ -207,6 +209,13 @@ impl<'a> List<'a> {
             .filter(|member| workspace.space_holding(member) == Some(ix))
             .filter_map(|member| Row::of_member(member, workspace, self.cx))
             .collect()
+    }
+
+    /// Whether the spaces have a section of their own: switched on, and
+    /// there being one.
+    fn lists_spaces(&self) -> bool {
+        let workspace = self.workspace;
+        workspace.settings.appearance.spaces_in_sidebar && !workspace.spaces.is_empty()
     }
 
     /// Whether `row` is an entry its project's label filter leaves out.
@@ -291,7 +300,7 @@ impl<'a> List<'a> {
         // to open one. After the projects, the spaces, because a space is not
         // inside one.
         let mut sections = vec![(Heading::Projects, projects.collect::<Vec<_>>())];
-        if !workspace.spaces.is_empty() {
+        if self.lists_spaces() {
             sections.push((Heading::Spaces, spaces.collect()));
         }
         let apps = self.apps();

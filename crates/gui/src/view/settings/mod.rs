@@ -13,19 +13,19 @@ use crate::view::kit::dialog::{answers, dialog};
 #[cfg(feature = "desktop")]
 use crate::{agent::Listing, model::update, view::window::root::traffic_lights};
 use crate::{model::workspace::Workspace, view::window::root::HEADER_HEIGHT};
-use bezel::ui::scroll as scrollbars;
 #[cfg(not(target_os = "linux"))]
 use bezel::{gpui::Focusable as _, ui::popover};
 use bezel::{
     gpui::{
-        AnyElement, App, Context, ElementId, Entity, Render, SharedString, Window, div, prelude::*,
-        px,
+        AnyElement, App, Context, Div, ElementId, Entity, Render, SharedString, Window, div,
+        prelude::*, px,
     },
     motion::{Fade, Painter},
     theme::{TextStyle, Theme, Typeset},
     ui::{
         icons,
         input::{Shape, TextField},
+        scroll as scrollbars,
         widgets::{Content, Controls, Layout, Scaffolding},
     },
 };
@@ -287,8 +287,16 @@ pub struct SettingsWindow {
 /// would be two views of one preference. One open over another workspace
 /// than `workspace`, left by a workspace window that has since closed, is
 /// drawn again over `workspace`.
+///
+/// Deferred: an action dispatched in the settings window runs while gpui holds
+/// that window, and a held window reads as closed.
 #[cfg(feature = "desktop")]
 pub fn open(workspace: Entity<Workspace>, section: Section, cx: &mut App) {
+    cx.defer(move |cx| show_or_open(workspace, section, cx));
+}
+
+#[cfg(feature = "desktop")]
+fn show_or_open(workspace: Entity<Workspace>, section: Section, cx: &mut App) {
     let open = cx
         .windows()
         .into_iter()
@@ -340,7 +348,7 @@ pub fn open(workspace: Entity<Workspace>, section: Section, cx: &mut App) {
             // onto every window on each appearance switch, which is what keeps
             // the main window's frost alive and would frost this one with it.
             appearance::keep_background(window, cx);
-            crate::view::window::lights::fit(window, cx);
+            crate::view::window::lights::fit(window, HEADER_HEIGHT, cx);
             cx.new(|cx| SettingsWindow::new(workspace, section, cx))
         },
     )
@@ -563,6 +571,16 @@ impl SettingsWindow {
     }
 }
 
+/// A quiet line where a row would be.
+pub(super) fn note(theme: &Theme, copy: &'static str, first: bool) -> Div {
+    theme.card_row(first).child(
+        div()
+            .text_style(TextStyle::Callout)
+            .text_color(theme.text_muted)
+            .child(copy),
+    )
+}
+
 /// A row's title over a line of explanation, filling the row's free width.
 /// `truncate` holds the line to one.
 pub(super) fn labelled(
@@ -671,6 +689,7 @@ impl SettingsWindow {
         Some(dialog(
             "field-dialog",
             &theme,
+            false,
             window,
             [
                 popover::dialog_title(&theme, field.title()).into_any_element(),

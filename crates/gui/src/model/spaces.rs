@@ -37,7 +37,7 @@ pub trait Store {
 
     fn read(id: &str) -> Option<Space>;
 
-    /// Write one back, and take the time it was written at — what the sidebar
+    /// Write one back, and take the time it was written at — what [`Self::all`]
     /// orders on.
     fn save(space: &mut Space);
 
@@ -50,15 +50,12 @@ pub trait Store {
     fn prepare() -> bool;
 
     /// Mint one, named clear of those already here.
-    fn create(name: &str, over: Member) -> Option<Space> {
+    fn create(over: Member) -> Option<Space> {
         if !Self::prepare() {
             return None;
         }
         let taken: HashSet<String> = Self::all().into_iter().map(|space| space.name).collect();
-        let name = match name.is_empty() {
-            false => name.to_owned(),
-            true => artifact::space::next_name(&taken),
-        };
+        let name = artifact::space::next_name(&taken);
         // This millisecond, or the first after it that is not taken — two made
         // inside one millisecond is the only way that happens.
         let id = (stamp::now()..)
@@ -98,15 +95,7 @@ impl Store for Disk {
             .flatten()
             .map(|entry| entry.path())
             .filter(|path| path.extension().is_some_and(|ext| ext == "toml"))
-            .filter_map(|path| {
-                let body = std::fs::read_to_string(&path).ok()?;
-                let mut space: Space = toml::from_str(&body).ok()?;
-                space.touched = stamp::of(&path);
-                if space.id.is_empty() {
-                    space.id = path.file_stem()?.to_str()?.to_owned();
-                }
-                Some(space)
-            })
+            .filter_map(|path| Self::read(path.file_stem()?.to_str()?))
             .collect();
         spaces.sort_by_key(|space| std::cmp::Reverse(space.touched));
         spaces

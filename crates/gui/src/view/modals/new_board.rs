@@ -6,6 +6,7 @@
 //! moment the key is free is the moment before there are any, and that is this
 //! one.
 
+use crate::model::workspace::Opening;
 use crate::{
     model::workspace::Workspace,
     view::{
@@ -17,7 +18,6 @@ use crate::{
     },
 };
 use artifact::board;
-use artifact::space::Member;
 use bezel::{
     gpui::{
         self, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, KeyBinding,
@@ -45,8 +45,6 @@ pub(crate) struct NewBoard {
     /// Which project it lands in: the one under whose heading it was asked
     /// for, not whichever is active.
     project: usize,
-    /// The pane whose `+` asked for it: the board opens there as a tab.
-    into: Option<Member>,
     name: Entity<TextField>,
     key: Entity<TextField>,
     /// The key as last derived from the name. While the field still holds it
@@ -69,26 +67,12 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.ask_new_board_into(project, None, window, cx);
-    }
-
-    /// [`Self::ask_new_board`], opening the board as a tab of `into`.
-    pub(crate) fn ask_new_board_into(
-        &mut self,
-        project: usize,
-        into: Option<Member>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
         self.commit(cx);
-        // One editor at a time, as [`Cydonia::open_info`] keeps it.
         self.close_menu(cx);
-        self.renaming = None;
-        self.info = None;
         let workspace = self.workspace.clone();
         let root = cx.entity().downgrade();
         self.toggle_modal(window, cx, |_, cx| {
-            NewBoard::new(project, into, workspace, root, cx)
+            NewBoard::new(project, workspace, root, cx)
         });
     }
 }
@@ -96,7 +80,6 @@ impl Cydonia {
 impl NewBoard {
     fn new(
         project: usize,
-        into: Option<Member>,
         workspace: Entity<Workspace>,
         root: WeakEntity<Cydonia>,
         cx: &mut Context<Self>,
@@ -119,7 +102,6 @@ impl NewBoard {
         });
         Self {
             project,
-            into,
             name,
             key,
             derived,
@@ -160,11 +142,8 @@ impl NewBoard {
         });
         match made {
             Ok(ix) => {
-                let member = self.workspace.read(cx).board_member(project, ix);
-                let into = self.into.clone();
-                let _ = self.root.update(cx, |root, cx| match into.zip(member) {
-                    Some((pane, member)) => root.add_tab(&pane, member, window, cx),
-                    None => root.open_board(project, ix, window, cx),
+                let _ = self.root.update(cx, |root, cx| {
+                    root.open_board(project, ix, Opening::Kept, window, cx)
                 });
                 cx.emit(DismissEvent);
             }
@@ -191,6 +170,7 @@ impl Render for NewBoard {
         let dialog = dialog(
             "new-board-dialog",
             &theme,
+            false,
             window,
             [
                 popover::dialog_title(&theme, "New board").into_any_element(),

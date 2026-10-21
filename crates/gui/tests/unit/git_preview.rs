@@ -2,7 +2,7 @@ use super::*;
 
 fn preview(patch: &str, old: &str, new: &str) -> Preview {
     crate::model::language::Here::paintable();
-    syntax_std::install();
+    syntax::grammars::install();
     Preview::build(
         Path::new("file.rs"),
         patch.into(),

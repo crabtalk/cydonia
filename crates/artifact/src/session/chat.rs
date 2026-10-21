@@ -54,6 +54,17 @@ pub enum ChatItem {
     },
 }
 
+impl ChatItem {
+    /// The text a reader can select and copy: what was asked, answered or
+    /// noticed.
+    pub fn text(&self) -> Option<&str> {
+        match self {
+            Self::User(text) | Self::Agent(text) | Self::Notice { text, .. } => Some(text),
+            _ => None,
+        }
+    }
+}
+
 /// Whether nothing has been said in a transcript yet.
 ///
 /// Not the same as holding no items. An agent writes to stderr as it starts —

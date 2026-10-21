@@ -131,6 +131,7 @@ impl Render for InstallApp {
         let dialog = dialog(
             "install-app-dialog",
             &theme,
+            false,
             window,
             [
                 popover::dialog_title(&theme, "Install app").into_any_element(),

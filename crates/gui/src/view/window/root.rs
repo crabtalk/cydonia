@@ -1,10 +1,6 @@
 //! Root view: the window's grid, the state the chrome owns, and the frame
 //! the sidebar and the chat column are hung in.
 
-use crate::view::kit::menu::Menu;
-use crate::view::kit::rename::{NameEvent, NameField};
-use crate::view::window::chrome;
-use crate::view::window::lights::{self, Lights};
 #[cfg(feature = "desktop")]
 use crate::view::{component::terminal::TerminalPanel, settings};
 use crate::{
@@ -12,26 +8,28 @@ use crate::{
         session::ChatSession,
         settings::Settings,
         state::State,
-        workspace::{Reloaded, Showing, Workspace},
+        workspace::{Opening, Reloaded, Showing, Slot, Workspace},
     },
     view::{
         board,
-        board::info,
         component::{
             composer::{Composer, ComposerEvent},
             meter,
         },
-        kit::watch::Watch,
+        kit::{menu::Menu, watch::Watch},
         pane::{Pane, Tab},
-        sidebar::{Dragged, Renaming, Row, Sidebar},
-        window::menubar::CloseWindow,
-        window::modal::ModalLayer,
-        window::section::Section,
+        sidebar::{Dragged, Row, Sidebar},
+        window::{
+            chrome,
+            lights::{self, Lights},
+            menubar::CloseWindow,
+            modal::ModalLayer,
+            section::Section,
+        },
     },
 };
 use anyhow::Result;
-use artifact::kind::Kind;
-use artifact::space::Member;
+use artifact::{kind::Kind, space::Member};
 use bezel::{
     gpui::{
         self, AnyElement, App, Axis, Bounds, Context, Div, DragMoveEvent, Empty, Entity,
@@ -50,7 +48,7 @@ use bezel::{
         widgets::{ButtonStyle, Buttons, Content, SplitDrag},
     },
 };
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
 pub(crate) const SIDEBAR_WIDTH: f32 = 200.;
 
@@ -61,9 +59,16 @@ const SIDEBAR_WIDTH_MAX: f32 = 420.;
 /// The sidebar's gutter: a row's outer margin, and the padding inside it.
 pub(crate) const SIDEBAR_GUTTER: f32 = 8.;
 
-/// The header strip's height, which the traffic lights centre in: macOS 26's
-/// 14px lights with [`TRAFFIC_LIGHT_INSET`] above and below them.
+/// The window's top row — the strip of tabs and the sidebar's band — which
+/// the traffic lights centre in down its height. At this height they stand
+/// where AppKit lays them out itself in a transparent, full-size-content
+/// titlebar on macOS 26. AppKit puts them back there through a fullscreen
+/// transition before gpui moves them, so anywhere else they jump.
 pub(crate) const HEADER_HEIGHT: f32 = 32.;
+
+/// A pane's title row and the right panel's tab row, away from the window's
+/// top.
+pub(crate) const CARD_ROW_HEIGHT: f32 = 32.;
 
 /// The room the pill keeps above and below its content.
 pub(crate) const COMPOSER_INSET: f32 = 4.;
@@ -77,9 +82,11 @@ pub(crate) const COMPOSER_COLUMN: f32 = 720.;
 
 pub(crate) const COMPOSER_MARGIN: f32 = 24.;
 
-/// How far the close button stands in from the window's left edge: AppKit's
-/// own place for it in a transparent, full-size-content titlebar on macOS 26.
-pub(crate) const TRAFFIC_LIGHT_INSET: f32 = 9.;
+/// How far the close button stands in from the window's left edge, as far as
+/// the lights stand down from its top: concentric with the window's corner,
+/// as macOS 26 places them.
+pub(crate) const TRAFFIC_LIGHT_INSET: f32 =
+    (HEADER_HEIGHT - crate::view::window::lights::LIGHT_SIZE) / 2.;
 
 /// The gap the header keeps at the window's edges.
 pub(crate) const HEADER_INSET: f32 = 16.;
@@ -97,6 +104,10 @@ const ICON_GLYPH: f32 = 14.;
 
 /// The trailing padding that puts an icon button's glyph at [`EDGE`].
 pub(crate) const BUTTON_EDGE: f32 = EDGE - BUTTON_SLACK;
+
+/// The padding at the ends of a card's own row — a pane's title row, the
+/// right panel's tabs — before the icon button there.
+pub(crate) const CARD_EDGE: f32 = 4.;
 
 /// The gap between the green light and the glyph of the first control past
 /// it.
@@ -145,12 +156,12 @@ pub struct NewSessionWith {
     pub agent: String,
 }
 
-/// Open the space at `index` in the sidebar's order — `cmd-1` through
-/// `cmd-8` — or the last one for `None`, `cmd-9`. An index past the last space
-/// does nothing.
+/// Bring the tab at `index` of the window's strip forward — `cmd-1` through
+/// `cmd-8` — or its last for `None`, `cmd-9`. An index past the last tab does
+/// nothing.
 #[derive(Clone, Debug, PartialEq, gpui::Action)]
 #[action(namespace = cydonia, no_json)]
-pub struct SwitchSpace {
+pub struct SwitchTab {
     pub index: Option<usize>,
 }
 
@@ -192,9 +203,8 @@ pub(crate) fn traffic_lights() -> Point<Pixels> {
 }
 
 /// The band across the top of a column, and the only place its height and its
-/// inset are written: the header, the sidebar's, a pane's in a space, and the
-/// right panel's are all this row. A control in one stands where the same
-/// control stands in the next.
+/// inset are written: the window's band over the library and the launch view,
+/// the strip, the sidebar's and the right panel's are all this row.
 ///
 /// The leading inset is the caller's only where the traffic lights take it —
 /// see [`toolbar_inset`].
@@ -209,13 +219,14 @@ pub(crate) fn band() -> Div {
         .pr(px(BUTTON_EDGE))
 }
 
-/// Where the toolbar's own controls start at the window's left edge: the
-/// button whose glyph stands [`LIGHTS_GAP`] past the green light, or in full
-/// screen, where there are no lights, in line with the sidebar rows' icons.
-pub(crate) fn toolbar_inset(window: &Window, cx: &App) -> f32 {
+/// Where the toolbar's own controls start at the window's left edge, under a
+/// top band `band` tall: the button whose glyph stands [`LIGHTS_GAP`] past the
+/// green light, or in full screen, where there are no lights, in line with
+/// the sidebar rows' icons.
+pub(crate) fn toolbar_inset(window: &Window, band: f32, cx: &App) -> f32 {
     match (window.is_fullscreen(), cfg!(target_os = "macos")) {
         (true, _) => 2. * SIDEBAR_GUTTER - BUTTON_SLACK,
-        (false, true) => Lights::of(cx).end() + LIGHTS_GAP - BUTTON_SLACK,
+        (false, true) => Lights::of(cx).end(band) + LIGHTS_GAP - BUTTON_SLACK,
         (false, false) => HEADER_INSET,
     }
 }
@@ -224,48 +235,47 @@ pub(crate) fn toolbar_inset(window: &Window, cx: &App) -> f32 {
 /// answers to are bound from [`crate::view::keymap`], which is where they can
 /// be moved.
 pub fn bindings() -> Vec<KeyBinding> {
-    let spaces = (1..=9).map(|n| {
+    let tabs = (1..=9).map(|n| {
         KeyBinding::new(
             &format!("secondary-{n}"),
-            SwitchSpace {
+            SwitchTab {
                 index: (n < 9).then(|| n - 1),
             },
             Some("Cydonia"),
         )
     });
-    spaces
-        .chain([
-            // What a browser binds its tabs to, and the only chord these answer to:
-            // the menu bar cannot draw it — gpui has no macOS equivalent for `tab`,
-            // so AppKit is handed the word where the API takes one character and
-            // shows ⌃T — and a chord it *can* draw is claimed by AppKit before the
-            // window is ever offered it.
-            //
-            // Scoped to the root rather than left contextless, so that a surface
-            // with a row of its own can take the chord for its own row: a binding
-            // with no predicate ranks at the depth of the whole stack, which puts
-            // it *above* every scoped one rather than below — see
-            // `Keymap::binding_enabled`. The `cmd-c` fallback below is the same
-            // trick for the same reason.
-            KeyBinding::new("ctrl-tab", NextEntry, Some("Cydonia")),
-            KeyBinding::new("ctrl-shift-tab", PrevEntry, Some("Cydonia")),
-            // The panes of a space, on the chords beside the ones that step
-            // through entries.
-            KeyBinding::new("ctrl-alt-tab", NextPane, Some("Cydonia")),
-            KeyBinding::new("ctrl-alt-shift-tab", PrevPane, Some("Cydonia")),
-            KeyBinding::new("ctrl-alt-w", ClosePane, Some("Cydonia")),
-            KeyBinding::new("ctrl-alt-z", ZoomPane, Some("Cydonia")),
-            // Scope the fallback to the root so focused text surfaces take priority.
-            KeyBinding::new(
-                "secondary-c",
-                CopySelection,
-                Some(crate::view::keymap::platform(
-                    "Cydonia",
-                    "Cydonia && !CydoniaTerminal",
-                )),
-            ),
-        ])
-        .collect()
+    tabs.chain([
+        // What a browser binds its tabs to, and the only chord these answer to:
+        // the menu bar cannot draw it — gpui has no macOS equivalent for `tab`,
+        // so AppKit is handed the word where the API takes one character and
+        // shows ⌃T — and a chord it *can* draw is claimed by AppKit before the
+        // window is ever offered it.
+        //
+        // Scoped to the root rather than left contextless, so that a surface
+        // with a row of its own can take the chord for its own row: a binding
+        // with no predicate ranks at the depth of the whole stack, which puts
+        // it *above* every scoped one rather than below — see
+        // `Keymap::binding_enabled`. The `cmd-c` fallback below is the same
+        // trick for the same reason.
+        KeyBinding::new("ctrl-tab", NextEntry, Some("Cydonia")),
+        KeyBinding::new("ctrl-shift-tab", PrevEntry, Some("Cydonia")),
+        // The panes of a space, on the chords beside the ones that step
+        // through entries.
+        KeyBinding::new("ctrl-alt-tab", NextPane, Some("Cydonia")),
+        KeyBinding::new("ctrl-alt-shift-tab", PrevPane, Some("Cydonia")),
+        KeyBinding::new("ctrl-alt-w", ClosePane, Some("Cydonia")),
+        KeyBinding::new("ctrl-alt-z", ZoomPane, Some("Cydonia")),
+        // Scope the fallback to the root so focused text surfaces take priority.
+        KeyBinding::new(
+            "secondary-c",
+            CopySelection,
+            Some(crate::view::keymap::platform(
+                "Cydonia",
+                "Cydonia && !CydoniaTerminal",
+            )),
+        ),
+    ])
+    .collect()
 }
 
 impl Cydonia {
@@ -328,8 +338,8 @@ pub fn open(settings: Settings, state: State, cx: &mut App) -> Result<WindowHand
     cx.open_window(
         WindowOptions {
             window_bounds: Some(bounds),
-            // No strip of its own: the traffic lights sit in the nav, so the
-            // window owes no titlebar above it.
+            // No titlebar of its own: the traffic lights sit in the window's
+            // top row.
             titlebar: Some(TitlebarOptions {
                 title: Some("Cydonia".into()),
                 appears_transparent: true,
@@ -351,7 +361,7 @@ pub fn open(settings: Settings, state: State, cx: &mut App) -> Result<WindowHand
         },
         |window, cx| {
             appearance::observe_window(window, cx).detach();
-            lights::fit(window, cx);
+            lights::fit(window, HEADER_HEIGHT, cx);
             cx.new(|cx| {
                 let mut root = Cydonia::new(settings, state, window, cx);
                 root.restore_panel_layout();
@@ -408,7 +418,9 @@ pub fn on_notification(cx: &mut App) {
             let Some(window) = window.downcast::<Cydonia>() else {
                 continue;
             };
-            let _ = window.update(cx, |root, window, cx| root.select_session(id, window, cx));
+            let _ = window.update(cx, |root, window, cx| {
+                root.select_session(id, Opening::Preview, window, cx)
+            });
         }
     });
 }
@@ -430,14 +442,14 @@ fn stepped(at: Option<usize>, len: usize, step: isize) -> Option<usize> {
 /// [`Tab`]'s.
 pub struct Cydonia {
     pub(crate) workspace: Entity<Workspace>,
-    /// The panes on screen, and which of them has the focus.
-    ///
-    /// One unless a space is open — see [`Tab`]. The order is the order the
-    /// arrangement lays them out, so stepping through them is stepping across
-    /// the window.
+    /// A tab for every entry the open space holds and every entry of the
+    /// window's strip, and which of them has the focus. Empty where no tab is
+    /// open.
     pub(crate) leaves: Vec<Entity<Tab>>,
-    /// The panes of the open space, each holding its tabs — see [`Pane`].
+    /// The panes of what the window lays out — see [`Pane`].
     pub(crate) panes: Vec<Entity<Pane>>,
+    /// The window's strip of tabs — see [`crate::view::window::strip`].
+    pub(crate) strip: Entity<crate::view::window::strip::Strip>,
     /// Every session, observed — see [`Self::watch_sessions`].
     session_watches: Watch,
     /// The projects sidebar, drawn under the band at the top of its column.
@@ -511,9 +523,8 @@ pub struct Cydonia {
         std::path::PathBuf,
         Entity<crate::view::article::thread::ThreadView>,
     >,
-    /// The pane the last press came down in: `None` for the one a window with
-    /// no space open shows. Where a link opens — see
-    /// [`Cydonia::open_reference`].
+    /// The tab the last press came down in: `None` for the library. Where a
+    /// link opens — see [`Cydonia::open_reference`].
     pub(crate) pressed_pane: Option<Member>,
     /// The modal over the window, while one is up.
     pub(crate) modals: Entity<ModalLayer>,
@@ -525,22 +536,17 @@ pub struct Cydonia {
     pub(crate) board_sort: drag::Domain<board::BoardRegion, board::BoardItem>,
     /// The tabs that have been brought to the front, most recent last, across
     /// every pane. Read when a pane's last tab closes with the focus on it —
-    /// see [`Cydonia::close_pane`]. Runtime only, as [`Pane`]'s own are.
+    /// see [`Cydonia::close_pane`]. Runtime only.
     pub(crate) tab_history: Vec<Member>,
+    /// A zoom on its way — see [`Cydonia::toggle_zoom`].
+    pub(crate) zoom_glide: Option<crate::view::pane::arrangement::ZoomGlide>,
+    pub(crate) pane_places: Rc<RefCell<crate::view::pane::arrangement::Places>>,
     /// The library, while it stands over the panes — see
     /// [`crate::view::library`].
     pub(crate) library: Option<Entity<crate::view::library::Library>>,
-    /// The board identity panel, while it is open — see [`header::BoardInfo`].
-    pub(crate) info: Option<info::BoardInfo>,
-    /// Whether the press now being handled landed on the name of the board
-    /// whose panel is open — read by [`Cydonia::toggle_info`] and nothing else.
-    pub(crate) info_pressed: bool,
     /// The menu that is up, of every menu the window's screens open — see
     /// [`crate::view::kit::menu`].
     pub(crate) menu: ContextMenu<Cydonia, Menu>,
-    /// What the band's name field is attached to, and the field itself.
-    pub(crate) renaming: Option<Renaming>,
-    pub(crate) name_field: Entity<NameField>,
     /// The sidebar's search across projects — see [`crate::view::search`].
     pub(crate) search: Entity<crate::view::search::Search>,
     meter: Entity<Stats>,
@@ -548,17 +554,25 @@ pub struct Cydonia {
     /// Where the focus rests when no field holds it — a board, a table and a
     /// transcript have none — so the bindings below always have a path here.
     pub(crate) focus: FocusHandle,
+    /// The top band the lights were last centred down — see [`lights::fit`].
+    lights_band: f32,
+    /// An entry of the stack ⌃⇥ steps while the strip shows its tabs: one
+    /// picked from its pane's deck. Taken off when another tab of the strip
+    /// comes forward, or an entry moves out to a tab of its own.
+    pub(crate) stack_steps: Option<Member>,
 }
 
 impl Cydonia {
-    /// The pane with the focus — what a command without a pane of its own acts
-    /// on, and what the sidebar lights.
-    ///
-    /// Never empty: a window always draws at least one pane, and closing the
-    /// last one is closing the space, not the pane.
-    pub(crate) fn leaf(&self) -> &Entity<Tab> {
+    /// The tab with the focus — what a command without a tab of its own acts
+    /// on, and what the sidebar lights. Nothing where no tab is open.
+    pub(crate) fn leaf(&self) -> Option<&Entity<Tab>> {
         let at = self.focused.min(self.leaves.len().saturating_sub(1));
-        &self.leaves[at]
+        self.leaves.get(at)
+    }
+
+    /// The entry the focused tab is on.
+    pub(crate) fn focused_entry(&self, cx: &App) -> Option<Member> {
+        Some(self.leaf()?.read(cx).entry.clone())
     }
 
     /// What the model saying something changed asks of the window: the applied
@@ -566,29 +580,29 @@ impl Cydonia {
     fn model_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.watch_sessions(window, cx);
         self.search.update(cx, crate::view::search::Search::refresh);
-        let previous = self.leaf().read(cx).composer.read(cx).session();
+        let session = |this: &Self, cx: &App| {
+            this.leaf()
+                .and_then(|leaf| leaf.read(cx).composer.read(cx).session())
+        };
+        let previous = session(self, cx);
         self.sync_composer(cx);
-        let current = self.leaf().read(cx).composer.read(cx).session();
+        let current = session(self, cx);
         // An article's composer takes the focus only from a press into it.
         if current.is_some()
             && current != previous
-            && self.leaf().read(cx).thread_article(cx).is_none()
+            && self
+                .leaf()
+                .is_some_and(|leaf| leaf.read(cx).thread_article(cx).is_none())
+            && let Some(focus) = self.composer_focus_handle(cx)
         {
-            window.focus(&self.composer_focus_handle(cx), cx);
+            window.focus(&focus, cx);
         }
     }
 
     /// Observe every session the workspace holds: the composers follow each
     /// one's own change.
     fn watch_sessions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let chats: Vec<Entity<ChatSession>> = self
-            .workspace
-            .read(cx)
-            .projects
-            .iter()
-            .flat_map(|project| &project.sessions)
-            .map(|held| held.chat.clone())
-            .collect();
+        let chats = self.workspace.read(cx).chat_entities();
         let mut watches = std::mem::take(&mut self.session_watches);
         watches.set_in(&chats, window, cx, |this, _, window, cx| {
             this.model_changed(window, cx)
@@ -596,8 +610,8 @@ impl Cydonia {
         self.session_watches = watches;
     }
 
-    /// The sidebar's column: the band the window draws at its top — the
-    /// lights, the fold with back and forward, the grip — over the sidebar.
+    /// The sidebar's column: the band at its top, where the window's corner
+    /// controls stand and which the window is dragged by, over the sidebar.
     fn sidebar_column(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::of(cx).clone();
         let floating = self.workspace.read(cx).settings.appearance.floating;
@@ -610,21 +624,8 @@ impl Cydonia {
             .when(!floating, |column| column.bg(theme.sidebar_bg()))
             .flex()
             .flex_col()
-            // The fold just past the lights, where the pane header puts it
-            // with the sidebar folded: it keeps its place across the toggle.
             .child(
-                band()
-                    .pl(px(toolbar_inset(window, cx)))
-                    .when(
-                        chrome::has(bezel::ui::titlebar::CaptionSide::Left, window, cx),
-                        |band| band.pl_0(),
-                    )
-                    .children(chrome::caption(
-                        bezel::ui::titlebar::CaptionSide::Left,
-                        window,
-                        cx,
-                    ))
-                    .child(self.fold_controls(cx))
+                chrome::top_band(self.workspace.read(cx).settings.appearance.global_tabs())
                     .child(chrome::grip("sidebar-grip", &self.drag, window)),
             )
             .child(
@@ -646,9 +647,18 @@ impl Cydonia {
             .update(cx, |sidebar, cx| sidebar.set_lit(lit, cx));
     }
 
+    /// Tell the strip where it stands against the window's chrome.
+    fn sync_strip(&mut self, cx: &mut Context<Self>) {
+        let sidebar_open = self.sidebar_open;
+        self.strip
+            .update(cx, |strip, cx| strip.seat(sidebar_open, cx));
+    }
+
     /// Tell each pane whether it is the one with the focus, where that moved.
     pub(crate) fn sync_focus(&mut self, cx: &mut Context<Self>) {
-        let focused = self.leaf().entity_id();
+        let Some(focused) = self.leaf().map(|leaf| leaf.entity_id()) else {
+            return;
+        };
         for pane in self.leaves.clone() {
             let on = pane.entity_id() == focused;
             if pane.read(cx).focused != on {
@@ -660,13 +670,8 @@ impl Cydonia {
         }
     }
 
-    /// A pane on `entry`, its composer wired to this window.
-    fn new_pane(
-        &self,
-        entry: Option<Member>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Entity<Tab> {
+    /// A tab on `entry`, its composer wired to this window.
+    fn new_pane(&self, entry: Member, window: &mut Window, cx: &mut Context<Self>) -> Entity<Tab> {
         let composer = cx.new(Composer::new);
         let (workspace, root) = (self.workspace.clone(), cx.entity().downgrade());
         let (docs, sort) = (self.card_docs.clone(), self.board_sort.clone());
@@ -710,9 +715,7 @@ impl Cydonia {
                 // anybody is looking. Somebody typing has the focus already:
                 // the press that put the caret in the field went through the
                 // pane, which is what moves it.
-                if let Some(on) = on.clone()
-                    && !matches!(event, ComposerEvent::Draft(..))
-                {
+                if !matches!(event, ComposerEvent::Draft(..)) {
                     this.focus_pane(&on, window, cx);
                 }
                 if let Some(path) = pane.read(cx).thread_article(cx) {
@@ -725,45 +728,29 @@ impl Cydonia {
         .detach();
     }
 
-    /// Reconcile the panes on screen with the open space.
-    ///
-    /// A pane already on an entry is kept, so switching spaces does not throw
-    /// away a composer with a draft in it. Panes are ordered as the
-    /// arrangement lays them out — stepping through them steps across the
-    /// window.
     /// Hand the tools what is on screen — see [`mcp::rail::shown`].
     fn publish_shown(&self, cx: &App) {
         // A session is the chat the tools are talking in, not a thing shown.
         let kind = |kind: Kind| (kind != Kind::Session).then_some(kind);
-        let shown = if self.leaves.iter().any(|leaf| leaf.read(cx).entry.is_some()) {
-            self.leaves
-                .iter()
-                .enumerate()
-                .filter_map(|(ix, leaf)| {
-                    let entry = leaf.read(cx).entry.as_ref()?.entry()?;
-                    Some(mcp::rail::Shown {
-                        project: entry.project.clone(),
-                        kind: kind(entry.kind)?,
-                        id: entry.id.clone(),
-                        focused: ix == self.focused,
-                    })
+        let fronts = self
+            .arrangement(cx)
+            .map(|space| space.tree.fronts())
+            .unwrap_or_default();
+        let shown: Vec<mcp::rail::Shown> = self
+            .leaves
+            .iter()
+            .enumerate()
+            .filter(|(_, leaf)| fronts.contains(&leaf.read(cx).entry))
+            .filter_map(|(ix, leaf)| {
+                let entry = leaf.read(cx).entry.entry()?;
+                Some(mcp::rail::Shown {
+                    project: entry.project.clone(),
+                    kind: kind(entry.kind)?,
+                    id: entry.id.clone(),
+                    focused: ix == self.focused,
                 })
-                .collect::<Vec<_>>()
-        } else {
-            let workspace = self.workspace.read(cx);
-            workspace
-                .landed()
-                .and_then(|(project, entry)| {
-                    Some(mcp::rail::Shown {
-                        project: project.to_path_buf(),
-                        kind: kind(entry.kind)?,
-                        id: entry.id.clone(),
-                        focused: true,
-                    })
-                })
-                .into_iter()
-                .collect()
-        };
+            })
+            .collect();
         let lone = shown.len() == 1;
         let shown = shown
             .into_iter()
@@ -776,35 +763,32 @@ impl Cydonia {
         mcp::rail::set_shown(shown);
     }
 
+    /// Reconcile the tabs with what the window holds: one for every entry
+    /// the arrangement in front holds, behind a pane's front included, in its
+    /// order, then one for every other entry of the strip.
+    ///
+    /// A tab already on an entry is kept, so switching tabs, spaces or a
+    /// stack's front does not throw away a composer with a draft in it.
     pub(crate) fn sync_leaves(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let members = self.arrangement(cx).map(|space| space.entries());
-        let Some(members) = members else {
-            // No space: one pane, and the leaf kept is the focused one
-            // rather than the first — leaving an arrangement leaves you in
-            // the pane you were standing in, composer and draft included.
-            //
-            // [`Self::leaf_mut`] indexes by `self.focused`, so anything
-            // written through it between a space closing and this running
-            // lands on a leaf that is about to be dropped.
-            let front = self.focused.min(self.leaves.len().saturating_sub(1));
-            if front > 0 {
-                self.leaves.swap(0, front);
+        let mut members = self
+            .arrangement(cx)
+            .map(|space| space.entries())
+            .unwrap_or_default();
+        for member in self.workspace.read(cx).tab_strip() {
+            if !members.contains(&member) {
+                members.push(member);
             }
-            self.leaves.truncate(1);
-            self.focused = 0;
-            self.leaf().update(cx, |pane, _| pane.entry = None);
-            return;
-        };
-        let focused = self.leaf().read(cx).entry.clone();
+        }
+        let focused = self.focused_entry(cx);
         let mut kept: Vec<Entity<Tab>> = Vec::with_capacity(members.len());
         for entry in &members {
             match self
                 .leaves
                 .iter()
-                .position(|leaf| leaf.read(cx).entry.as_ref() == Some(entry))
+                .position(|leaf| leaf.read(cx).entry == *entry)
             {
                 Some(at) => kept.push(self.leaves.remove(at)),
-                None => kept.push(self.new_pane(Some(entry.clone()), window, cx)),
+                None => kept.push(self.new_pane(entry.clone(), window, cx)),
             }
         }
         self.leaves = kept;
@@ -812,7 +796,7 @@ impl Cydonia {
             .and_then(|on| {
                 self.leaves
                     .iter()
-                    .position(|leaf| leaf.read(cx).entry.as_ref() == Some(&on))
+                    .position(|leaf| leaf.read(cx).entry == on)
             })
             .unwrap_or(0);
         self.sync_focus(cx);
@@ -825,46 +809,62 @@ impl Cydonia {
     /// is in one space at a time — see [`Workspace::arrange`] — so it is
     /// listed either under a space or under its project, never both, and that
     /// one place says what opening it means. Under a space, the arrangement is
-    /// opened and the pane focused; under a project, the window shows it alone.
-    /// Where the window happened to be standing does not enter into it.
+    /// opened and the pane focused; under a project, the entry opens in the
+    /// window's strip — see [`Workspace::open_tab`]. Where the window happened
+    /// to be standing does not enter into it.
     ///
-    /// `true` when the entry was found in a space and the focus went to its
-    /// pane, so the caller has nothing left to open. `false` for an entry no
-    /// space holds, which is the plain single-pane case.
     pub(crate) fn enter_member(
         &mut self,
-        member: Option<Member>,
+        member: Member,
+        opening: Opening,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> bool {
+    ) {
         self.library = None;
-        // A space names entries by the file they have, so one with no file yet
-        // — a session that has had no turn — is in none of them.
-        let held = member.as_ref().and_then(|member| {
-            let at = self.workspace.read(cx).space_holding(member)?;
-            Some((at, member.clone()))
-        });
-        let Some((at, member)) = held else {
-            if self.workspace.read(cx).active_space().is_some() {
+        match self.workspace.read(cx).space_holding(&member) {
+            Some(at) => {
+                if self.workspace.read(cx).space() != Some(at) {
+                    self.open_space(at, window, cx);
+                }
                 self.workspace
-                    .update(cx, |workspace, _| workspace.leave_space());
-                // Down to one pane before the caller writes anything: it
-                // reaches for the leaf through [`Self::leaf_mut`], which
-                // indexes by [`Self::focused`] — still pointing into the panes
-                // the space had, and at a leaf this is about to drop.
-                self.sync_leaves(window, cx);
+                    .update(cx, |workspace, cx| workspace.set_front(&member, cx));
             }
-            return false;
-        };
-        if self.workspace.read(cx).space != Some(at) {
-            self.open_space(at, window, cx);
+            None => self.workspace.update(cx, |workspace, cx| {
+                workspace.open_tab(member.clone(), opening, cx);
+            }),
         }
-        // The pane a tab is in is keyed by the first of its strip — see
-        // [`Self::show_tab`].
-        let stack = self.workspace.read(cx).stack_of(&member);
-        let pane = stack.first().cloned().unwrap_or_else(|| member.clone());
-        self.show_tab(&pane, &member, window, cx);
-        true
+        self.show_pane(&member, window, cx);
+    }
+
+    /// Bring a tab of the strip forward, and the focus with it.
+    pub(crate) fn show_slot(&mut self, slot: &Slot, window: &mut Window, cx: &mut Context<Self>) {
+        self.library = None;
+        self.stack_steps = None;
+        match slot {
+            Slot::Space { space } => {
+                if let Some(ix) = self.workspace.read(cx).space_ix(space) {
+                    self.open_space(ix, window, cx);
+                }
+            }
+            Slot::Entry(member) => {
+                self.workspace
+                    .update(cx, |workspace, cx| workspace.front_tab(slot, cx));
+                self.refocus(member, window, cx);
+            }
+        }
+        cx.notify();
+    }
+
+    /// Bring the leaves up to the arrangement and move the focus to the pane
+    /// on `entry`, putting the project's selection on it even where that pane
+    /// is already the focused leaf.
+    pub(crate) fn refocus(&mut self, entry: &Member, window: &mut Window, cx: &mut Context<Self>) {
+        // A pane the arrangement has gained since the last frame has no leaf
+        // yet, and [`Cydonia::focus_pane`] moves nothing it cannot find.
+        self.sync_leaves(window, cx);
+        self.focused = usize::MAX;
+        self.focus_pane(entry, window, cx);
+        cx.notify();
     }
 
     /// Move the focus to the pane on this entry, and put the project's
@@ -882,9 +882,9 @@ impl Cydonia {
         let Some(at) = self
             .leaves
             .iter()
-            .position(|leaf| leaf.read(cx).entry.as_ref() == Some(entry))
+            .position(|leaf| leaf.read(cx).entry == *entry)
         else {
-            // [`Cydonia::show_tab`] parks the index past the end to force the
+            // [`Cydonia::refocus`] parks the index past the end to force the
             // selection below, and [`Self::leaf`] clamps — so a miss left here
             // reads as the pane at the end of the space, which is some entry
             // nobody pressed.
@@ -901,10 +901,12 @@ impl Cydonia {
         self.sync_focus(cx);
         self.workspace
             .update(cx, |workspace, _| workspace.set_focused(entry));
+        let Some(leaf) = self.leaf().cloned() else {
+            return;
+        };
         // An app's fields take the caret when they are pressed.
         if let Member::App { .. } = entry {
-            self.leaf().update(cx, |pane, _| pane.kind = Kind::App);
-            let here = self.leaf().read(cx).focus.clone();
+            let here = leaf.read(cx).focus.clone();
             window.focus(&here, cx);
             cx.notify();
             return;
@@ -918,8 +920,6 @@ impl Cydonia {
             return;
         };
         if moved {
-            let kind = showing.kind();
-            self.leaf().update(cx, |pane, _| pane.kind = kind);
             self.workspace.update(cx, |workspace, cx| {
                 workspace.select_showing(project, showing.clone(), cx);
             });
@@ -928,7 +928,7 @@ impl Cydonia {
         // The press already put the focus on something inside this pane — a
         // transcript's text, a field — before bubbling here. Moving it to the
         // composer would take ⌘C away from the run just selected.
-        let here = self.leaf().read(cx).focus.clone();
+        let here = leaf.read(cx).focus.clone();
         if here.contains_focused(window, cx) && !here.is_focused(window) {
             cx.notify();
             return;
@@ -948,14 +948,14 @@ impl Cydonia {
                 .read(cx)
                 .session(id, cx)
                 .is_some_and(ChatSession::resumable)
-                .then(|| self.composer_focus_handle(cx)),
+                .then(|| self.composer_focus_handle(cx))
+                .flatten(),
             Showing::Article(_) => self.pane_editor(cx).map(|editor| editor.focus_handle(cx)),
             // A board or a table takes no caret of its own, but an open card
             // or cell is a field inside one: pressing into the text a second
             // time is how the caret is moved, and settling on the pane instead
             // would take the field's focus off it every time.
-            Showing::Board(id) => self
-                .leaf()
+            Showing::Board(id) => leaf
                 .read(cx)
                 .boards
                 .iter()
@@ -964,7 +964,7 @@ impl Cydonia {
                 .filter(|view| view.editing.is_some())
                 .map(|view| view.card_field.read(cx).focus_handle(cx)),
             Showing::Table(_) => self
-                .table_view_of(self.leaf().read(cx).entry.clone().as_ref(), cx)
+                .table_view_of(Some(&leaf.read(cx).entry), cx)
                 .map(|view| view.read(cx))
                 .filter(|view| view.cell.is_some())
                 .map(|view| view.cell_field.read(cx).focus_handle(cx)),
@@ -976,20 +976,18 @@ impl Cydonia {
         cx.notify();
     }
 
-    /// The pane showing this entry, falling back to the focused one where the
-    /// window has no space open and the caller has no entry to name.
+    /// The tab on this entry, falling back to the focused one where the
+    /// caller has no entry to name.
     ///
-    /// Drawing reads a pane's state through this rather than through
-    /// [`Self::leaf`]: every pane drawn against the focused leaf shares one
+    /// Drawing reads a tab's state through this rather than through
+    /// [`Self::leaf`]: every tab drawn against the focused leaf shares one
     /// scroll and one editor between them, so moving the focus
-    /// moves what the other panes are showing.
-    pub(crate) fn leaf_of(&self, on: Option<&Member>, cx: &App) -> &Entity<Tab> {
-        on.and_then(|on| {
-            self.leaves
-                .iter()
-                .find(|leaf| leaf.read(cx).entry.as_ref() == Some(on))
-        })
-        .unwrap_or_else(|| self.leaf())
+    /// moves what the other tabs are showing.
+    pub(crate) fn leaf_of(&self, on: Option<&Member>, cx: &App) -> Option<&Entity<Tab>> {
+        match on {
+            Some(on) => self.leaves.iter().find(|leaf| leaf.read(cx).entry == *on),
+            None => self.leaf(),
+        }
     }
 
     pub fn new(
@@ -998,12 +996,6 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let name_field = cx.new(NameField::new);
-        cx.subscribe(&name_field, |this, _, event: &NameEvent, cx| match event {
-            NameEvent::Named(name) => this.commit_name(name.clone(), cx),
-            NameEvent::Dismissed => this.dismiss_name(cx),
-        })
-        .detach();
         let workspace = cx.new(|cx| Workspace::new(settings, state, cx));
         Workspace::install(&workspace, cx);
         // The model is the only thing that says a session appeared or a turn
@@ -1038,7 +1030,12 @@ impl Cydonia {
                 (workspace.clone(), cx.entity().downgrade(), search.clone());
             cx.new(|cx| Sidebar::new(workspace, root, search, cx))
         };
+        let strip = {
+            let (workspace, root) = (workspace.clone(), cx.entity().downgrade());
+            cx.new(|cx| crate::view::window::strip::Strip::new(workspace, root, cx))
+        };
         let mut this = Self {
+            strip,
             meter: cx.new(Stats::new),
             meter_at: Floating::new(Painter::of(cx)),
             workspace,
@@ -1047,6 +1044,8 @@ impl Cydonia {
             session_watches: Watch::default(),
             sidebar,
             focused: 0,
+            stack_steps: None,
+            lights_band: HEADER_HEIGHT,
             sidebar_open: true,
             sidebar_width: SIDEBAR_WIDTH,
             #[cfg(feature = "desktop")]
@@ -1084,13 +1083,11 @@ impl Cydonia {
                 move |item, window, cx| board::ghost(&this, item, window, cx)
             }),
             tab_history: Vec::new(),
+            zoom_glide: None,
+            pane_places: Rc::default(),
             modals: cx.new(|_| ModalLayer::default()),
             library: None,
-            info: None,
-            info_pressed: false,
             menu: ContextMenu::default(),
-            renaming: None,
-            name_field,
             search,
             focus: cx.focus_handle(),
         };
@@ -1110,11 +1107,16 @@ impl Cydonia {
             }
         })
         .detach();
-        let pane = this.new_pane(None, window, cx);
-        this.leaves.push(pane);
-        // The window comes back on the entry it was left on — the whole point
-        // of [`state::Entry`], and the pane the entry is read in is half of it.
-        this.land(cx);
+        // The window comes back on the tabs it was left on.
+        this.sync_leaves(window, cx);
+        if let Some(front) = this.arrangement(cx).and_then(|space| space.focused_front())
+            && let Some(at) = this
+                .leaves
+                .iter()
+                .position(|leaf| leaf.read(cx).entry == front)
+        {
+            this.focused = at;
+        }
         this.sync_composer(cx);
         #[cfg(not(target_os = "linux"))]
         this.take_browser(window, cx);
@@ -1125,42 +1127,38 @@ impl Cydonia {
             .read(cx)
             .active_session(cx)
             .is_some_and(ChatSession::resumable)
-            .then(|| this.composer_focus_handle(cx));
+            .then(|| this.composer_focus_handle(cx))
+            .flatten();
         window.focus(composer.as_ref().unwrap_or(&this.focus), cx);
         this.watch_sessions(window, cx);
         this
     }
 
     /// Open a session on whichever agent the last one ran on, or on the first
-    /// one configured.
+    /// one configured, as a tab of its own.
     ///
-    /// With none configured there is nothing to open a session *on*, and a
-    /// chat pane switched to over no session is a blank one. A fresh install
-    /// names no agent — see [`crate::model::settings::Settings::default`] — so
-    /// this is where most people meet the feature: it sends them to the
-    /// section that installs one, the same place the composer's own
-    /// `Install an agent…` goes.
+    /// With none configured there is nothing to open a session *on*. A fresh
+    /// install names no agent — see
+    /// [`crate::model::settings::Settings::default`] — so this is where most
+    /// people meet the feature: the notice it raises offers the section that
+    /// installs one, the same place the composer's own `Install an agent…`
+    /// goes.
     pub(crate) fn new_session_action(
         &mut self,
         _: &NewSession,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let asked = self.workspace.read(cx).preferred_agent(cx);
-        // Same as [`Self::pick_agent`]: a session with no file yet is in no
-        // arrangement, so making one leaves whatever space is up.
-        self.enter_member(None, window, cx);
-        // Nothing to open one on: the pane says so and offers the install,
-        // which is the same notice a session whose agent has gone stands
-        // under. The window jumping to Settings on its own answered a question
-        // it had not been asked yet.
-        let asked_session = asked.is_none();
-        self.leaf()
-            .update(cx, |pane, _| pane.asked_session = asked_session);
-        self.show_pane(Kind::Session, cx);
-        if let Some(entry) = asked {
-            self.workspace
-                .update(cx, |workspace, cx| workspace.new_session(entry, None, cx));
+        let Some(agent) = self.workspace.read(cx).preferred_agent(cx) else {
+            // Nothing to open one on: the window says so and offers the
+            // install, rather than jumping to Settings on its own.
+            return self.no_agent(window, cx);
+        };
+        let id = self
+            .workspace
+            .update(cx, |workspace, cx| workspace.new_session(agent, None, cx));
+        if let Some(id) = id {
+            self.select_session(id, Opening::Kept, window, cx);
         }
     }
 
@@ -1241,48 +1239,39 @@ impl Cydonia {
     /// ring over every kind, in the order the sidebar lists them, so a board
     /// standing alone still has the article above it for a neighbour.
     fn cycle_entry(&mut self, step: isize, window: &mut Window, cx: &mut Context<Self>) {
-        // A pane holding tabs answers the chord for its own strip: the tabs
-        // are what is in front of you, and stepping past them to the sidebar's
-        // list would skip what the pane itself is holding.
-        if self.cycle_tab(step, window, cx) {
+        // With the spaces in the sidebar there are no tabs to step through:
+        // the chord is the focused pane's stack's, and nothing else's.
+        if self
+            .workspace
+            .read(cx)
+            .settings
+            .appearance
+            .spaces_in_sidebar
+        {
+            self.step_stack(step, window, cx);
             return;
         }
-        // And an arrangement answers it for what it holds. The sidebar's list
-        // is not what is in front of you there, and every entry the space
-        // holds is left out of it — see [`Self::ungrouped`] — so stepping into
-        // that list opens something else and leaves the space behind.
-        if self.cycle_arranged(step, window, cx) {
+        // The focused pane's stack, once an entry of it was picked from its
+        // deck — see [`Self::stack_steps`].
+        if self.steps_stack(cx) {
+            self.step_stack(step, window, cx);
+            return;
+        }
+        // The strip answers it while it holds more than one tab: the tabs are
+        // what is in front of you.
+        if self.cycle_strip(step, window, cx) {
             return;
         }
         // Nothing on screen is nothing to step from: the launch view is not an
         // entry, and its neighbour is not another one.
-        let Some(pane) = self.showing(cx) else {
+        let Some(entry) = self.focused_entry(cx) else {
             return;
         };
         let workspace = self.workspace.read(cx);
-        let Some(project) = workspace.active else {
+        let Some(project) = entry.project().and_then(|path| workspace.project_at(path)) else {
             return;
         };
-        let Some(open) = workspace.projects.get(project) else {
-            return;
-        };
-        let showing = match pane {
-            Kind::Session => open.active.map(Showing::Session),
-            Kind::Board => open
-                .board
-                .and_then(|ix| Some(Showing::Board(open.boards.get(ix)?.id.clone()))),
-            Kind::Article => open
-                .article
-                .and_then(|ix| Some(Showing::Article(open.articles.get(ix)?.id.clone()))),
-            Kind::Table => open
-                .table
-                .and_then(|ix| Some(Showing::Table(open.tables.get(ix)?.key.clone()))),
-            Kind::App => None,
-        }
-        .map(|showing| Row::Entry {
-            project: open.path.clone(),
-            showing,
-        });
+        let showing = Row::of_member(&entry, workspace, cx);
         // The divider is a line, not a landing.
         let ring: Vec<Row> = self
             .list(cx)
@@ -1294,63 +1283,26 @@ impl Cydonia {
         let Some(landing) = stepped(at, ring.len(), step).map(|ix| ring[ix].clone()) else {
             return;
         };
-        self.open_row(&landing, window, cx);
+        self.open_row(&landing, Opening::Preview, window, cx);
         self.sidebar
             .update(cx, |sidebar, cx| sidebar.reveal(&landing, cx));
     }
 
-    /// Step the focused pane to the next of its own tabs, wrapping at the
-    /// ends. Says whether it did — a pane holding one entry has no strip of
-    /// its own, and the chord means the sidebar's list instead.
-    fn cycle_tab(&mut self, step: isize, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        let Some(front) = self.leaf().read(cx).entry.clone() else {
-            return false;
-        };
-        let stack = self.workspace.read(cx).stack_of(&front);
-        if stack.len() < 2 {
+    /// Step the strip to its next tab, wrapping at the ends. Says whether it
+    /// did — a strip of one tab leaves the chord to the sidebar's list.
+    fn cycle_strip(&mut self, step: isize, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let workspace = self.workspace.read(cx);
+        let strip = workspace.strip();
+        if strip.len() < 2 {
             return false;
         }
-        let Some(at) = stack.iter().position(|tab| *tab == front) else {
+        let at = workspace
+            .front_slot()
+            .and_then(|front| strip.iter().position(|slot| slot == front));
+        let Some(landing) = stepped(at, strip.len(), step).map(|ix| strip[ix].clone()) else {
             return false;
         };
-        let landing = (at as isize + step).rem_euclid(stack.len() as isize) as usize;
-        let (Some(pane), Some(tab)) = (stack.first().cloned(), stack.get(landing).cloned()) else {
-            return false;
-        };
-        self.show_tab(&pane, &tab, window, cx);
-        true
-    }
-
-    /// Step the window to the next entry the open arrangement holds, wrapping
-    /// at the ends — every tab across every pane, in the order they are laid
-    /// out. Says whether the chord was the arrangement's, which is whenever one
-    /// is open: a space holding a single entry answers it by staying put. The
-    /// sidebar's list leaves the space and can land in another project
-    /// altogether, so falling through to it is never what the chord meant.
-    ///
-    /// Panes alone are the chord beside this one — see [`Self::step_pane`].
-    fn cycle_arranged(&mut self, step: isize, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        let ring = match self.arrangement(cx) {
-            Some(space) => space.entries(),
-            None => return false,
-        };
-        if ring.len() < 2 {
-            return true;
-        }
-        let at = self
-            .leaf()
-            .read(cx)
-            .entry
-            .clone()
-            .and_then(|front| ring.iter().position(|member| *member == front))
-            .unwrap_or(0);
-        let landing = (at as isize + step).rem_euclid(ring.len() as isize) as usize;
-        let Some(tab) = ring.get(landing).cloned() else {
-            return true;
-        };
-        let stack = self.workspace.read(cx).stack_of(&tab);
-        let pane = stack.first().cloned().unwrap_or_else(|| tab.clone());
-        self.show_tab(&pane, &tab, window, cx);
+        self.show_slot(&landing, window, cx);
         true
     }
 
@@ -1361,19 +1313,6 @@ impl Cydonia {
         self.library = None;
         self.workspace
             .update(cx, |workspace, cx| workspace.select_project(ix, cx));
-        self.land(cx);
-    }
-
-    /// Put the pane on what the project coming forward was last showing.
-    ///
-    /// Without this the pane is whatever the last project was read in, and
-    /// [`Self::showing`] falls back through the four in a fixed order — so a
-    /// project with a board open from earlier in the session lands on the
-    /// board however recently the article beside it was read.
-    fn land(&mut self, cx: &mut Context<Self>) {
-        if let Some(kind) = self.workspace.read(cx).landing() {
-            self.leaf().update(cx, |pane, _| pane.kind = kind);
-        }
     }
 
     pub(crate) fn close_project(&mut self, ix: usize, cx: &mut Context<Self>) {
@@ -1387,14 +1326,22 @@ impl Cydonia {
     /// The composer is drawn only over a chat it can send to, and focus on an
     /// element no frame draws is focus nowhere — so a session that cannot take
     /// a message leaves the focus where it was.
-    pub(crate) fn select_session(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
-        let member = self.workspace.read(cx).member_of_session(id, cx);
-        if self.enter_member(member, window, cx) {
+    pub(crate) fn select_session(
+        &mut self,
+        id: u64,
+        opening: Opening,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let member = self.workspace.update(cx, |workspace, cx| {
+            workspace.select_session(id, cx);
+            workspace.mint_record(id, cx)?;
+            workspace.member_of_session(id, cx)
+        });
+        let Some(member) = member else {
             return;
-        }
-        self.show_pane(Kind::Session, cx);
-        self.workspace
-            .update(cx, |workspace, cx| workspace.select_session(id, cx));
+        };
+        self.enter_member(member, opening, window, cx);
         self.sync_composer(cx);
         self.reveal_applied_match(cx);
         if self
@@ -1402,8 +1349,9 @@ impl Cydonia {
             .read(cx)
             .session(id, cx)
             .is_some_and(ChatSession::resumable)
+            && let Some(focus) = self.composer_focus_handle(cx)
         {
-            window.focus(&self.composer_focus_handle(cx), cx);
+            window.focus(&focus, cx);
         }
     }
 
@@ -1490,53 +1438,17 @@ impl Cydonia {
         .detach();
     }
 
-    /// Which pane is on screen, as against [`Self::pane`], which is the one
-    /// asked for. They part when what it points at is gone — deleted, switched
-    /// off, or in a project that has none open — and whatever the project does
-    /// have stands in, so a launch lands on the entry it was left on rather
-    /// than on an empty conversation. The sidebar reads this, not the request:
-    /// a row lit for a pane nobody can see is the second selection the eye
-    /// finds.
-    ///
-    /// `None` is the launch view. A pane exists only where something is open in
-    /// it, so with nothing open there is no pane to name — least of all the
-    /// chat, which under the shipped defaults is itself switched off.
+    /// The kind of entry the focused tab is on. `None` where no tab is open,
+    /// which is the launch view, or where its entry has gone.
     pub(crate) fn showing(&self, cx: &App) -> Option<Kind> {
-        // A pane in a space is whatever its entry is, whether or not it has
-        // been focused yet: `leaf.pane` is only written by the focus. A leaf
-        // is one tab, so its entry is what it shows.
-        if let Some(entry) = &self.leaf().read(cx).entry
-            && let Some((_, showing)) = self.workspace.read(cx).showing_of(entry, cx)
-        {
-            return Some(showing.kind());
-        }
-        if self.has_pane(self.leaf().read(cx).kind, cx) {
-            return Some(self.leaf().read(cx).kind);
-        }
-        Kind::ALL.into_iter().find(|&pane| self.has_pane(pane, cx))
-    }
-
-    /// Whether the active project has anything open in `pane` — what makes it
-    /// a pane there is to show, as against one asked for.
-    pub(crate) fn has_pane(&self, pane: Kind, cx: &App) -> bool {
-        let workspace = self.workspace.read(cx);
-        match pane {
-            // A pane with no session in it, where one was asked for and there
-            // is no agent to open it on — [`Self::asked_session`]. Conditioned
-            // on the agent as well as on the flag, so an install is all it
-            // takes to put the pane back to what it is for.
-            Kind::Session => {
-                workspace.active_session(cx).is_some()
-                    || (self.leaf().read(cx).asked_session
-                        && workspace.preferred_agent(cx).is_none())
-            }
-            Kind::Board => workspace.active_board(cx).is_some(),
-            Kind::Article => workspace.active_article().is_some(),
-            Kind::Table => workspace.active_table().is_some(),
-            Kind::App => workspace
-                .app
-                .as_deref()
-                .is_some_and(|id| workspace.program(id, cx).is_some()),
+        let entry = self.focused_entry(cx)?;
+        match entry {
+            Member::App { .. } => Some(Kind::App),
+            Member::Entry(_) => self
+                .workspace
+                .read(cx)
+                .showing_of(&entry, cx)
+                .map(|(_, showing)| showing.kind()),
         }
     }
 
@@ -1571,12 +1483,17 @@ impl Cydonia {
 impl Render for Cydonia {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.track_history(cx);
+        let band = chrome::top_height(self.workspace.read(cx).settings.appearance.global_tabs());
+        if self.lights_band != band {
+            lights::fit(window, band, cx);
+            self.lights_band = band;
+        }
         self.sync_leaves(window, cx);
         self.sync_changes(window, cx);
         self.sync_items(cx);
-        self.sync_focus(cx);
-        self.sync_panes(cx);
         self.sync_sidebar(cx);
+        self.sync_strip(cx);
+        self.sync_edges(cx);
         self.publish_shown(cx);
         self.hold_drawn_tables(cx);
         let theme = Theme::of(cx).clone();
@@ -1600,15 +1517,18 @@ impl Render for Cydonia {
                 gpui::MouseButton::Navigate(gpui::NavigationDirection::Forward),
                 cx.listener(|this, _, window, cx| this.go_forward(&GoForward, window, cx)),
             )
-            .on_action(cx.listener(|this, at: &SwitchSpace, window, cx| {
-                let workspace = this.workspace.read(cx);
-                let last = workspace.spaces.len().checked_sub(1);
-                let Some(ix) = at.index.or(last).filter(|ix| Some(*ix) <= last) else {
+            .on_action(cx.listener(|this, at: &SwitchTab, window, cx| {
+                let strip = this.workspace.read(cx).strip();
+                let last = strip.len().checked_sub(1);
+                let Some(slot) = at
+                    .index
+                    .or(last)
+                    .filter(|ix| Some(*ix) <= last)
+                    .and_then(|ix| strip.get(ix).cloned())
+                else {
                     return;
                 };
-                if workspace.space != Some(ix) {
-                    this.open_space(ix, window, cx);
-                }
+                this.show_slot(&slot, window, cx);
             }))
             .on_action(cx.listener(|this, _: &NextPane, window, cx| this.step_pane(1, window, cx)))
             .on_action(cx.listener(|this, _: &PrevPane, window, cx| this.step_pane(-1, window, cx)))
@@ -1624,17 +1544,15 @@ impl Render for Cydonia {
             // worth closing a tab from. An element handler runs before the
             // global one that removes the window, so this is where the two
             // meanings part.
-            .on_action(cx.listener(|this, _: &CloseWindow, window, cx| {
-                match this.leaf().read(cx).entry.is_some() {
+            .on_action(cx.listener(
+                |this, _: &CloseWindow, window, cx| match this.leaf().is_some() {
                     true => this.close_focused_pane(window, cx),
                     false => window.remove_window(),
-                }
-            }))
+                },
+            ))
             .on_action(cx.listener(|this, _: &ZoomPane, _, cx| this.zoom_focused_pane(cx)))
             .on_action(cx.listener(Self::toggle_changes))
             .on_action(cx.listener(Self::copy_selection))
-            .on_action(cx.listener(Self::commit_info))
-            .on_action(cx.listener(Self::dismiss_info))
             // Everything the menu bar names, and only under the conditions
             // that keep its items honest.
             .map(|root| self.commands(root, cx))
@@ -1675,6 +1593,7 @@ impl Render for Cydonia {
                     .meter
                     .then(|| meter::panel("app-meter", &self.meter_at, &self.meter, window)),
             )
+            .child(self.corner_controls(window, cx))
             // Over every column and every floating control: nothing behind it
             // is answerable while it is asking.
             .child(self.modals.clone());

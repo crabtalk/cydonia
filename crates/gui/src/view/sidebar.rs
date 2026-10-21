@@ -7,41 +7,43 @@ mod rows;
 
 pub(crate) use list::List;
 
-use crate::model::{
-    session::ChatSession,
-    settings::Features,
-    workspace::{Showing, Workspace},
-};
-use crate::view::{
-    kit::{
-        menu::{self, Act},
-        rename::{NameEvent, NameField},
-        watch::Watch,
+use crate::{
+    model::{
+        session::ChatSession,
+        settings::Features,
+        workspace::{Showing, Workspace},
     },
-    search::Search,
-    window::{reach::InWindow, root::Cydonia},
+    view::{
+        kit::{
+            menu::{self, Act, MenuHost},
+            orb,
+            rename::{Rename, Renaming},
+            watch::Watch,
+        },
+        search::Search,
+        window::{
+            reach::InWindow,
+            root::{self, Cydonia},
+        },
+    },
 };
-use artifact::kind::Kind;
-use artifact::space::Member;
-use bezel::ui::scroll as scrollbars;
+use artifact::{kind::Kind, space::Member};
 use bezel::{
-    agent::orbs::{OrbState, engine::Frame},
     gpui::{
-        self, AnyElement, App, AppContext as _, Context, Div, Empty, Entity, Hsla, ListAlignment,
-        ListOffset, ListState, SharedString, Stateful, Subscription, Task, WeakEntity, Window, div,
-        prelude::*, px,
+        self, AnyElement, App, Context, Div, Empty, Entity, Hsla, ListAlignment, ListOffset,
+        ListState, SharedString, Stateful, Subscription, Task, WeakEntity, Window, div, prelude::*,
+        px,
     },
     theme::{self, TextStyle, Theme, Typeset},
     ui::{
         context_menu::{ContextMenu, Place as MenuPlace},
         drag::{self, Carried},
         icons::{self, Icon},
-        input::Case,
         menu::Item,
+        scroll as scrollbars,
     },
 };
 use std::{
-    cell::RefCell,
     collections::HashMap,
     path::{Path, PathBuf},
     rc::Rc,
@@ -96,14 +98,7 @@ struct SessionRow {
     /// The turn in flight, as the orb needs it: which of the twelve, how long
     /// it has been running, and the buffer it paints into. `None` when nothing
     /// is in flight, which is what puts the agent's own mark back.
-    working: Option<Working>,
-}
-
-/// A session's orb, read off the model with the row.
-struct Working {
-    state: OrbState,
-    since: Duration,
-    frame: Rc<RefCell<Frame>>,
+    working: Option<orb::Working>,
 }
 
 /// What the sidebar shows of a session — what moving redraws it.
@@ -269,11 +264,7 @@ impl Row {
                 }
                 Row::Archive(_) | Row::Heading(_) => return None,
                 Row::App(id) => workspace.program(id, cx)?.read(cx).label(),
-                Row::Group(Group::Space(id)) => workspace
-                    .spaces
-                    .get(workspace.space_ix(id)?)?
-                    .label()
-                    .to_owned(),
+                Row::Group(Group::Space(id)) => workspace.space_by_id(id)?.label().to_owned(),
                 Row::Entry { showing, .. } => {
                     let (project, ix) = self.located(workspace)?;
                     workspace.projects[project]
@@ -381,7 +372,7 @@ pub(crate) enum Group {
 pub(crate) enum Light {
     /// In the focused pane: the one row that says where you are.
     Focused,
-    /// In another pane of the open space.
+    /// In another tab the window holds.
     Shown,
     Off,
 }
@@ -404,62 +395,33 @@ impl Light {
 pub(crate) struct Lit {
     /// The library stands over every pane.
     pub(crate) library: bool,
-    /// The focused pane's entry, in a space.
+    /// The focused tab's entry.
     pub(crate) focused: Option<Member>,
-    /// The kind the pane in front shows.
-    pub(crate) showing: Option<Kind>,
+    /// Every leaf the window holds: the arranged space's entries and the
+    /// strip's tabs.
+    pub(crate) open: Vec<Member>,
 }
 
 impl Lit {
-    /// Whether the pane in front is on this entry. Never while the library
+    /// Whether the focused tab is on this entry. Never while the library
     /// stands over the panes.
-    pub(crate) fn in_front(&self, entry: &Row, workspace: &Workspace) -> bool {
-        if self.library || workspace.active_space().is_some() {
-            return false;
-        }
-        let showing = match entry {
-            Row::Entry { showing, .. } => showing,
-            Row::App(id) => {
-                return self.showing == Some(Kind::App) && workspace.app.as_ref() == Some(id);
-            }
-            Row::Group(_) | Row::Archive(_) | Row::Heading(_) => return false,
-        };
-        let Some((project, ix)) = entry.located(workspace) else {
-            return false;
-        };
-        if workspace.active != Some(project) {
-            return false;
-        }
-        let open = &workspace.projects[project];
-        let pane = self.showing;
-        match showing {
-            Showing::Session(id) => pane == Some(Kind::Session) && open.active == Some(*id),
-            Showing::Board(_) => pane == Some(Kind::Board) && open.board == Some(ix),
-            Showing::Article(_) => pane == Some(Kind::Article) && open.article == Some(ix),
-            Showing::Table(_) => pane == Some(Kind::Table) && open.table == Some(ix),
-        }
+    pub(crate) fn in_front(&self, entry: &Row, workspace: &Workspace, cx: &App) -> bool {
+        self.light(entry, workspace, cx) == Light::Focused
     }
 
     /// How a row's entry stands to what the window is showing — see
-    /// [`Light`]. In a space, the focused pane's entry is the lit one and the
-    /// others it shows are [`Light::Shown`]; on one entry alone, that entry.
+    /// [`Light`].
     pub(crate) fn light(&self, row: &Row, workspace: &Workspace, cx: &App) -> Light {
         // The library stands over every pane, so no row is what is on screen.
         if self.library {
             return Light::Off;
         }
-        let Some(space) = workspace.active_space() else {
-            return match self.in_front(row, workspace) {
-                true => Light::Focused,
-                false => Light::Off,
-            };
-        };
         let Some(member) = row.member(workspace, cx) else {
             return Light::Off;
         };
         if self.focused.as_ref() == Some(&member) {
             Light::Focused
-        } else if space.entries().contains(&member) {
+        } else if self.open.contains(&member) {
             Light::Shown
         } else {
             Light::Off
@@ -505,85 +467,6 @@ pub(crate) fn shown(row: &Row, features: &Features) -> bool {
     }
 }
 
-/// What a name field is attached to. Each entry is held by what identifies it
-/// — a session, a table's key — never by an index: that moves the moment a
-/// neighbour is made or dropped, and the field would follow it onto whichever
-/// entry slid underneath.
-///
-/// No article here: its title is the first line of its own page, which is
-/// where it is written — see [`crate::view::article`]. No board either: a
-/// board is named by its identity panel — see [`Cydonia::open_info`].
-#[derive(Clone, PartialEq, Eq)]
-pub(crate) enum Renaming {
-    Session(u64),
-    Table(String),
-    /// A space, by its id — auto-named `space-1` until someone gives it a
-    /// name of their own.
-    Space(String),
-}
-
-impl Renaming {
-    /// How `row` is renamed in a field, for the kinds named that way.
-    pub(crate) fn of(row: &Row) -> Option<Self> {
-        match row {
-            Row::Entry {
-                showing: Showing::Session(id),
-                ..
-            } => Some(Self::Session(*id)),
-            Row::Entry {
-                showing: Showing::Table(key),
-                ..
-            } => Some(Self::Table(key.clone())),
-            Row::Group(Group::Space(id)) => Some(Self::Space(id.clone())),
-            Row::Entry {
-                showing: Showing::Article(_) | Showing::Board(_),
-                ..
-            }
-            | Row::App(_)
-            | Row::Group(Group::Project(_))
-            | Row::Archive(_)
-            | Row::Heading(_) => None,
-        }
-    }
-
-    /// The name it has now, which the field opens holding.
-    pub(crate) fn label(&self, workspace: &Workspace, cx: &App) -> String {
-        match self {
-            Self::Session(id) => workspace
-                .session(*id, cx)
-                .map(ChatSession::label)
-                .unwrap_or_default(),
-            Self::Table(key) => workspace
-                .projects
-                .iter()
-                .flat_map(|open| open.tables.iter())
-                .find(|table| table.key == *key)
-                .map(|table| table.name.clone())
-                .unwrap_or_default(),
-            Self::Space(id) => workspace
-                .spaces
-                .iter()
-                .find(|space| space.id == *id)
-                .map(|space| space.name.clone())
-                .unwrap_or_default(),
-        }
-    }
-
-    /// Give it `name`.
-    pub(crate) fn commit(
-        self,
-        name: String,
-        workspace: &mut Workspace,
-        cx: &mut Context<Workspace>,
-    ) {
-        match self {
-            Self::Session(id) => workspace.rename_session(id, name, cx),
-            Self::Table(key) => workspace.rename_table(&key, name, cx),
-            Self::Space(id) => workspace.rename_space(&id, name, cx),
-        }
-    }
-}
-
 /// What an entry's row is written in: the one on screen at full strength, one
 /// put away a step back from the rest.
 pub(crate) fn tint(selected: bool, archived: bool, theme: &Theme) -> Hsla {
@@ -594,12 +477,13 @@ pub(crate) fn tint(selected: bool, archived: bool, theme: &Theme) -> Hsla {
     }
 }
 
-/// What the sidebar's list and the panes' strips carry, and what a pane takes
-/// a drop of: a sidebar row, or a tab off a pane's strip.
+/// What the sidebar's list and the window's strip carry, and what a pane takes
+/// a drop of: a sidebar row, or a tab off the window's strip.
 #[derive(Clone, PartialEq)]
 pub(crate) enum Dragged {
     Row(Row),
-    Tab(Member),
+    /// A tab of the window's strip.
+    Tab(crate::model::workspace::Slot),
 }
 
 /// A row's kind and the section it is listed in.
@@ -697,9 +581,10 @@ pub(crate) fn row(
     selected: bool,
     lifted: bool,
     indent: u8,
+    trail: f32,
     theme: &Theme,
 ) -> Stateful<Div> {
-    row_frame(id, group, indent)
+    row_frame(id, group, indent, trail)
         // A carried row is drawn inside [`Sidebar::sidebar_ghost`]'s frame.
         .when(lifted, |el| el.m_0())
         .when(!lifted && selected, |el| {
@@ -715,18 +600,20 @@ pub(crate) fn row(
 
 /// A row's place in the column with none of its washes: what a line that is
 /// never selected and takes no hover wash — a section's heading — stands in.
+/// `trail` is what it stands off the column's right edge by — see
+/// [`Sidebar::trail`].
 pub(crate) fn row_frame(
     id: impl Into<gpui::ElementId>,
     group: &'static str,
     indent: u8,
+    trail: f32,
 ) -> Stateful<Div> {
-    use crate::view::window::root;
     div()
         .id(id)
         .group(group)
         .h(px(ROW_PILL))
         .ml(px(root::SIDEBAR_GUTTER))
-        .mr(px(root::SIDEBAR_GUTTER))
+        .mr(px(trail))
         .px(px(root::SIDEBAR_GUTTER))
         // Levels rather than a flag: a row a space holds is one step under
         // whatever its neighbours are at, and with the project's own indent on
@@ -747,15 +634,11 @@ pub(crate) fn row_frame(
 /// gpui's default the label's box is φ×13, and renaming would resize the row
 /// under the name being typed.
 fn row_label(name: String, tint: Hsla) -> AnyElement {
-    labelled(name, tint, TextStyle::Body)
-}
-
-fn labelled(name: String, tint: Hsla, style: TextStyle) -> AnyElement {
     div()
         .flex_1()
         .min_w_0()
         .truncate()
-        .text_style(style)
+        .text_style(TextStyle::Body)
         .line_height(px(18.))
         .text_color(tint)
         .child(name)
@@ -790,8 +673,7 @@ pub(crate) struct Sidebar {
     menu: ContextMenu<Self, SidebarMenu>,
     /// The row or heading under the pointer, as the menu it would open.
     hovered: Option<SidebarMenu>,
-    renaming: Option<Renaming>,
-    name_field: Entity<NameField>,
+    rename: Rename,
     /// The drag domain of the list: a row moves within it, or out onto a pane.
     pub(crate) sort: drag::Domain<(), Dragged>,
     rail: ListState,
@@ -816,13 +698,9 @@ impl Sidebar {
         search: Entity<Search>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let name_field = cx.new(NameField::new);
+        let rename = Rename::new(workspace.clone(), |this: &mut Self| &mut this.rename, cx);
         #[allow(unused_mut)]
         let mut subscriptions = vec![
-            cx.subscribe(&name_field, |this, _, event: &NameEvent, cx| match event {
-                NameEvent::Named(name) => this.commit_name(name.clone(), cx),
-                NameEvent::Dismissed => this.dismiss_name(cx),
-            }),
             cx.observe(&workspace, |_, _, cx| cx.notify()),
             cx.observe(&search, |_, _, cx| cx.notify()),
         ];
@@ -847,8 +725,7 @@ impl Sidebar {
             lit: Lit::default(),
             menu: ContextMenu::default(),
             hovered: None,
-            renaming: None,
-            name_field,
+            rename,
             sort,
             rail: ListState::new(0, ListAlignment::Top, px(OVERDRAW)),
             measured: Vec::new(),
@@ -862,8 +739,18 @@ impl Sidebar {
     }
 
     /// The list as it stands.
+    /// What a row stands off the column's right edge by: the gutter, or
+    /// nothing while floating, where the column already stands as far from
+    /// the cards as two cards stand apart.
+    fn trail(&self, cx: &App) -> f32 {
+        match self.workspace.read(cx).settings.appearance.floating {
+            true => 0.,
+            false => root::SIDEBAR_GUTTER,
+        }
+    }
+
     fn list<'a>(&self, cx: &'a App) -> List<'a> {
-        List::new(self.workspace.read(cx), self.search.read(cx), cx)
+        List::new(&self.workspace, &self.search, cx)
     }
 
     /// The rows drawn: the list's, less the rows of a project or a space whose
@@ -892,14 +779,7 @@ impl Sidebar {
 
     /// Observe every session, redrawing where what its row shows moved.
     fn watch_sessions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let chats: Vec<Entity<ChatSession>> = self
-            .workspace
-            .read(cx)
-            .projects
-            .iter()
-            .flat_map(|project| &project.sessions)
-            .map(|held| held.chat.clone())
-            .collect();
+        let chats = self.workspace.read(cx).chat_entities();
         let mut sessions = std::mem::take(&mut self.sessions);
         sessions.set_in(&chats, window, cx, |this, chat, _, cx| {
             let extended = this.extended(cx);
@@ -1007,25 +887,6 @@ impl Sidebar {
 
     /// Open `menu` at `place` with the rows `rows` builds, or shut it where it
     /// is the one up. The rows act on the window.
-    fn toggle_menu(
-        &mut self,
-        menu: SidebarMenu,
-        place: MenuPlace,
-        rows: impl FnOnce(&mut Self, &mut Context<Self>) -> Vec<(Item, Act)>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        ContextMenu::toggle(
-            self,
-            |this| &mut this.menu,
-            menu,
-            place,
-            |this, _, cx| menu::chooser(Self::through(rows(this, cx))),
-            window,
-            cx,
-        );
-    }
-
     fn menu_open(&self, menu: &SidebarMenu) -> bool {
         self.menu.key() == Some(menu)
     }
@@ -1064,26 +925,13 @@ impl Sidebar {
                 this.toggle_menu(
                     menu.clone(),
                     place,
-                    move |this, cx| rows(this, cx),
+                    move |this, _, cx| Self::through(rows(this, cx)),
                     window,
                     cx,
                 );
             })
         });
-        ContextMenu::trigger(button, |this: &mut Self| &mut this.menu, menu, cx)
-    }
-
-    /// The menu `menu`, placed, while it is on screen: what its trigger hangs
-    /// beside itself.
-    fn menu_here(
-        &self,
-        menu: &SidebarMenu,
-        id: impl Into<SharedString>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        self.menu
-            .render_for(menu, id, |this| &mut this.menu, window, cx)
+        self.menu_trigger(button, menu, cx)
     }
 
     /// The rows of an entry's menu, as the window builds them for a row here.
@@ -1109,24 +957,7 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let label = what.label(self.workspace.read(cx), cx);
-        self.name_field
-            .update(cx, |field, cx| field.start(label, Case::Mixed, window, cx));
-        self.renaming = Some(what);
-        cx.notify();
-    }
-
-    fn commit_name(&mut self, name: String, cx: &mut Context<Self>) {
-        let Some(what) = self.renaming.take() else {
-            return;
-        };
-        self.workspace
-            .update(cx, |workspace, cx| what.commit(name, workspace, cx));
-        cx.notify();
-    }
-
-    fn dismiss_name(&mut self, cx: &mut Context<Self>) {
-        self.renaming = None;
+        self.rename.start(what, window, cx);
         cx.notify();
     }
 
@@ -1297,7 +1128,6 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        use crate::view::window::root;
         let Dragged::Row(row) = item else {
             return Empty.into_any_element();
         };
@@ -1307,7 +1137,7 @@ impl Sidebar {
             .upgrade()
             .map_or(root::SIDEBAR_WIDTH, |root| root.read(cx).sidebar_width);
         div()
-            .w(px(width - 2. * root::SIDEBAR_GUTTER))
+            .w(px(width - root::SIDEBAR_GUTTER - self.trail(cx)))
             .h(px(self.shape(row, cx).pill()))
             .rounded(px(Theme::control_radius()))
             .overflow_hidden()
@@ -1392,7 +1222,7 @@ impl Sidebar {
     /// A drag never pins or unpins. The pins are a region of the list with
     /// their own order, and a row dragged between the two regions would be
     /// changing what it *is* rather than where it sits — that is what the
-    /// button at the end of the row and the band's `···` are for.
+    /// button at the end of the row and the title row's `···` are for.
     fn reorder_entries(&mut self, carried: &Row, region: Vec<Row>, cx: &mut Context<Self>) {
         use crate::model::state;
         let workspace = self.workspace.read(cx);
@@ -1441,6 +1271,18 @@ impl Sidebar {
                 workspace.set_pinned(project, pins, cx);
             }
         });
+    }
+}
+
+impl MenuHost for Sidebar {
+    type Key = SidebarMenu;
+
+    fn menu(&self) -> &ContextMenu<Self, SidebarMenu> {
+        &self.menu
+    }
+
+    fn menu_mut(&mut self) -> &mut ContextMenu<Self, SidebarMenu> {
+        &mut self.menu
     }
 }
 

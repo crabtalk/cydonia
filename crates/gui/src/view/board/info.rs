@@ -3,7 +3,8 @@
 
 use crate::view::{
     kit::{dialog::answers, form},
-    window::root::Cydonia,
+    pane::Tab,
+    window::reach::InWindow as _,
 };
 use bezel::{
     gpui::{
@@ -11,7 +12,7 @@ use bezel::{
         actions, prelude::*, px,
     },
     theme::Theme,
-    ui::{input::TextField, popover},
+    ui::{context_menu::ContextMenu, input::TextField, popover},
 };
 
 /// Claimed on the panel's fields, so `enter` files it.
@@ -41,13 +42,13 @@ pub(crate) struct BoardInfo {
     pub error: Option<SharedString>,
 }
 
-impl Cydonia {
+impl Tab {
     // ── the board's identity panel ───────────────────────────────
 
     /// Show the panel, or put it away. The dismiss-on-press-outside lands
     /// before the click, so by then the panel already reads as shut and a plain
     /// toggle would only reopen it — what the press found is noted on the way
-    /// down instead, as [`Cydonia::toggle_menu`] does.
+    /// down instead.
     pub(crate) fn toggle_info(&mut self, board: &str, window: &mut Window, cx: &mut Context<Self>) {
         let shut_by_this_press = std::mem::take(&mut self.info_pressed);
         if shut_by_this_press || self.info.is_some() {
@@ -58,14 +59,14 @@ impl Cydonia {
         self.open_info(board, window, cx);
     }
 
-    /// Open the panel on the board the band is showing, seeded from what it is
+    /// Open the panel on the board the tab is showing, seeded from what it is
     /// called now.
     pub(crate) fn open_info(&mut self, board: &str, window: &mut Window, cx: &mut Context<Self>) {
-        self.commit(cx);
+        self.defer_window(window, cx, |root, _, cx| root.commit(cx));
         // One editor at a time, and before the lookup: a rename left in flight
         // would otherwise outlive a board that has gone.
-        self.close_menu(cx);
-        self.renaming = None;
+        ContextMenu::close(self, |this| &mut this.menu, cx);
+        self.rename.what = None;
         let Some((name, key)) = self
             .workspace
             .read(cx)

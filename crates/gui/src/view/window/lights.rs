@@ -3,13 +3,16 @@
 //! header asks rather than assumes. A button's frame need not be square:
 //! gpui places it by its full height.
 
-use crate::view::window::root::TRAFFIC_LIGHT_INSET;
+use crate::view::window::root::{HEADER_HEIGHT, TRAFFIC_LIGHT_INSET};
 use bezel::gpui::{App, Global, Window};
+
+/// A light's size on macOS 26.
+pub(crate) const LIGHT_SIZE: f32 = 14.;
 
 /// What macOS 26 draws, for a window not measured yet and off macOS.
 const MACOS_26: Lights = Lights {
-    size: 14.,
-    height: 14.,
+    size: LIGHT_SIZE,
+    height: LIGHT_SIZE,
     pitch: 23.,
 };
 
@@ -29,28 +32,37 @@ impl Lights {
         cx.try_global::<Self>().copied().unwrap_or(MACOS_26)
     }
 
-    /// Where the green light's right edge lands, the close button standing at
-    /// [`TRAFFIC_LIGHT_INSET`].
-    pub fn end(&self) -> f32 {
-        TRAFFIC_LIGHT_INSET + 2. * self.pitch + self.size
+    /// How far the close button stands in from the window's left edge under a
+    /// top band `band` tall: [`TRAFFIC_LIGHT_INSET`] under the header's, and
+    /// further in by as much as a taller band centres the lights further down.
+    pub fn left(band: f32) -> f32 {
+        TRAFFIC_LIGHT_INSET + (band - HEADER_HEIGHT) / 2.
+    }
+
+    /// Where the green light's right edge lands under a top band `band` tall.
+    pub fn end(&self, band: f32) -> f32 {
+        Self::left(band) + 2. * self.pitch + self.size
     }
 }
 
 /// Measure `window`'s lights, record them for every band to read, and centre
-/// the lights down the header. Call once the window exists.
-pub fn fit(window: &mut Window, cx: &mut App) {
+/// the lights down a top band `band` tall, as far in from the left edge as
+/// [`Lights::left`] says. Call once the window exists, and again when its band
+/// changes height.
+pub fn fit(window: &mut Window, band: f32, cx: &mut App) {
     let lights = measure(window).unwrap_or(MACOS_26);
     cx.set_global(lights);
     // gpui has the setter on macOS only.
     #[cfg(target_os = "macos")]
     {
-        use crate::view::window::root::HEADER_HEIGHT;
         use bezel::gpui::{point, px};
         window.set_traffic_light_position(point(
-            px(TRAFFIC_LIGHT_INSET),
-            px((HEADER_HEIGHT - lights.height) / 2.),
+            px(Lights::left(band)),
+            px((band - lights.height) / 2.),
         ));
     }
+    #[cfg(not(target_os = "macos"))]
+    let _ = band;
 }
 
 #[cfg(target_os = "macos")]

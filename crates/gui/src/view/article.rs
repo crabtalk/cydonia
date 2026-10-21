@@ -4,12 +4,11 @@ pub mod comments;
 mod note;
 pub mod thread;
 
-use crate::view::kit::menu;
 use crate::{
-    model::palette::Washes,
     model::{
         article,
-        workspace::{Showing, Workspace},
+        palette::Washes,
+        workspace::{Opening, Showing, Workspace},
     },
     view::{
         component::{
@@ -17,16 +16,16 @@ use crate::{
             margin::{self, Glide, Margin, Slot},
             transcript::{MARK_AWAY, MARK_READING, MARK_VISIBLE},
         },
-        kit::labels::{LabelHost, Labels, Target},
+        kit::{
+            labels::{LabelHost, Labels, Target},
+            menu::{self, MenuHost},
+        },
         pane::find::{self, Find, Searchable},
         sidebar::Row,
         window::root::{Cydonia, NewArticle},
     },
 };
-use artifact::kind::Kind;
-use artifact::space::{Entry, Member};
-use bezel::ui::scroll as scrollbars;
-use bezel::ui::surface::{self, Surfaced as _};
+use artifact::space::Entry;
 use bezel::{
     gpui::{
         self, AnyElement, App, Context, CursorStyle, Div, Entity, Focusable as _, KeyBinding,
@@ -40,13 +39,13 @@ use bezel::{
         icons,
         input::TextField,
         menu::Item,
-        popover,
+        popover, scroll as scrollbars,
+        surface::{self, Surfaced as _},
         tooltip::Tooltip,
         widgets::{ButtonStyle, Buttons as _, Status as _},
     },
 };
-use editor::AppExt as _;
-use editor::{EditorEvent, Mode};
+use editor::{AppExt as _, EditorEvent, Mode};
 use markdown::AppExt as _;
 use std::{
     cell::{Cell, RefCell},
@@ -461,7 +460,7 @@ impl Cydonia {
             .workspace
             .update(cx, |workspace, cx| workspace.new_article(cx));
         if let Some(ix) = ix {
-            self.open_article(project, ix, window, cx);
+            self.open_article(project, ix, Opening::Kept, window, cx);
         }
     }
 
@@ -471,19 +470,19 @@ impl Cydonia {
         &mut self,
         project: usize,
         ix: usize,
+        opening: Opening,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.commit(cx);
-        let member = self.workspace.read(cx).article_member(project, ix);
-        if self.enter_member(member.clone(), window, cx) {
+        let Some(member) = self.workspace.read(cx).article_member(project, ix) else {
             return;
-        }
-        self.workspace
-            .update(cx, |workspace, cx| workspace.open_article(project, ix, cx));
-        let pane = self.leaf().clone();
-        pane.update(cx, |pane, _| pane.kind = Kind::Article);
-        let editor = member.and_then(Member::into_entry).and_then(|member| {
+        };
+        self.enter_member(member.clone(), opening, window, cx);
+        let Some(pane) = self.leaf().cloned() else {
+            return;
+        };
+        let editor = member.into_entry().and_then(|member| {
             let view = pane.update(cx, |pane, cx| pane.article_view(member, cx));
             view.update(cx, |view, cx| view.ensure_editor(cx));
             view.read(cx).editor().cloned()
@@ -506,12 +505,10 @@ impl Cydonia {
         cx.notify();
     }
 
-    /// The article the focused pane is on. A window with no space open has no
-    /// member to name, and falls back to what its project is pointed at.
+    /// The article the focused tab is on.
     pub(crate) fn pane_doc<'a>(&self, cx: &'a App) -> Option<&'a crate::model::article::Article> {
-        self.workspace
-            .read(cx)
-            .article_of(self.leaf().read(cx).entry.as_ref(), cx)
+        let entry = self.focused_entry(cx)?;
+        self.workspace.read(cx).article_of(Some(&entry), cx)
     }
 
     /// The same by its file — the one address every write to an article is
@@ -532,7 +529,7 @@ impl Cydonia {
 
     /// The editor of the article the focused pane shows.
     pub(crate) fn pane_editor(&self, cx: &App) -> Option<Entity<editor::Editor>> {
-        self.leaf()
+        self.leaf()?
             .read(cx)
             .article_shown(cx)?
             .read(cx)
@@ -554,8 +551,10 @@ impl Cydonia {
             return;
         };
         editor.update(cx, |editor, cx| editor.toggle_source(cx));
-        let pane = self.leaf().read(cx);
-        let finding = pane.finding && pane.find_field.read(cx).focus_handle(cx).is_focused(window);
+        let finding = self.leaf().is_some_and(|pane| {
+            let pane = pane.read(cx);
+            pane.finding && pane.find_field.read(cx).focus_handle(cx).is_focused(window)
+        });
         if !finding {
             window.focus(&editor.focus_handle(cx), cx);
         }
@@ -569,7 +568,7 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(view) = self.leaf().read(cx).article_shown(cx) {
+        if let Some(view) = self.leaf().and_then(|pane| pane.read(cx).article_shown(cx)) {
             view.update(cx, |view, cx| view.toggle_outline_menu(window, cx));
         }
     }
@@ -633,7 +632,7 @@ impl Cydonia {
 
 /// Which of an article view's menus is up.
 #[derive(Clone, PartialEq, Eq)]
-enum ArticleMenu {
+pub(crate) enum ArticleMenu {
     Outline,
 }
 
@@ -677,12 +676,24 @@ pub(crate) struct ArticleView {
     find: Find,
     /// The picker the labels under the title open.
     labels: Labels,
-    /// The comments button the pane's bar draws for it.
+    /// The comments button the tab's title row draws for it.
     pub(crate) comments: Entity<comments::CommentsButton>,
     /// The field under the open comment that asks a follow-up on it. One,
     /// since one comment is open at a time.
     follow_up: Entity<TextField>,
     _editor: Option<Subscription>,
+}
+
+impl MenuHost for ArticleView {
+    type Key = ArticleMenu;
+
+    fn menu(&self) -> &ContextMenu<Self, ArticleMenu> {
+        &self.menu
+    }
+
+    fn menu_mut(&mut self) -> &mut ContextMenu<Self, ArticleMenu> {
+        &mut self.menu
+    }
 }
 
 impl ArticleView {
@@ -802,12 +813,10 @@ impl ArticleView {
             return;
         };
         self.outline_hovered = false;
-        ContextMenu::toggle(
-            self,
-            |this| &mut this.menu,
+        self.toggle_menu(
             ArticleMenu::Outline,
             Place::AboveEnd,
-            move |_, _, cx| menu::chooser(outline_rows(&editor, cx)),
+            move |_, _, cx| outline_rows(&editor, cx),
             window,
             cx,
         );
@@ -1276,12 +1285,7 @@ impl ArticleView {
                 .bottom(px(16.))
                 .right(px(16.))
                 .child(watch)
-                .child(ContextMenu::trigger(
-                    trigger,
-                    |this: &mut Self| &mut this.menu,
-                    ArticleMenu::Outline,
-                    cx,
-                ))
+                .child(self.menu_trigger(trigger, ArticleMenu::Outline, cx))
                 .into_any_element(),
         )
     }

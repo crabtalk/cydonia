@@ -53,7 +53,7 @@ pub trait Project {
     /// Mint a board and file it, called and keyed as the caller has them.
     /// An empty key is derived from the name, clear of the keys the project's
     /// other boards hold — see [`crate::board::key`].
-    fn create_board(&self, name: &str, key: &str) -> Result<Board>;
+    fn create_board(&self, name: &str, key: &str, view: crate::board::View) -> Result<Board>;
 
     /// Write a board back, and take the time it was written at — the key the
     /// sidebar orders on, which only the backend knows — and the version it

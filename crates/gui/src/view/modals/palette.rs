@@ -16,6 +16,7 @@
 //! are as of its last write. Opening a hit in an entry's body puts the query in
 //! its pane's find bar — see [`crate::view::pane::find`].
 
+use crate::model::workspace::Opening;
 use crate::view::kit::{icon::kind_icon, text::CardTitle};
 use crate::{
     model::workspace::{Showing, Workspace},
@@ -78,6 +79,7 @@ actions!(
     cydonia_search,
     [
         ToggleSearch,
+        NewTab,
         ApplySearch,
         SelectNext,
         SelectPrev,
@@ -166,6 +168,9 @@ pub(crate) struct Palette {
     /// Set while the palette links an entry: what picking one does in place
     /// of opening it. It lists no commands.
     linking: Option<OnLink>,
+    /// Whether what is picked opens as a tab of its own rather than in the
+    /// preview's place — see [`Cydonia::new_tab`].
+    keep: bool,
     selected: usize,
     scroll: ScrollHandle,
     task: Option<Task<()>>,
@@ -244,6 +249,19 @@ impl Cydonia {
         });
     }
 
+    /// Raise the palette to open an entry in a tab of its own.
+    pub(crate) fn new_tab(&mut self, _: &NewTab, window: &mut Window, cx: &mut Context<Self>) {
+        let recent = self.list(cx).recent_rows();
+        let workspace = self.workspace.clone();
+        let root = cx.entity().downgrade();
+        self.toggle_modal(window, cx, |window, cx| {
+            let mut palette = Palette::new(workspace, root, recent, window, cx);
+            palette.keep = true;
+            palette.refresh(cx);
+            palette
+        });
+    }
+
     /// Raise the palette to link an entry: Enter hands the one picked to `on`
     /// rather than opening it.
     pub(crate) fn link_search(&mut self, on: OnLink, window: &mut Window, cx: &mut Context<Self>) {
@@ -293,6 +311,7 @@ impl Palette {
             filter: None,
             limit: RECENT,
             linking: None,
+            keep: false,
             selected: 0,
             scroll: ScrollHandle::new(),
             task: None,
@@ -612,15 +631,21 @@ impl Palette {
             return;
         }
         let query = self.field.read(cx).content().clone();
+        let keep = self.keep;
         let _ = self.root.update(cx, |root, cx| {
             if let Some(card) = &hit.card {
                 root.open_reference(&card.reference, window, cx);
                 cx.notify();
                 return;
             }
-            root.open_row(&hit.row, window, cx);
-            if hit.snippet.is_some() {
-                let pane = root.leaf().clone();
+            let opening = match keep {
+                true => Opening::Kept,
+                false => Opening::Preview,
+            };
+            root.open_row(&hit.row, opening, window, cx);
+            if hit.snippet.is_some()
+                && let Some(pane) = root.leaf().cloned()
+            {
                 pane.update(cx, |pane, cx| {
                     pane.finding = true;
                     pane.find_field

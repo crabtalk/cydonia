@@ -25,13 +25,15 @@ use crate::{
         board,
         board::info,
         component::{composer, ribbon},
-        pane::find::{FindNext, FindPrev},
+        pane::find::{FindCard, FindNext, FindPrev},
         table,
-        window::menubar,
-        window::root::{
-            self, CloseProject, GoBack, GoForward, InstallApp, LoadApp, NewArticle, NewBoard,
-            NewSession, NewSessionNext, NewTable, NextEntry, OpenFiles, OpenProject, OpenReview,
-            OpenSettings, PrevEntry, ToggleChanges, ToggleSidebar, ToggleTerminal,
+        window::{
+            menubar,
+            root::{
+                self, CloseProject, GoBack, GoForward, InstallApp, LoadApp, NewArticle, NewBoard,
+                NewSession, NewSessionNext, NewTable, NextEntry, OpenFiles, OpenProject,
+                OpenReview, OpenSettings, PrevEntry, ToggleChanges, ToggleSidebar, ToggleTerminal,
+            },
         },
     },
 };
@@ -66,6 +68,7 @@ pub enum Command {
     OpenSettings,
     NewSession,
     NewSessionNext,
+    NewTab,
     NewBoard,
     NewArticle,
     NewTable,
@@ -113,10 +116,11 @@ impl Menu {
 }
 
 impl Command {
-    pub const ALL: [Self; 25] = [
+    pub const ALL: [Self; 26] = [
         Self::OpenSettings,
         Self::NewSession,
         Self::NewSessionNext,
+        Self::NewTab,
         Self::NewBoard,
         Self::NewArticle,
         Self::NewTable,
@@ -147,6 +151,7 @@ impl Command {
             Self::OpenSettings => "open_settings",
             Self::NewSession => "new_session",
             Self::NewSessionNext => "new_session_next",
+            Self::NewTab => "new_tab",
             Self::NewBoard => "new_board",
             Self::NewArticle => "new_article",
             Self::NewTable => "new_table",
@@ -178,6 +183,7 @@ impl Command {
             Self::OpenSettings => "Settings…",
             Self::NewSession => "New Session",
             Self::NewSessionNext => "New Session on Next Agent",
+            Self::NewTab => "New Tab",
             Self::NewBoard => "New Board",
             Self::NewArticle => "New Article",
             Self::NewTable => "New Table",
@@ -208,6 +214,7 @@ impl Command {
             Self::OpenSettings => Menu::App,
             Self::NewSession
             | Self::NewSessionNext
+            | Self::NewTab
             | Self::NewBoard
             | Self::NewArticle
             | Self::NewTable
@@ -233,10 +240,7 @@ impl Command {
         }
     }
 
-    /// The chord it ships with, where it ships with one. The ones that do not
-    /// are reachable from the menu and were never worth a default between
-    /// them: ⌘N is the session, and three more `New` chords would spend the
-    /// letters a person may want for their own.
+    /// The chord it ships with, where it ships with one.
     pub fn default(self) -> Option<&'static str> {
         Some(match self {
             // What macOS binds Preferences to in every other app.
@@ -245,12 +249,11 @@ impl Command {
             // ⌘N's other agent: the chord a second agent needs, since ⌘N
             // stays with whoever the project last talked to.
             Self::NewSessionNext => "alt-secondary-n",
-            Self::NewBoard
-            | Self::NewArticle
-            | Self::NewTable
-            | Self::InstallApp
-            | Self::LoadApp
-            | Self::CloseProject => return None,
+            // What every browser opens a tab on.
+            Self::NewTab => "secondary-t",
+            Self::NewArticle => "secondary-shift-a",
+            Self::NewBoard => "secondary-shift-b",
+            Self::NewTable | Self::InstallApp | Self::LoadApp | Self::CloseProject => return None,
             // Nothing: ⌃⇥ and ⇧⌃⇥ are what step between entries, and they are
             // bound where nothing can name them — see [`root::bindings`]. A
             // second default would go in the menu as a key equivalent, and an
@@ -285,6 +288,16 @@ impl Command {
             Self::OpenSettings => KeyBinding::new(chord, OpenSettings, context),
             Self::NewSession => KeyBinding::new(chord, NewSession, context),
             Self::NewSessionNext => KeyBinding::new(chord, NewSessionNext, context),
+            // Everywhere but the right and bottom panels, which hold ⌘T for a
+            // shell of their own.
+            Self::NewTab => KeyBinding::new(
+                chord,
+                super::modals::palette::NewTab,
+                Some(match NATIVE {
+                    true => "!SessionPanel && !BottomTerminalPanel",
+                    false => "!SessionPanel && !BottomTerminalPanel && !CydoniaTerminal",
+                }),
+            ),
             Self::NewBoard => KeyBinding::new(chord, NewBoard, context),
             Self::NewArticle => KeyBinding::new(chord, NewArticle, context),
             Self::NewTable => KeyBinding::new(chord, NewTable, context),
@@ -312,7 +325,7 @@ impl Command {
             Self::Search => KeyBinding::new(chord, super::modals::palette::ToggleSearch, context),
             Self::FindCard => KeyBinding::new(
                 chord,
-                board::FindCard,
+                FindCard,
                 Some(match NATIVE {
                     true => "!SessionPanel",
                     false => "!SessionPanel && !CydoniaTerminal",

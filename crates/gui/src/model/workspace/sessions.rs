@@ -51,16 +51,6 @@ impl Workspace {
         Some(artifact::reference::Reference::entry(Some(&name), number, None).link())
     }
 
-    /// [`Self::new_session`] behind whatever the window shows.
-    pub fn new_session_behind(
-        &mut self,
-        entry: settings::Agent,
-        cx: &mut Context<Self>,
-    ) -> Option<u64> {
-        let ix = self.active?;
-        self.new_session_in(ix, entry, None, false, cx)
-    }
-
     /// [`Self::new_session`] in the project at `ix` rather than the active one.
     /// `front` puts it in front of its project; without it, whatever the
     /// window shows stays put.
@@ -90,8 +80,7 @@ impl Workspace {
     }
 
     /// The member that names a session wherever it is open — what finds the
-    /// pane holding it. Nothing for one with no file yet: a space names its
-    /// members by file, and a session has none until its first turn.
+    /// tab holding it. Nothing for one with no record id yet.
     pub fn member_of_session(&self, id: u64, cx: &App) -> Option<artifact::space::Member> {
         self.member_of(self.project_of(id)?, super::Showing::Session(id), cx)
     }
@@ -315,6 +304,9 @@ impl Workspace {
         let Some(record) = record else {
             return;
         };
+        if let Some(minted) = self.session(id, cx).and_then(|chat| chat.record.clone()) {
+            self.keep_edited(Kind::Session, &minted);
+        }
         if let (Some(record), Some(ix)) = (record, self.project_of(id)) {
             self.note_landing(ix, Kind::Session, record, cx);
         }
@@ -626,6 +618,15 @@ impl Workspace {
         self.projects
             .iter()
             .find_map(|project| project.session_entity(id))
+    }
+
+    /// Every open project's sessions, as the entities they are held in.
+    pub fn chat_entities(&self) -> Vec<Entity<ChatSession>> {
+        self.projects
+            .iter()
+            .flat_map(|project| &project.sessions)
+            .map(|held| held.chat.clone())
+            .collect()
     }
 
     /// Every open project's sessions, read.

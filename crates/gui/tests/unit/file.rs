@@ -127,7 +127,7 @@ fn source_uses_full_viewport_and_scrolls_long_files(cx: &mut gpui::TestAppContex
 #[gpui::test]
 fn source_files_are_coloured_and_recoloured(cx: &mut gpui::TestAppContext) {
     crate::model::language::Here::paintable();
-    syntax_std::install();
+    syntax::grammars::install();
     let file = Temp::named(".rs");
     std::fs::write(&file.0, "fn main() { let x = 1; }\n").unwrap();
     let view = cx.new(|cx| FileView::new(file.0.clone(), WeakEntity::new_invalid(), cx));
@@ -185,7 +185,7 @@ fn a_named_but_unpainted_language_reports_itself(cx: &mut gpui::TestAppContext) 
 #[gpui::test]
 fn a_painted_or_unknown_file_reports_nothing(cx: &mut gpui::TestAppContext) {
     crate::model::language::Here::paintable();
-    syntax_std::install();
+    syntax::grammars::install();
     let painted = Temp::named(".rs");
     let view = cx.new(|cx| FileView::new(painted.0.clone(), WeakEntity::new_invalid(), cx));
     settle(cx);

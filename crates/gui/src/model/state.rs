@@ -29,7 +29,7 @@ pub enum Sort {
 }
 
 /// One remembered entry: which kind, and which of them.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(from = "Written")]
 pub struct Entry {
     pub kind: Kind,
@@ -99,9 +99,11 @@ pub struct State {
     /// an id whose file has since gone lands on one too.
     #[serde(default)]
     pub space: Option<String>,
-    /// The order the sidebar lists the spaces in, by id. A space this does
-    /// not name is one made since it was last written, and is listed above
-    /// everything here — the same rule `order` above follows for entries.
+    /// The order the spaces are read back in, by id: the order the sidebar
+    /// lists them in, and the order a space with no tab on the strip joins it
+    /// in. A space this does not name is one made since it was last written,
+    /// and goes before everything here — the same rule `order` above follows
+    /// for entries.
     #[serde(default)]
     pub spaces: Vec<String>,
     /// Spaces whose members the sidebar hides, by id.
@@ -125,6 +127,14 @@ pub struct State {
     /// path and name — see [`crate::view::window::menubar::Command::key`].
     #[serde(default)]
     pub commands: Vec<String>,
+    /// The window's tabs, in strip order — see
+    /// [`crate::model::workspace::Workspace::strip`]. Nothing in a file
+    /// written before tabs, which lands on the active project's `last`.
+    #[serde(default)]
+    pub tabs: Option<Vec<crate::model::workspace::Slot>>,
+    /// The tab in front. One the strip no longer holds, or none, is its first.
+    #[serde(default)]
+    pub front: Option<crate::model::workspace::Slot>,
 }
 
 /// Where the main window stands, in the platform's logical pixels. For a
@@ -174,22 +184,11 @@ pub fn restore() -> State {
     State {
         projects,
         active,
-        collapsed: stored.collapsed,
         release: match first {
             true => Some(Version::running()),
             false => stored.release,
         },
-        last: stored.last,
-        order: stored.order,
-        pinned: stored.pinned,
-        sort: stored.sort,
-        space: stored.space,
-        spaces: stored.spaces,
-        folded_spaces: stored.folded_spaces,
-        space_order: stored.space_order,
-        folded_sections: stored.folded_sections,
-        window: stored.window,
-        commands: stored.commands,
+        ..stored
     }
 }
 

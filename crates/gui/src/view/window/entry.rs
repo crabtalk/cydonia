@@ -1,19 +1,23 @@
 //! What the window does to an entry: open it, put it away, delete it, pin
 //! it, name it, and the rows of its menu — whichever view's menu asked.
 
-use crate::model::workspace::Showing;
-use crate::view::{
-    article::TogglePlainText,
-    keymap::{self, Command},
-    kit::{menu, stamp, text},
-    sidebar::{Group, Lit, Renaming, Row, on_disk},
-    window::root::Cydonia,
+use crate::{
+    model::workspace::{Opening, Showing},
+    view::{
+        article::TogglePlainText,
+        keymap::{self, Command},
+        kit::{menu, rename::Renaming, stamp, text},
+        sidebar::{Group, Lit, Row, on_disk},
+        window::root::Cydonia,
+    },
 };
-use artifact::board::{Page, View};
-use artifact::space::Member;
+use artifact::{
+    board::{Page, View},
+    space::Member,
+};
 use bezel::{
-    gpui::{AnyElement, App, Context, Window, prelude::*},
-    ui::{icons, input::Case, menu::Item},
+    gpui::{App, Context, Window},
+    ui::{icons, menu::Item},
 };
 use std::path::PathBuf;
 
@@ -24,9 +28,8 @@ pub(crate) enum Host {
     Sidebar,
     /// A row in the library.
     Library,
-    /// The band over the window's one pane.
-    Header,
-    /// A tab of a space's pane, by the entry it is on.
+    /// A tab, by the entry it is on: its title row's `···`, or its tab in
+    /// the strip.
     Tab(Member),
 }
 
@@ -35,20 +38,30 @@ impl Cydonia {
     pub(crate) fn lit(&self, cx: &App) -> Lit {
         Lit {
             library: self.library.is_some(),
-            focused: self.leaf().read(cx).entry.clone(),
-            showing: self.showing(cx),
+            focused: self.focused_entry(cx),
+            open: self
+                .leaves
+                .iter()
+                .map(|leaf| leaf.read(cx).entry.clone())
+                .collect(),
         }
     }
 
     /// The sidebar's list as it stands.
     pub(crate) fn list<'a>(&self, cx: &'a App) -> crate::view::sidebar::List<'a> {
-        crate::view::sidebar::List::new(self.workspace.read(cx), self.search.read(cx), cx)
+        crate::view::sidebar::List::new(&self.workspace, &self.search, cx)
     }
 
     /// Open what a row points at — what a keyboard step does with its landing.
     /// The pointer never comes through here: each row carries its own
     /// `on_click`, which needs no [`Row`] to know what it is.
-    pub(crate) fn open_row(&mut self, row: &Row, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn open_row(
+        &mut self,
+        row: &Row,
+        opening: Opening,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let workspace = self.workspace.read(cx);
         match row {
             Row::Group(Group::Project(path)) => {
@@ -66,15 +79,15 @@ impl Cydonia {
             Row::Entry {
                 showing: Showing::Session(id),
                 ..
-            } => self.select_session(*id, window, cx),
+            } => self.select_session(*id, opening, window, cx),
             Row::Entry { showing, .. } => {
                 let Some((project, ix)) = row.located(self.workspace.read(cx)) else {
                     return;
                 };
                 match showing {
-                    Showing::Board(_) => self.open_board(project, ix, window, cx),
-                    Showing::Article(_) => self.open_article(project, ix, window, cx),
-                    Showing::Table(_) => self.open_table(project, ix, window, cx),
+                    Showing::Board(_) => self.open_board(project, ix, opening, window, cx),
+                    Showing::Article(_) => self.open_article(project, ix, opening, window, cx),
+                    Showing::Table(_) => self.open_table(project, ix, opening, window, cx),
                     Showing::Session(_) => {}
                 }
             }
@@ -83,7 +96,7 @@ impl Cydonia {
                     self.open_space(ix, window, cx);
                 }
             }
-            Row::App(id) => self.open_app(id, window, cx),
+            Row::App(id) => self.open_app(id, opening, window, cx),
             // A heading over a section, and nothing to open.
             Row::Heading(_) => {}
         }
@@ -121,7 +134,7 @@ impl Cydonia {
     }
 
     /// Pin an entry to the top of its project's list, or let it back down.
-    pub(crate) fn pin_entry(&mut self, entry: &Row, on: bool, cx: &mut Context<Self>) {
+    fn pin_entry(&mut self, entry: &Row, on: bool, cx: &mut Context<Self>) {
         let Row::Entry { project, showing } = entry else {
             return;
         };
@@ -133,7 +146,7 @@ impl Cydonia {
     }
 
     /// Everything an entry can have done to it, for the menu `host` names:
-    /// the band's `···`, a sidebar or library row, a tab. One builder for all
+    /// a pane's title row, a sidebar or library row, a window tab. One builder for all
     /// of them, so a command reachable in one is reachable in every other.
     pub(crate) fn entry_rows(
         &self,
@@ -144,7 +157,7 @@ impl Cydonia {
     ) -> Vec<(Item, menu::Act)> {
         // `../desktop`'s rule for what a `···` may carry: only commands with no
         // affordance on the object. An article's title is the head of its own
-        // page and a board's name in the band opens its identity panel, so
+        // page and a board's name in its title row opens its identity panel, so
         // neither is offered a second route here. Everywhere else the name is
         // display-only and this is the way.
         // An app's name is its manifest's, and it is not filed or pinned.
@@ -154,16 +167,13 @@ impl Cydonia {
                 entry.showing(),
                 Some(Showing::Article(_) | Showing::Board(_))
             );
-        // A page's measure and how it is being read: the open page's, since
-        // [`Self::set_full_width`] and [`Self::plain_text`] are about the one
-        // the window is showing. A row's menu names an entry that may not be
-        // it, so these are the band's alone — on the wrong row they would act
-        // on whatever else was open.
-        // A tab's menu has them only while its tab is the one focused.
+        // A page's measure and how it is being read: [`Self::set_full_width`]
+        // and [`Self::plain_text`] act on the focused pane's page, so a tab's
+        // menu has them only while its tab is the one focused, and a row's
+        // menu never.
         let page = match &host {
             Host::Sidebar | Host::Library => false,
-            Host::Tab(tab) => self.leaf().read(cx).entry.as_ref() == Some(tab),
-            Host::Header => true,
+            Host::Tab(tab) => self.focused_entry(cx).as_ref() == Some(tab),
         };
 
         // ── how the open page is shown ──
@@ -233,7 +243,7 @@ impl Cydonia {
             {
                 let on = match &host {
                     Host::Tab(tab) => Some(tab.clone()),
-                    Host::Sidebar | Host::Library | Host::Header => None,
+                    Host::Sidebar | Host::Library => None,
                 };
                 let label = match described {
                     true => "Description",
@@ -344,16 +354,6 @@ impl Cydonia {
             .map(|path| on_disk(path).into_iter().collect())
             .unwrap_or_default();
 
-        // ── the tab it is open in ──
-        let mut tab_rows: Vec<(Item, menu::Act)> = Vec::new();
-        if let Host::Tab(tab) = &host {
-            let tab = tab.clone();
-            tab_rows.push(menu::row::<Cydonia>(
-                Item::action("Close tab").with_icon(icons::notifications::X),
-                move |this, window, cx| this.close_pane(&tab, window, cx),
-            ));
-        }
-
         // Alone, so it is never the row beside the one meant.
         let delete = vec![menu::row::<Cydonia>(
             Item::action("Delete").with_icon(icons::files::Trash),
@@ -369,7 +369,7 @@ impl Cydonia {
             && let Some(article) = self.pane_doc(cx)
         {
             if let Some(words) = article.words() {
-                about.push(menu::note(text::word_count(words)));
+                about.push(menu::note(text::count(words, "word", "words")));
             }
             about.push(menu::note(format!(
                 "Edited {}",
@@ -380,7 +380,7 @@ impl Cydonia {
             }
         }
 
-        menu::sections([shown, held, disk, tab_rows, delete, about])
+        menu::sections([shown, held, disk, delete, about])
     }
 
     /// Drop an entry, file and all. Deleting the session on screen lands on
@@ -399,7 +399,7 @@ impl Cydonia {
                     ..
                 },
                 Some((project, _)),
-            ) if self.lit(cx).in_front(entry, self.workspace.read(cx)) => Some(project),
+            ) if self.lit(cx).in_front(entry, self.workspace.read(cx), cx) => Some(project),
             _ => None,
         };
         let member = entry.member(self.workspace.read(cx), cx);
@@ -433,25 +433,19 @@ impl Cydonia {
             }
         });
         if let Some(project) = landing_project
-            && let Some(landing) = self
-                .list(cx)
-                .entries(project)
-                .into_iter()
-                .find(|row| !matches!(row, Row::Archive(_)))
+            && let Some(landing) = self.open_top_entry(project, window, cx)
         {
-            self.open_row(&landing, window, cx);
             self.sidebar
                 .update(cx, |sidebar, cx| sidebar.reveal(&landing, cx));
         }
         cx.notify();
     }
 
-    /// Put the name field on an entry, in the place `host` names: the band's
-    /// own field for the band's menu, the sidebar's for every other.
+    /// Put the name field on an entry, in the place `host` names: the title
+    /// row's own field for a tab's menu, the sidebar's for every other.
     ///
-    /// A board is named by two things at once, so it opens its identity panel
-    /// instead — which lives under the band, so the board is brought to the
-    /// front first. One way to name a board, wherever you asked from.
+    /// A board opens its identity panel instead, in the pane it is brought to
+    /// the front of first.
     fn rename_entry(
         &mut self,
         entry: &Row,
@@ -465,17 +459,27 @@ impl Cydonia {
         } = entry
         {
             if let Some((project, ix)) = entry.located(self.workspace.read(cx)) {
-                self.open_board(project, ix, window, cx);
-                self.open_info(id, window, cx);
+                self.open_board(project, ix, Opening::Preview, window, cx);
+                if let Some(tab) = self.leaf().cloned() {
+                    tab.update(cx, |tab, cx| tab.open_info(id, window, cx));
+                }
             }
             return;
         }
         let Some(what) = Renaming::of(entry) else {
             return;
         };
-        match host {
-            Host::Header => self.start_rename(what, window, cx),
-            Host::Sidebar | Host::Library | Host::Tab(_) => self
+        let tab = match host {
+            Host::Tab(member) => self
+                .leaves
+                .iter()
+                .find(|leaf| leaf.read(cx).entry == *member)
+                .cloned(),
+            Host::Sidebar | Host::Library => None,
+        };
+        match tab {
+            Some(tab) => tab.update(cx, |tab, cx| tab.start_rename(what, window, cx)),
+            None => self
                 .sidebar
                 .update(cx, |sidebar, cx| sidebar.start_rename(what, window, cx)),
         }
@@ -493,7 +497,7 @@ impl Cydonia {
     ) {
         // Read before the flag moves: once the entry is away it is no longer
         // what any pane is on.
-        let landing = (archived && self.lit(cx).in_front(entry, self.workspace.read(cx)))
+        let landing = (archived && self.lit(cx).in_front(entry, self.workspace.read(cx), cx))
             .then(|| {
                 entry
                     .located(self.workspace.read(cx))
@@ -510,7 +514,7 @@ impl Cydonia {
         // back to, and it is remade by dragging one entry onto another.
         if let Row::Group(Group::Space(id)) = entry {
             let workspace = self.workspace.read(cx);
-            let Some(space) = workspace.space_ix(id).map(|ix| &workspace.spaces[ix]) else {
+            let Some(space) = workspace.space_by_id(id) else {
                 return;
             };
             let members: Vec<Row> = space
@@ -585,53 +589,22 @@ impl Cydonia {
     }
 
     /// Put the pane on the first entry the project still lists. What the pane
-    /// falls back to when the entry it was on is put away — [`Self::entries`]
-    /// sorts the archived below the divider, so the first row is one still in
-    /// hand or the divider itself.
-    fn open_top_entry(&mut self, project: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(top) = self
+    /// falls back to when the entry it was on is put away —
+    /// [`crate::view::sidebar::List::entries`] sorts the archived below the
+    /// divider, so the first row is one still in hand or the divider itself.
+    /// Answers the row it opened.
+    fn open_top_entry(
+        &mut self,
+        project: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Row> {
+        let top = self
             .list(cx)
             .entries(project)
             .into_iter()
-            .find(|row| row.showing().is_some())
-        else {
-            return;
-        };
-        self.open_row(&top, window, cx);
-    }
-
-    /// The field, in the row's place.
-    pub(crate) fn name_field(&self, _: &mut Context<Self>) -> AnyElement {
-        self.name_field.clone().into_any_element()
-    }
-
-    /// Put the band's field on `what`.
-    pub(crate) fn start_rename(
-        &mut self,
-        what: Renaming,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let label = what.label(self.workspace.read(cx), cx);
-        self.name_field
-            .update(cx, |field, cx| field.start(label, Case::Mixed, window, cx));
-        // See [`Cydonia::open_info`] — the other way round.
-        self.info = None;
-        self.renaming = Some(what);
-        cx.notify();
-    }
-
-    pub(crate) fn commit_name(&mut self, name: String, cx: &mut Context<Self>) {
-        let Some(what) = self.renaming.take() else {
-            return;
-        };
-        self.workspace
-            .update(cx, |workspace, cx| what.commit(name, workspace, cx));
-        cx.notify();
-    }
-
-    pub(crate) fn dismiss_name(&mut self, cx: &mut Context<Self>) {
-        self.renaming = None;
-        cx.notify();
+            .find(|row| row.showing().is_some())?;
+        self.open_row(&top, Opening::Preview, window, cx);
+        Some(top)
     }
 }

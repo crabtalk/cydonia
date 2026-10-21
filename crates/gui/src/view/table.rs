@@ -5,15 +5,16 @@
 
 use crate::{
     data::ColType,
-    model::workspace::Workspace,
+    model::workspace::{Opening, Workspace},
     view::{
-        kit::menu,
+        kit::{
+            add,
+            menu::{self, MenuHost},
+        },
         window::root::{Cydonia, NewTable},
     },
 };
-use artifact::kind::Kind;
 use artifact::space::{Entry, Member};
-use bezel::ui::scroll as scrollbars;
 use bezel::{
     gpui::{
         self, AnyElement, App, Context, Div, Entity, Focusable as _, KeyBinding, SharedString,
@@ -25,7 +26,7 @@ use bezel::{
         icons,
         input::{Shape, TextField},
         menu::Item,
-        table,
+        scroll as scrollbars, table,
         widgets::Buttons,
     },
 };
@@ -104,7 +105,7 @@ impl Cydonia {
             .workspace
             .update(cx, |workspace, cx| workspace.new_table(cx));
         if let Some(ix) = ix {
-            self.open_table(project, ix, window, cx);
+            self.open_table(project, ix, Opening::Kept, window, cx);
         }
     }
 
@@ -112,23 +113,21 @@ impl Cydonia {
         &mut self,
         project: usize,
         ix: usize,
+        opening: Opening,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.commit(cx);
-        let member = self.workspace.read(cx).table_member(project, ix);
-        if self.enter_member(member, window, cx) {
+        let Some(member) = self.workspace.read(cx).table_member(project, ix) else {
             return;
-        }
-        self.workspace
-            .update(cx, |workspace, cx| workspace.open_table(project, ix, cx));
-        self.leaf().update(cx, |pane, _| pane.kind = Kind::Table);
+        };
+        self.enter_member(member, opening, window, cx);
         cx.notify();
     }
 
     /// The table view `on`'s pane draws, where it shows a table.
     pub(crate) fn table_view_of(&self, on: Option<&Member>, cx: &App) -> Option<Entity<TableView>> {
-        self.leaf_of(on, cx).read(cx).table_shown(cx)
+        self.leaf_of(on, cx)?.read(cx).table_shown(cx)
     }
 
     /// Every table view the panes hold.
@@ -232,6 +231,18 @@ pub(crate) struct TableView {
     pub(crate) cell_field: Entity<TextField>,
     /// The column menu that is up, by column.
     menu: ContextMenu<Self, usize>,
+}
+
+impl MenuHost for TableView {
+    type Key = usize;
+
+    fn menu(&self) -> &ContextMenu<Self, usize> {
+        &self.menu
+    }
+
+    fn menu_mut(&mut self) -> &mut ContextMenu<Self, usize> {
+        &mut self.menu
+    }
 }
 
 impl TableView {
@@ -436,21 +447,17 @@ impl TableView {
         )
         .on_click(cx.listener(move |this, _, window, cx| {
             cx.stop_propagation();
-            ContextMenu::toggle(
-                this,
-                |this| &mut this.menu,
+            this.toggle_menu(
                 ix,
                 Place::Below,
-                move |_, _, _| menu::chooser(Self::column_rows(ix, kind)),
+                move |_, _, _| Self::column_rows(ix, kind),
                 window,
                 cx,
             );
         }));
-        let button = ContextMenu::trigger(button, |this: &mut Self| &mut this.menu, ix, cx)
-            .children(
-                self.menu
-                    .render_for(&ix, id, |this| &mut this.menu, window, cx),
-            );
+        let button = self
+            .menu_trigger(button, ix, cx)
+            .children(self.menu_here(&ix, id, window, cx));
         table::header_cell(&theme, shape, None)
             .line_height(px(LINE))
             .id(("heading", ix))
@@ -646,23 +653,10 @@ impl Render for TableView {
                     .pb(px(20.))
                     .child(body)
                     .child(
-                        theme
-                            .ghost("add-row")
+                        add::row("add-row", "New row", theme.text_muted, &theme)
                             .mt(px(6.))
                             .px(px(10.))
                             .py(px(7.))
-                            .gap(px(6.))
-                            .child(
-                                icons::icon(icons::math::Plus)
-                                    .size(px(12.))
-                                    .text_color(theme.text_faint),
-                            )
-                            .child(
-                                div()
-                                    .text_style(TextStyle::Callout)
-                                    .text_color(theme.text_muted)
-                                    .child("New row"),
-                            )
                             .on_click(cx.listener(|this, _, window, cx| this.add_row(window, cx))),
                     )
                     .map(|pane| {

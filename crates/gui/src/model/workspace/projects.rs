@@ -27,6 +27,7 @@ impl Workspace {
         });
         rail::set_open(self.paths());
         rail::set_agents(self.rail_agents());
+        rail::set_board_view(self.board_view);
         cx.spawn(async move |workspace, cx| {
             while let Some(change) = asks.next().await {
                 let held = workspace
@@ -168,6 +169,13 @@ impl Workspace {
         if ix >= self.projects.len() {
             return;
         }
+        let path = self.projects[ix].path.clone();
+        let gone: Vec<_> = self
+            .tab_strip()
+            .into_iter()
+            .filter(|member| member.project() == Some(path.as_path()))
+            .collect();
+        self.drop_tabs(&gone, cx);
         self.projects.remove(ix);
         self.active = self.active.and_then(|active| {
             let next = if active > ix { active - 1 } else { active };
@@ -260,10 +268,6 @@ impl Workspace {
         id: String,
         cx: &mut Context<Self>,
     ) {
-        // Opening any entry leaves the arrangement. Here rather than in each
-        // `open_*`: this is the one place they all come through, so there is
-        // no way to open an entry and forget to.
-        self.leave_space();
         self.note_landing(project, kind, id, cx);
     }
 

@@ -5,17 +5,16 @@
 //! holds is a [`Peek`].
 
 use super::Tab;
-use crate::view::window::reach::InWindow as _;
 use crate::{
-    model::workspace::{Showing, references::Part},
+    model::workspace::{Opening, Showing, references::Part},
     view::{
         board::{BoardView, DrawerAt, PaneState},
         kit::watch::Watch,
         sidebar::Row,
-        window::root::Cydonia,
+        window::{reach::InWindow as _, root::Cydonia},
     },
 };
-use artifact::{board::Page, space::Member};
+use artifact::{board::Page, reference::Reference, space::Member};
 use bezel::{
     gpui::{
         self, AnyElement, App, Context, Div, Entity, EntityId, FocusHandle, KeyBinding, Pixels,
@@ -43,11 +42,29 @@ pub fn bindings() -> Vec<KeyBinding> {
 }
 
 /// What a pane's drawer holds.
+#[derive(Clone)]
 pub(crate) enum Peek {
     /// The card or the description open in one of the pane's board views —
     /// see [`BoardView::open`].
     Page(Entity<BoardView>),
     Entry(Entry),
+}
+
+impl Peek {
+    /// What the drawer draws: the board view's open page, or what
+    /// `entry_face` draws for an entry, scrolled by `scroll`.
+    pub(crate) fn face<V: 'static>(
+        self,
+        scroll: &ScrollHandle,
+        window: &mut Window,
+        cx: &mut Context<V>,
+        entry_face: impl FnOnce(&Entry, &ScrollHandle, &mut Window, &mut Context<V>) -> Option<Face>,
+    ) -> Option<Face> {
+        match self {
+            Self::Page(view) => view.update(cx, |view, cx| view.page_face(window, cx)),
+            Self::Entry(entry) => entry_face(&entry, scroll, window, cx),
+        }
+    }
 }
 
 /// An entry opened from a `cydonia://` link, or from the library.
@@ -425,10 +442,8 @@ impl Tab {
                 .capture_any_mouse_down({
                     let root = self.root.clone();
                     move |_, window, cx| {
-                        if let Some(on) = &focus_on {
-                            root.update(cx, |root, cx| root.focus_pane(on, window, cx))
-                                .ok();
-                        }
+                        root.update(cx, |root, cx| root.focus_pane(&focus_on, window, cx))
+                            .ok();
                     }
                 })
                 .on_mouse_down(gpui::MouseButton::Left, {
@@ -602,9 +617,9 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.leaf_of(on, cx)
-            .clone()
-            .update(cx, |pane, cx| pane.close_drawer(window, cx));
+        if let Some(pane) = self.leaf_of(on, cx).cloned() {
+            pane.update(cx, |pane, cx| pane.close_drawer(window, cx));
+        }
     }
 
     /// Hold the rows of every table a drawer shows, so its preview has a page
@@ -651,7 +666,10 @@ impl Cydonia {
             }
             return;
         }
-        if self.leaf_of(on, cx).read(cx).peeks(reference) {
+        if self
+            .leaf_of(on, cx)
+            .is_some_and(|pane| pane.read(cx).peeks(reference))
+        {
             return self.close_drawer(on, window, cx);
         }
         // An article or a board a pane already shows opens in that pane.
@@ -663,7 +681,7 @@ impl Cydonia {
             }
         );
         if paned && self.on_screen(&named.row, cx) {
-            return self.open_row(&named.row, window, cx);
+            return self.open_row(&named.row, Opening::Preview, window, cx);
         }
         match &named.row {
             Row::Entry {
@@ -710,9 +728,9 @@ impl Cydonia {
             reference: reference.to_owned(),
             session,
         };
-        self.leaf_of(on, cx)
-            .clone()
-            .update(cx, |pane, cx| pane.open_entry(entry, window, cx));
+        if let Some(pane) = self.leaf_of(on, cx).cloned() {
+            pane.update(cx, |pane, cx| pane.open_entry(entry, window, cx));
+        }
         cx.notify();
     }
 
@@ -723,20 +741,19 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
-        let pane = self.leaf_of(on, cx).clone();
-        let peek = pane
+        let Some(pane) = self.leaf_of(on, cx).cloned() else {
+            return Vec::new();
+        };
+        let Some((peek, scroll)) = pane
             .read(cx)
             .drawer_shown(cx)
-            .map(|drawer| match &drawer.peek {
-                Peek::Page(view) => Err(view.clone()),
-                Peek::Entry(entry) => Ok((entry.clone(), drawer.scroll.clone())),
-            });
-        let face = match peek {
-            None => None,
-            Some(Err(view)) => view.update(cx, |view, cx| view.page_face(window, cx)),
-            Some(Ok((entry, scroll))) => Some(self.entry_face(&entry, on, &scroll, window, cx)),
+            .map(|drawer| (drawer.peek.clone(), drawer.scroll.clone()))
+        else {
+            return Vec::new();
         };
-        let Some(face) = face else {
+        let Some(face) = peek.face(&scroll, window, cx, |entry, scroll, window, cx| {
+            Some(self.entry_face(entry, on, scroll, window, cx))
+        }) else {
             return Vec::new();
         };
         pane.update(cx, |pane, cx| pane.drawer_layer(face, cx))
@@ -794,7 +811,7 @@ impl Cydonia {
                 .into_any_element(),
             div()
                 .font_family(theme.font_mono.clone())
-                .child(format!("#{}", named.number))
+                .child(Reference::entry(None, named.number, None).to_string())
                 .into_any_element(),
         ];
         let (body, open): (AnyElement, OpenIn) = match (session, named.part.clone()) {
@@ -810,7 +827,7 @@ impl Cydonia {
                 },
                 Rc::new(
                     move |this: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
-                        this.select_session(id, window, cx)
+                        this.select_session(id, Opening::Preview, window, cx)
                     },
                 ),
             ),
@@ -820,7 +837,7 @@ impl Cydonia {
                     self.excerpt_body(id, turns, None, window, cx),
                     Rc::new(
                         move |this: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
-                            this.select_session(id, window, cx);
+                            this.select_session(id, Opening::Preview, window, cx);
                             this.reveal_session_turn(id, from, cx);
                         },
                     ),
@@ -864,7 +881,7 @@ impl Cydonia {
                     body,
                     Rc::new(
                         move |this: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
-                            this.open_row(&row, window, cx)
+                            this.open_row(&row, Opening::Preview, window, cx)
                         },
                     ),
                 )

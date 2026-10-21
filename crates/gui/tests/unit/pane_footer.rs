@@ -1,4 +1,5 @@
 use super::*;
+use crate::model::workspace::Showing;
 use crate::model::{
     project::Project,
     session::ChatSession,
@@ -13,7 +14,7 @@ impl Render for PaneView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let pane = self.0.update(cx, |root, cx| {
             root.sync_items(cx);
-            root.pane(&self.1, window, cx)
+            root.pane(&self.1, true, window, cx)
         });
         div().w(px(600.)).h(px(500.)).child(pane)
     }
@@ -41,12 +42,15 @@ fn arranged_session_measures_its_own_composer(cx: &mut gpui::TestAppContext) {
                 workspace.active = Some(0);
                 workspace.member_of(0, Showing::Session(2), cx).unwrap()
             });
+            root.workspace.update(cx, |workspace, cx| {
+                workspace.open_tab(member.clone(), crate::model::workspace::Opening::Kept, cx)
+            });
+            root.sync_leaves(window, cx);
             let tab = root.leaves[0].clone();
-            tab.update(cx, |tab, _| tab.entry = Some(member.clone()));
             // The pane a space would hold this tab in.
-            let (workspace, owner) = (root.workspace.clone(), cx.entity().downgrade());
-            let pane = cx.new(|cx| crate::view::pane::Pane::new(member.clone(), workspace, owner, cx));
-            pane.update(cx, |pane, _| pane.tabs = vec![tab.clone()]);
+            let owner = cx.entity().downgrade();
+            let pane = cx.new(|_| crate::view::pane::Pane::new(member.clone(), owner));
+            pane.update(cx, |pane, _| pane.tab = Some(tab.clone()));
             root.panes.push(pane);
             let composer = tab.read(cx).composer.clone();
             composer.update(cx, |composer, cx| {

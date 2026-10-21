@@ -6,6 +6,7 @@
 //! Going back is going to that entry, wherever it is shown now, scrolled to
 //! where it was left; or to the library, narrowed as it was left.
 
+use crate::model::workspace::Opening;
 use artifact::space::Member;
 use bezel::{
     gpui::{Context, Div, IntoElement, ListOffset, Pixels, Point, Window, div, prelude::*},
@@ -78,18 +79,13 @@ impl History {
 }
 
 impl Cydonia {
-    /// What the window is on: the library while it is up, else the entry in
-    /// focus — the focused pane's in a space, the single pane's otherwise.
+    /// What the window is on: the library while it is up, else the focused
+    /// tab's entry.
     fn focused_place(&self, cx: &Context<Self>) -> Option<Place> {
         if self.library.is_some() {
             return Some(Place::Library);
         }
-        self.leaf()
-            .read(cx)
-            .entry
-            .clone()
-            .or_else(|| self.lone_member(cx))
-            .map(Place::Entry)
+        self.focused_entry(cx).map(Place::Entry)
     }
 
     /// Note what the window is on, and step the history when it changed.
@@ -234,7 +230,7 @@ impl Cydonia {
             self.history.stepping = true;
             match (row, next.at.clone()) {
                 (Some(row), _) => {
-                    self.open_row(&row, window, cx);
+                    self.open_row(&row, Opening::Preview, window, cx);
                     self.restore(&next, cx);
                 }
                 (None, Some(Position::Library(shelf))) => self.open_library(shelf, window, cx),
@@ -248,7 +244,7 @@ impl Cydonia {
 
     /// Back and forward, beside the sidebar's fold wherever that stands. One
     /// with nowhere to go is faded, and pressing it does nothing.
-    pub(crate) fn history_buttons(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    fn history_buttons(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
         let button = |id: &'static str, glyph: &'static [u8], label: &'static str, open: bool| {
             theme
@@ -299,10 +295,8 @@ impl Cydonia {
         })
     }
 
-    /// The control that folds the sidebar away and brings it back. It belongs
-    /// to whichever column runs along the window's left edge, so it changes
-    /// strip across the collapse.
-    pub(crate) fn fold_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    /// The control that folds the sidebar away and brings it back.
+    fn fold_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
         let label = if self.sidebar_open {
             "Hide sidebar"

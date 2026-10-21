@@ -123,11 +123,11 @@ const BEFORE_COLUMN: Arg = Arg {
 /// now. A const each, so the tool that takes one names the one it takes.
 const TEXT: Arg = Arg {
     name: "text",
-    about: "What the card says, or what each of several cards says — they land in the order they are given.",
+    about: "What the card says, or what each of several cards says — they land in the order they are given. A card's first line is its title, written as plain text rather than a heading.",
 };
 const TEXT_NOW: Arg = Arg {
     name: "text",
-    about: "What the card should say now.",
+    about: "What the card should say now. Its first line is its title, written as plain text rather than a heading.",
 };
 const NAME: Arg = Arg {
     name: "name",
@@ -412,7 +412,9 @@ fn add(args: Args<'_>) -> Outcome {
         return Err(Trouble::Refused("A board needs a name.".into()));
     }
     let key = artifact::board::key::claim(args.text(KEY)?, &project.boards(), None)?;
-    let board = project.create_board(name, &key).map_err(unwritten)?;
+    let board = project
+        .create_board(name, &key, crate::rail::board_view())
+        .map_err(unwritten)?;
     let lanes = Lane::first(&board);
     let here = project.root();
     Ok(Answer::said(outline(&board, &lanes, here)).with(shape(&board, &lanes, here)))

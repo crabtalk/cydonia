@@ -3,24 +3,30 @@
 
 use super::{
     BUTTON_SIZE, DETAIL_LINE, EXTENDED_PAD, Group, Heading, MenuRows, PINNED_BLEED, ROW_GAP,
-    ROW_HEIGHT, ROW_PILL, Renaming, Row, SessionRow, Sidebar, SidebarMenu, TITLE_LINE, Working,
-    key_of, on_disk, row, row_frame, row_label, tint,
+    ROW_HEIGHT, ROW_PILL, Row, SessionRow, Sidebar, SidebarMenu, TITLE_LINE, key_of, on_disk, row,
+    row_frame, row_label, tint,
 };
-use crate::model::{state, workspace::Showing};
-use crate::view::{
-    component::transcript,
-    keymap::{self, Command},
-    kit::{
-        menu::{self, Act},
-        new::{self, New},
-        stamp,
+use crate::{
+    model::{
+        state,
+        workspace::{Opening, Showing},
     },
-    modals::palette::{Filter, ToggleSearch},
-    search::Search,
-    window::{
-        reach::InWindow as _,
-        root::{self, Cydonia, NewSession, OpenProject},
-        section::Section,
+    view::{
+        keymap::{self, Command},
+        kit::{
+            menu::{self, Act, MenuHost},
+            new::{self, New},
+            orb,
+            rename::Renaming,
+            stamp, text,
+        },
+        modals::palette::{Filter, ToggleSearch},
+        search::Search,
+        window::{
+            reach::InWindow as _,
+            root::{self, Cydonia, NewSession, OpenProject},
+            section::Section,
+        },
     },
 };
 use bezel::{
@@ -40,8 +46,10 @@ use bezel::{
         widgets::{ButtonStyle, Buttons, Content, Layout},
     },
 };
-use std::path::{Path, PathBuf};
-use std::rc::Rc;
+use std::{
+    path::{Path, PathBuf},
+    rc::Rc,
+};
 
 /// A line of an extended row under its name: small, muted, cut to one line.
 fn detail(text: String, theme: &Theme) -> Div {
@@ -105,7 +113,7 @@ impl Sidebar {
                             this.toggle_menu(
                                 SidebarMenu::Entry(row.clone()),
                                 MenuPlace::At(press.position),
-                                move |this, cx| this.entry_rows(&row, cx),
+                                move |this, _, cx| Self::through(this.entry_rows(&row, cx)),
                                 window,
                                 cx,
                             );
@@ -155,10 +163,7 @@ impl Sidebar {
                     ),
                     None => return Empty.into_any_element(),
                 },
-                Group::Space(id) => match workspace
-                    .space_ix(id)
-                    .and_then(|ix| workspace.spaces.get(ix))
-                {
+                Group::Space(id) => match workspace.space_by_id(id) {
                     Some(space) => (
                         space.label().to_owned(),
                         workspace.space_folded(&space.id),
@@ -188,9 +193,9 @@ impl Sidebar {
         let reveal = (!held).then_some("group-head");
         let renaming = space_id
             .as_ref()
-            .is_some_and(|id| matches!(&self.renaming, Some(Renaming::Space(at)) if at == id));
+            .is_some_and(|id| matches!(&self.rename.what, Some(Renaming::Space(at)) if at == id));
         let label = match renaming {
-            true => self.name_field.clone().into_any_element(),
+            true => self.rename.field.clone().into_any_element(),
             false => div()
                 .flex_1()
                 .min_w_0()
@@ -331,28 +336,24 @@ impl Sidebar {
         // note has to be here too — read stale, a right press would swallow.
         // A space's opens from the row around it, as an entry's does.
         let head = match &group {
-            Group::Project(path) => bezel::ui::context_menu::ContextMenu::trigger(
-                head,
-                |this: &mut Self| &mut this.menu,
-                SidebarMenu::Project(path.clone()),
-                cx,
-            )
-            .on_mouse_down(
-                MouseButton::Right,
-                cx.listener({
-                    let path = path.clone();
-                    move |this, press: &gpui::MouseDownEvent, window, cx| {
+            Group::Project(path) => self
+                .menu_trigger(head, SidebarMenu::Project(path.clone()), cx)
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener({
                         let path = path.clone();
-                        this.toggle_menu(
-                            SidebarMenu::Project(path.clone()),
-                            MenuPlace::At(press.position),
-                            move |this, cx| this.project_rows(&path, cx),
-                            window,
-                            cx,
-                        );
-                    }
-                }),
-            ),
+                        move |this, press: &gpui::MouseDownEvent, window, cx| {
+                            let path = path.clone();
+                            this.toggle_menu(
+                                SidebarMenu::Project(path.clone()),
+                                MenuPlace::At(press.position),
+                                move |this, _, cx| Self::through(this.project_rows(&path, cx)),
+                                window,
+                                cx,
+                            );
+                        }
+                    }),
+                ),
             Group::Space(_) => head,
         };
         match pinned {
@@ -372,11 +373,7 @@ impl Sidebar {
         Some(SessionRow {
             id: chat.id,
             icon: workspace.agent_icon(&chat.entry.name),
-            working: chat.streaming.then(|| Working {
-                state: transcript::orb_of(chat),
-                since: chat.elapsed().unwrap_or_default(),
-                frame: chat.mark.clone(),
-            }),
+            working: chat.streaming.then(|| orb::Working::of(chat)),
         })
     }
 
@@ -393,6 +390,7 @@ impl Sidebar {
             return Empty.into_any_element();
         };
         let theme = Theme::of(cx).clone();
+        let trail = self.trail(cx);
         let workspace = self.workspace.read(cx);
         let Some((project, ix)) = entry.located(workspace) else {
             return Empty.into_any_element();
@@ -428,9 +426,7 @@ impl Sidebar {
                     // and widening the column for it would move every label in
                     // the sidebar to make room for a row that is only
                     // sometimes working.
-                    Some(working) => {
-                        transcript::orb(working.state, working.since, &working.frame, cx)
-                    }
+                    Some(working) => working.draw(cx),
                     None => match session.icon {
                         Some(icon) => icons::icon(icon)
                             .size(px(14.))
@@ -467,11 +463,11 @@ impl Sidebar {
         };
         // An article is named at the head of its own page and a board by its
         // identity panel, so neither row is ever a field.
-        let label = match Renaming::of(entry).is_some_and(|at| self.renaming.as_ref() == Some(&at))
-        {
-            true => self.name_field.clone().into_any_element(),
-            false => row_label(facts.label, tint),
-        };
+        let label =
+            match Renaming::of(entry).is_some_and(|at| self.rename.what.as_ref() == Some(&at)) {
+                true => self.rename.field.clone().into_any_element(),
+                false => row_label(facts.label, tint),
+            };
         let open = entry.clone();
         let button = self.archive_button(
             format!("archive-{}", key_of(entry)),
@@ -487,6 +483,7 @@ impl Sidebar {
             selected,
             lifted,
             self.list(cx).indent_of(entry),
+            trail,
             &theme,
         );
         let pill = self.shape(entry, cx).pill();
@@ -553,7 +550,7 @@ impl Sidebar {
             .on_click(cx.listener(move |this, _, window, cx| {
                 let open = open.clone();
                 this.defer_window(window, cx, move |root, window, cx| {
-                    root.open_row(&open, window, cx)
+                    root.open_row(&open, Opening::Preview, window, cx)
                 });
             }))
             .into_any_element()
@@ -563,6 +560,7 @@ impl Sidebar {
     /// A press opens it.
     fn app_row(&self, entry: &Row, id: &str, lifted: bool, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
+        let trail = self.trail(cx);
         let workspace = self.workspace.read(cx);
         let Some(program) = workspace.program(id, cx) else {
             return Empty.into_any_element();
@@ -577,6 +575,7 @@ impl Sidebar {
             light.selected(),
             lifted,
             self.list(cx).indent_of(entry),
+            trail,
             &theme,
         )
         .child(
@@ -590,7 +589,7 @@ impl Sidebar {
         .on_click(cx.listener(move |this, _, window, cx| {
             let open = open.clone();
             this.defer_window(window, cx, move |root, window, cx| {
-                root.open_row(&open, window, cx)
+                root.open_row(&open, Opening::Preview, window, cx)
             });
         }))
         .into_any_element()
@@ -715,17 +714,19 @@ impl Sidebar {
     /// step below everything still in hand.
     fn archive_divider(&self, project: usize, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        let workspace = self.workspace.read(cx);
-        let open = workspace
-            .projects
-            .get(project)
-            .is_some_and(|open| open.archive_open);
+        let trail = self.trail(cx);
+        let Some(held) = self.workspace.read(cx).projects.get(project) else {
+            return Empty.into_any_element();
+        };
+        let open = held.archive_open;
+        let indent = self.list(cx).indent_of(&Row::Archive(held.path.clone()));
         row(
             ("archive", project),
             "archive-row",
             false,
             false,
-            u8::from(workspace.indent_project_rows),
+            indent,
+            trail,
             &theme,
         )
         .child(theme.disclosure(open).text_color(theme.text_faint))
@@ -747,6 +748,7 @@ impl Sidebar {
     /// the pointer is on the heading.
     fn heading_row(&self, heading: Heading, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
+        let trail = self.trail(cx);
         let workspace = self.workspace.read(cx);
         let folded =
             self.search.read(cx).query().is_none() && workspace.section_folded(heading.key());
@@ -777,7 +779,7 @@ impl Sidebar {
                 }))
         });
         // A row's frame without its washes, the label ahead of its chevron.
-        row_frame(group, group, 0)
+        row_frame(group, group, 0, trail)
             .text_color(theme.text_faint)
             .child(
                 div()
@@ -888,10 +890,7 @@ impl Sidebar {
         rows.extend(counts.into_iter().map(|(label, count)| {
             let item = Item::action(label.clone())
                 .checked(picked.as_deref() == Some(label.as_str()))
-                .with_description(match count {
-                    1 => "1 entry".to_owned(),
-                    n => format!("{n} entries"),
-                });
+                .with_description(text::count(count, "entry", "entries"));
             pick(Some(label), item)
         }));
         Some(menu::submenu(
@@ -954,6 +953,7 @@ impl Sidebar {
     /// query, how many it found, and the × that clears it.
     pub(super) fn search_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
+        let trail = self.trail(cx);
         let chord = keymap::label(Command::Search, &self.workspace.read(cx).settings.shortcuts);
         let raise = cx.listener(|this, _, window, cx| {
             this.defer_window(window, cx, |root, window, cx| {
@@ -967,57 +967,65 @@ impl Sidebar {
                 None => text,
             };
             let count = search.rows(cx).map_or(0, |rows| rows.len());
-            return row("applied-search", "applied-search", false, false, 0, &theme)
-                .flex_none()
-                .min_w_0()
-                .mb(px(4.))
-                .child(
-                    icons::icon(icons::text::Search)
-                        .size(px(14.))
-                        .text_color(theme.text_muted),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .text_style(TextStyle::Body)
-                        .text_color(theme.text)
-                        .child(label),
-                )
-                .child(
-                    div()
-                        .flex_none()
-                        .text_style(TextStyle::Caption)
-                        .text_color(theme.text_muted)
-                        .child(match ready {
-                            false => "…".to_owned(),
-                            true => count.to_string(),
-                        }),
-                )
-                .child(
-                    theme
-                        .ghost("clear-workspace-search")
-                        .debug_selector(|| "clear-workspace-search".into())
-                        .flex_none()
-                        .size(px(24.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(
-                            icons::icon(icons::notifications::X)
-                                .size(px(14.))
-                                .text_color(theme.text_muted),
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            cx.stop_propagation();
-                            this.search.update(cx, Search::clear);
-                        })),
-                )
-                .on_click(raise)
-                .into_any_element();
+            return row(
+                "applied-search",
+                "applied-search",
+                false,
+                false,
+                0,
+                trail,
+                &theme,
+            )
+            .flex_none()
+            .min_w_0()
+            .mb(px(4.))
+            .child(
+                icons::icon(icons::text::Search)
+                    .size(px(14.))
+                    .text_color(theme.text_muted),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_style(TextStyle::Body)
+                    .text_color(theme.text)
+                    .child(label),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .text_style(TextStyle::Caption)
+                    .text_color(theme.text_muted)
+                    .child(match ready {
+                        false => "…".to_owned(),
+                        true => count.to_string(),
+                    }),
+            )
+            .child(
+                theme
+                    .ghost("clear-workspace-search")
+                    .debug_selector(|| "clear-workspace-search".into())
+                    .flex_none()
+                    .size(px(24.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        icons::icon(icons::notifications::X)
+                            .size(px(14.))
+                            .text_color(theme.text_muted),
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.search.update(cx, Search::clear);
+                    })),
+            )
+            .on_click(raise)
+            .into_any_element();
         }
-        row("search-row", "search-row", false, false, 0, &theme)
+        row("search-row", "search-row", false, false, 0, trail, &theme)
             .flex_none()
             .mb(px(4.))
             .child(
@@ -1042,27 +1050,36 @@ impl Sidebar {
         let theme = Theme::of(cx).clone();
         let open = self.lit.library;
         let tone = tint(open, false, &theme);
-        row("library-entry", "library-entry", open, false, 0, &theme)
-            .flex_none()
-            .mb(px(4.))
-            .child(
-                icons::icon(icons::text::LibraryBig)
-                    .size(px(14.))
-                    .text_color(tone),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .text_style(TextStyle::Body)
-                    .text_color(tone)
-                    .child("Library"),
-            )
-            .on_click(cx.listener(|this, _, window, cx| {
-                this.defer_window(window, cx, |root, window, cx| {
-                    root.toggle_library(window, cx)
-                });
-            }))
-            .into_any_element()
+        let trail = self.trail(cx);
+        row(
+            "library-entry",
+            "library-entry",
+            open,
+            false,
+            0,
+            trail,
+            &theme,
+        )
+        .flex_none()
+        .mb(px(4.))
+        .child(
+            icons::icon(icons::text::LibraryBig)
+                .size(px(14.))
+                .text_color(tone),
+        )
+        .child(
+            div()
+                .flex_1()
+                .text_style(TextStyle::Body)
+                .text_color(tone)
+                .child("Library"),
+        )
+        .on_click(cx.listener(|this, _, window, cx| {
+            this.defer_window(window, cx, |root, window, cx| {
+                root.toggle_library(window, cx)
+            });
+        }))
+        .into_any_element()
     }
 
     /// The line at the foot of the column: the gear that opens the settings

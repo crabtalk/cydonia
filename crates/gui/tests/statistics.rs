@@ -38,7 +38,9 @@ fn activity_comes_from_the_project_files() {
             sent_at: [(0, noon.timestamp() as u64)].into(),
         })
         .unwrap();
-    let mut board = store.create_board("Work", "WORK").unwrap();
+    let mut board = store
+        .create_board("Work", "WORK", artifact::board::View::Lanes)
+        .unwrap();
     let column = board.add_column("Todo").id.clone();
     board.add_card(&column, "new".into());
     board.columns[0].cards[0].id = noon.timestamp_millis().to_string();

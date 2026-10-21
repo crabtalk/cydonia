@@ -53,12 +53,6 @@ impl Workspace {
         self.apps.iter().map(|held| &held.program)
     }
 
-    /// Show the app `id` in the pane a window with no space open shows.
-    pub fn open_app(&mut self, id: &str, cx: &mut Context<Self>) {
-        self.app = Some(id.to_owned());
-        cx.notify();
-    }
-
     /// An app was recorded: watch the apps again, so a folder loaded is
     /// among them, and re-list them.
     pub fn app_recorded(&mut self, cx: &mut Context<Self>) {
@@ -85,9 +79,6 @@ impl Workspace {
         };
         held.program.update(cx, |program, _| program.stop());
         held.program.read(cx).origin.remove()?;
-        if self.app.as_deref() == Some(id) {
-            self.app = None;
-        }
         self.reload_apps(cx);
         Ok(())
     }

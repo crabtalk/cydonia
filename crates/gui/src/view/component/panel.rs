@@ -7,9 +7,16 @@ use super::browser::Browser;
 #[cfg(feature = "desktop")]
 use super::terminal::{DirectoryChanged, Exited, Terminal};
 use super::{changes::Changes, file::FileView, files::Files};
-use crate::model::{settings::PanelTabs, workspace::Workspace};
-use crate::view::window::root::{Cydonia, ToggleChanges};
-use crate::view::{modals::desktop::DesktopOnly, window::chrome};
+use crate::{
+    model::{settings::PanelTabs, workspace::Workspace},
+    view::{
+        modals::desktop::DesktopOnly,
+        window::{
+            chrome,
+            root::{self, Cydonia, ToggleChanges},
+        },
+    },
+};
 use bezel::{
     gpui::{
         self, AnyElement, Axis, Context, DragMoveEvent, Empty, Entity, Focusable, Render,
@@ -22,7 +29,6 @@ use bezel::{
         icons,
         menu::Item,
         tabs,
-        titlebar::{self, CaptionSide},
         tooltip::Tooltip,
         widgets::{ButtonStyle, Buttons as _},
     },
@@ -126,8 +132,6 @@ pub struct Panel {
     closing: Option<usize>,
     focus_pending: bool,
     restore_pending: Option<persistence::SavedPanel>,
-    /// The press on the strip's [`chrome::grip`].
-    drag: titlebar::DragState,
     /// Which switchable tabs may be open: the settings' word, pushed in by
     /// the root, within [`Self::offers`].
     tabs: PanelTabs,
@@ -136,8 +140,9 @@ pub struct Panel {
     offers: PanelTabs,
     /// Whose settings the panel's files read.
     workspace: WeakEntity<Workspace>,
-    /// The root's, which paints [`changes_toggle`] on the header too.
-    toggle: Painter,
+    /// Its tab row is the right end of the window's top row, and leaves room
+    /// for the window's corner controls — see [`Cydonia::sync_edges`].
+    pub(crate) on_top: bool,
 }
 
 impl Panel {
@@ -158,11 +163,10 @@ impl Panel {
             closing: None,
             focus_pending: false,
             restore_pending: None,
-            drag: Default::default(),
             tabs: PanelTabs::default(),
             offers: PanelTabs::default(),
             workspace: WeakEntity::new_invalid(),
-            toggle: Painter::of(cx),
+            on_top: false,
         }
     }
 
@@ -630,12 +634,23 @@ impl Render for Panel {
             self.focus(window, cx);
         }
         let theme = Theme::of(cx).clone();
-        // Floating, the window's top right is the chrome over the panel's card.
         let floating = self
             .workspace
             .upgrade()
             .is_some_and(|workspace| workspace.read(cx).settings.appearance.floating);
-        let right = !floating && chrome::has(CaptionSide::Right, window, cx);
+        // Floating, the panel is a card. While its tab row is part of the
+        // window's top row, the row is on the chrome over the card, lined up
+        // with it, and the card holds the rest.
+        let on_chrome = floating && self.on_top;
+        let inset = match on_chrome {
+            true => Theme::CONTENT_INSET / 2.,
+            false => 0.,
+        };
+        let (outer, card) = match (floating, on_chrome) {
+            (true, true) => (div(), chrome::card(true, cx)),
+            (true, false) => (bezel::ui::window::content(true, cx), div()),
+            (false, _) => (div(), div()),
+        };
         let launchers = self.launchers();
         let popup = self
             .menu
@@ -749,8 +764,10 @@ impl Render for Panel {
                     }))
                     .into_any_element()
             });
-        div()
-            .size_full()
+        outer
+            .flex_1()
+            .min_w_0()
+            .min_h_0()
             .flex()
             .flex_col()
             .key_context("SessionPanel")
@@ -796,105 +813,122 @@ impl Render for Panel {
             .on_action(cx.listener(|this, _: &NextTab, window, cx| this.cycle(1, window, cx)))
             .on_action(cx.listener(|this, _: &PrevTab, window, cx| this.cycle(-1, window, cx)))
             .child(
-                crate::view::window::root::band()
+                root::band()
+                    .h(px(root::CARD_ROW_HEIGHT))
+                    .pl(px(inset + root::CARD_EDGE))
+                    .pr(px(match self.on_top {
+                        true => {
+                            chrome::Corners {
+                                left: false,
+                                right: true,
+                                tabs: false,
+                            }
+                            .trail(0., window, cx)
+                                - inset
+                        }
+                        false => inset + root::CARD_EDGE,
+                    }))
                     .gap(px(6.))
-                    // At the window's top right while it is up, but floating.
-                    .when(right, |band| band.pr_0())
-                    .child(
-                        self.reorder
-                            .bar(
-                                "panel-tabs",
-                                &self.strip,
-                                self.ordered().map(|(id, tab)| {
-                                    let icon = match &tab.content {
-                                        Content::Review(_) => icons::development::GitCompare,
-                                        #[cfg(feature = "desktop")]
-                                        Content::Terminal(_) => icons::development::Terminal,
-                                        Content::File(_) => icons::files::File,
-                                        #[cfg(not(target_os = "linux"))]
-                                        Content::Browser(_) => icons::navigation::Globe,
-                                    };
-                                    // The path is the tooltip and the last component is
-                                    // the name: several tabs can be named the same.
-                                    let (name, path, dirty) = match &tab.content {
-                                        Content::Review(_) => {
-                                            ("Review".to_string(), "Review".to_string(), false)
+                    // The strip only while it holds a tab.
+                    .when(!self.strip.is_empty(), |band| {
+                        band.child(
+                            self.reorder
+                                .bar(
+                                    "panel-tabs",
+                                    &self.strip,
+                                    self.ordered().map(|(id, tab)| {
+                                        let icon = match &tab.content {
+                                            Content::Review(_) => icons::development::GitCompare,
+                                            #[cfg(feature = "desktop")]
+                                            Content::Terminal(_) => icons::development::Terminal,
+                                            Content::File(_) => icons::files::File,
+                                            #[cfg(not(target_os = "linux"))]
+                                            Content::Browser(_) => icons::navigation::Globe,
+                                        };
+                                        // The path is the tooltip and the last component is
+                                        // the name: several tabs can be named the same.
+                                        let (name, path, dirty) = match &tab.content {
+                                            Content::Review(_) => {
+                                                ("Review".to_string(), "Review".to_string(), false)
+                                            }
+                                            #[cfg(feature = "desktop")]
+                                            Content::Terminal(terminal) => {
+                                                let path = &terminal.read(cx).directory;
+                                                (
+                                                    path.file_name()
+                                                        .unwrap_or(path.as_os_str())
+                                                        .to_string_lossy()
+                                                        .into_owned(),
+                                                    path.display().to_string(),
+                                                    false,
+                                                )
+                                            }
+                                            #[cfg(not(target_os = "linux"))]
+                                            Content::Browser(browser) => {
+                                                let browser = browser.read(cx);
+                                                (
+                                                    browser.title().to_owned(),
+                                                    browser.url().to_owned(),
+                                                    false,
+                                                )
+                                            }
+                                            Content::File(file) => {
+                                                let file = file.read(cx);
+                                                (
+                                                    file.path
+                                                        .file_name()
+                                                        .unwrap_or_default()
+                                                        .to_string_lossy()
+                                                        .into_owned(),
+                                                    file.path.display().to_string(),
+                                                    file.dirty(cx),
+                                                )
+                                            }
+                                        };
+                                        let name = gpui::SharedString::from(name);
+                                        let mut label =
+                                            tabs::Label::new(name.clone()).with_icon(icon);
+                                        // Unsaved work is the mark rather than a bullet in
+                                        // the name: the name truncates and the mark does
+                                        // not.
+                                        if dirty {
+                                            label = label.mark(
+                                                icons::Icon::glyph(icons::glyph::CircleSmall)
+                                                    .solid(),
+                                            );
                                         }
-                                        #[cfg(feature = "desktop")]
-                                        Content::Terminal(terminal) => {
-                                            let path = &terminal.read(cx).directory;
-                                            (
-                                                path.file_name()
-                                                    .unwrap_or(path.as_os_str())
-                                                    .to_string_lossy()
-                                                    .into_owned(),
-                                                path.display().to_string(),
-                                                false,
-                                            )
-                                        }
-                                        #[cfg(not(target_os = "linux"))]
-                                        Content::Browser(browser) => {
-                                            let browser = browser.read(cx);
-                                            (
-                                                browser.title().to_owned(),
-                                                browser.url().to_owned(),
-                                                false,
-                                            )
-                                        }
-                                        Content::File(file) => {
-                                            let file = file.read(cx);
-                                            (
-                                                file.path
-                                                    .file_name()
-                                                    .unwrap_or_default()
-                                                    .to_string_lossy()
-                                                    .into_owned(),
-                                                file.path.display().to_string(),
-                                                file.dirty(cx),
-                                            )
-                                        }
-                                    };
-                                    let name = gpui::SharedString::from(name);
-                                    let mut label = tabs::Label::new(name.clone()).with_icon(icon);
-                                    // Unsaved work is the mark rather than a bullet in
-                                    // the name: the name truncates and the mark does
-                                    // not.
-                                    if dirty {
-                                        label = label.mark(
-                                            icons::Icon::glyph(icons::glyph::CircleSmall).solid(),
-                                        );
-                                    }
-                                    let state = match self.strip.active() == Some(&id) {
-                                        true => tabs::State::Focused,
-                                        false => tabs::State::Resting,
-                                    };
-                                    let key = gpui::SharedString::from(format!("panel-{id}"));
-                                    let tab = tabs::tab(&theme, key.clone(), label, state)
-                                        .tooltip(move |window, cx| {
-                                            Tooltip::text(path.clone(), window, cx)
-                                        })
-                                        .on_click(cx.listener(move |this, _, window, cx| {
-                                            this.strip.activate(&id);
-                                            this.focus(window, cx);
-                                            cx.notify();
-                                        }))
-                                        .child(
-                                            tabs::close(&theme, key, tabs::Close::OnHover)
-                                                .on_click(cx.listener(
-                                                    move |this, _, window, cx| {
-                                                        cx.stop_propagation();
-                                                        this.close(id, window, cx);
-                                                    },
-                                                )),
-                                        );
-                                    (id, tab)
-                                }),
-                            )
-                            .on_reorder(cx.listener(|this, moved: &tabs::Move, _, cx| {
-                                this.strip.reorder(moved.from, moved.to);
-                                cx.notify();
-                            })),
-                    )
+                                        let state = match self.strip.active() == Some(&id) {
+                                            true => tabs::State::Focused,
+                                            false => tabs::State::Resting,
+                                        };
+                                        let key = gpui::SharedString::from(format!("panel-{id}"));
+                                        let tab = tabs::tab(&theme, key.clone(), label, state)
+                                            .tooltip(move |window, cx| {
+                                                Tooltip::text(path.clone(), window, cx)
+                                            })
+                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                this.strip.activate(&id);
+                                                this.focus(window, cx);
+                                                cx.notify();
+                                            }))
+                                            .child(
+                                                tabs::close(&theme, key, tabs::Close::OnHover)
+                                                    .on_click(cx.listener(
+                                                        move |this, _, window, cx| {
+                                                            cx.stop_propagation();
+                                                            this.close(id, window, cx);
+                                                        },
+                                                    )),
+                                            );
+                                        (id, tab)
+                                    }),
+                                )
+                                .on_reorder(cx.listener(|this, moved: &tabs::Move, _, cx| {
+                                    this.strip.reorder(moved.from, moved.to);
+                                    cx.notify();
+                                })),
+                        )
+                    })
                     .child(
                         div()
                             .relative()
@@ -925,114 +959,125 @@ impl Render for Panel {
                                     }),
                             )
                             .children(popup),
-                    )
-                    .child(chrome::grip("panel-grip", &self.drag, window))
-                    .child(changes_toggle("Hide right panel", self.toggle, &theme))
-                    .children(
-                        right
-                            .then(|| chrome::caption(CaptionSide::Right, window, cx))
-                            .flatten(),
                     ),
             )
-            .when_some(self.closing, |panel, id| {
-                panel.child(
-                    div()
-                        .p(px(8.))
-                        .text_style(TextStyle::Caption)
-                        .child("Save changes before closing?")
-                        .child(
-                            div()
-                                .flex()
-                                .gap(px(12.))
-                                .child(
-                                    div()
-                                        .id("file-close-save")
-                                        .cursor_pointer()
-                                        .child("Save and close")
-                                        .on_click(cx.listener(move |this, _, window, cx| {
-                                            let file = this.contents.get(&id).and_then(|tab| {
-                                                match &tab.content {
-                                                    Content::File(file) => Some(file.clone()),
-                                                    _ => None,
-                                                }
-                                            });
-                                            if file.is_some_and(|file| {
-                                                file.update(cx, |file, cx| file.save(false, cx))
-                                            }) {
-                                                this.remove(id, cx);
-                                                this.focus(window, cx);
-                                            }
-                                        })),
-                                )
-                                .child(
-                                    div()
-                                        .id("file-close-discard")
-                                        .cursor_pointer()
-                                        .child("Discard")
-                                        .on_click(cx.listener(move |this, _, window, cx| {
-                                            this.remove(id, cx);
-                                            this.focus(window, cx);
-                                        })),
-                                )
-                                .child(
-                                    div()
-                                        .id("file-close-cancel")
-                                        .cursor_pointer()
-                                        .child("Cancel")
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.closing = None;
-                                            cx.notify();
-                                        })),
-                                ),
-                        ),
-                )
-            })
             .child(
-                div()
-                    .flex_1()
+                card.flex_1()
                     .min_h_0()
                     .flex()
-                    .on_drag_move(
-                        cx.listener(|this, event: &DragMoveEvent<FilesResize>, _, cx| {
-                            let available = f32::from(event.bounds.size.width);
-                            let min = 80_f32.min(available / 2.);
-                            this.files_width =
-                                f32::from(event.bounds.right() - event.event.position.x)
-                                    .clamp(min, (available * 0.8).max(min));
-                            cx.notify();
-                        }),
-                    )
-                    .when(!(self.files_open && self.strip.is_empty()), |row| {
-                        row.child(div().flex_1().min_w_0().child(body))
-                    })
-                    .when(self.files_open, |row| {
-                        row.children(self.files.clone().map(|files| {
+                    .flex_col()
+                    .when_some(self.closing, |panel, id| {
+                        panel.child(
                             div()
-                                .when(self.strip.is_empty(), |tree| tree.flex_1().w_full())
-                                .when(!self.strip.is_empty(), |tree| {
-                                    tree.w(px(self.files_width))
-                                        .max_w(gpui::relative(0.8))
-                                        .flex_none()
-                                })
-                                .relative()
-                                .child(files)
-                                .when(!self.strip.is_empty(), |tree| {
-                                    tree.child(
-                                        crate::view::component::divider::divider(
-                                            &theme,
-                                            Axis::Horizontal,
+                                .p(px(8.))
+                                .text_style(TextStyle::Caption)
+                                .child("Save changes before closing?")
+                                .child(
+                                    div()
+                                        .flex()
+                                        .gap(px(12.))
+                                        .child(
+                                            div()
+                                                .id("file-close-save")
+                                                .cursor_pointer()
+                                                .child("Save and close")
+                                                .on_click(cx.listener(
+                                                    move |this, _, window, cx| {
+                                                        let file = this.contents.get(&id).and_then(
+                                                            |tab| match &tab.content {
+                                                                Content::File(file) => {
+                                                                    Some(file.clone())
+                                                                }
+                                                                _ => None,
+                                                            },
+                                                        );
+                                                        if file.is_some_and(|file| {
+                                                            file.update(cx, |file, cx| {
+                                                                file.save(false, cx)
+                                                            })
+                                                        }) {
+                                                            this.remove(id, cx);
+                                                            this.focus(window, cx);
+                                                        }
+                                                    },
+                                                )),
                                         )
-                                        .id("files-split")
-                                        .absolute()
-                                        .top_0()
-                                        .left(px(-crate::view::component::divider::HIT / 2.))
-                                        .on_drag(FilesResize, |_, _, _, cx| cx.new(|_| Empty)),
-                                    )
-                                })
-                        }))
-                    }),
+                                        .child(
+                                            div()
+                                                .id("file-close-discard")
+                                                .cursor_pointer()
+                                                .child("Discard")
+                                                .on_click(cx.listener(
+                                                    move |this, _, window, cx| {
+                                                        this.remove(id, cx);
+                                                        this.focus(window, cx);
+                                                    },
+                                                )),
+                                        )
+                                        .child(
+                                            div()
+                                                .id("file-close-cancel")
+                                                .cursor_pointer()
+                                                .child("Cancel")
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.closing = None;
+                                                    cx.notify();
+                                                })),
+                                        ),
+                                ),
+                        )
+                    })
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_h_0()
+                            .flex()
+                            .on_drag_move(cx.listener(
+                                |this, event: &DragMoveEvent<FilesResize>, _, cx| {
+                                    let available = f32::from(event.bounds.size.width);
+                                    let min = 80_f32.min(available / 2.);
+                                    this.files_width =
+                                        f32::from(event.bounds.right() - event.event.position.x)
+                                            .clamp(min, (available * 0.8).max(min));
+                                    cx.notify();
+                                },
+                            ))
+                            .when(!(self.files_open && self.strip.is_empty()), |row| {
+                                row.child(div().flex_1().min_w_0().child(body))
+                            })
+                            .when(self.files_open, |row| {
+                                row.children(self.files.clone().map(|files| {
+                                    div()
+                                        .when(self.strip.is_empty(), |tree| tree.flex_1().w_full())
+                                        .when(!self.strip.is_empty(), |tree| {
+                                            tree.w(px(self.files_width))
+                                                .max_w(gpui::relative(0.8))
+                                                .flex_none()
+                                        })
+                                        .relative()
+                                        .child(files)
+                                        .when(!self.strip.is_empty(), |tree| {
+                                            tree.child(
+                                                crate::view::component::divider::divider(
+                                                    &theme,
+                                                    Axis::Horizontal,
+                                                )
+                                                .id("files-split")
+                                                .absolute()
+                                                .top_0()
+                                                .left(
+                                                    px(-crate::view::component::divider::HIT / 2.),
+                                                )
+                                                .on_drag(FilesResize, |_, _, _, cx| {
+                                                    cx.new(|_| Empty)
+                                                }),
+                                            )
+                                        })
+                                }))
+                            }),
+                    )
+                    .child(status),
             )
-            .child(status)
     }
 }
 
@@ -1122,7 +1167,9 @@ impl Cydonia {
     ) {
         self.set_changes_open(!self.changes_open, cx);
         if !self.changes_open {
-            window.focus(&self.composer_focus_handle(cx), cx);
+            if let Some(focus) = self.composer_focus_handle(cx) {
+                window.focus(&focus, cx);
+            }
         } else {
             self.sync_changes(window, cx);
             if let Some(panel) = self.changes.clone() {
@@ -1285,10 +1332,8 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<Panel> {
-        let toggle = Painter::of(cx);
         let panel = cx.new(|cx| {
             let mut panel = Panel::new(cwd.clone(), cx);
-            panel.toggle = toggle;
             panel.restore_pending = restore;
             panel.project_root = cwd.canonicalize().unwrap_or(cwd.clone());
             panel.workspace = self.workspace.downgrade();
@@ -1337,21 +1382,20 @@ mod tests;
 #[path = "../../../tests/unit/right_panel.rs"]
 mod right_panel_tests;
 
-/// The control that hides and shows the right panel: on the panel's strip
-/// while it is up, on the header while it is down. One fade under `painter`,
-/// the root, so the wash under the pointer carries across the swap.
-pub(crate) fn changes_toggle(
-    label: &'static str,
-    painter: Painter,
-    theme: &Theme,
-) -> impl IntoElement + use<> {
+/// The control that hides and shows the right panel, at the window's top
+/// right whether it is up or down.
+pub(crate) fn changes_toggle<T: 'static>(open: bool, cx: &Context<T>) -> impl IntoElement + use<T> {
+    let label = match open {
+        true => "Hide right panel",
+        false => "Show right panel",
+    };
     // The column it acts on, which is this one: a left-panel glyph on the
     // right panel's own hide button pointed at the wrong side of the window.
-    theme
+    Theme::of(cx)
         .icon_button(
             icons::layout::PanelRight,
             ButtonStyle::Ghost,
-            Some(Fade::new(painter, "toggle-changes")),
+            Some(Fade::new(Painter::of(cx), "toggle-changes")),
         )
         .id("toggle-changes")
         .flex_none()

@@ -237,7 +237,7 @@ fn menus(cx: &App) -> Vec<Menu> {
             // [`crate::view::keymap::Command::PlainText`].
             MenuItem::action("Plain Text", TogglePlainText),
             MenuItem::action("Outline", ToggleOutline),
-            MenuItem::action("Find", crate::view::board::FindCard),
+            MenuItem::action("Find", crate::view::pane::find::FindCard),
             MenuItem::action("Find Next", crate::view::pane::find::FindNext),
             MenuItem::action("Find Previous", crate::view::pane::find::FindPrev),
             MenuItem::action("Search", crate::view::modals::palette::ToggleSearch),
@@ -274,6 +274,7 @@ fn file_menu() -> Vec<MenuItem> {
         ));
     }
     file.extend([
+        MenuItem::action("New Tab", crate::view::modals::palette::NewTab),
         MenuItem::separator(),
         MenuItem::action("New Board", NewBoard),
         MenuItem::action("New Article", NewArticle),
@@ -349,6 +350,7 @@ impl Cydonia {
 
         root.on_action(cx.listener(Self::toggle_sidebar_action))
             .on_action(cx.listener(Self::toggle_search))
+            .on_action(cx.listener(Self::new_tab))
             .on_action(cx.listener(Self::open_project_action))
             .on_action(cx.listener(Self::open_settings_action))
             .on_action(cx.listener(Self::install_app_action))

@@ -5,11 +5,15 @@ use crate::{
     model::workspace::{Showing, Workspace},
     view::{
         app, article,
-        board::{self, DismissFind},
+        board::{self, info::BoardInfo},
         component::{composer::Composer, ribbon::Ribbon, transcript},
-        kit::watch::Watch,
+        kit::{menu::MenuHost, rename::Rename, watch::Watch},
+        pane::{
+            Edge,
+            find::{self, DismissFind},
+        },
         table,
-        window::{reach::InWindow, root::Cydonia},
+        window::{chrome, reach::InWindow, root::Cydonia},
     },
 };
 use artifact::kind::Kind;
@@ -33,17 +37,21 @@ pub(crate) enum TabMenu {
     /// The block picker on the article ribbon — see
     /// [`crate::view::component::ribbon`].
     Turn,
+    /// The `···` on the title row: the entry's own menu — see
+    /// [`crate::view::pane::title`].
+    Entry,
+    /// The title row's move, where the pane can go more than one way.
+    Move,
+    /// The title row's deck: the entries the pane's stack holds.
+    Stack,
 }
 
-/// One pane: what it shows, and what it holds while it shows it.
+/// One entry of a pane's stack: what it shows, and what it holds while it
+/// shows it.
 pub(crate) struct Tab {
-    /// The entry this pane is on, named the way a space names its members —
-    /// which project it is in and which of that project's things it is. That
-    /// is what ties a pane to a member of the arrangement.
-    ///
-    /// Nothing for the pane a window with no space open shows: it is on
-    /// whatever the project was last left on, and the project holds that.
-    pub(crate) entry: Option<artifact::space::Member>,
+    /// The entry this tab is on, named the way a space names its members —
+    /// which project it is in and which of that project's things it is.
+    pub(crate) entry: artifact::space::Member,
     pub(crate) workspace: Entity<Workspace>,
     pub(crate) root: WeakEntity<Cydonia>,
     /// The board views' shared card previews and drag domain — see
@@ -56,26 +64,17 @@ pub(crate) struct Tab {
     /// for a pane holding nothing to type into; a session's composer and a
     /// document's editor are inside the pane already.
     pub(crate) focus: FocusHandle,
-    /// What kind of entry the pane is showing.
-    pub(crate) kind: Kind,
     /// Whether this is the pane with the window's focus — see
     /// [`Cydonia::sync_focus`].
     pub(crate) focused: bool,
+    /// Where its pane stands against the window's top edge — see
+    /// [`Cydonia::sync_edges`].
+    pub(crate) edge: Edge,
     pub(crate) composer: Entity<Composer>,
     pub(crate) queued_galleries: std::collections::HashMap<
         (u64, usize, String),
         Entity<crate::view::component::transcript::gallery::Gallery>,
     >,
-    /// Whether a session has been asked for with no agent to open one on.
-    ///
-    /// The chat pane then stands over the notice — see
-    /// [`crate::view::window::root::Cydonia::no_agent`] — rather than a ⌘N throwing the
-    /// settings window up in front of a window that has said nothing about
-    /// why. Runtime only, and read through
-    /// [`crate::view::window::root::Cydonia::has_pane`], which drops it the moment an
-    /// agent is there: a flag left set behind an install would keep an empty
-    /// pane on offer.
-    pub(crate) asked_session: bool,
     /// What the pane's drawer holds, while it is up — see
     /// [`crate::view::pane::drawer`].
     pub(crate) drawer: Option<super::drawer::Drawer>,
@@ -111,6 +110,14 @@ pub(crate) struct Tab {
     /// field it puts up — see [`crate::view::component::ribbon`].
     pub(crate) ribbon: Ribbon,
     pub(crate) menu: ContextMenu<Self, TabMenu>,
+    /// The title row's name field.
+    pub(crate) rename: Rename,
+    /// The board identity panel, while it is open — see
+    /// [`crate::view::board::info::BoardInfo`].
+    pub(crate) info: Option<BoardInfo>,
+    /// Whether the press now being handled landed on the name of the board
+    /// whose panel is open — read by [`Tab::toggle_info`] and nothing else.
+    pub(crate) info_pressed: bool,
     /// The sessions it draws — see [`Self::watch_sessions`].
     sessions_watch: Watch,
 }
@@ -118,7 +125,7 @@ pub(crate) struct Tab {
 impl Tab {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
-        entry: Option<artifact::space::Member>,
+        entry: artifact::space::Member,
         workspace: Entity<Workspace>,
         root: WeakEntity<Cydonia>,
         card_docs: Rc<board::Docs>,
@@ -126,7 +133,7 @@ impl Tab {
         composer: Entity<Composer>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let find_field = board::find_field(cx);
+        let find_field = find::find_field(cx);
         // What the pane draws is read off the model, and a cached pane draws
         // again only when told.
         cx.observe(&workspace, |_, _, cx| cx.notify()).detach();
@@ -136,6 +143,7 @@ impl Tab {
             }
         })
         .detach();
+        let rename = Rename::new(workspace.clone(), |this: &mut Self| &mut this.rename, cx);
         Self {
             entry,
             workspace,
@@ -143,11 +151,10 @@ impl Tab {
             card_docs,
             board_sort,
             focus: cx.focus_handle(),
-            kind: Kind::Session,
             focused: false,
+            edge: Edge::default(),
             composer,
             queued_galleries: Default::default(),
-            asked_session: false,
             drawer: None,
             boards: Vec::new(),
             articles: Vec::new(),
@@ -161,28 +168,21 @@ impl Tab {
             applied: None,
             ribbon: Ribbon::new(cx),
             menu: ContextMenu::default(),
+            rename,
+            info: None,
+            info_pressed: false,
             sessions_watch: Watch::default(),
         }
     }
 }
 
 impl Tab {
-    /// What the pane shows: its entry, or for the pane a window with no space
-    /// open shows, what the project in front is pointed at for the pane's kind.
+    /// What the tab shows: its entry, where its project is open and it is
+    /// still there.
     pub(crate) fn showing(&self, cx: &App) -> Option<(usize, Showing)> {
-        let workspace = self.workspace.read(cx);
-        match &self.entry {
-            Some(entry) => workspace.showing_of(entry, cx),
-            None => {
-                let project = workspace.active?;
-                let showing = workspace.projects.get(project)?.selected(self.kind)?;
-                Some((project, showing))
-            }
-        }
+        self.workspace.read(cx).showing_of(&self.entry, cx)
     }
 
-    /// Whether the pane draws anything of session `id`: the session it shows,
-    /// or the thread under the article it shows.
     /// Observe the sessions the pane draws: the one it shows, and the
     /// thread under the article it shows.
     fn watch_sessions(&mut self, cx: &mut Context<Self>) {
@@ -278,20 +278,30 @@ impl Tab {
         cx: &mut Context<Self>,
     ) -> Option<super::drawer::Face> {
         let drawer = self.drawer_shown(cx)?;
-        match &drawer.peek {
-            super::drawer::Peek::Page(view) => view
-                .clone()
-                .update(cx, |view, cx| view.page_face(window, cx)),
-            super::drawer::Peek::Entry(entry) => {
-                let (entry, scroll, on) =
-                    (entry.clone(), drawer.scroll.clone(), self.entry.clone());
-                self.root
-                    .update(cx, |root, cx| {
-                        root.entry_face(&entry, on.as_ref(), &scroll, window, cx)
-                    })
-                    .ok()
-            }
-        }
+        let (peek, scroll, on) = (
+            drawer.peek.clone(),
+            drawer.scroll.clone(),
+            self.entry.clone(),
+        );
+        peek.face(&scroll, window, cx, |entry, scroll, window, cx| {
+            self.root
+                .update(cx, |root, cx| {
+                    root.entry_face(entry, Some(&on), scroll, window, cx)
+                })
+                .ok()
+        })
+    }
+}
+
+impl MenuHost for Tab {
+    type Key = TabMenu;
+
+    fn menu(&self) -> &ContextMenu<Self, TabMenu> {
+        &self.menu
+    }
+
+    fn menu_mut(&mut self) -> &mut ContextMenu<Self, TabMenu> {
+        &mut self.menu
     }
 }
 
@@ -307,42 +317,27 @@ impl Render for Tab {
         self.watch_sessions(cx);
         let theme = Theme::of(cx).clone();
         let showing = self.showing(cx);
-        let app = match &self.entry {
-            Some(member) => member.kind() == Kind::App,
-            None => self.kind == Kind::App,
-        };
+        let app = self.entry.kind() == Kind::App;
         let body = match &showing {
             _ if app => self.app_body(cx),
-            // The entry has gone since the space named it. The pane says so
-            // rather than standing empty: a blank pane reads as a bug, and the
-            // space is about to drop the member anyway — see
+            // The entry has gone since the tab named it. The tab says so
+            // rather than standing empty, and is about to be dropped — see
             // [`crate::model::workspace::Workspace::prune_spaces`].
-            None if self.entry.is_some() => theme
+            None => theme
                 .empty_state(
                     icons::files::File,
                     "This entry has gone",
-                    "It was deleted after the space was made.",
+                    "It was deleted after the tab was opened.",
                 )
                 .into_any_element(),
-            None => match self.kind {
-                Kind::Session => self.conversation(None, cx),
-                _ => div().flex_1().into_any_element(),
-            },
             Some((_, showing)) => self.body(showing, window, cx),
         };
         let session = match &showing {
             Some((_, Showing::Session(id))) => Some(*id),
-            None if self.kind == Kind::Session => self.shown_session(cx),
             _ => None,
         };
-        // A pane of a space always carries its composer; the window's one pane
-        // stands the reason there in its place when there is nowhere to send.
-        let reachable = self.entry.is_some() || self.workspace.read(cx).reachable(cx);
         let footer = match (&showing, session) {
-            (_, Some(id)) if reachable => Some(self.session_footer(Some(id), cx)),
-            (_, Some(id)) => self
-                .adrift_strip(Some(id), cx)
-                .map(|strip| crate::view::detail::footer(strip, None).into_any_element()),
+            (_, Some(id)) => Some(self.session_footer(Some(id), cx)),
             (Some((_, Showing::Article(_))), None) => self.thread_footer(cx),
             _ => None,
         };
@@ -355,6 +350,25 @@ impl Render for Tab {
             None => Vec::new(),
         };
         let composer = self.composer.clone();
+        let title = self.title_row(window, cx);
+        let floating = self.workspace.read(cx).settings.appearance.floating;
+        // Floating, what the tab shows is on a card, the focused pane's with
+        // the stronger edge. The title row is on the chrome over it while it
+        // is part of the window's top row, and the card's own first row
+        // anywhere else.
+        let on_chrome = floating && self.edge.top;
+        let card = match (floating, on_chrome) {
+            (true, true) => chrome::card(true, cx),
+            (true, false) => bezel::ui::window::content(true, cx),
+            (false, _) => div(),
+        }
+        .when(floating && self.focused, |card| {
+            card.border_color(theme.border_strong)
+        });
+        let (over, inside) = match on_chrome {
+            true => (title, None),
+            false => (None, title),
+        };
         div()
             .relative()
             .flex_1()
@@ -362,16 +376,29 @@ impl Render for Tab {
             .size_full()
             .flex()
             .flex_col()
-            .child(body)
-            .children(footer)
-            .children(selection)
-            // The whole pane takes a dropped picture for the composer.
-            .when(session.is_some() && reachable, |pane| {
-                pane.on_drop(move |paths: &bezel::gpui::ExternalPaths, _, cx| {
-                    composer.update(cx, |composer, cx| composer.drop_paths(paths, cx));
-                })
-                .child(crate::view::detail::drop_wash(&theme))
-            })
+            .on_action(cx.listener(Self::commit_info))
+            .on_action(cx.listener(Self::dismiss_info))
+            .children(over)
+            .child(
+                // A flex item rather than full size: the card's margin is what
+                // leaves the gap, and a full-size card overflows by it.
+                card.relative()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .children(inside)
+                    .child(body)
+                    .children(footer)
+                    .children(selection)
+                    // The whole pane takes a dropped picture for the composer.
+                    .when(session.is_some(), |pane| {
+                        pane.on_drop(move |paths: &bezel::gpui::ExternalPaths, _, cx| {
+                            composer.update(cx, |composer, cx| composer.drop_paths(paths, cx));
+                        })
+                        .child(crate::view::detail::drop_wash(&theme))
+                    }),
+            )
             .children(drawer)
     }
 }

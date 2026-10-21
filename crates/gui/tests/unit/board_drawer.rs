@@ -1,4 +1,5 @@
 use super::*;
+use crate::model::workspace::Opening;
 use crate::model::{project::Project, settings::Settings, state};
 use artifact::kind::Kind;
 use artifact::project::{Project as _, fs};
@@ -26,7 +27,7 @@ struct Host(Entity<Cydonia>);
 impl Render for Host {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // As a window hosts it: the pane, its board and its drawer over it.
-        let pane = self.0.read(cx).leaf().clone();
+        let pane = self.0.read(cx).leaf().cloned();
         div().size_full().flex().flex_col().child(
             div()
                 .relative()
@@ -34,7 +35,7 @@ impl Render for Host {
                 .min_h_0()
                 .flex()
                 .flex_col()
-                .child(pane),
+                .children(pane),
         )
     }
 }
@@ -56,7 +57,9 @@ fn open(
 ) {
     let scratch = Scratch::new(name);
     let store = fs::Project::new(&scratch.0);
-    let mut board = store.create_board("Work", "DEV").unwrap();
+    let mut board = store
+        .create_board("Work", "DEV", artifact::board::View::Lanes)
+        .unwrap();
     let column = board.add_column("Todo").id.clone();
     let cards = vec![
         board
@@ -88,14 +91,10 @@ fn open(
             cx.new(|cx| Cydonia::new(Settings::default(), state::State::default(), window, cx));
         root.update(cx, |root, cx| {
             root.workspace.update(cx, |workspace, cx| {
-                let mut project = Project::new(scratch.0.clone(), cx);
-                project.board = Some(0);
-                workspace.projects.push(project);
+                workspace.projects.push(Project::new(scratch.0.clone(), cx));
                 workspace.active = Some(0);
             });
-            root.leaf()
-                .clone()
-                .update(cx, |pane, _| pane.kind = Kind::Board);
+            root.open_board(0, 0, Opening::Preview, window, cx);
             root.open_page(
                 None,
                 member.clone(),
@@ -185,6 +184,7 @@ fn resizing_expanding_and_restoring_use_the_board_pane(cx: &mut TestAppContext) 
     assert!(cx.update(|_, cx| {
         root.read(cx)
             .leaf()
+            .unwrap()
             .read(cx)
             .drawer
             .as_ref()
@@ -215,6 +215,7 @@ fn resizing_expanding_and_restoring_use_the_board_pane(cx: &mut TestAppContext) 
     assert!(!cx.update(|_, cx| {
         root.read(cx)
             .leaf()
+            .unwrap()
             .read(cx)
             .drawer
             .as_ref()
@@ -358,7 +359,7 @@ fn emptied_cards_are_kept_and_never_saved(cx: &mut TestAppContext) {
     click("drawer-close", &mut cx);
     cx.update(|window, cx| {
         root.update(cx, |root, cx| {
-            assert!(root.leaf().read(cx).drawer.is_none());
+            assert!(root.leaf().unwrap().read(cx).drawer.is_none());
             root.open_page(
                 None,
                 member.clone(),
@@ -742,7 +743,7 @@ fn list_window_tracks_group_folding_and_search(cx: &mut TestAppContext) {
     }));
     cx.update(|_, cx| {
         root.update(cx, |root, cx| {
-            root.leaf().clone().update(cx, |pane, cx| {
+            root.leaf().unwrap().clone().update(cx, |pane, cx| {
                 pane.finding = true;
                 pane.find_field
                     .update(cx, |field, cx| field.set_content("Hidden row 42", cx));
@@ -783,7 +784,12 @@ fn list_rows_open_drawer_and_group_controls_stay_independent(cx: &mut TestAppCon
         })
     });
     settle(&mut cx);
-    let first = point(px(180.), px(LIST_HEADING_HEIGHT + LIST_ROW_HEIGHT / 2.));
+    // Under the tab's title row.
+    let top = crate::view::window::root::CARD_ROW_HEIGHT;
+    let first = point(
+        px(180.),
+        px(top + LIST_HEADING_HEIGHT + LIST_ROW_HEIGHT / 2.),
+    );
     cx.simulate_mouse_down(first, MouseButton::Left, Modifiers::default());
     cx.simulate_mouse_up(first, MouseButton::Left, Modifiers::default());
     settle(&mut cx);
@@ -816,7 +822,7 @@ fn list_rows_open_drawer_and_group_controls_stay_independent(cx: &mut TestAppCon
             .columns[0]
             .collapsed
     }));
-    assert!(cx.update(|_, cx| root.read(cx).renaming.is_none()));
+    assert!(cx.update(|_, cx| root.read(cx).leaf().unwrap().read(cx).rename.what.is_none()));
     click("list-group-add", &mut cx);
     assert!(cx.update(|_, cx| matches!(
         view(&root, cx).read(cx).editing,
@@ -945,8 +951,8 @@ fn busy_orb_opens_its_session_without_opening_the_card(cx: &mut TestAppContext) 
     cx.update(|_, cx| {
         let root = root.read(cx);
         assert_eq!(root.workspace.read(cx).projects[0].active, Some(77));
-        assert!(matches!(root.leaf().read(cx).kind, Kind::Session));
-        assert!(root.leaf().read(cx).drawer.is_none());
+        assert_eq!(root.showing(cx), Some(Kind::Session));
+        assert!(root.leaf().unwrap().read(cx).drawer.is_none());
     });
 }
 
@@ -980,11 +986,16 @@ fn list_cards_drop_into_a_collapsed_group_without_unfolding(cx: &mut TestAppCont
             })
         });
         settle(&mut cx);
-        let source = point(px(180.), px(LIST_HEADING_HEIGHT + LIST_ROW_HEIGHT / 2.));
+        // Under the tab's title row.
+        let top = crate::view::window::root::CARD_ROW_HEIGHT;
+        let source = point(
+            px(180.),
+            px(top + LIST_HEADING_HEIGHT + LIST_ROW_HEIGHT / 2.),
+        );
         // Past the middle of the folded group's heading.
         let destination = point(
             px(180.),
-            px(LIST_HEADING_HEIGHT * 1.75 + LIST_ROW_HEIGHT * 2.),
+            px(top + LIST_HEADING_HEIGHT * 1.75 + LIST_ROW_HEIGHT * 2.),
         );
         cx.simulate_mouse_down(source, MouseButton::Left, Modifiers::default());
         cx.simulate_mouse_move(

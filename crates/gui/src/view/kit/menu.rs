@@ -24,6 +24,7 @@ pub(crate) type Rows<V = Cydonia> =
     Box<dyn Fn(&mut V, &mut Window, &mut Context<V>) -> Vec<(Item, Act<V>)>>;
 
 /// How a menu's trigger is revealed.
+#[derive(Clone, Copy)]
 pub(crate) enum Reveal {
     /// Always on show.
     Always,
@@ -36,8 +37,6 @@ pub(crate) enum Reveal {
 /// Which of the window's own menus is open.
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) enum Menu {
-    /// The `···` in the band over the window's one pane.
-    Header,
     /// The agents on offer under `New session`, on the screen a project with
     /// nothing open shows — see [`crate::view::window::root::Cydonia::launch`].
     Launch,
@@ -57,6 +56,11 @@ pub(crate) fn row<V: 'static>(
 /// A line of plain text, read and never chosen.
 pub(crate) fn note<V: 'static>(text: impl Into<SharedString>) -> (Item, Act<V>) {
     (Item::Note(text.into()), Box::new(|_, _, _, _| {}))
+}
+
+/// A heading over the rows after it, read and never chosen.
+pub(crate) fn heading<V: 'static>(text: impl Into<SharedString>) -> (Item, Act<V>) {
+    (Item::Heading(text.into()), Box::new(|_, _, _, _| {}))
 }
 
 /// A row that drops a panel of rows of its own. Picking one of those is what
@@ -135,20 +139,28 @@ pub(crate) fn sections<V: 'static>(
     rows
 }
 
-impl Cydonia {
+/// A view that hangs menus of its own, from the [`ContextMenu`] it holds.
+pub(crate) trait MenuHost: Sized + 'static {
+    /// Which of the view's menus is up.
+    type Key: PartialEq + 'static;
+
+    fn menu(&self) -> &ContextMenu<Self, Self::Key>;
+
+    fn menu_mut(&mut self) -> &mut ContextMenu<Self, Self::Key>;
+
     /// Open `menu` at `place` with the rows `rows` builds, or shut it when it
     /// is the one up.
-    pub(crate) fn toggle_menu(
+    fn toggle_menu(
         &mut self,
-        menu: Menu,
+        menu: Self::Key,
         place: Place,
-        rows: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) -> Vec<(Item, Act)>,
+        rows: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) -> Vec<(Item, Act<Self>)>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         ContextMenu::toggle(
             self,
-            |this| &mut this.menu,
+            Self::menu_mut,
             menu,
             place,
             |this, window, cx| chooser(rows(this, window, cx)),
@@ -157,76 +169,46 @@ impl Cydonia {
         );
     }
 
-    /// Shut whichever menu is open, leaving the focus where it is.
-    pub(crate) fn close_menu(&mut self, cx: &mut Context<Self>) {
-        ContextMenu::close(self, |this| &mut this.menu, cx);
-    }
-
     /// `el`, noting each press for `menu` so a press on the trigger of the
     /// menu that is up shuts it rather than reopening it.
-    pub(crate) fn menu_trigger<E: gpui::StatefulInteractiveElement>(
+    fn menu_trigger<E: gpui::StatefulInteractiveElement>(
         &self,
         el: E,
-        menu: Menu,
+        menu: Self::Key,
         cx: &Context<Self>,
     ) -> E {
-        ContextMenu::trigger(el, |this: &mut Self| &mut this.menu, menu, cx)
-    }
-
-    /// Whether `menu` is the one up.
-    pub(crate) fn menu_open(&self, menu: &Menu) -> bool {
-        self.menu.key() == Some(menu)
-    }
-
-    /// A `···` or `+` that opens `menu` below itself, revealed on the row's
-    /// hover. `group` is the hover group that reveals it; `None` for a trigger
-    /// that stands on its own, as the pane header's does.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn menu_button(
-        &self,
-        id: impl Into<SharedString>,
-        group: Option<&'static str>,
-        mark: impl Into<Icon>,
-        menu: Menu,
-        place: Place,
-        rows: Rows,
-        cx: &Context<Self>,
-    ) -> Stateful<Div> {
-        // Resolved during render, never in a hover style: GPUI can resolve
-        // hover differently in prepaint and paint.
-        let reveal = match group {
-            None => Reveal::Always,
-            Some(group) => Reveal::Group(group),
-        };
-        let button = button(id, mark, reveal, self.menu_open(&menu), cx).on_click({
-            let menu = menu.clone();
-            let rows: std::rc::Rc<Rows> = std::rc::Rc::new(rows);
-            cx.listener(move |this, _, window, cx| {
-                cx.stop_propagation();
-                let rows = rows.clone();
-                this.toggle_menu(
-                    menu.clone(),
-                    place,
-                    move |this, window, cx| rows(this, window, cx),
-                    window,
-                    cx,
-                );
-            })
-        });
-        self.menu_trigger(button, menu, cx)
+        ContextMenu::trigger(el, Self::menu_mut, menu, cx)
     }
 
     /// The menu `menu`, placed, while it is on screen: what its trigger hangs
     /// beside itself.
-    pub(crate) fn menu_here(
+    fn menu_here(
         &self,
-        menu: &Menu,
+        menu: &Self::Key,
         id: impl Into<SharedString>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        self.menu
-            .render_for(menu, id, |this| &mut this.menu, window, cx)
+        self.menu().render_for(menu, id, Self::menu_mut, window, cx)
+    }
+}
+
+impl MenuHost for Cydonia {
+    type Key = Menu;
+
+    fn menu(&self) -> &ContextMenu<Self, Menu> {
+        &self.menu
+    }
+
+    fn menu_mut(&mut self) -> &mut ContextMenu<Self, Menu> {
+        &mut self.menu
+    }
+}
+
+impl Cydonia {
+    /// Shut whichever menu is open, leaving the focus where it is.
+    pub(crate) fn close_menu(&mut self, cx: &mut Context<Self>) {
+        ContextMenu::close(self, |this| &mut this.menu, cx);
     }
 }
 
