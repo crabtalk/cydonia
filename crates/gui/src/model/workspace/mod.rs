@@ -116,9 +116,8 @@ pub struct Workspace {
     /// The hue the greys carry, and how much of it.
     pub tint: Tint,
     /// How wide a page that has not been set either way is drawn — see
-    /// [`crate::model::state::State::wide_pages`].
+    /// [`crate::model::settings::Appearance::wide_pages`].
     pub wide_pages: bool,
-    /// Whether an article shows its cover band when it has not said otherwise
     /// How a new board is laid out — see
     /// [`crate::model::settings::Appearance::board_view`].
     pub board_view: artifact::board::View,
@@ -153,9 +152,9 @@ pub struct Workspace {
     /// The main window's last frame, carried so the whole-file rewrite in
     /// [`Self::save`] keeps it.
     window: Option<state::Frame>,
-    /// The arrangements this machine holds, and which one the window is
-    /// showing. The window's rather than a project's: a space can hold panes
-    /// from several — see [`spaces`].
+    /// The arrangements this machine holds. The window's rather than a
+    /// project's: a space can hold panes from several — see [`spaces`]. Which
+    /// one is shown is the strip's `front`.
     pub spaces: Vec<artifact::space::Space>,
     /// The window's tabs, and which is in front — see [`tabs`].
     strip: Vec<Slot>,
@@ -762,12 +761,6 @@ impl Workspace {
 
     // ── releases ─────────────────────────────────────────────────
 
-    /// Look for releases on our own, or stop looking. The file is what the next
-    /// launch reads; the updater is what runs until then, so both are told.
-    ///
-    /// A release already staged is left alone: this switch is about the looking,
-    /// and throwing away a bundle that is downloaded and verified would be a
-    /// second thing under one name.
     /// Whether a finished turn is worth telling the system about. Written
     /// through to `settings.toml` first, as every switch here is.
     pub fn set_notify_turns(&mut self, on: bool, cx: &mut Context<Self>) {
@@ -804,6 +797,9 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Look for releases on our own, or stop looking. Written to the file the
+    /// next launch reads and told to the running updater. A release already
+    /// staged is left alone.
     pub fn set_auto_update(&mut self, on: bool, cx: &mut Context<Self>) {
         if settings::set_auto_update(on).is_err() {
             return;

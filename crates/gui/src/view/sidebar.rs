@@ -406,7 +406,8 @@ pub(crate) struct Lit {
     pub(crate) library: bool,
     /// The focused tab's entry.
     pub(crate) focused: Option<Member>,
-    /// Every entry the window's arrangement holds.
+    /// Every leaf the window holds: the arranged space's entries and the
+    /// strip's tabs.
     pub(crate) open: Vec<Member>,
 }
 
@@ -482,7 +483,8 @@ pub(crate) fn shown(row: &Row, features: &Features) -> bool {
 ///
 /// No article here: its title is the first line of its own page, which is
 /// where it is written — see [`crate::view::article`]. No board either: a
-/// board is named by its identity panel — see [`Cydonia::open_info`].
+/// board is named by its identity panel — see
+/// [`crate::view::pane::tab::Tab::open_info`].
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) enum Renaming {
     Session(u64),
@@ -564,8 +566,8 @@ pub(crate) fn tint(selected: bool, archived: bool, theme: &Theme) -> Hsla {
     }
 }
 
-/// What the sidebar's list and the panes' strips carry, and what a pane takes
-/// a drop of: a sidebar row, or a tab off a pane's strip.
+/// What the sidebar's list and the window's strip carry, and what a pane takes
+/// a drop of: a sidebar row, or a tab off the window's strip.
 #[derive(Clone, PartialEq)]
 pub(crate) enum Dragged {
     Row(Row),
@@ -718,15 +720,11 @@ pub(crate) fn row_frame(
 /// gpui's default the label's box is φ×13, and renaming would resize the row
 /// under the name being typed.
 fn row_label(name: String, tint: Hsla) -> AnyElement {
-    labelled(name, tint, TextStyle::Body)
-}
-
-fn labelled(name: String, tint: Hsla, style: TextStyle) -> AnyElement {
     div()
         .flex_1()
         .min_w_0()
         .truncate()
-        .text_style(style)
+        .text_style(TextStyle::Body)
         .line_height(px(18.))
         .text_color(tint)
         .child(name)
@@ -1363,7 +1361,7 @@ impl Sidebar {
     /// A drag never pins or unpins. The pins are a region of the list with
     /// their own order, and a row dragged between the two regions would be
     /// changing what it *is* rather than where it sits — that is what the
-    /// button at the end of the row and the band's `···` are for.
+    /// button at the end of the row and the title row's `···` are for.
     fn reorder_entries(&mut self, carried: &Row, region: Vec<Row>, cx: &mut Context<Self>) {
         use crate::model::state;
         let workspace = self.workspace.read(cx);

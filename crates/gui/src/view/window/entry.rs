@@ -130,7 +130,7 @@ impl Cydonia {
     }
 
     /// Pin an entry to the top of its project's list, or let it back down.
-    pub(crate) fn pin_entry(&mut self, entry: &Row, on: bool, cx: &mut Context<Self>) {
+    fn pin_entry(&mut self, entry: &Row, on: bool, cx: &mut Context<Self>) {
         let Row::Entry { project, showing } = entry else {
             return;
         };
@@ -142,7 +142,7 @@ impl Cydonia {
     }
 
     /// Everything an entry can have done to it, for the menu `host` names:
-    /// the band's `···`, a sidebar or library row, a tab. One builder for all
+    /// a pane's title row, a sidebar or library row, a window tab. One builder for all
     /// of them, so a command reachable in one is reachable in every other.
     pub(crate) fn entry_rows(
         &self,
@@ -153,7 +153,7 @@ impl Cydonia {
     ) -> Vec<(Item, menu::Act)> {
         // `../desktop`'s rule for what a `···` may carry: only commands with no
         // affordance on the object. An article's title is the head of its own
-        // page and a board's name in the band opens its identity panel, so
+        // page and a board's name in its title row opens its identity panel, so
         // neither is offered a second route here. Everywhere else the name is
         // display-only and this is the way.
         // An app's name is its manifest's, and it is not filed or pinned.
@@ -163,12 +163,10 @@ impl Cydonia {
                 entry.showing(),
                 Some(Showing::Article(_) | Showing::Board(_))
             );
-        // A page's measure and how it is being read: the open page's, since
-        // [`Self::set_full_width`] and [`Self::plain_text`] are about the one
-        // the window is showing. A row's menu names an entry that may not be
-        // it, so these are the band's alone — on the wrong row they would act
-        // on whatever else was open.
-        // A tab's menu has them only while its tab is the one focused.
+        // A page's measure and how it is being read: [`Self::set_full_width`]
+        // and [`Self::plain_text`] act on the focused pane's page, so a tab's
+        // menu has them only while its tab is the one focused, and a row's
+        // menu never.
         let page = match &host {
             Host::Sidebar | Host::Library => false,
             Host::Tab(tab) => self.focused_entry(cx).as_ref() == Some(tab),
@@ -444,12 +442,11 @@ impl Cydonia {
         cx.notify();
     }
 
-    /// Put the name field on an entry, in the place `host` names: the band's
-    /// own field for the band's menu, the sidebar's for every other.
+    /// Put the name field on an entry, in the place `host` names: the title
+    /// row's own field for a tab's menu, the sidebar's for every other.
     ///
-    /// A board is named by two things at once, so it opens its identity panel
-    /// instead — which lives under the band, so the board is brought to the
-    /// front first. One way to name a board, wherever you asked from.
+    /// A board opens its identity panel instead, in the pane it is brought to
+    /// the front of first.
     fn rename_entry(
         &mut self,
         entry: &Row,
@@ -593,9 +590,9 @@ impl Cydonia {
     }
 
     /// Put the pane on the first entry the project still lists. What the pane
-    /// falls back to when the entry it was on is put away — [`Self::entries`]
-    /// sorts the archived below the divider, so the first row is one still in
-    /// hand or the divider itself.
+    /// falls back to when the entry it was on is put away —
+    /// [`crate::view::sidebar::List::entries`] sorts the archived below the
+    /// divider, so the first row is one still in hand or the divider itself.
     fn open_top_entry(&mut self, project: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(top) = self
             .list(cx)

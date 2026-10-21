@@ -356,7 +356,6 @@ impl Project {
         chats
     }
 
-    /// Where the entry `showing` names is listed among its kind.
     /// The entry a stored id names: a session by its record, every other kind
     /// by its id or key.
     pub fn stored(&self, kind: Kind, id: &str, cx: &App) -> Option<Showing> {
@@ -472,6 +471,7 @@ impl Project {
         }
     }
 
+    /// Where the entry `showing` names is listed among its kind.
     pub fn ix_of(&self, showing: &Showing) -> Option<usize> {
         match showing {
             Showing::Session(id) => self.sessions.iter().position(|held| held.id == *id),

@@ -51,16 +51,6 @@ impl Workspace {
         Some(artifact::reference::Reference::entry(Some(&name), number, None).link())
     }
 
-    /// [`Self::new_session`] behind whatever the window shows.
-    pub fn new_session_behind(
-        &mut self,
-        entry: settings::Agent,
-        cx: &mut Context<Self>,
-    ) -> Option<u64> {
-        let ix = self.active?;
-        self.new_session_in(ix, entry, None, false, cx)
-    }
-
     /// [`Self::new_session`] in the project at `ix` rather than the active one.
     /// `front` puts it in front of its project; without it, whatever the
     /// window shows stays put.

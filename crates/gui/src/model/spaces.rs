@@ -50,15 +50,12 @@ pub trait Store {
     fn prepare() -> bool;
 
     /// Mint one, named clear of those already here.
-    fn create(name: &str, over: Member) -> Option<Space> {
+    fn create(over: Member) -> Option<Space> {
         if !Self::prepare() {
             return None;
         }
         let taken: HashSet<String> = Self::all().into_iter().map(|space| space.name).collect();
-        let name = match name.is_empty() {
-            false => name.to_owned(),
-            true => artifact::space::next_name(&taken),
-        };
+        let name = artifact::space::next_name(&taken);
         // This millisecond, or the first after it that is not taken — two made
         // inside one millisecond is the only way that happens.
         let id = (stamp::now()..)

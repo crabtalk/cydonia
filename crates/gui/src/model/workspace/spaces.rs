@@ -139,14 +139,6 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Read every space back off disk. Called at launch, since nothing else
-    /// writes them.
-    pub fn reload_spaces(&mut self, cx: &mut Context<Self>) {
-        let order: Vec<String> = self.spaces.iter().map(|at| at.id.clone()).collect();
-        self.spaces = Self::in_order(Shelf::all(), &order);
-        cx.notify();
-    }
-
     /// Show a space: its tab in front of the strip. The projects its panes are
     /// in are opened if they are not already — an arrangement is a working
     /// context, and half of one is not what was asked for.
@@ -220,7 +212,7 @@ impl Workspace {
             // The first drag. The space starts as the pane that was there,
             // which is what the arrival is being put beside.
             _ => {
-                let space = Shelf::create("", target.clone())?;
+                let space = Shelf::create(target.clone())?;
                 self.spaces.insert(0, space);
                 0
             }
@@ -392,8 +384,7 @@ impl Workspace {
     /// [`Self::close_pane`] is the gesture's version of this and works on the
     /// space in front; this one is for an entry that is going away from the
     /// list altogether, which can be holding a pane in an arrangement nobody
-    /// is looking at. Taking the last pane out takes the space with it, the
-    /// same rule and for the same reason.
+    /// is looking at. A space left with one entry is deleted, as there.
     pub fn drop_from_spaces(&mut self, member: &Member, cx: &mut Context<Self>) {
         self.drop_tabs(std::slice::from_ref(member), cx);
         let Some(ix) = self.space_holding(member) else {
@@ -415,7 +406,7 @@ impl Workspace {
     }
 
     /// Take every archived entry out of the space holding it, by the rule
-    /// [`Self::drop_from_spaces`] follows: a space left with one pane goes.
+    /// [`Self::drop_from_spaces`] follows: a space left with one entry goes.
     pub(super) fn drop_archived_from_spaces(&mut self, cx: &mut Context<Self>) {
         let archived: Vec<Member> = self
             .spaces
@@ -631,18 +622,6 @@ impl Workspace {
             .map(Member::from)
     }
 
-    /// The program of the app a pane's member names, where it is listed.
-    pub fn program_of(
-        &self,
-        member: &Member,
-        cx: &App,
-    ) -> Option<&bezel::gpui::Entity<crate::model::apps::Program>> {
-        match member {
-            Member::App { app } => self.program(app, cx),
-            Member::Entry { .. } => None,
-        }
-    }
-
     /// The board a pane is on, by its place in its project. Named apart from
     /// [`Self::board_at`], which finds one by file wherever it is open.
     pub fn board_in<'a>(&self, project: usize, ix: usize, cx: &'a App) -> Option<&'a Board> {
@@ -728,10 +707,6 @@ impl Workspace {
         }
         let open = self.projects.get(project)?;
         open.pages.get(&open.tables.get(ix)?.key)
-    }
-
-    pub fn session_in<'a>(&self, project: usize, id: u64, cx: &'a App) -> Option<&'a ChatSession> {
-        self.projects.get(project)?.session(id, cx)
     }
 
     /// Put the project's selection on what a pane is showing.

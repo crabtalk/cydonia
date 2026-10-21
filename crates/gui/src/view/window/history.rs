@@ -244,7 +244,7 @@ impl Cydonia {
 
     /// Back and forward, beside the sidebar's fold wherever that stands. One
     /// with nowhere to go is faded, and pressing it does nothing.
-    pub(crate) fn history_buttons(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    fn history_buttons(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
         let button = |id: &'static str, glyph: &'static [u8], label: &'static str, open: bool| {
             theme
@@ -295,10 +295,8 @@ impl Cydonia {
         })
     }
 
-    /// The control that folds the sidebar away and brings it back. It belongs
-    /// to whichever column runs along the window's left edge, so it changes
-    /// strip across the collapse.
-    pub(crate) fn fold_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    /// The control that folds the sidebar away and brings it back.
+    fn fold_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
         let label = if self.sidebar_open {
             "Hide sidebar"

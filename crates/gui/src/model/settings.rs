@@ -1545,16 +1545,8 @@ pub fn set_paste_images_in_source(on: bool) -> Result<()> {
     })
 }
 
-/// Put `agent` in the file, replacing whichever entry already launches it.
-///
-/// `supersedes` is the npm package the agent is published as, which is how an
-/// install claims the hand-written `@latest` entry that shipped as a default
-/// instead of sitting next to it. A replaced entry keeps its own `name`: the
-/// person who wrote it chose that, and only the command underneath has moved.
-/// Write down that this agent's source was agreed to.
-///
-/// Recorded before the install runs, not after: what is being agreed to is the
-/// fetch, and an install that fails is one that was still allowed to try.
+/// Write down that this agent's source was agreed to. Called before the
+/// install runs.
 pub fn trust_agent(id: &str, mark: &str) -> Result<()> {
     Here::edit(|doc| {
         let held = table(doc, "trusted_agents")?;
@@ -1566,6 +1558,11 @@ pub fn trust_agent(id: &str, mark: &str) -> Result<()> {
     })
 }
 
+/// Put `agent` in the file, replacing whichever entry already launches it.
+///
+/// `supersedes` is the npm package the agent is published as: an entry
+/// launching that package is replaced too. A replaced entry keeps its own
+/// `name`.
 pub fn put_agent(agent: &Agent, supersedes: Option<&str>) -> Result<()> {
     Here::edit(|doc| {
         // A freshly generated file serialises no agents as `agents = []`, which

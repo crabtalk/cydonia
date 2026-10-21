@@ -1024,10 +1024,6 @@ impl Cydonia {
         }
     }
 
-    /// What to do when there is nothing to show: make the first entry in the
-    /// project that is open. The kinds are listed rather than named in a hint,
-    /// because a list can be clicked — and only the kinds that are switched on
-    /// are listed, so under the shipped defaults this is one line.
     /// The agents a new session can run on, from the front door's session
     /// row.
     fn launch_rows(&mut self, _: &mut Window, cx: &mut Context<Self>) -> Vec<(Item, menu::Act)> {
@@ -1044,6 +1040,8 @@ impl Cydonia {
             .collect()
     }
 
+    /// What to do when there is nothing to show: make the first entry in the
+    /// project that is open, one row per kind that is switched on.
     fn nothing_open(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let workspace = self.workspace.read(cx);
@@ -1166,7 +1164,7 @@ impl Cydonia {
     }
 
     /// The session view `on`'s pane draws, where it shows a session.
-    pub(crate) fn session_view_of(
+    fn session_view_of(
         &self,
         on: Option<&Member>,
         cx: &App,

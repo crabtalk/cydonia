@@ -316,16 +316,17 @@ impl Cydonia {
             .into_any_element()
     }
 
-    /// The pane of the open space showing `entry`.
-    pub(crate) fn pane_on(&self, entry: &Member, cx: &App) -> Option<Entity<Pane>> {
+    /// The pane showing `entry`.
+    fn pane_on(&self, entry: &Member, cx: &App) -> Option<Entity<Pane>> {
         self.panes
             .iter()
             .find(|pane| pane.read(cx).entry == *entry)
             .cloned()
     }
 
-    /// Make a pane for every pane of the open space and drop the rest, and
-    /// hand each its tab.
+    /// Make a pane for every pane of what the window lays out — the open
+    /// space, or the strip's entry in front — and drop the rest, and hand each
+    /// its tab.
     pub(crate) fn sync_panes(&mut self, cx: &mut Context<Self>) {
         let Some(space) = self.arrangement(cx) else {
             self.panes.clear();
@@ -787,7 +788,7 @@ impl Cydonia {
         self.focus_pane(&pane, window, cx);
     }
 
-    /// Close the focused pane. The keyboard's half of the `×` in its header.
+    /// Close the focused pane. The keyboard's half of the `×` in its title row.
     pub(crate) fn close_focused_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(entry) = self.focused_entry(cx) else {
             return;

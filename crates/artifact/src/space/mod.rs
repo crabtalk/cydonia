@@ -4,17 +4,15 @@
 //! One file per space under `.cydonia/spaces/`, named for the millisecond it
 //! was made, the way boards are.
 //!
-//! A space holds no entry. It holds the [`crate::entry`] numbers of entries
-//! that exist beside it, so the same session can be a member of two spaces
-//! and stay one session. A number outlives a rename — see
-//! [`crate::entry::Registry::rename`] — and a removed entry leaves its number
-//! behind as a tombstone, so a member that has been deleted resolves to
-//! nothing rather than to whatever was filed next.
+//! A space holds no entry. It holds the ids of entries that exist beside it,
+//! each by its project's path — see [`Entry`] — so the same session can be a
+//! member of two spaces and stay one session. A member whose entry has been
+//! deleted resolves to nothing.
 //!
 //! The tree nests: children are a `Vec`, so a third pane alongside two others
 //! joins their split rather than nesting inside one of them.
 
-use crate::{id, kind::Kind, stamp};
+use crate::{kind::Kind, stamp};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
@@ -22,7 +20,7 @@ use std::collections::HashSet;
 pub const UNNAMED: &str = "Untitled";
 
 /// The stem every auto-given name is built on: `space-1`, `space-2`.
-pub const STEM: &str = "space";
+const STEM: &str = "space";
 
 /// Which way a split divides the room it is given.
 ///
@@ -48,7 +46,7 @@ pub enum Side {
 
 impl Side {
     /// The axis a split made at this edge divides along.
-    pub fn axis(self) -> Axis {
+    fn axis(self) -> Axis {
         match self {
             Self::Left | Self::Right => Axis::Horizontal,
             Self::Above | Self::Below => Axis::Vertical,
@@ -61,7 +59,7 @@ impl Side {
     }
 
     /// The side facing this one.
-    pub fn opposite(self) -> Self {
+    fn opposite(self) -> Self {
         match self {
             Self::Left => Self::Right,
             Self::Right => Self::Left,
@@ -248,7 +246,7 @@ impl<T: Clone + PartialEq> Node<T> {
         }
     }
 
-    pub fn set_ratio(&mut self, to: f64) {
+    fn set_ratio(&mut self, to: f64) {
         match self {
             Self::Leaf { ratio, .. } | Self::Split { ratio, .. } => *ratio = to,
         }
@@ -400,35 +398,6 @@ impl<T: Clone + PartialEq> Node<T> {
         }
     }
 
-    /// Move `moving` to where `to` sits in the stack of the pane holding
-    /// both, the first place included. Answers whether the stack changed.
-    pub fn reorder(&mut self, moving: &T, to: &T) -> bool {
-        match self {
-            Self::Leaf { entry, tabs, .. } => {
-                let mut stack: Vec<T> = std::iter::once(entry.clone())
-                    .chain(tabs.iter().cloned())
-                    .collect();
-                let (Some(from), Some(at)) = (
-                    stack.iter().position(|held| held == moving),
-                    stack.iter().position(|held| held == to),
-                ) else {
-                    return false;
-                };
-                if from == at {
-                    return false;
-                }
-                let moved = stack.remove(from);
-                stack.insert(at, moved);
-                *entry = stack.remove(0);
-                *tabs = stack;
-                true
-            }
-            Self::Split { children, .. } => {
-                children.iter_mut().any(|child| child.reorder(moving, to))
-            }
-        }
-    }
-
     /// Put `arriving` beside the pane showing `target`, on the given side.
     /// Answers whether `target` was found.
     ///
@@ -490,34 +459,6 @@ impl<T: Clone + PartialEq> Node<T> {
         children
             .iter_mut()
             .any(|child| child.insert(target, arriving, side))
-    }
-
-    /// How much of the arrangement's width, or height, the pane on this entry
-    /// takes: the shares of every split above it that divides along `axis`,
-    /// multiplied together.
-    ///
-    /// A split the other way does not narrow it — two panes stacked are each
-    /// as wide as the column holding them. Nothing for an entry no pane here
-    /// is on.
-    ///
-    /// What a pane needs to know to draw itself as a pane rather than as the
-    /// window: a rail, a margin or a column that has room in the window may
-    /// have none in the fraction of it this pane is.
-    pub fn share_of(&self, entry: &T, axis: Axis) -> Option<f64> {
-        match self {
-            Self::Leaf { .. } => self.holds(entry).then_some(1.),
-            Self::Split {
-                axis: split,
-                children,
-                ..
-            } => children.iter().find_map(|child| {
-                let share = child.share_of(entry, axis)?;
-                Some(match *split == axis {
-                    true => share * child.ratio(),
-                    false => share,
-                })
-            }),
-        }
     }
 
     /// Take the pane showing this entry out, collapsing whatever it leaves
@@ -937,12 +878,6 @@ impl Space {
         self.tree.relocate(entry, target, side)
     }
 
-    /// Move a tab to where `to` sits in its pane's stack — see
-    /// [`Node::reorder`]. Tabs in different panes are left alone.
-    pub fn reorder(&mut self, moving: &Member, to: &Member) -> bool {
-        self.tree.reorder(moving, to)
-    }
-
     /// Put an entry into the pane holding `target`, at the end of its stack —
     /// a drop on a pane's middle rather than on its edge. Answers whether
     /// that pane was found.
@@ -992,7 +927,8 @@ impl Space {
 
     /// Take one entry out. A pane holding tabs keeps the pane and loses a tab;
     /// the last one out closes the pane. The space stays when its last pane
-    /// goes: it is deleted with its tab and nowhere else.
+    /// goes; the workspace deletes a space instead of taking one of its last
+    /// two entries out.
     ///
     /// A zoomed pane that is closed leaves the rest unzoomed rather than
     /// standing something else in its place.
@@ -1064,9 +1000,4 @@ pub fn next_name(taken: &HashSet<String>) -> String {
         .max()
         .unwrap_or(0);
     format!("{STEM}-{}", highest + 1)
-}
-
-/// An id for a space a backend has no file to name one from.
-pub fn mint() -> String {
-    id::mint()
 }

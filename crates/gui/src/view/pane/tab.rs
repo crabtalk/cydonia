@@ -47,7 +47,8 @@ pub(crate) enum TabMenu {
     Stack,
 }
 
-/// One pane: what it shows, and what it holds while it shows it.
+/// One entry of a pane's stack: what it shows, and what it holds while it
+/// shows it.
 pub(crate) struct Tab {
     /// The entry this tab is on, named the way a space names its members —
     /// which project it is in and which of that project's things it is.
@@ -190,8 +191,6 @@ impl Tab {
         self.workspace.read(cx).showing_of(&self.entry, cx)
     }
 
-    /// Whether the pane draws anything of session `id`: the session it shows,
-    /// or the thread under the article it shows.
     /// Observe the sessions the pane draws: the one it shows, and the
     /// thread under the article it shows.
     fn watch_sessions(&mut self, cx: &mut Context<Self>) {

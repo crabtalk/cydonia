@@ -422,93 +422,6 @@ fn a_path_that_names_nothing_finds_nothing() {
     assert!(tree.at_path_mut(&[9]).is_none());
 }
 
-// ── how much of the window a pane is ─────────────────────────────
-
-/// A pane beside another is half the width; stacked, it is the full width and
-/// half the height. A split the other way does not narrow a pane.
-#[test]
-fn a_pane_knows_how_much_of_the_window_it_is() {
-    let mut tree = Node::split(Axis::Horizontal, vec![Node::leaf(1), Node::leaf(2)]);
-    tree.even();
-    assert_eq!(tree.share_of(&1, Axis::Horizontal), Some(0.5));
-    assert_eq!(
-        tree.share_of(&1, Axis::Vertical),
-        Some(1.),
-        "side by side takes nothing off the height"
-    );
-
-    let mut tree = Node::split(Axis::Vertical, vec![Node::leaf(1), Node::leaf(2)]);
-    tree.even();
-    assert_eq!(tree.share_of(&1, Axis::Horizontal), Some(1.));
-    assert_eq!(tree.share_of(&1, Axis::Vertical), Some(0.5));
-}
-
-/// The shares of every split above a pane multiply, and only those dividing
-/// the way asked about count.
-#[test]
-fn shares_multiply_down_the_tree() {
-    let tree = Node::Split {
-        ratio: 1.,
-        axis: Axis::Horizontal,
-        children: vec![
-            Node::Leaf {
-                ratio: 0.5,
-                entry: 1,
-                tabs: Vec::new(),
-                front: None,
-            },
-            Node::Split {
-                ratio: 0.5,
-                axis: Axis::Vertical,
-                children: vec![
-                    Node::Leaf {
-                        ratio: 0.5,
-                        entry: 2,
-                        tabs: Vec::new(),
-                        front: None,
-                    },
-                    Node::Split {
-                        ratio: 0.5,
-                        axis: Axis::Horizontal,
-                        children: vec![
-                            Node::Leaf {
-                                ratio: 0.5,
-                                entry: 3,
-                                tabs: Vec::new(),
-                                front: None,
-                            },
-                            Node::Leaf {
-                                ratio: 0.5,
-                                entry: 4,
-                                tabs: Vec::new(),
-                                front: None,
-                            },
-                        ],
-                    },
-                ],
-            },
-        ],
-    };
-
-    // 2 is in the right half, stacked — so half the width, and the vertical
-    // split takes a quarter of the height off it.
-    assert_eq!(tree.share_of(&2, Axis::Horizontal), Some(0.5));
-    assert_eq!(tree.share_of(&2, Axis::Vertical), Some(0.5));
-    // 3 sits in the bottom half of that column, divided across — so its
-    // width halves again while its height is the half it already had.
-    assert_eq!(tree.share_of(&3, Axis::Horizontal), Some(0.25));
-    assert_eq!(tree.share_of(&3, Axis::Vertical), Some(0.5));
-}
-
-/// A pane on its own is the whole of it, and an entry no pane is on has no
-/// share at all.
-#[test]
-fn a_lone_pane_is_the_whole_window() {
-    let tree = Node::leaf(1);
-    assert_eq!(tree.share_of(&1, Axis::Horizontal), Some(1.));
-    assert_eq!(tree.share_of(&9, Axis::Horizontal), None);
-}
-
 // ── across the seams ─────────────────────────────────────────────
 
 /// Two panes side by side are each other's neighbour, and neither has one
@@ -842,28 +755,6 @@ fn stacking_a_tab_onto_its_own_strip_is_a_no_op() {
     assert_eq!(tree.at_path(&[0]).expect("a pane").stack(), vec![1, 3, 4]);
 }
 
-#[test]
-fn a_tab_reorders_within_its_own_strip_only() {
-    let mut tree = Node::split(Axis::Horizontal, vec![Node::leaf(1), Node::leaf(5)]);
-    for tab in [2, 3, 4] {
-        tree.stack_onto(&1, &tab);
-    }
-    assert!(tree.reorder(&4, &2));
-    assert_eq!(stack_of(&tree, 1), vec![1, 4, 2, 3]);
-    // Into the first place, which is the pane's own entry.
-    assert!(tree.reorder(&3, &1));
-    assert_eq!(stack_of(&tree, 3), vec![3, 1, 4, 2]);
-    // Across panes, and onto itself, nothing moves.
-    assert!(!tree.reorder(&2, &5));
-    assert!(!tree.reorder(&2, &2));
-}
-
-fn stack_of(tree: &Node<u64>, entry: u64) -> Vec<u64> {
-    tree.at_path(&tree.path_to(&entry).unwrap())
-        .unwrap()
-        .stack()
-}
-
 /// A member written before article ids named an article by its `content.md`;
 /// it reads back as the article's id. Every other kind is read as written.
 #[test]
@@ -923,7 +814,7 @@ fn a_space_keeps_the_pane_it_was_focused_on() {
 }
 
 /// A zoomed pane stays zoomed when the tab it was zoomed from closes and
-/// another stays, and when its first tab is moved behind another.
+/// another stays.
 #[test]
 fn a_zoomed_pane_outlives_the_tab_it_was_zoomed_from() {
     let (a, b, c) = (Member::app("a"), Member::app("b"), Member::app("c"));
@@ -932,8 +823,6 @@ fn a_zoomed_pane_outlives_the_tab_it_was_zoomed_from() {
     assert!(space.stack(&b, &c));
 
     assert_eq!(space.zoom(&b), Some(b.clone()));
-    assert!(space.reorder(&c, &b));
-    assert_eq!(space.zoomed(), Some(c.clone()));
 
     space.remove(&b);
     assert_eq!(space.zoomed(), Some(c.clone()));

@@ -2,9 +2,8 @@
 //!
 //! A continuation of [`Workspace`]'s one `impl`, the way [`super::spaces`] is.
 //!
-//! Saved in `state.toml`. A space's tab names the space by id; the space
-//! itself stays on the shelf, and closing its tab takes it off the strip
-//! alone.
+//! Saved in `state.toml`. A space's tab names the space by id, and closing it
+//! deletes the space.
 use super::*;
 use artifact::{
     kind::Kind,
@@ -184,15 +183,6 @@ impl Workspace {
         edited
     }
 
-    /// Take a tab off the strip. A space's takes the space with it; the
-    /// entries it arranges stay where they are.
-    pub fn close_slot(&mut self, slot: &Slot, cx: &mut Context<Self>) {
-        match slot {
-            Slot::Space { space } => self.delete_space_id(space, cx),
-            Slot::Entry(_) => self.take_slot(slot, cx),
-        }
-    }
-
     /// Take a tab off the strip and nothing else. The one in front hands the
     /// front to its neighbour, to its left or, for the first, to its right.
     pub(super) fn take_slot(&mut self, slot: &Slot, cx: &mut Context<Self>) {
@@ -217,7 +207,7 @@ impl Workspace {
 
     /// Take the entry `member`'s tab off the strip.
     pub fn close_tab(&mut self, member: &Member, cx: &mut Context<Self>) {
-        self.close_slot(&Slot::Entry(member.clone()), cx);
+        self.take_slot(&Slot::Entry(member.clone()), cx);
     }
 
     /// Put `slot` in `taken`'s place in the strip, in front where `taken` was.
@@ -285,7 +275,7 @@ impl Workspace {
                 Slot::Entry(member) => self.showing_of(member, cx).is_some(),
             })
             .collect();
-        // A space is reached through its tab alone.
+        // Every space keeps a tab on the strip.
         for space in &self.spaces {
             let slot = Slot::Space {
                 space: space.id.clone(),

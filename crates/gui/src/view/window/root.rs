@@ -205,9 +205,8 @@ pub(crate) fn traffic_lights() -> Point<Pixels> {
 }
 
 /// The band across the top of a column, and the only place its height and its
-/// inset are written: the header, the sidebar's, a pane's in a space, and the
-/// right panel's are all this row. A control in one stands where the same
-/// control stands in the next.
+/// inset are written: the window's band over the library and the launch view,
+/// the strip, the sidebar's and the right panel's are all this row.
 ///
 /// The leading inset is the caller's only where the traffic lights take it —
 /// see [`toolbar_inset`].
@@ -344,8 +343,8 @@ pub fn open(settings: Settings, state: State, cx: &mut App) -> Result<WindowHand
     cx.open_window(
         WindowOptions {
             window_bounds: Some(bounds),
-            // No strip of its own: the traffic lights sit in the nav, so the
-            // window owes no titlebar above it.
+            // No titlebar of its own: the traffic lights sit in the window's
+            // top row.
             titlebar: Some(TitlebarOptions {
                 title: Some("Cydonia".into()),
                 appears_transparent: true,
@@ -448,9 +447,9 @@ fn stepped(at: Option<usize>, len: usize, step: isize) -> Option<usize> {
 /// [`Tab`]'s.
 pub struct Cydonia {
     pub(crate) workspace: Entity<Workspace>,
-    /// A tab for every entry the arrangement holds — the open space's, or
-    /// else the window's own strip — and which of them has the focus. Empty
-    /// where no tab is open.
+    /// A tab for every entry the open space holds and every entry of the
+    /// window's strip, and which of them has the focus. Empty where no tab is
+    /// open.
     pub(crate) leaves: Vec<Entity<Tab>>,
     /// The panes of what the window lays out — see [`Pane`].
     pub(crate) panes: Vec<Entity<Pane>>,
@@ -542,7 +541,7 @@ pub struct Cydonia {
     pub(crate) board_sort: drag::Domain<board::BoardRegion, board::BoardItem>,
     /// The tabs that have been brought to the front, most recent last, across
     /// every pane. Read when a pane's last tab closes with the focus on it —
-    /// see [`Cydonia::close_pane`]. Runtime only, as [`Pane`]'s own are.
+    /// see [`Cydonia::close_pane`]. Runtime only.
     pub(crate) tab_history: Vec<Member>,
     /// A zoom on its way — see [`Cydonia::toggle_zoom`].
     pub(crate) zoom_glide: Option<crate::view::pane::arrangement::ZoomGlide>,
@@ -631,8 +630,8 @@ impl Cydonia {
             .when(!floating, |column| column.bg(theme.sidebar_bg()))
             .flex()
             .flex_col()
-            // The fold just past the lights, where the pane header puts it
-            // with the sidebar folded: it keeps its place across the toggle.
+            // The fold just past the lights, where the window's top row puts
+            // it with the sidebar folded.
             .child(
                 band()
                     .pl(px(toolbar_inset(window, cx)))
@@ -893,7 +892,7 @@ impl Cydonia {
             .iter()
             .position(|leaf| leaf.read(cx).entry == *entry)
         else {
-            // [`Cydonia::show_tab`] parks the index past the end to force the
+            // [`Cydonia::show_slot`] and [`Cydonia::show_pane`] park the index past the end to force the
             // selection below, and [`Self::leaf`] clamps — so a miss left here
             // reads as the pane at the end of the space, which is some entry
             // nobody pressed.

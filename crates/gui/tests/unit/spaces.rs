@@ -740,8 +740,11 @@ fn a_space_keeps_the_place_it_was_dragged_to(cx: &mut gpui::TestAppContext) {
         assert_eq!(ids(workspace), moved);
         assert_eq!(workspace.space(), Some(1), "and it is still the open one");
 
-        workspace.reload_spaces(cx);
-        assert_eq!(ids(workspace), moved, "a re-read is not a re-sort");
+        let reread: Vec<String> = Workspace::in_order(Shelf::all(), &moved)
+            .into_iter()
+            .map(|space| space.id)
+            .collect();
+        assert_eq!(reread, moved, "a re-read is not a re-sort");
     });
 }
 
@@ -1028,7 +1031,7 @@ fn tabs_close_and_leave_for_a_space(cx: &mut gpui::TestAppContext) {
         assert!(workspace.tab_strip().is_empty(), "both went to the space");
 
         let id = workspace.active_space().expect("open").id.clone();
-        workspace.close_slot(&crate::model::workspace::Slot::Space { space: id }, cx);
+        workspace.delete_space_id(&id, cx);
         assert!(workspace.strip().is_empty());
         assert!(workspace.arranged().is_none());
         assert!(

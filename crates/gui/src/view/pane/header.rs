@@ -61,7 +61,7 @@ impl Cydonia {
 
     /// What a tab showing the app `id` puts in its title row: the app's name.
     /// An app has no number and nothing to rename.
-    pub(crate) fn app_toolbar(&self, id: &str, cx: &App) -> Option<Toolbar> {
+    fn app_toolbar(&self, id: &str, cx: &App) -> Option<Toolbar> {
         let program = self.workspace.read(cx).program(id, cx)?;
         Some(Toolbar {
             title: program.read(cx).label(),
@@ -71,7 +71,7 @@ impl Cydonia {
     }
 
     /// The same, for an entry named by its project and what it shows.
-    pub(crate) fn toolbar_of(&self, project: usize, showing: Showing, cx: &App) -> Option<Toolbar> {
+    fn toolbar_of(&self, project: usize, showing: Showing, cx: &App) -> Option<Toolbar> {
         let workspace = self.workspace.read(cx);
         let open = workspace.projects.get(project)?;
         let row = Row::Entry {
