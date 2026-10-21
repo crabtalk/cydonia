@@ -868,22 +868,6 @@ impl Cydonia {
         cx.notify();
     }
 
-    /// Take a tab off the strip, and put the focus on what is in front after.
-    pub(crate) fn close_slot(&mut self, slot: &Slot, window: &mut Window, cx: &mut Context<Self>) {
-        self.commit(cx);
-        self.workspace
-            .update(cx, |workspace, cx| workspace.close_slot(slot, cx));
-        self.sync_leaves(window, cx);
-        let front = self
-            .arrangement(cx)
-            .and_then(|space| space.focused().or_else(|| space.entries().first().cloned()));
-        if let Some(entry) = front {
-            self.focused = usize::MAX;
-            self.focus_pane(&entry, window, cx);
-        }
-        cx.notify();
-    }
-
     /// Move the focus to the pane on this entry, and put the project's
     /// selection on what that pane shows.
     ///

@@ -131,37 +131,22 @@ impl Strip {
                 .member_toolbar(&member, cx)
                 .and_then(|toolbar| toolbar.entry)
                 .map(|entry| {
-                    root.entry_rows(Host::Strip(member.clone()), &entry.row, entry.archived, cx)
+                    root.entry_rows(Host::Tab(member.clone()), &entry.row, entry.archived, cx)
                 })
                 .unwrap_or_default(),
-            Slot::Space { space } => {
-                let rename = menu::row::<Cydonia>(
-                    Item::action("Rename").with_icon(icons::text::SquarePen),
-                    {
-                        let space = space.clone();
-                        move |root, window, cx| {
-                            let (slot, what) = (
-                                Slot::Space {
-                                    space: space.clone(),
-                                },
-                                Renaming::Space(space.clone()),
-                            );
-                            root.strip
-                                .update(cx, |strip, cx| strip.start_rename(slot, what, window, cx));
-                        }
-                    },
-                );
-                let close = menu::row::<Cydonia>(
-                    Item::action("Close tab").with_icon(icons::notifications::X),
-                    move |root, window, cx| {
-                        let slot = Slot::Space {
+            Slot::Space { space } => vec![menu::row::<Cydonia>(
+                Item::action("Rename").with_icon(icons::text::SquarePen),
+                move |root, window, cx| {
+                    let (slot, what) = (
+                        Slot::Space {
                             space: space.clone(),
-                        };
-                        root.close_slot(&slot, window, cx)
-                    },
-                );
-                menu::sections([vec![rename], vec![close]])
-            }
+                        },
+                        Renaming::Space(space.clone()),
+                    );
+                    root.strip
+                        .update(cx, |strip, cx| strip.start_rename(slot, what, window, cx));
+                },
+            )],
         }
     }
 
@@ -198,9 +183,9 @@ impl Strip {
         );
     }
 
-    /// One tab: its kind's mark and its name. A right press opens its menu,
-    /// which closes it: an entry's own menu, or a space's, whose closing
-    /// deletes the space. An entry's reads in italic while it is the preview.
+    /// One tab: its kind's mark and its name. A right press opens its menu: an
+    /// entry's own menu, or a space's. An entry's reads in italic while it is
+    /// the preview.
     fn tab(
         &self,
         slot: &Slot,
@@ -399,7 +384,7 @@ impl Render for Strip {
                         .bar("window-tabs", &model, tabs)
                         .on_track(match floating {
                             true => tabs::Track::Bare,
-                            false => tabs::Track::Bordered,
+                            false => tabs::Track::Flat,
                         })
                         .on_reorder(cx.listener(move |this, moved: &tabs::Move, _, cx| {
                             if let (Some(moving), Some(to)) =

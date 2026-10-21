@@ -1,7 +1,7 @@
 //! What the window does to an entry: open it, put it away, delete it, pin
 //! it, name it, and the rows of its menu — whichever view's menu asked.
 
-use crate::model::workspace::{Opening, Showing, Slot};
+use crate::model::workspace::{Opening, Showing};
 use crate::view::{
     article::TogglePlainText,
     keymap::{self, Command},
@@ -24,10 +24,9 @@ pub(crate) enum Host {
     Sidebar,
     /// A row in the library.
     Library,
-    /// A pane's title row's `···`, by the entry the pane is on.
-    Pane(Member),
-    /// A tab of the window's strip, by the entry it is on.
-    Strip(Member),
+    /// A tab, by the entry it is on: its title row's `···`, or its tab in
+    /// the strip.
+    Tab(Member),
 }
 
 impl Cydonia {
@@ -167,7 +166,7 @@ impl Cydonia {
         // A tab's menu has them only while its tab is the one focused.
         let page = match &host {
             Host::Sidebar | Host::Library => false,
-            Host::Pane(tab) | Host::Strip(tab) => self.focused_entry(cx).as_ref() == Some(tab),
+            Host::Tab(tab) => self.focused_entry(cx).as_ref() == Some(tab),
         };
 
         // ── how the open page is shown ──
@@ -236,7 +235,7 @@ impl Cydonia {
                 .and_then(artifact::space::Member::into_entry)
             {
                 let on = match &host {
-                    Host::Pane(tab) | Host::Strip(tab) => Some(tab.clone()),
+                    Host::Tab(tab) => Some(tab.clone()),
                     Host::Sidebar | Host::Library => None,
                 };
                 let label = match described {
@@ -348,16 +347,6 @@ impl Cydonia {
             .map(|path| on_disk(path).into_iter().collect())
             .unwrap_or_default();
 
-        // ── the tab it is open in ──
-        let mut tab_rows: Vec<(Item, menu::Act)> = Vec::new();
-        if let Host::Strip(tab) = &host {
-            let slot = Slot::Entry(tab.clone());
-            tab_rows.push(menu::row::<Cydonia>(
-                Item::action("Close tab").with_icon(icons::notifications::X),
-                move |this, window, cx| this.close_slot(&slot, window, cx),
-            ));
-        }
-
         // Alone, so it is never the row beside the one meant.
         let delete = vec![menu::row::<Cydonia>(
             Item::action("Delete").with_icon(icons::files::Trash),
@@ -384,7 +373,7 @@ impl Cydonia {
             }
         }
 
-        menu::sections([shown, held, disk, tab_rows, delete, about])
+        menu::sections([shown, held, disk, delete, about])
     }
 
     /// Drop an entry, file and all. Deleting the session on screen lands on
@@ -479,7 +468,7 @@ impl Cydonia {
             return;
         };
         let tab = match host {
-            Host::Pane(member) | Host::Strip(member) => self
+            Host::Tab(member) => self
                 .leaves
                 .iter()
                 .find(|leaf| leaf.read(cx).entry == *member)

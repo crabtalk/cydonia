@@ -138,7 +138,7 @@ impl Tab {
                     let (row, archived, host) = (
                         entry.row.clone(),
                         entry.archived,
-                        Host::Pane(this.entry.clone()),
+                        Host::Tab(this.entry.clone()),
                     );
                     let tab = cx.entity();
                     // From the window: its rows read this tab back.
