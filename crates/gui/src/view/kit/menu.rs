@@ -24,6 +24,7 @@ pub(crate) type Rows<V = Cydonia> =
     Box<dyn Fn(&mut V, &mut Window, &mut Context<V>) -> Vec<(Item, Act<V>)>>;
 
 /// How a menu's trigger is revealed.
+#[derive(Clone, Copy)]
 pub(crate) enum Reveal {
     /// Always on show.
     Always,

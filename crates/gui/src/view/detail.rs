@@ -639,12 +639,12 @@ impl Cydonia {
         };
         // The window's top row, over every column the panel's included: the
         // strip over a tab, the band over the library or the launch view.
-        // Floating, it is on the chrome over the cards.
+        // Floating, it is on the chrome over the cards. Edge to edge either
+        // way: its ends are the window's, as the lights are.
         let top = div()
             .flex_none()
             .relative()
             .h(px(root::HEADER_HEIGHT))
-            .when(floating, |top| top.mx(px(Theme::CONTENT_INSET / 2.)))
             .when(!floating, |top| {
                 top.bg(bezel::ui::window::content_fill(false, &theme))
             })
@@ -806,13 +806,21 @@ impl Cydonia {
             .min_h_0()
             .flex()
             .flex_col()
-            .when(floating, |column| {
-                column
-                    .px(px(Theme::CONTENT_INSET / 2.))
-                    .pb(px(Theme::CONTENT_INSET / 2.))
-            })
             .child(top)
-            .child(panels)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .when(floating, |column| {
+                        column
+                            .px(px(Theme::CONTENT_INSET / 2.))
+                            .pb(px(Theme::CONTENT_INSET / 2.))
+                    })
+                    .child(panels),
+            )
             .into_any_element()
     }
 }

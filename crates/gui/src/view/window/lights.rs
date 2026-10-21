@@ -6,10 +6,13 @@
 use crate::view::window::root::TRAFFIC_LIGHT_INSET;
 use bezel::gpui::{App, Global, Window};
 
+/// A light's size on macOS 26.
+pub(crate) const LIGHT_SIZE: f32 = 14.;
+
 /// What macOS 26 draws, for a window not measured yet and off macOS.
 const MACOS_26: Lights = Lights {
-    size: 14.,
-    height: 14.,
+    size: LIGHT_SIZE,
+    height: LIGHT_SIZE,
     pitch: 23.,
 };
 

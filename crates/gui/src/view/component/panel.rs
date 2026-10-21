@@ -785,8 +785,9 @@ impl Render for Panel {
             .child(
                 crate::view::window::root::band()
                     .h(px(crate::view::window::root::CARD_ROW_HEIGHT))
-                    // Its first control at the column's edge, as its last.
-                    .pl(px(crate::view::window::root::BUTTON_EDGE))
+                    // A card's row, not the window's.
+                    .pl(px(crate::view::window::root::CARD_EDGE))
+                    .pr(px(crate::view::window::root::CARD_EDGE))
                     .gap(px(6.))
                     // The strip only while it holds a tab.
                     .when(!self.strip.is_empty(), |band| {

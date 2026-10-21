@@ -21,6 +21,9 @@ use bezel::{
     theme::Theme,
 };
 
+/// The hover group a pane's card is, which its title row's tools show on.
+pub(crate) const HOVER_GROUP: &str = "pane";
+
 /// One pane of what the window lays out: the entry it shows under its title
 /// row.
 pub(crate) struct Pane {
@@ -80,7 +83,7 @@ impl Render for Pane {
             // the focus — see [`Tab::focus`]. The tab's handle: the body, the
             // composer and [`Cydonia::focus_pane`] all answer for it.
             .when_some(focus, |pane, focus| pane.track_focus(&focus))
-            .group("pane")
+            .group(HOVER_GROUP)
             .size_full()
             .min_w_0()
             .min_h_0()

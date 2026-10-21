@@ -1,8 +1,7 @@
 //! What the window does to an entry: open it, put it away, delete it, pin
 //! it, name it, and the rows of its menu — whichever view's menu asked.
 
-use crate::model::workspace::Opening;
-use crate::model::workspace::Showing;
+use crate::model::workspace::{Opening, Showing, Slot};
 use crate::view::{
     article::TogglePlainText,
     keymap::{self, Command},
@@ -25,9 +24,10 @@ pub(crate) enum Host {
     Sidebar,
     /// A row in the library.
     Library,
-    /// A tab, by the entry it is on: its title row's `···`, or its tab in
-    /// the strip.
-    Tab(Member),
+    /// A pane's title row's `···`, by the entry the pane is on.
+    Pane(Member),
+    /// A tab of the window's strip, by the entry it is on.
+    Strip(Member),
 }
 
 impl Cydonia {
@@ -167,7 +167,7 @@ impl Cydonia {
         // A tab's menu has them only while its tab is the one focused.
         let page = match &host {
             Host::Sidebar | Host::Library => false,
-            Host::Tab(tab) => self.focused_entry(cx).as_ref() == Some(tab),
+            Host::Pane(tab) | Host::Strip(tab) => self.focused_entry(cx).as_ref() == Some(tab),
         };
 
         // ── how the open page is shown ──
@@ -236,7 +236,7 @@ impl Cydonia {
                 .and_then(artifact::space::Member::into_entry)
             {
                 let on = match &host {
-                    Host::Tab(tab) => Some(tab.clone()),
+                    Host::Pane(tab) | Host::Strip(tab) => Some(tab.clone()),
                     Host::Sidebar | Host::Library => None,
                 };
                 let label = match described {
@@ -350,11 +350,11 @@ impl Cydonia {
 
         // ── the tab it is open in ──
         let mut tab_rows: Vec<(Item, menu::Act)> = Vec::new();
-        if let Host::Tab(tab) = &host {
-            let tab = tab.clone();
+        if let Host::Strip(tab) = &host {
+            let slot = Slot::Entry(tab.clone());
             tab_rows.push(menu::row::<Cydonia>(
                 Item::action("Close tab").with_icon(icons::notifications::X),
-                move |this, window, cx| this.close_pane(&tab, window, cx),
+                move |this, window, cx| this.close_slot(&slot, window, cx),
             ));
         }
 
@@ -479,7 +479,7 @@ impl Cydonia {
             return;
         };
         let tab = match host {
-            Host::Tab(member) => self
+            Host::Pane(member) | Host::Strip(member) => self
                 .leaves
                 .iter()
                 .find(|leaf| leaf.read(cx).entry == *member)

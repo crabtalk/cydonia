@@ -6,6 +6,7 @@
 use super::{Tab, TabMenu, header::Naming};
 use crate::view::{
     kit::{icon, menu},
+    pane,
     sidebar::Renaming,
     window::{entry::Host, reach::InWindow as _, root},
 };
@@ -51,6 +52,11 @@ impl Tab {
                 .find(|line| !line.trim().is_empty())?;
             Some(line.trim().to_owned().into())
         });
+        // The focused pane's tools are on show, another's under the pointer.
+        let reveal = match self.focused {
+            true => menu::Reveal::Always,
+            false => menu::Reveal::Group(pane::HOVER_GROUP),
+        };
         let comments = self
             .article_shown(cx)
             .map(|view| view.read(cx).comments.clone());
@@ -58,7 +64,7 @@ impl Tab {
             .flex_none()
             .h(px(root::CARD_ROW_HEIGHT))
             .pl(px(root::HEADER_INSET))
-            .pr(px(root::BUTTON_EDGE))
+            .pr(px(root::CARD_EDGE))
             .flex()
             .flex_row()
             .items_center()
@@ -126,40 +132,34 @@ impl Tab {
             .children(board.as_deref().and_then(|id| self.info_panel(id, cx)));
         let menu = toolbar.entry.map(|entry| {
             let open = self.menu.key() == Some(&TabMenu::Entry);
-            let button = menu::button(
-                "tab-entry-menu",
-                icons::layout::Ellipsis,
-                menu::Reveal::Always,
-                open,
-                cx,
-            )
-            .on_click(cx.listener(move |this, _, window, cx| {
-                cx.stop_propagation();
-                let (row, archived, host) = (
-                    entry.row.clone(),
-                    entry.archived,
-                    Host::Tab(this.entry.clone()),
-                );
-                let tab = cx.entity();
-                // From the window: its rows read this tab back.
-                this.defer_window(window, cx, move |root, window, cx| {
-                    let rows = Self::through(root.entry_rows(host, &row, archived, cx));
-                    let rows = std::cell::RefCell::new(Some(rows));
-                    tab.update(cx, |this, cx| {
-                        ContextMenu::toggle(
-                            this,
-                            |this| &mut this.menu,
-                            TabMenu::Entry,
-                            Place::BelowEnd,
-                            move |_, _, _| {
-                                menu::chooser(rows.borrow_mut().take().unwrap_or_default())
-                            },
-                            window,
-                            cx,
-                        )
+            let button = menu::button("tab-entry-menu", icons::layout::Ellipsis, reveal, open, cx)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    cx.stop_propagation();
+                    let (row, archived, host) = (
+                        entry.row.clone(),
+                        entry.archived,
+                        Host::Pane(this.entry.clone()),
+                    );
+                    let tab = cx.entity();
+                    // From the window: its rows read this tab back.
+                    this.defer_window(window, cx, move |root, window, cx| {
+                        let rows = Self::through(root.entry_rows(host, &row, archived, cx));
+                        let rows = std::cell::RefCell::new(Some(rows));
+                        tab.update(cx, |this, cx| {
+                            ContextMenu::toggle(
+                                this,
+                                |this| &mut this.menu,
+                                TabMenu::Entry,
+                                Place::BelowEnd,
+                                move |_, _, _| {
+                                    menu::chooser(rows.borrow_mut().take().unwrap_or_default())
+                                },
+                                window,
+                                cx,
+                            )
+                        });
                     });
-                });
-            }));
+                }));
             ContextMenu::trigger(button, |this: &mut Self| &mut this.menu, TabMenu::Entry, cx)
                 .children(self.menu.render_for(
                     &TabMenu::Entry,
@@ -179,7 +179,7 @@ impl Tab {
                     true => (icons::arrows::Minimize2, "Restore"),
                     false => (icons::arrows::Maximize2, "Expand"),
                 };
-                menu::button("tab-zoom-pane", mark, menu::Reveal::Always, false, cx)
+                menu::button("tab-zoom-pane", mark, reveal, false, cx)
                     .tooltip(move |window, cx| Tooltip::text(tip, window, cx))
                     .on_click(cx.listener(|this, _, window, cx| {
                         cx.stop_propagation();
@@ -200,7 +200,7 @@ impl Tab {
             [(side, label, mark)] => {
                 let (side, label) = (*side, *label);
                 Some(
-                    menu::button("tab-move-pane", *mark, menu::Reveal::Always, false, cx)
+                    menu::button("tab-move-pane", *mark, reveal, false, cx)
                         .tooltip(move |window, cx| Tooltip::text(label, window, cx))
                         .on_click(cx.listener(move |this, _, window, cx| {
                             cx.stop_propagation();
@@ -213,36 +213,30 @@ impl Tab {
             }
             _ => {
                 let open = self.menu.key() == Some(&TabMenu::Move);
-                let button = menu::button(
-                    "tab-move-pane",
-                    icons::arrows::Move,
-                    menu::Reveal::Always,
-                    open,
-                    cx,
-                )
-                .tooltip(|window, cx| Tooltip::text("Move", window, cx))
-                .on_click(cx.listener(|this, _, window, cx| {
-                    cx.stop_propagation();
-                    let (entry, tab) = (this.entry.clone(), cx.entity());
-                    // From the window: its rows read this tab back.
-                    this.defer_window(window, cx, move |root, window, cx| {
-                        let rows = Self::through(root.move_rows(&entry, cx));
-                        let rows = std::cell::RefCell::new(Some(rows));
-                        tab.update(cx, |this, cx| {
-                            ContextMenu::toggle(
-                                this,
-                                |this| &mut this.menu,
-                                TabMenu::Move,
-                                Place::BelowEnd,
-                                move |_, _, _| {
-                                    menu::chooser(rows.borrow_mut().take().unwrap_or_default())
-                                },
-                                window,
-                                cx,
-                            )
+                let button = menu::button("tab-move-pane", icons::arrows::Move, reveal, open, cx)
+                    .tooltip(|window, cx| Tooltip::text("Move", window, cx))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        cx.stop_propagation();
+                        let (entry, tab) = (this.entry.clone(), cx.entity());
+                        // From the window: its rows read this tab back.
+                        this.defer_window(window, cx, move |root, window, cx| {
+                            let rows = Self::through(root.move_rows(&entry, cx));
+                            let rows = std::cell::RefCell::new(Some(rows));
+                            tab.update(cx, |this, cx| {
+                                ContextMenu::toggle(
+                                    this,
+                                    |this| &mut this.menu,
+                                    TabMenu::Move,
+                                    Place::BelowEnd,
+                                    move |_, _, _| {
+                                        menu::chooser(rows.borrow_mut().take().unwrap_or_default())
+                                    },
+                                    window,
+                                    cx,
+                                )
+                            });
                         });
-                    });
-                }));
+                    }));
                 Some(
                     ContextMenu::trigger(
                         button,
@@ -261,21 +255,15 @@ impl Tab {
             }
         };
         // In a space it closes the pane; alone, the tab with it.
-        let close = menu::button(
-            "tab-close-pane",
-            icons::notifications::X,
-            menu::Reveal::Always,
-            false,
-            cx,
-        )
-        .tooltip(|window, cx| Tooltip::text("Close", window, cx))
-        .on_click(cx.listener(|this, _, window, cx| {
-            cx.stop_propagation();
-            let entry = this.entry.clone();
-            this.defer_window(window, cx, move |root, window, cx| {
-                root.close_pane(&entry, window, cx)
-            });
-        }));
+        let close = menu::button("tab-close-pane", icons::notifications::X, reveal, false, cx)
+            .tooltip(|window, cx| Tooltip::text("Close", window, cx))
+            .on_click(cx.listener(|this, _, window, cx| {
+                cx.stop_propagation();
+                let entry = this.entry.clone();
+                this.defer_window(window, cx, move |root, window, cx| {
+                    root.close_pane(&entry, window, cx)
+                });
+            }));
         Some(
             row.child(name)
                 .children(comments)

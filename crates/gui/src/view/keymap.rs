@@ -238,10 +238,7 @@ impl Command {
         }
     }
 
-    /// The chord it ships with, where it ships with one. The ones that do not
-    /// are reachable from the menu and were never worth a default between
-    /// them: ⌘N is the session, and three more `New` chords would spend the
-    /// letters a person may want for their own.
+    /// The chord it ships with, where it ships with one.
     pub fn default(self) -> Option<&'static str> {
         Some(match self {
             // What macOS binds Preferences to in every other app.
@@ -252,12 +249,9 @@ impl Command {
             Self::NewSessionNext => "alt-secondary-n",
             // What every browser opens a tab on.
             Self::NewTab => "secondary-t",
-            Self::NewBoard
-            | Self::NewArticle
-            | Self::NewTable
-            | Self::InstallApp
-            | Self::LoadApp
-            | Self::CloseProject => return None,
+            Self::NewArticle => "secondary-shift-a",
+            Self::NewBoard => "secondary-shift-b",
+            Self::NewTable | Self::InstallApp | Self::LoadApp | Self::CloseProject => return None,
             // Nothing: ⌃⇥ and ⇧⌃⇥ are what step between entries, and they are
             // bound where nothing can name them — see [`root::bindings`]. A
             // second default would go in the menu as a key equivalent, and an

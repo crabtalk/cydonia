@@ -1,4 +1,5 @@
 use super::*;
+use crate::model::workspace::Showing;
 use crate::model::{
     project::Project,
     session::ChatSession,

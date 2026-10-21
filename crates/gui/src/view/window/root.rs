@@ -61,8 +61,11 @@ const SIDEBAR_WIDTH_MAX: f32 = 420.;
 pub(crate) const SIDEBAR_GUTTER: f32 = 8.;
 
 /// The window's top row — the strip of tabs and the sidebar's band — which
-/// the traffic lights centre in down its height.
-pub(crate) const HEADER_HEIGHT: f32 = 42.;
+/// the traffic lights centre in down its height. At this height they stand
+/// where AppKit lays them out itself in a transparent, full-size-content
+/// titlebar on macOS 26. AppKit puts them back there through a fullscreen
+/// transition before gpui moves them, so anywhere else they jump.
+pub(crate) const HEADER_HEIGHT: f32 = 32.;
 
 /// The row at the top of a card: a pane's title row, the right panel's tabs.
 pub(crate) const CARD_ROW_HEIGHT: f32 = 32.;
@@ -79,9 +82,11 @@ pub(crate) const COMPOSER_COLUMN: f32 = 720.;
 
 pub(crate) const COMPOSER_MARGIN: f32 = 24.;
 
-/// How far the close button stands in from the window's left edge: AppKit's
-/// own place for it in a transparent, full-size-content titlebar on macOS 26.
-pub(crate) const TRAFFIC_LIGHT_INSET: f32 = 9.;
+/// How far the close button stands in from the window's left edge, as far as
+/// the lights stand down from its top: concentric with the window's corner,
+/// as macOS 26 places them.
+pub(crate) const TRAFFIC_LIGHT_INSET: f32 =
+    (HEADER_HEIGHT - crate::view::window::lights::LIGHT_SIZE) / 2.;
 
 /// The gap the header keeps at the window's edges.
 pub(crate) const HEADER_INSET: f32 = 16.;
@@ -99,6 +104,10 @@ const ICON_GLYPH: f32 = 14.;
 
 /// The trailing padding that puts an icon button's glyph at [`EDGE`].
 pub(crate) const BUTTON_EDGE: f32 = EDGE - BUTTON_SLACK;
+
+/// The padding at the ends of a card's own row — a pane's title row, the
+/// right panel's tabs — before the icon button there.
+pub(crate) const CARD_EDGE: f32 = 4.;
 
 /// The gap between the green light and the glyph of the first control past
 /// it.

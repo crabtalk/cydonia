@@ -1,7 +1,6 @@
 //! The window's strip: a tab for each entry and space the window holds, and
 //! the window's own controls at its ends — past the lights, the fold while the
-//! sidebar is shut, the `+`, the right panel's toggle and the right caption
-//! buttons.
+//! sidebar is shut, the right panel's toggle and the right caption buttons.
 
 use crate::{
     model::workspace::{Slot, Workspace},
@@ -39,14 +38,12 @@ use bezel::{
 
 /// Between the controls in the strip.
 const BAR_GAP: f32 = 2.;
-/// The room the window is dragged by before a track of tabs.
-const GRIP_WIDTH: f32 = 32.;
+/// The empty row a track of tabs stops short of the toggle by.
+const DRAG_ROOM: f32 = 32.;
 
 /// Which of the strip's menus is up.
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) enum StripMenu {
-    /// The `+`: what to start in a tab of its own.
-    Add,
     /// A tab, right-pressed: its entry's own menu, or its space's.
     Tab(Slot),
 }
@@ -134,7 +131,7 @@ impl Strip {
                 .member_toolbar(&member, cx)
                 .and_then(|toolbar| toolbar.entry)
                 .map(|entry| {
-                    root.entry_rows(Host::Tab(member.clone()), &entry.row, entry.archived, cx)
+                    root.entry_rows(Host::Strip(member.clone()), &entry.row, entry.archived, cx)
                 })
                 .unwrap_or_default(),
             Slot::Space { space } => {
@@ -269,6 +266,7 @@ impl Strip {
             false => tabs::State::Resting,
         };
         let el = tabs::tab(theme, key.clone(), label, state)
+            .occlude()
             .when(preview, |tab| tab.italic())
             .on_click(cx.listener({
                 let shown = slot.clone();
@@ -317,43 +315,6 @@ impl Strip {
         };
         el.children(renaming.then(|| self.name_field.clone()))
     }
-
-    /// The `+`: the sidebar's `+` for `project`, landing as a tab of its own.
-    /// Always on show, so the track beside it keeps its width.
-    fn add_button(
-        &self,
-        project: usize,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> gpui::Stateful<gpui::Div> {
-        let open = self.menu.key() == Some(&StripMenu::Add);
-        let button = menu::button(
-            "strip-add",
-            icons::math::Plus,
-            menu::Reveal::Always,
-            open,
-            cx,
-        )
-        .on_click(cx.listener(move |this, _, window, cx| {
-            cx.stop_propagation();
-            this.toggle_menu(
-                StripMenu::Add,
-                Place::Below,
-                move |root, _, cx| root.new_tab_rows(project, cx),
-                window,
-                cx,
-            );
-        }));
-        ContextMenu::trigger(button, |this: &mut Self| &mut this.menu, StripMenu::Add, cx).children(
-            self.menu.render_for(
-                &StripMenu::Add,
-                "strip-add-card",
-                |this| &mut this.menu,
-                window,
-                cx,
-            ),
-        )
-    }
 }
 
 impl InWindow for Strip {
@@ -369,25 +330,16 @@ impl Render for Strip {
         let strip: Vec<Slot> = workspace.strip().to_vec();
         let front = workspace.front_slot().cloned();
         let floating = workspace.settings.appearance.floating;
-        // The project a `+` makes its entry in: the front entry's, else the
-        // one in front of the sidebar.
-        let project = front
-            .as_ref()
-            .and_then(Slot::entry)
-            .and_then(|member| workspace.showing_of(member, cx))
-            .map(|(project, _)| project)
-            .or(workspace.active);
         // The lights are the window's and are drawn over whatever is at its
         // top left. Fullscreen has none.
         let fold = !self.sidebar_open;
         let left = fold && chrome::has(CaptionSide::Left, window, cx);
         let right = chrome::has(CaptionSide::Right, window, cx);
+        // The row runs edge to edge; its tabs start where the cards below do.
         let lead = match self.sidebar_open {
             _ if left => 0.,
-            // Floating, the column pads itself by half the gap between cards
-            // and the strip keeps the other half, so it starts a gap in.
-            false => root::toolbar_inset(window, cx) - root::card_gap(floating),
-            true if floating => 0.,
+            false => root::toolbar_inset(window, cx),
+            true if floating => root::card_gap(floating),
             true => root::HEADER_INSET,
         };
         let (fold_controls, grip) = match self.root.upgrade() {
@@ -414,6 +366,8 @@ impl Render for Strip {
         if let Some(front) = &front {
             model.activate(&Dragged::Tab(front.clone()));
         }
+        // A control over the drag layer takes its own presses.
+        let shield = |control: gpui::AnyElement| div().flex_none().occlude().child(control);
         root::band()
             .id("window-strip")
             .relative()
@@ -421,28 +375,21 @@ impl Render for Strip {
             .gap(px(BAR_GAP))
             .pl(px(lead))
             .when(right, |el| el.pr_0())
+            // Under the whole row: any of it no control stands on moves the
+            // window, as a titlebar does.
+            .child(div().absolute().inset_0().flex().child(grip))
             .children(
                 left.then(|| chrome::caption(CaptionSide::Left, window, cx))
-                    .flatten(),
+                    .flatten()
+                    .map(|caption| shield(caption.into_any_element())),
             )
             // The fold belongs to whichever column runs along the window's left
             // edge, so with the sidebar gone it is the strip's.
             .children(fold_controls.map(|controls| {
-                div()
+                shield(controls)
                     .mr(px(root::HEADER_INSET - BAR_GAP))
-                    .child(controls)
                     .into_any_element()
             }))
-            .child(match tracked {
-                true => div()
-                    .flex_none()
-                    .w(px(GRIP_WIDTH))
-                    .h_full()
-                    .flex()
-                    .child(grip)
-                    .into_any_element(),
-                false => grip,
-            })
             // The tabs on a track of their own, which scrolls sideways once
             // they no longer fit: the controls keep their places while it does.
             // One tab has no track, back while its name is typed.
@@ -465,20 +412,28 @@ impl Render for Strip {
                         })),
                 )
             })
-            // At the strip's end, where the panes below end their own rows.
-            .children(project.map(|project| self.add_button(project, window, cx)))
-            .child(changes_toggle(
-                match self.panel_open {
-                    true => "Hide right panel",
-                    false => "Show right panel",
-                },
-                Painter::of(cx),
-                Theme::of(cx),
+            // Empty row kept before the toggle, so the window can be taken
+            // by it however many tabs there are.
+            .child(match tracked {
+                true => div().flex_none().w(px(DRAG_ROOM)),
+                false => div().flex_1(),
+            })
+            .child(shield(
+                changes_toggle(
+                    match self.panel_open {
+                        true => "Hide right panel",
+                        false => "Show right panel",
+                    },
+                    Painter::of(cx),
+                    Theme::of(cx),
+                )
+                .into_any_element(),
             ))
             .children(
                 right
                     .then(|| chrome::caption(CaptionSide::Right, window, cx))
-                    .flatten(),
+                    .flatten()
+                    .map(|caption| shield(caption.into_any_element())),
             )
     }
 }

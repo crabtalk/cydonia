@@ -7,14 +7,10 @@
 use super::Pane;
 use crate::model::workspace::Slot;
 use crate::view::kit::menu;
-use crate::{
-    model::workspace::Showing,
-    view::{
-        component::divider,
-        kit::new::{self, New},
-        sidebar::{Dragged, Row},
-        window::root::{Cydonia, NewSession},
-    },
+use crate::view::{
+    component::divider,
+    sidebar::{Dragged, Row},
+    window::root::Cydonia,
 };
 use artifact::space::{Axis as Split, Member, Node, Side, Space};
 use bezel::{
@@ -713,69 +709,6 @@ impl Cydonia {
         self.focused = usize::MAX;
         self.focus_pane(&arriving, window, cx);
         cx.notify();
-    }
-
-    /// What the strip's `+` starts: the sidebar's `+` for `project`,
-    /// landing as a tab of its own.
-    pub(crate) fn new_tab_rows(&self, project: usize, cx: &App) -> Vec<(Item, menu::Act)> {
-        new::rows(new::offered(self.workspace.read(cx)), |kind| {
-            Box::new(move |this: &mut Cydonia, window, cx| {
-                this.new_in_tab(project, kind, window, cx)
-            })
-        })
-    }
-
-    /// Make an entry in `project` and open it as a tab of its own.
-    fn new_in_tab(
-        &mut self,
-        project: usize,
-        kind: New,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.commit(cx);
-        if let New::Board = kind {
-            return self.ask_new_board(project, window, cx);
-        }
-        // No agent to open one on: the session pane says so and offers the
-        // install.
-        if let New::Session(None) = kind
-            && self.workspace.read(cx).preferred_agent(cx).is_none()
-        {
-            return self.new_session_action(&NewSession, window, cx);
-        }
-        let member = self.workspace.update(cx, |workspace, cx| {
-            workspace.select_project(project, cx);
-            let showing = match kind {
-                New::Session(at) => {
-                    let agent = workspace.agent_at(at, cx)?;
-                    let id = workspace.new_session(agent, None, cx)?;
-                    workspace.mint_record(id, cx)?;
-                    Showing::Session(id)
-                }
-                New::Article => {
-                    let ix = workspace.create_article()?;
-                    Showing::Article(
-                        workspace
-                            .projects
-                            .get(project)?
-                            .articles
-                            .get(ix)?
-                            .id
-                            .clone(),
-                    )
-                }
-                New::Table => {
-                    let ix = workspace.create_table()?;
-                    Showing::Table(workspace.projects.get(project)?.tables.get(ix)?.key.clone())
-                }
-                New::Board => return None,
-            };
-            workspace.member_of(project, showing, cx)
-        });
-        if let Some(member) = member {
-            self.join_strip(member, window, cx);
-        }
     }
 
     /// Put the seam after `at` where the pointer left it.

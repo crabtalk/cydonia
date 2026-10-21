@@ -111,11 +111,6 @@ impl Cydonia {
             true => root::HEADER_INSET,
             false => root::toolbar_inset(window, cx),
         };
-        // Floating, the band is on the chrome over the card, a gap in from the
-        // window's edge: the column pads itself by half of it and the band
-        // keeps the other half.
-        let floating = self.workspace.read(cx).settings.appearance.floating;
-        let inset = inset - root::card_gap(floating);
         let title = self.library.is_some().then(|| {
             div()
                 .min_w_0()
