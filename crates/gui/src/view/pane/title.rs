@@ -26,8 +26,9 @@ use bezel::{
     },
 };
 
-/// The hover group a title row is, which its tools show on.
-const TITLE_GROUP: &str = "pane-title";
+/// The hover group a title row is, which its tools show on — the ones other
+/// views hang in it included.
+pub(crate) const TITLE_GROUP: &str = "pane-title";
 
 impl Tab {
     /// The row: the entry's name, or the field renaming it, and what acts on
@@ -263,16 +264,22 @@ impl Tab {
                 )
             }
         };
-        // In a space it closes the pane; alone, the tab with it.
-        let close = menu::button("tab-close-pane", icons::notifications::X, reveal, false, cx)
-            .tooltip(|window, cx| Tooltip::text("Close", window, cx))
-            .on_click(cx.listener(|this, _, window, cx| {
-                cx.stop_propagation();
-                let entry = this.entry.clone();
-                this.defer_window(window, cx, move |root, window, cx| {
-                    root.close_pane(&entry, window, cx)
-                });
-            }));
+        // In a space it closes the pane; alone, the tab with it — none while
+        // the sidebar lists the spaces, which draws no tabs.
+        let workspace = self.workspace.read(cx);
+        let alone = workspace.active_space().is_none();
+        let close = !(alone && workspace.settings.appearance.spaces_in_sidebar);
+        let close = close.then(|| {
+            menu::button("tab-close-pane", icons::notifications::X, reveal, false, cx)
+                .tooltip(|window, cx| Tooltip::text("Close", window, cx))
+                .on_click(cx.listener(|this, _, window, cx| {
+                    cx.stop_propagation();
+                    let entry = this.entry.clone();
+                    this.defer_window(window, cx, move |root, window, cx| {
+                        root.close_pane(&entry, window, cx)
+                    });
+                }))
+        });
         // The window's: its fold at the top left, and the empty stretch it is
         // dragged by.
         let (fold, grip) = match (edge.top, self.root.upgrade()) {
@@ -299,7 +306,7 @@ impl Tab {
             .children(menu)
             .children(shift)
             .children(zoom)
-            .child(close)
+            .children(close)
             .children(toggle)
             .children(
                 right

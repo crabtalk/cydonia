@@ -2,7 +2,10 @@
 //! how the margin shows the comments, then every one of them.
 
 use super::{ArticleView, MENU_MAX_HEIGHT, MENU_MAX_WIDTH};
-use crate::{model::workspace::Workspace, view::kit::menu};
+use crate::{
+    model::workspace::Workspace,
+    view::{kit::menu, pane::title},
+};
 use bezel::{
     gpui::{
         AnyElement, App, Context, Entity, Focusable as _, IntoElement, Render, SharedString,
@@ -169,7 +172,7 @@ impl CommentsButton {
         let trigger = menu::button(
             format!("comments-{}", path.display()),
             icons::social::MessageCircle,
-            menu::Reveal::Always,
+            menu::Reveal::Group(title::TITLE_GROUP),
             self.menu.showing(&()),
             cx,
         )
