@@ -5,13 +5,12 @@ description: Splitting the window, carrying entries between panes, and the panel
 
 ## Panes
 
-The window splits into panes, and entries drag between them. Each pane draws
-from its own state, so moving the focus does not move what the other panes are
-showing. ⌃⇥ and ⇧⌃⇥ step between the panes on screen.
+The window splits into panes, and entries drag between them. Each pane draws from its own state, so moving the focus does not move what the other panes are showing. ⌃⌥⇥ and ⇧⌃⌥⇥ step between the panes on screen.
 
 ## Tabs
 
-A pane holds several entries as tabs, and a tab can be carried to another pane.
+An entry dropped on the middle of a pane joins its stack, in front. A pane holding a stack draws a deck at the head of its title row; a click on the deck lists the stack, to bring another entry to the front or move the one in front to a tab of its own. While the focus is in a pane holding a stack, ⌃⇥ and ⇧⌃⇥ step through the stack instead of the window's tabs, and ⌘1–9 still pick the window's tabs.
+
 ⌘W closes a tab in a space. Archiving or deleting the entry a tab shows closes its pane and moves the focus to the top-left pane.
 
 ## Spaces

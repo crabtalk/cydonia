@@ -6,7 +6,7 @@ use crate::view::kit::menu::Menu;
 use crate::view::window::chrome;
 use crate::view::window::lights::{self, Lights};
 #[cfg(feature = "desktop")]
-use crate::view::{component::terminal::TerminalPanel, settings};
+use crate::view::{component::terminal::TerminalPanel, pane, settings};
 use crate::{
     model::{
         session::ChatSession,
@@ -135,6 +135,8 @@ actions!(
         PrevEntry,
         NextPane,
         PrevPane,
+        NextInStack,
+        PrevInStack,
         ClosePane,
         ZoomPane,
         CopySelection,
@@ -259,6 +261,10 @@ pub fn bindings() -> Vec<KeyBinding> {
         // trick for the same reason.
         KeyBinding::new("ctrl-tab", NextEntry, Some("Cydonia")),
         KeyBinding::new("ctrl-shift-tab", PrevEntry, Some("Cydonia")),
+        // The same chords, taken by a pane holding a stack while the focus is
+        // in it.
+        KeyBinding::new("ctrl-tab", NextInStack, Some(pane::STACK_CONTEXT)),
+        KeyBinding::new("ctrl-shift-tab", PrevInStack, Some(pane::STACK_CONTEXT)),
         // The panes of a space, on the chords beside the ones that step
         // through entries.
         KeyBinding::new("ctrl-alt-tab", NextPane, Some("Cydonia")),
@@ -748,7 +754,7 @@ impl Cydonia {
         let kind = |kind: Kind| (kind != Kind::Session).then_some(kind);
         let fronts = self
             .arrangement(cx)
-            .map(|space| space.entries())
+            .map(|space| space.tree.fronts())
             .unwrap_or_default();
         let shown: Vec<mcp::rail::Shown> = self
             .leaves
@@ -778,11 +784,11 @@ impl Cydonia {
     }
 
     /// Reconcile the tabs with what the window holds: one for every entry
-    /// the arrangement in front lays out, in its order, then one for every
-    /// other entry of the strip.
+    /// the arrangement in front holds, behind a pane's front included, in its
+    /// order, then one for every other entry of the strip.
     ///
-    /// A tab already on an entry is kept, so switching tabs or spaces does not
-    /// throw away a composer with a draft in it.
+    /// A tab already on an entry is kept, so switching tabs, spaces or a
+    /// stack's front does not throw away a composer with a draft in it.
     pub(crate) fn sync_leaves(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let mut members = self
             .arrangement(cx)
@@ -840,6 +846,8 @@ impl Cydonia {
                 if self.workspace.read(cx).space() != Some(at) {
                     self.open_space(at, window, cx);
                 }
+                self.workspace
+                    .update(cx, |workspace, cx| workspace.set_front(&member, cx));
             }
             None => self.workspace.update(cx, |workspace, cx| {
                 workspace.open_tab(member.clone(), opening, cx);
@@ -1108,9 +1116,7 @@ impl Cydonia {
         .detach();
         // The window comes back on the tabs it was left on.
         this.sync_leaves(window, cx);
-        if let Some(front) = this
-            .arrangement(cx)
-            .and_then(|space| space.focused().or_else(|| space.entries().first().cloned()))
+        if let Some(front) = this.arrangement(cx).and_then(|space| space.focused_front())
             && let Some(at) = this
                 .leaves
                 .iter()
@@ -1511,6 +1517,12 @@ impl Render for Cydonia {
             }))
             .on_action(cx.listener(|this, _: &NextPane, window, cx| this.step_pane(1, window, cx)))
             .on_action(cx.listener(|this, _: &PrevPane, window, cx| this.step_pane(-1, window, cx)))
+            .on_action(
+                cx.listener(|this, _: &NextInStack, window, cx| this.step_stack(1, window, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &PrevInStack, window, cx| this.step_stack(-1, window, cx)),
+            )
             .on_action(
                 cx.listener(|this, _: &ClosePane, window, cx| this.close_focused_pane(window, cx)),
             )

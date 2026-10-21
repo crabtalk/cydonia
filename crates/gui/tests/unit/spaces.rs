@@ -484,10 +484,10 @@ fn resting_session(id: u64, project: &std::path::Path) -> crate::model::session:
     )
 }
 
-/// A drop on a pane but not on its edge opens the arrival as a tab of the
-/// strip, and starts no space.
+/// An entry moved to a tab of its own opens in the strip, and starts no
+/// space.
 #[gpui::test]
-fn a_drop_off_the_edge_opens_a_tab(cx: &mut gpui::TestAppContext) {
+fn a_tab_of_its_own_starts_no_space(cx: &mut gpui::TestAppContext) {
     use crate::model::workspace::Opening;
     let scratch = Scratch::new("join-strip");
     let (workspace, a, b) = two_boards(&scratch, cx);
@@ -500,6 +500,30 @@ fn a_drop_off_the_edge_opens_a_tab(cx: &mut gpui::TestAppContext) {
             workspace.front_slot().and_then(|slot| slot.entry()),
             Some(&b)
         );
+    });
+}
+
+/// A drop on a pane but not on its edge mints a space of one pane over the
+/// entry there, stacking the arrival in front of it; opening the entry behind
+/// brings it back to the front.
+#[gpui::test]
+fn a_drop_off_the_edge_stacks_the_arrival(cx: &mut gpui::TestAppContext) {
+    use crate::model::workspace::{Opening, Slot};
+    let scratch = Scratch::new("stack");
+    let (workspace, a, b) = two_boards(&scratch, cx);
+    workspace.update(cx, |workspace, cx| {
+        workspace.open_tab(a.clone(), Opening::Kept, cx);
+        workspace.stack_pane(&a, &b, cx).expect("stacked");
+        let space = workspace.active_space().expect("a space");
+        assert_eq!(space.leaves(), 1, "one pane");
+        assert_eq!(space.stack_of(&a), vec![a.clone(), b.clone()]);
+        assert_eq!(space.front_of(&a), Some(b.clone()));
+        let id = space.id.clone();
+        assert_eq!(workspace.strip(), &[Slot::Space { space: id.clone() }]);
+
+        workspace.set_front(&a, cx);
+        let read = Shelf::read(&id).expect("on disk");
+        assert_eq!(read.front_of(&b), Some(a.clone()), "written");
     });
 }
 

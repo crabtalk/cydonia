@@ -6,7 +6,7 @@
 
 use super::Pane;
 use crate::model::workspace::Slot;
-use crate::view::kit::menu;
+use crate::view::kit::{icon, menu};
 use crate::view::{
     component::divider,
     sidebar::{Dragged, Row},
@@ -164,12 +164,10 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         match node {
-            Node::Leaf { entry, .. } if Some(entry) == empty => {
-                div().flex_1().min_w_0().min_h_0().into_any_element()
-            }
-            // `entry` is the pane's name, not what it is showing — the pane
-            // resolves its own strip and which of it is in front.
-            Node::Leaf { entry, .. } => self.pane(entry, true, window, cx),
+            Node::Leaf { .. } => match node.front() {
+                Some(front) if Some(&front) != empty => self.pane(&front, true, window, cx),
+                _ => div().flex_1().min_w_0().min_h_0().into_any_element(),
+            },
             Node::Split { axis, children, .. } => {
                 let axis = *axis;
                 let theme = Theme::of(cx).clone();
@@ -279,7 +277,7 @@ impl Cydonia {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let body = match self.pane_named(entry, cx) {
+        let body = match self.pane_on(entry, cx) {
             Some(pane) => pane
                 .cached(StyleRefinement::default().flex().flex_col().size_full())
                 .into_any_element(),
@@ -318,11 +316,11 @@ impl Cydonia {
             .into_any_element()
     }
 
-    /// The pane of the open space named `name`.
-    pub(crate) fn pane_named(&self, name: &Member, cx: &App) -> Option<Entity<Pane>> {
+    /// The pane of the open space showing `entry`.
+    pub(crate) fn pane_on(&self, entry: &Member, cx: &App) -> Option<Entity<Pane>> {
         self.panes
             .iter()
-            .find(|pane| pane.read(cx).name == *name)
+            .find(|pane| pane.read(cx).entry == *entry)
             .cloned()
     }
 
@@ -334,23 +332,23 @@ impl Cydonia {
             return;
         };
         let mut kept = Vec::new();
-        for name in space.entries() {
+        for front in space.tree.fronts() {
             let pane = match self
                 .panes
                 .iter()
-                .position(|pane| pane.read(cx).name == name)
+                .position(|pane| pane.read(cx).entry == front)
             {
                 Some(at) => self.panes.remove(at),
                 None => {
                     let (workspace, root) = (self.workspace.clone(), cx.entity().downgrade());
-                    let name = name.clone();
-                    cx.new(|cx| Pane::new(name, workspace, root, cx))
+                    let front = front.clone();
+                    cx.new(|cx| Pane::new(front, workspace, root, cx))
                 }
             };
             let tab = self
                 .leaves
                 .iter()
-                .find(|leaf| leaf.read(cx).entry == name)
+                .find(|leaf| leaf.read(cx).entry == front)
                 .cloned();
             pane.update(cx, |pane, cx| {
                 if pane.tab != tab {
@@ -376,7 +374,7 @@ impl Cydonia {
         let (Some(space), Some(at)) = (workspace.arranged(), workspace.project_at(project)) else {
             return false;
         };
-        space.entries().iter().any(|shown| {
+        space.tree.fronts().iter().any(|shown| {
             workspace
                 .showing_of(shown, cx)
                 .is_some_and(|(open, shown)| open == at && &shown == showing)
@@ -435,8 +433,8 @@ impl Cydonia {
         }
     }
 
-    /// A release on a pane: beside it where it lands on an edge, and as a tab
-    /// of the strip anywhere else. Answers the entry the focus is now on.
+    /// A release on a pane: beside it where it lands on an edge, and in front
+    /// of its stack anywhere else. Answers the entry the focus is now on.
     pub(crate) fn dock_drop(
         &mut self,
         event: &docking::Drop<Member, Dragged>,
@@ -449,17 +447,15 @@ impl Cydonia {
             return None;
         }
         let side = match event.zone {
-            docking::Zone::Join => {
-                self.join_strip(arriving.clone(), window, cx);
-                return Some(arriving);
-            }
-            docking::Zone::Left => Side::Left,
-            docking::Zone::Right => Side::Right,
-            docking::Zone::Top => Side::Above,
-            docking::Zone::Bottom => Side::Below,
+            docking::Zone::Join => None,
+            docking::Zone::Left => Some(Side::Left),
+            docking::Zone::Right => Some(Side::Right),
+            docking::Zone::Top => Some(Side::Above),
+            docking::Zone::Bottom => Some(Side::Below),
         };
-        self.workspace.update(cx, |workspace, cx| {
-            workspace.arrange(target, &arriving, side, cx)
+        self.workspace.update(cx, |workspace, cx| match side {
+            Some(side) => workspace.arrange(target, &arriving, side, cx),
+            None => workspace.stack_pane(target, &arriving, cx),
         });
         self.sync_leaves(window, cx);
         self.focused = usize::MAX;
@@ -507,6 +503,69 @@ impl Cydonia {
                 )
             })
             .collect()
+    }
+
+    /// The stack of the pane on `entry` as rows of a menu: one per entry, the
+    /// one in front checked, each bringing its entry to the front; then the
+    /// entry in front out to a tab of its own.
+    pub(crate) fn stack_rows(&self, entry: &Member, cx: &App) -> Vec<(Item, menu::Act)> {
+        let workspace = self.workspace.read(cx);
+        let Some(space) = workspace.active_space() else {
+            return Vec::new();
+        };
+        let front = space.front_of(entry);
+        let mut rows: Vec<_> = space
+            .stack_of(entry)
+            .into_iter()
+            .map(|held| {
+                let title = self
+                    .member_toolbar(&held, cx)
+                    .map(|toolbar| toolbar.title)
+                    .unwrap_or_default();
+                let item = Item::action(title)
+                    .with_icon(icon::entry_icon(&held, workspace, cx))
+                    .checked(front.as_ref() == Some(&held));
+                menu::row::<Self>(item, move |this, window, cx| {
+                    this.bring_forward(&held, window, cx)
+                })
+            })
+            .collect();
+        if let Some(front) = front {
+            rows.push(menu::row::<Self>(Item::Separator, |_, _, _| {}));
+            rows.push(menu::row::<Self>(
+                Item::action("Move to a tab of its own").with_icon(icons::layout::PanelTop),
+                move |this, window, cx| this.join_strip(front.clone(), window, cx),
+            ));
+        }
+        rows
+    }
+
+    /// Bring the entry `step` along from the focused one in its pane's stack to
+    /// the front, wrapping at either end.
+    pub(crate) fn step_stack(&mut self, step: isize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(entry) = self.focused_entry(cx) else {
+            return;
+        };
+        let stack = self
+            .workspace
+            .read(cx)
+            .active_space()
+            .map(|space| space.stack_of(&entry))
+            .unwrap_or_default();
+        let Some(at) = stack.iter().position(|held| *held == entry) else {
+            return;
+        };
+        let next = (at as isize + step).rem_euclid(stack.len() as isize) as usize;
+        if next != at {
+            self.bring_forward(&stack[next].clone(), window, cx);
+        }
+    }
+
+    /// Put `entry` in front of its stack, or of the strip, and the focus on it.
+    fn bring_forward(&mut self, entry: &Member, window: &mut Window, cx: &mut Context<Self>) {
+        self.workspace
+            .update(cx, |workspace, cx| workspace.set_front(entry, cx));
+        self.show_pane(entry, window, cx);
     }
 
     /// Exchange a pane with the one across the seam, and keep the focus on it
@@ -575,7 +634,7 @@ impl Cydonia {
         // last.
         let entries = self
             .arrangement(cx)
-            .map(|space| space.entries())
+            .map(|space| space.tree.fronts())
             .unwrap_or_default();
         let kept = self
             .focused_entry(cx)
@@ -619,7 +678,7 @@ impl Cydonia {
     /// tmux; it needs each pane's frame, which nothing here keeps yet.
     pub(crate) fn step_pane(&mut self, step: isize, window: &mut Window, cx: &mut Context<Self>) {
         let panes = match self.arrangement(cx) {
-            Some(space) => space.entries(),
+            Some(space) => space.tree.fronts(),
             None => return,
         };
         if panes.len() < 2 {
@@ -656,7 +715,7 @@ impl Cydonia {
         self.close_pane(entry, window, cx);
         let Some(pane) = self
             .arrangement(cx)
-            .and_then(|space| space.entries().first().cloned())
+            .and_then(|space| space.tree.fronts().first().cloned())
         else {
             return;
         };
@@ -686,7 +745,7 @@ impl Cydonia {
             .workspace
             .read(cx)
             .active_space()
-            .and_then(|space| space.focused().or_else(|| space.entries().first().cloned()));
+            .and_then(|space| space.focused_front());
         if let Some(entry) = front {
             self.focused = usize::MAX;
             self.focus_pane(&entry, window, cx);

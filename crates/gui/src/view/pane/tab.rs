@@ -42,6 +42,8 @@ pub(crate) enum TabMenu {
     Entry,
     /// The title row's move, where the pane can go more than one way.
     Move,
+    /// The title row's deck: the entries the pane's stack holds.
+    Stack,
 }
 
 /// One pane: what it shows, and what it holds while it shows it.

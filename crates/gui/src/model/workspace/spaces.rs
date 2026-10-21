@@ -140,6 +140,37 @@ impl Workspace {
         side: Side,
         cx: &mut Context<Self>,
     ) -> Option<usize> {
+        self.gather(target, arriving, cx, |space| {
+            space.insert(target, arriving, side)
+        })
+    }
+
+    /// Put `arriving` in front of the stack of the pane holding `target`,
+    /// making the space that holds them if there is not one yet, as
+    /// [`Self::arrange`] does.
+    pub fn stack_pane(
+        &mut self,
+        target: &Member,
+        arriving: &Member,
+        cx: &mut Context<Self>,
+    ) -> Option<usize> {
+        self.gather(target, arriving, cx, |space| {
+            space.stack(target, arriving);
+            space.set_front(arriving);
+            space.stack_of(target).contains(arriving)
+        })
+    }
+
+    /// Bring `target` and `arriving` into the space in front, or one minted
+    /// over `target`, and `place` the arrival there. The space's tab takes
+    /// `target`'s place in the strip, and both entries' own tabs go.
+    fn gather(
+        &mut self,
+        target: &Member,
+        arriving: &Member,
+        cx: &mut Context<Self>,
+        place: impl FnOnce(&mut Space) -> bool,
+    ) -> Option<usize> {
         let at = match self.space() {
             Some(at) => at,
             // The first drag. The space starts as the pane that was there,
@@ -158,7 +189,7 @@ impl Workspace {
         self.evict_from_spaces(arriving, &keep, cx);
         let at = self.spaces.iter().position(|space| space.id == keep)?;
         let space = self.spaces.get_mut(at)?;
-        if !space.insert(target, arriving, side) {
+        if !place(space) {
             return None;
         }
         Shelf::save(space);
@@ -211,11 +242,17 @@ impl Workspace {
         }
     }
 
-    /// Bring an entry forward in the strip. One in the space in front is
-    /// already on screen.
-    pub fn set_front(&mut self, tab: &Member, cx: &mut Context<Self>) {
-        if !self.active_space().is_some_and(|space| space.contains(tab)) {
-            self.front_tab(&Slot::Entry(tab.clone()), cx);
+    /// Bring an entry to the front: of its pane's stack where a space holds
+    /// it, of the strip otherwise.
+    pub fn set_front(&mut self, member: &Member, cx: &mut Context<Self>) {
+        let Some(ix) = self.space_holding(member) else {
+            self.front_tab(&Slot::Entry(member.clone()), cx);
+            return;
+        };
+        let space = &mut self.spaces[ix];
+        if space.set_front(member) {
+            Shelf::save(space);
+            cx.notify();
         }
     }
 
@@ -714,7 +751,8 @@ impl Workspace {
             return;
         };
         let showing: Vec<_> = space
-            .entries()
+            .tree
+            .fronts()
             .iter()
             .filter_map(|member| self.showing_of(member, cx))
             .collect();

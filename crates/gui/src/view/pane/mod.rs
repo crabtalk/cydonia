@@ -23,13 +23,15 @@ use bezel::{
 
 /// The hover group a pane's card is, which its title row's tools show on.
 pub(crate) const HOVER_GROUP: &str = "pane";
+/// The key context of a pane holding more than one entry.
+pub(crate) const STACK_CONTEXT: &str = "Stack";
 
-/// One pane of what the window lays out: the entry it shows under its title
-/// row.
+/// One pane of what the window lays out: the front of its stack, under its
+/// title row.
 pub(crate) struct Pane {
-    /// The pane's name: the entry of its leaf, which is what the space keeps
-    /// and what every drop and close is aimed at.
-    pub(crate) name: Member,
+    /// The entry in front of its stack, which every drop and close is aimed
+    /// at.
+    pub(crate) entry: Member,
     workspace: Entity<Workspace>,
     root: WeakEntity<Cydonia>,
     /// The tab on the entry, once the window has made it.
@@ -43,14 +45,14 @@ impl Pane {
     }
 
     pub(crate) fn new(
-        name: Member,
+        entry: Member,
         workspace: Entity<Workspace>,
         root: WeakEntity<Cydonia>,
         cx: &mut Context<Self>,
     ) -> Self {
         cx.observe(&workspace, |_, _, cx| cx.notify()).detach();
         Self {
-            name,
+            entry,
             workspace,
             root,
             tab: None,
@@ -61,8 +63,8 @@ impl Pane {
 impl Render for Pane {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::of(cx).clone();
-        let key = arrangement::key_of(&self.name);
-        let front = self.name.clone();
+        let key = arrangement::key_of(&self.entry);
+        let front = self.entry.clone();
         let tab = self.tab.clone();
         let focus = tab.as_ref().map(|tab| tab.read(cx).focus.clone());
         let body = match tab {
@@ -72,7 +74,11 @@ impl Render for Pane {
             None => div().flex_1().into_any_element(),
         };
         let root = self.root.clone();
-        let floating = self.workspace.read(cx).settings.appearance.floating;
+        let workspace = self.workspace.read(cx);
+        let floating = workspace.settings.appearance.floating;
+        let stacked = workspace
+            .active_space()
+            .is_some_and(|space| space.stack_of(&self.entry).len() > 1);
         // The focused pane's card has the stronger edge.
         let strong = theme.border_strong;
         div()
@@ -83,6 +89,7 @@ impl Render for Pane {
             // the focus — see [`Tab::focus`]. The tab's handle: the body, the
             // composer and [`Cydonia::focus_pane`] all answer for it.
             .when_some(focus, |pane, focus| pane.track_focus(&focus))
+            .when(stacked, |pane| pane.key_context(STACK_CONTEXT))
             .group(HOVER_GROUP)
             .size_full()
             .min_w_0()

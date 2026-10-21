@@ -144,10 +144,14 @@ fn an_arrival_takes_its_room_from_the_pane_it_landed_on() {
             Node::Leaf {
                 ratio: 0.8,
                 entry: 1,
+                tabs: Vec::new(),
+                front: None,
             },
             Node::Leaf {
                 ratio: 0.2,
                 entry: 2,
+                tabs: Vec::new(),
+                front: None,
             },
         ],
     };
@@ -450,6 +454,8 @@ fn shares_multiply_down_the_tree() {
             Node::Leaf {
                 ratio: 0.5,
                 entry: 1,
+                tabs: Vec::new(),
+                front: None,
             },
             Node::Split {
                 ratio: 0.5,
@@ -458,6 +464,8 @@ fn shares_multiply_down_the_tree() {
                     Node::Leaf {
                         ratio: 0.5,
                         entry: 2,
+                        tabs: Vec::new(),
+                        front: None,
                     },
                     Node::Split {
                         ratio: 0.5,
@@ -466,10 +474,14 @@ fn shares_multiply_down_the_tree() {
                             Node::Leaf {
                                 ratio: 0.5,
                                 entry: 3,
+                                tabs: Vec::new(),
+                                front: None,
                             },
                             Node::Leaf {
                                 ratio: 0.5,
                                 entry: 4,
+                                tabs: Vec::new(),
+                                front: None,
                             },
                         ],
                     },
@@ -585,10 +597,14 @@ fn swapping_keeps_the_shape_and_the_sizes() {
             Node::Leaf {
                 ratio: 0.7,
                 entry: 1,
+                tabs: Vec::new(),
+                front: None,
             },
             Node::Leaf {
                 ratio: 0.3,
                 entry: 2,
+                tabs: Vec::new(),
+                front: None,
             },
         ],
     };
@@ -655,19 +671,197 @@ fn a_path_leads_to_the_pane_it_names() {
 
 // ── tabs ─────────────────────────────────────────────────────────
 
-/// A pane written while one could hold several entries reads back on the
-/// one it showed, or on its first where it named none.
+/// An entry dropped on a pane's bar joins its strip at the end, and the pane
+/// stays one pane.
 #[test]
-fn a_stacked_pane_reads_back_as_the_entry_it_showed() {
-    let shown: Node<u64> =
-        toml::from_str("kind = \"leaf\"\nentry = 1\ntabs = [2, 3]\nfront = 3\n").unwrap();
-    assert_eq!(shown.entries(), vec![3]);
+fn stacking_puts_an_entry_behind_the_one_it_was_dropped_on() {
+    let mut tree = Node::split(Axis::Horizontal, vec![Node::leaf(1), Node::leaf(2)]);
 
-    let first: Node<u64> = toml::from_str("kind = \"leaf\"\nentry = 1\ntabs = [2]\n").unwrap();
-    assert_eq!(first.entries(), vec![1]);
+    assert!(tree.stack_onto(&1, &3));
+    assert!(tree.stack_onto(&1, &4));
 
-    let written = toml::to_string(&shown).unwrap();
-    assert!(!written.contains("tabs") && !written.contains("front"));
+    assert_eq!(tree.leaves(), 2, "still two panes");
+    assert_eq!(tree.entries(), vec![1, 3, 4, 2]);
+    let pane = tree.at_path(&[0]).expect("the first pane");
+    assert_eq!(pane.stack(), vec![1, 3, 4], "in the order they arrived");
+    // A tab names its pane as well as the pane's own first entry does.
+    assert!(tree.stack_onto(&4, &5));
+    assert_eq!(
+        tree.at_path(&[0]).expect("the first pane").stack(),
+        vec![1, 3, 4, 5],
+    );
+}
+
+/// An entry the pane already holds is not taken twice, wherever it is named
+/// from.
+#[test]
+fn stacking_what_a_pane_already_holds_changes_nothing() {
+    let mut tree = Node::split(Axis::Horizontal, vec![Node::leaf(1), Node::leaf(2)]);
+    tree.stack_onto(&1, &3);
+
+    assert!(tree.stack_onto(&1, &3));
+    assert!(tree.stack_onto(&3, &1));
+
+    assert_eq!(tree.at_path(&[0]).expect("a pane").stack(), vec![1, 3]);
+}
+
+/// Closing a tab loses the tab; closing the last of them loses the pane.
+#[test]
+fn a_pane_outlives_its_tabs_until_the_last_one() {
+    let mut tree = Node::split(Axis::Horizontal, vec![Node::leaf(1), Node::leaf(2)]);
+    tree.stack_onto(&1, &3);
+    tree.stack_onto(&1, &4);
+
+    assert!(tree.remove(&3), "a tab in the middle");
+    assert_eq!(tree.at_path(&[0]).expect("a pane").stack(), vec![1, 4]);
+    assert_eq!(tree.leaves(), 2);
+
+    // The pane's own name goes: the tab behind it takes the name, and the
+    // pane stays where it was.
+    assert!(tree.remove(&1));
+    assert_eq!(tree.at_path(&[0]).expect("a pane").stack(), vec![4]);
+    assert_eq!(tree.leaves(), 2);
+
+    // Nothing left to hold the pane up, so the split collapses to its other
+    // child — the rule a pane closed by hand has always followed.
+    assert!(tree.remove(&4));
+    assert_eq!(tree.leaves(), 1);
+    assert_eq!(tree.entries(), vec![2]);
+}
+
+/// A pane divides whole: a drop on its edge leaves its tabs on the side they
+/// were, rather than scattering them across the new seam.
+#[test]
+fn splitting_a_pane_keeps_its_tabs_together() {
+    let mut tree = Node::leaf(1);
+    tree.stack_onto(&1, &2);
+
+    assert!(tree.insert(&1, &3, Side::Right));
+
+    assert_eq!(tree.leaves(), 2);
+    assert_eq!(tree.at_path(&[0]).expect("a pane").stack(), vec![1, 2]);
+    assert_eq!(tree.at_path(&[1]).expect("a pane").stack(), vec![3]);
+}
+
+/// A pane crossing a seam takes its tabs with it, and going back puts
+/// everything where it was.
+#[test]
+fn swapping_carries_whole_panes() {
+    let mut tree = Node::split(Axis::Horizontal, vec![Node::leaf(1), Node::leaf(2)]);
+    tree.stack_onto(&1, &3);
+
+    // Named by a tab rather than by the pane's own first entry: either says
+    // which pane is meant.
+    assert!(tree.swap(&3, &2));
+    assert_eq!(tree.at_path(&[0]).expect("a pane").stack(), vec![2]);
+    assert_eq!(tree.at_path(&[1]).expect("a pane").stack(), vec![1, 3]);
+
+    assert!(tree.swap(&1, &2));
+    assert_eq!(tree.at_path(&[0]).expect("a pane").stack(), vec![1, 3]);
+    assert_eq!(tree.at_path(&[1]).expect("a pane").stack(), vec![2]);
+}
+
+/// The tab in front is the pane's: it rides along a swap and a split, and a
+/// tab that leaves hands the front back to the first.
+#[test]
+fn a_pane_keeps_the_tab_in_front() {
+    let mut tree = Node::split(Axis::Horizontal, vec![Node::leaf(1), Node::leaf(2)]);
+    tree.stack_onto(&1, &3);
+    tree.stack_onto(&1, &4);
+    assert_eq!(tree.fronts(), vec![1, 2]);
+
+    assert!(tree.set_front(&3));
+    assert!(!tree.set_front(&3));
+    assert_eq!(tree.fronts(), vec![3, 2]);
+
+    assert!(tree.swap(&1, &2));
+    assert_eq!(tree.fronts(), vec![2, 3]);
+
+    assert!(tree.insert(&4, &5, Side::Below));
+    assert_eq!(tree.fronts(), vec![2, 3, 5]);
+
+    tree.remove(&3);
+    assert_eq!(tree.fronts(), vec![2, 1, 5]);
+}
+
+/// A front written survives the file, and a leaf written without one reads
+/// back on its first tab.
+#[test]
+fn the_tab_in_front_is_written() {
+    let mut tree = Node::leaf(1u64);
+    tree.stack_onto(&1, &2);
+    tree.set_front(&2);
+    let written = toml::to_string(&tree).unwrap();
+    let read: Node<u64> = toml::from_str(&written).unwrap();
+    assert_eq!(read.fronts(), vec![2]);
+
+    let old: Node<u64> = toml::from_str("kind = \"leaf\"\nentry = 1\ntabs = [2]\n").unwrap();
+    assert_eq!(old.fronts(), vec![1]);
+}
+
+/// Two entries of one pane are one pane, so there is no seam between them to
+/// walk across and no way to swap them with each other.
+#[test]
+fn tabs_of_one_pane_are_not_neighbours() {
+    let mut tree = Node::split(Axis::Horizontal, vec![Node::leaf(1), Node::leaf(2)]);
+    tree.stack_onto(&1, &3);
+
+    assert_eq!(tree.neighbour(&1, Side::Right), Some(2));
+    assert_eq!(tree.neighbour(&3, Side::Right), Some(2), "same pane");
+    assert_eq!(tree.neighbour(&1, Side::Left), None);
+    assert!(!tree.swap(&1, &3), "one pane cannot cross itself");
+}
+
+/// Dragging a tab onto another pane's edge takes it out of the strip it was in
+/// and gives it a pane of its own.
+#[test]
+fn relocating_a_tab_pulls_it_out_of_its_strip() {
+    let mut tree = Node::split(Axis::Horizontal, vec![Node::leaf(1), Node::leaf(2)]);
+    tree.stack_onto(&1, &3);
+
+    assert!(tree.relocate(&3, &2, Side::Right));
+
+    assert_eq!(tree.leaves(), 3);
+    assert_eq!(tree.entries(), vec![1, 2, 3]);
+    assert_eq!(tree.at_path(&[0]).expect("a pane").stack(), vec![1]);
+}
+
+/// A tab let go over the bar it is already in changes nothing. Taking it out
+/// and putting it back would send it to the end of a strip nobody asked to
+/// reorder.
+#[test]
+fn stacking_a_tab_onto_its_own_strip_is_a_no_op() {
+    let mut tree = Node::split(Axis::Horizontal, vec![Node::leaf(1), Node::leaf(2)]);
+    tree.stack_onto(&1, &3);
+    tree.stack_onto(&1, &4);
+
+    // Named from the pane, and from a sibling tab: neither reorders it.
+    assert!(tree.stack_onto(&1, &3));
+    assert!(tree.stack_onto(&4, &3));
+
+    assert_eq!(tree.at_path(&[0]).expect("a pane").stack(), vec![1, 3, 4]);
+}
+
+#[test]
+fn a_tab_reorders_within_its_own_strip_only() {
+    let mut tree = Node::split(Axis::Horizontal, vec![Node::leaf(1), Node::leaf(5)]);
+    for tab in [2, 3, 4] {
+        tree.stack_onto(&1, &tab);
+    }
+    assert!(tree.reorder(&4, &2));
+    assert_eq!(stack_of(&tree, 1), vec![1, 4, 2, 3]);
+    // Into the first place, which is the pane's own entry.
+    assert!(tree.reorder(&3, &1));
+    assert_eq!(stack_of(&tree, 3), vec![3, 1, 4, 2]);
+    // Across panes, and onto itself, nothing moves.
+    assert!(!tree.reorder(&2, &5));
+    assert!(!tree.reorder(&2, &2));
+}
+
+fn stack_of(tree: &Node<u64>, entry: u64) -> Vec<u64> {
+    tree.at_path(&tree.path_to(&entry).unwrap())
+        .unwrap()
+        .stack()
 }
 
 /// A member written before article ids named an article by its `content.md`;
@@ -703,37 +897,45 @@ fn an_app_member_is_written_by_its_id_alone() {
     assert_eq!((read.project(), read.id()), (None, "yc"));
 }
 
-/// The focused pane is recorded, read back, and forgotten when it closes.
+/// The focused pane is recorded by its tab, read back as the pane holding it,
+/// and kept when another tab of that pane closes, its first included.
 #[test]
 fn a_space_keeps_the_pane_it_was_focused_on() {
-    let (a, b) = (Member::app("a"), Member::app("b"));
+    let (a, b, c) = (Member::app("a"), Member::app("b"), Member::app("c"));
     let mut space = Space::new("1".into(), "space-1", a.clone());
     assert!(space.insert(&a, &b, Side::Right));
+    assert!(space.stack(&b, &c));
     assert_eq!(space.focused(), None);
 
-    assert!(space.focus(&b));
+    assert!(space.focus(&c));
     assert_eq!(space.focused(), Some(b.clone()));
-    assert!(!space.focus(&b));
+    assert!(!space.focus(&c));
 
     let read: Space = toml::from_str(&toml::to_string(&space).unwrap()).unwrap();
     assert_eq!(read.focused(), Some(b.clone()));
 
     space.remove(&b);
+    assert_eq!(space.focused(), Some(c.clone()));
+
+    assert!(space.focus(&a));
+    space.remove(&a);
     assert_eq!(space.focused(), None);
 }
 
-/// Zooming a pane stands it over the rest; zooming it again puts it back, and
-/// closing it unzooms the space.
+/// A zoomed pane stays zoomed when the tab it was zoomed from closes and
+/// another stays, and when its first tab is moved behind another.
 #[test]
-fn a_zoomed_pane_goes_back_or_goes() {
-    let (a, b) = (Member::app("a"), Member::app("b"));
+fn a_zoomed_pane_outlives_the_tab_it_was_zoomed_from() {
+    let (a, b, c) = (Member::app("a"), Member::app("b"), Member::app("c"));
     let mut space = Space::new("1".into(), "space-1", a.clone());
     assert!(space.insert(&a, &b, Side::Right));
+    assert!(space.stack(&b, &c));
 
     assert_eq!(space.zoom(&b), Some(b.clone()));
-    assert_eq!(space.zoom(&b), None);
+    assert!(space.reorder(&c, &b));
+    assert_eq!(space.zoomed(), Some(c.clone()));
 
-    assert_eq!(space.zoom(&b), Some(b.clone()));
     space.remove(&b);
-    assert_eq!(space.zoomed(), None);
+    assert_eq!(space.zoomed(), Some(c.clone()));
+    assert_eq!(space.zoom(&c), None);
 }

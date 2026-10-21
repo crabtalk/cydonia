@@ -18,6 +18,7 @@ use bezel::{
         icons,
         input::Case,
         tooltip::Tooltip,
+        widgets::Content as _,
     },
 };
 
@@ -112,13 +113,7 @@ impl Tab {
             .flex()
             .flex_row()
             .items_center()
-            .child(
-                icons::icon(icon::entry_icon(&self.entry, self.workspace.read(cx), cx))
-                    .flex_none()
-                    .mr(px(6.))
-                    .size(px(14.))
-                    .text_color(theme.text_muted),
-            )
+            .child(self.deck(window, cx))
             .child(title)
             .children(toolbar.number.map(|number| {
                 div()
@@ -273,6 +268,57 @@ impl Tab {
                 .child(close)
                 .into_any_element(),
         )
+    }
+
+    /// The pane's stack as a deck, its front entry's mark on top, opening the
+    /// stack's list on a click.
+    fn deck(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let workspace = self.workspace.read(cx);
+        let behind = workspace.active_space().map_or(0, |space| {
+            space.stack_of(&self.entry).len().saturating_sub(1)
+        });
+        let deck = theme
+            .icon_deck(icon::entry_icon(&self.entry, workspace, cx), behind)
+            .mr(px(6.));
+        if behind == 0 {
+            return deck.into_any_element();
+        }
+        let button = div()
+            .id("tab-stack")
+            .cursor_pointer()
+            .child(deck)
+            .on_click(cx.listener(|this, _, window, cx| {
+                cx.stop_propagation();
+                let (entry, tab) = (this.entry.clone(), cx.entity());
+                // From the window: its rows read this tab back.
+                this.defer_window(window, cx, move |root, window, cx| {
+                    let rows = Self::through(root.stack_rows(&entry, cx));
+                    let rows = std::cell::RefCell::new(Some(rows));
+                    tab.update(cx, |this, cx| {
+                        ContextMenu::toggle(
+                            this,
+                            |this| &mut this.menu,
+                            TabMenu::Stack,
+                            Place::Below,
+                            move |_, _, _| {
+                                menu::chooser(rows.borrow_mut().take().unwrap_or_default())
+                            },
+                            window,
+                            cx,
+                        )
+                    });
+                });
+            }));
+        ContextMenu::trigger(button, |this: &mut Self| &mut this.menu, TabMenu::Stack, cx)
+            .children(self.menu.render_for(
+                &TabMenu::Stack,
+                "tab-stack-menu-card",
+                |this| &mut this.menu,
+                window,
+                cx,
+            ))
+            .into_any_element()
     }
 
     /// Put the row's field on `what`.
