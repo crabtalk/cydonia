@@ -11,6 +11,7 @@ use crate::{
             rename::{NameEvent, NameField},
             watch::Watch,
         },
+        pane::Edge,
         sidebar::Renaming,
         table,
         window::{reach::InWindow, root::Cydonia},
@@ -66,6 +67,9 @@ pub(crate) struct Tab {
     /// Whether this is the pane with the window's focus — see
     /// [`Cydonia::sync_focus`].
     pub(crate) focused: bool,
+    /// Where its pane stands against the window's top edge — see
+    /// [`Cydonia::sync_edges`].
+    pub(crate) edge: Edge,
     pub(crate) composer: Entity<Composer>,
     pub(crate) queued_galleries: std::collections::HashMap<
         (u64, usize, String),
@@ -154,6 +158,7 @@ impl Tab {
             board_sort,
             focus: cx.focus_handle(),
             focused: false,
+            edge: Edge::default(),
             composer,
             queued_galleries: Default::default(),
             drawer: None,

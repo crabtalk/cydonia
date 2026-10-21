@@ -4,9 +4,9 @@
 //! The tree is [`artifact::space::Node`] — see there for what the shape
 //! means. This is only how it lands on the window.
 
-use super::Pane;
 use crate::model::workspace::Slot;
 use crate::view::kit::{icon, menu};
+use crate::view::pane::{Edge, Pane};
 use crate::view::{
     component::divider,
     sidebar::{Dragged, Row},
@@ -359,6 +359,65 @@ impl Cydonia {
             kept.push(pane);
         }
         self.panes = kept;
+    }
+
+    /// Whether the panes' title rows along the window's top edge are its top
+    /// row: while the sidebar lists the spaces, so the strip has no tabs to
+    /// draw, and a pane is in front.
+    pub(crate) fn panes_on_top(&self, cx: &App) -> bool {
+        self.library.is_none()
+            && self
+                .workspace
+                .read(cx)
+                .settings
+                .appearance
+                .spaces_in_sidebar
+            && self.arrangement(cx).is_some()
+    }
+
+    /// Tell each pane where it stands against the window's top edge — see
+    /// [`Edge`].
+    pub(crate) fn sync_edges(&mut self, cx: &mut Context<Self>) {
+        let top = match (self.panes_on_top(cx), self.arrangement(cx)) {
+            (true, Some(space)) => match space.zoomed() {
+                Some(zoomed) => vec![zoomed],
+                None => space.tree.top_fronts(),
+            },
+            _ => Vec::new(),
+        };
+        let on_top = !top.is_empty();
+        if let Some(panel) = self.changes.clone()
+            && panel.read(cx).on_top != on_top
+        {
+            panel.update(cx, |panel, cx| {
+                panel.on_top = on_top;
+                cx.notify();
+            });
+        }
+        let (left, right) = (top.first().cloned(), top.last().cloned());
+        let (sidebar_open, panel_open) = (self.sidebar_open, self.changes.is_some());
+        for pane in self.panes.clone() {
+            let entry = Some(pane.read(cx).entry.clone());
+            let edge = Edge {
+                top: entry.as_ref().is_some_and(|entry| top.contains(entry)),
+                lights: !sidebar_open && entry == left,
+                toggle: !panel_open && entry == right,
+            };
+            if pane.read(cx).edge != edge {
+                pane.update(cx, |pane, cx| {
+                    pane.edge = edge;
+                    cx.notify();
+                });
+            }
+            if let Some(tab) = pane.read(cx).tab.clone()
+                && tab.read(cx).edge != edge
+            {
+                tab.update(cx, |tab, cx| {
+                    tab.edge = edge;
+                    cx.notify();
+                });
+            }
+        }
     }
 
     /// Whether a pane draws the entry `row` names.

@@ -9,7 +9,10 @@ use super::terminal::{DirectoryChanged, Exited, Terminal};
 use super::{changes::Changes, file::FileView, files::Files};
 use crate::model::{settings::PanelTabs, workspace::Workspace};
 use crate::view::modals::desktop::DesktopOnly;
-use crate::view::window::root::{Cydonia, ToggleChanges};
+use crate::view::window::{
+    chrome,
+    root::{Cydonia, ToggleChanges},
+};
 use bezel::{
     gpui::{
         self, AnyElement, Axis, Context, DragMoveEvent, Empty, Entity, Focusable, Render,
@@ -22,6 +25,7 @@ use bezel::{
         icons,
         menu::Item,
         tabs,
+        titlebar::CaptionSide,
         tooltip::Tooltip,
         widgets::{ButtonStyle, Buttons as _},
     },
@@ -133,6 +137,9 @@ pub struct Panel {
     offers: PanelTabs,
     /// Whose settings the panel's files read.
     workspace: WeakEntity<Workspace>,
+    /// Its tab row is the right end of the window's top row, and ends with
+    /// the panel's own toggle — see [`Cydonia::sync_edges`].
+    pub(crate) on_top: bool,
 }
 
 impl Panel {
@@ -156,6 +163,7 @@ impl Panel {
             tabs: PanelTabs::default(),
             offers: PanelTabs::default(),
             workspace: WeakEntity::new_invalid(),
+            on_top: false,
         }
     }
 
@@ -919,7 +927,19 @@ impl Render for Panel {
                                     }),
                             )
                             .children(popup),
-                    ),
+                    )
+                    .when(self.on_top, |band| {
+                        band.child(changes_toggle(
+                            "Hide right panel",
+                            Painter::of(cx),
+                            Theme::of(cx),
+                        ))
+                        .children(chrome::caption(
+                            CaptionSide::Right,
+                            window,
+                            cx,
+                        ))
+                    }),
             )
             .when_some(self.closing, |panel, id| {
                 panel.child(

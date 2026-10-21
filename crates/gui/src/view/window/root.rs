@@ -1246,6 +1246,18 @@ impl Cydonia {
     /// ring over every kind, in the order the sidebar lists them, so a board
     /// standing alone still has the article above it for a neighbour.
     fn cycle_entry(&mut self, step: isize, window: &mut Window, cx: &mut Context<Self>) {
+        // With the spaces in the sidebar there are no tabs to step through:
+        // the chord is the focused pane's stack's, and nothing else's.
+        if self
+            .workspace
+            .read(cx)
+            .settings
+            .appearance
+            .spaces_in_sidebar
+        {
+            self.step_stack(step, window, cx);
+            return;
+        }
         // The strip answers it while it holds more than one tab: the tabs are
         // what is in front of you.
         if self.cycle_strip(step, window, cx) {
@@ -1278,12 +1290,11 @@ impl Cydonia {
     }
 
     /// Step the strip to its next tab, wrapping at the ends. Says whether it
-    /// did — a strip of one tab, or one not drawn while the sidebar lists the
-    /// spaces, leaves the chord to the sidebar's list.
+    /// did — a strip of one tab leaves the chord to the sidebar's list.
     fn cycle_strip(&mut self, step: isize, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let workspace = self.workspace.read(cx);
         let strip = workspace.strip();
-        if strip.len() < 2 || workspace.settings.appearance.spaces_in_sidebar {
+        if strip.len() < 2 {
             return false;
         }
         let at = workspace
@@ -1480,6 +1491,7 @@ impl Render for Cydonia {
         self.sync_panes(cx);
         self.sync_sidebar(cx);
         self.sync_strip(cx);
+        self.sync_edges(cx);
         self.publish_shown(cx);
         self.hold_drawn_tables(cx);
         let theme = Theme::of(cx).clone();

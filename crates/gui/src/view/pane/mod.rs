@@ -21,10 +21,24 @@ use bezel::{
     theme::Theme,
 };
 
-/// The hover group a pane's card is, which its title row's tools show on.
-pub(crate) const HOVER_GROUP: &str = "pane";
 /// The key context of a pane holding more than one entry.
 pub(crate) const STACK_CONTEXT: &str = "Stack";
+
+/// Where a pane stands against the window's top edge, while the window draws
+/// no top row of its own and the title rows along that edge are it — see
+/// [`Cydonia::sync_edges`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Edge {
+    /// Its title row is part of the window's top row: the window is dragged
+    /// by it, and a floating card has no margin above it.
+    pub top: bool,
+    /// It is at the window's top left with the sidebar folded: its title row
+    /// clears the lights and holds the sidebar's fold.
+    pub lights: bool,
+    /// It is at the window's top right with the right panel down: its title
+    /// row ends with the panel's toggle.
+    pub toggle: bool,
+}
 
 /// One pane of what the window lays out: the front of its stack, under its
 /// title row.
@@ -36,6 +50,7 @@ pub(crate) struct Pane {
     root: WeakEntity<Cydonia>,
     /// The tab on the entry, once the window has made it.
     pub(crate) tab: Option<Entity<Tab>>,
+    pub(crate) edge: Edge,
 }
 
 impl Pane {
@@ -56,6 +71,7 @@ impl Pane {
             workspace,
             root,
             tab: None,
+            edge: Edge::default(),
         }
     }
 }
@@ -90,7 +106,6 @@ impl Render for Pane {
             // composer and [`Cydonia::focus_pane`] all answer for it.
             .when_some(focus, |pane, focus| pane.track_focus(&focus))
             .when(stacked, |pane| pane.key_context(STACK_CONTEXT))
-            .group(HOVER_GROUP)
             .size_full()
             .min_w_0()
             .min_h_0()
@@ -126,7 +141,8 @@ impl Render for Pane {
                 // leaves the gap, and a full-size card overflows by it.
                 match floating {
                     true => bezel::ui::window::content(true, cx)
-                        .when(self.focused(cx), |card| card.border_color(strong)),
+                        .when(self.focused(cx), |card| card.border_color(strong))
+                        .when(self.edge.top, |card| card.mt_0()),
                     false => div(),
                 }
                 .relative()

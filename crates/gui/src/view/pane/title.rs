@@ -1,26 +1,33 @@
 //! A pane's title row, over what it shows: its kind's mark and what it is on,
 //! the field that renames it, a board's identity panel, an article's
 //! comments, the `···` holding the entry's menu, the move and the expand of
-//! a pane beside others, and the `×` that closes it.
+//! a pane beside others, and the `×` that closes it. Along the window's top
+//! edge, while it has no top row of its own, also what that row holds at the
+//! pane's place in it — see [`crate::view::pane::Edge`].
 
 use super::{Tab, TabMenu, header::Naming};
 use crate::view::{
+    component::panel::changes_toggle,
     kit::{icon, menu},
-    pane,
     sidebar::Renaming,
-    window::{entry::Host, reach::InWindow as _, root},
+    window::{chrome, entry::Host, reach::InWindow as _, root},
 };
 use bezel::{
     gpui::{AnyElement, Context, FontWeight, SharedString, Window, div, prelude::*, px},
+    motion::Painter,
     theme::{TextStyle, Theme, Typeset},
     ui::{
         context_menu::{ContextMenu, Place},
         icons,
         input::Case,
+        titlebar::CaptionSide,
         tooltip::Tooltip,
         widgets::Content as _,
     },
 };
+
+/// The hover group a title row is, which its tools show on.
+const TITLE_GROUP: &str = "pane-title";
 
 impl Tab {
     /// The row: the entry's name, or the field renaming it, and what acts on
@@ -53,19 +60,26 @@ impl Tab {
                 .find(|line| !line.trim().is_empty())?;
             Some(line.trim().to_owned().into())
         });
-        // The focused pane's tools are on show, another's under the pointer.
-        let reveal = match self.focused {
-            true => menu::Reveal::Always,
-            false => menu::Reveal::Group(pane::HOVER_GROUP),
-        };
+        let reveal = menu::Reveal::Group(TITLE_GROUP);
         let comments = self
             .article_shown(cx)
             .map(|view| view.read(cx).comments.clone());
+        let edge = self.edge;
+        // The lights are the window's and are drawn over whatever is at its
+        // top left; caption buttons stand flush with the edge they are on.
+        let left = edge.lights && chrome::has(CaptionSide::Left, window, cx);
+        let right = edge.toggle && chrome::has(CaptionSide::Right, window, cx);
+        let lead = match edge.lights {
+            _ if left => 0.,
+            true => root::toolbar_inset(window, cx),
+            false => root::HEADER_INSET,
+        };
         let row = div()
+            .group(TITLE_GROUP)
             .flex_none()
             .h(px(root::CARD_ROW_HEIGHT))
-            .pl(px(root::HEADER_INSET))
-            .pr(px(root::CARD_EDGE))
+            .pl(px(lead))
+            .pr(px(if right { 0. } else { root::CARD_EDGE }))
             .flex()
             .flex_row()
             .items_center()
@@ -107,7 +121,7 @@ impl Tab {
         let name = div()
             .relative()
             .min_w_0()
-            .flex_1()
+            .when(!edge.top, |name| name.flex_1())
             // A row, so the name is only as wide as it reads — stretched, it
             // would swallow presses on the empty half of the row.
             .flex()
@@ -259,14 +273,40 @@ impl Tab {
                     root.close_pane(&entry, window, cx)
                 });
             }));
+        // The window's: its fold at the top left, and the empty stretch it is
+        // dragged by.
+        let (fold, grip) = match (edge.top, self.root.upgrade()) {
+            (true, Some(root)) => root.update(cx, |root, cx| {
+                (
+                    edge.lights.then(|| root.fold_controls(cx)),
+                    Some(chrome::grip("pane-grip", &root.drag, window)),
+                )
+            }),
+            _ => (None, None),
+        };
+        let toggle = edge.toggle.then(|| {
+            changes_toggle("Show right panel", Painter::of(cx), Theme::of(cx)).into_any_element()
+        });
         Some(
-            row.child(name)
-                .children(comments)
-                .children(menu)
-                .children(shift)
-                .children(zoom)
-                .child(close)
-                .into_any_element(),
+            row.children(
+                left.then(|| chrome::caption(CaptionSide::Left, window, cx))
+                    .flatten(),
+            )
+            .children(fold)
+            .child(name)
+            .children(grip)
+            .children(comments)
+            .children(menu)
+            .children(shift)
+            .children(zoom)
+            .child(close)
+            .children(toggle)
+            .children(
+                right
+                    .then(|| chrome::caption(CaptionSide::Right, window, cx))
+                    .flatten(),
+            )
+            .into_any_element(),
         )
     }
 

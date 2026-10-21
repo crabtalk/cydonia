@@ -200,6 +200,23 @@ impl<T: Clone + PartialEq> Node<T> {
         }
     }
 
+    /// The tab each pane along the top edge shows, left to right.
+    pub fn top_fronts(&self) -> Vec<T> {
+        match self {
+            Self::Leaf { .. } => self.front().into_iter().collect(),
+            Self::Split {
+                axis: Axis::Horizontal,
+                children,
+                ..
+            } => children.iter().flat_map(Node::top_fronts).collect(),
+            Self::Split {
+                axis: Axis::Vertical,
+                children,
+                ..
+            } => children.first().map(Node::top_fronts).unwrap_or_default(),
+        }
+    }
+
     /// Whether this node is the pane holding `entry` — as its name or as one
     /// of its tabs. A split holds nothing itself.
     fn holds(&self, entry: &T) -> bool {

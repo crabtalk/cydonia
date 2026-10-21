@@ -640,26 +640,30 @@ impl Cydonia {
         // The window's top row, over every column the panel's included: the
         // strip over a tab, the band over the library or the launch view.
         // Floating, it is on the chrome over the cards. Edge to edge either
-        // way: its ends are the window's, as the lights are.
-        let top = div()
-            .flex_none()
-            .relative()
-            .h(px(root::HEADER_HEIGHT))
-            .when(!floating, |top| {
-                top.bg(bezel::ui::window::content_fill(false, &theme))
-            })
-            .child(match panes.is_some() {
-                true => self
-                    .strip
-                    .clone()
-                    .cached(
-                        gpui::StyleRefinement::default()
-                            .w_full()
-                            .h(px(root::HEADER_HEIGHT)),
-                    )
-                    .into_any_element(),
-                false => self.window_band(window, cx),
-            });
+        // way: its ends are the window's, as the lights are. None where the
+        // panes' title rows are it — see [`Cydonia::sync_edges`].
+        let on_top = self.panes_on_top(cx);
+        let top = (!on_top).then(|| {
+            div()
+                .flex_none()
+                .relative()
+                .h(px(root::HEADER_HEIGHT))
+                .when(!floating, |top| {
+                    top.bg(bezel::ui::window::content_fill(false, &theme))
+                })
+                .child(match panes.is_some() {
+                    true => self
+                        .strip
+                        .clone()
+                        .cached(
+                            gpui::StyleRefinement::default()
+                                .w_full()
+                                .h(px(root::HEADER_HEIGHT)),
+                        )
+                        .into_any_element(),
+                    false => self.window_band(window, cx),
+                })
+        });
         let main = match (library, panes) {
             // The entry or the space in front.
             (_, Some(panes)) => match floating {
@@ -747,6 +751,7 @@ impl Cydonia {
                     .child(main)
                     .children(changes.clone().filter(|_| beside).map(|panel| {
                         bezel::ui::window::content(floating, cx)
+                            .when(on_top, |card| card.mt_0())
                             .relative()
                             .w(px(width))
                             .min_w_0()
@@ -806,7 +811,7 @@ impl Cydonia {
             .min_h_0()
             .flex()
             .flex_col()
-            .child(top)
+            .children(top)
             .child(
                 div()
                     .flex_1()

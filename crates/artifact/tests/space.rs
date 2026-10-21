@@ -939,3 +939,20 @@ fn a_zoomed_pane_outlives_the_tab_it_was_zoomed_from() {
     assert_eq!(space.zoomed(), Some(c.clone()));
     assert_eq!(space.zoom(&c), None);
 }
+
+/// The panes along the top edge: every column's top pane, left to right.
+#[test]
+fn the_top_edge_is_each_columns_top_pane() {
+    let (a, b, c, d) = (
+        Member::app("a"),
+        Member::app("b"),
+        Member::app("c"),
+        Member::app("d"),
+    );
+    let mut space = Space::new("1".into(), "space-1", a.clone());
+    assert_eq!(space.tree.top_fronts(), vec![a.clone()]);
+    assert!(space.insert(&a, &b, Side::Right));
+    assert!(space.insert(&a, &c, Side::Below));
+    assert!(space.insert(&b, &d, Side::Above));
+    assert_eq!(space.tree.top_fronts(), vec![a, d]);
+}
