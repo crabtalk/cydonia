@@ -43,8 +43,7 @@ const HOMEPAGE: &str = env!("CARGO_PKG_HOMEPAGE");
 
 /// What the notification switch says it does. The background is the whole of
 /// it: nothing is posted while the window is in front.
-const NOTIFY_BLURB: &str =
-    "Tell the system when an agent finishes, while cydonia is in the background.";
+const NOTIFY_BLURB: &str = "Tell the system when an agent finishes or asks for permission, while cydonia is in the background.";
 
 /// What the developer mode switch says it does.
 const DEVELOPER_BLURB: &str = "Lets Cydonia build and run apps from source on this machine.";
