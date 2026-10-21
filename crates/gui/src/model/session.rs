@@ -16,7 +16,6 @@ use crate::agent::acp::{self, Event, Launch, Reply, Session};
 #[cfg(feature = "desktop")]
 use crate::model::notify;
 #[cfg(feature = "desktop")]
-use crate::model::workspace::references;
 use crate::model::{
     session_preferences::{self, Choices, OfferCache, Offers},
     settings,
@@ -138,6 +137,8 @@ pub struct Command {
 }
 
 pub struct PermissionPrompt {
+    /// The tool call the agent asks about.
+    pub call: String,
     pub title: String,
     pub options: Vec<Choice>,
     /// Whether the answer should stand for every call like this one, rather
@@ -1120,6 +1121,7 @@ impl ChatSession {
             .clone()
             .unwrap_or_else(|| "Permission required".to_owned());
         self.permission = Some(PermissionPrompt {
+            call: request.tool_call.tool_call_id.to_string(),
             title,
             options,
             always: false,
@@ -1254,8 +1256,14 @@ fn pump(entry: &settings::Agent, launch: Launch, cx: &mut Context<ChatSession>) 
     let mut conn = PendingConnection(
         acp::runtime().spawn(async move { Session::spawn(&entry, launch, tx).await }),
     );
+    let outbox = cx.observe_self({
+        let mut outbox = notify::Outbox::default();
+        move |chat, cx| outbox.see(chat, cx)
+    });
 
     cx.spawn(async move |this, cx| {
+        // Held as long as the pump: a session with no agent posts nothing.
+        let _outbox = outbox;
         let opened = (&mut conn.0)
             .await
             .unwrap_or_else(|e| Err(anyhow!("the connection task panicked: {e}")));
@@ -1349,27 +1357,10 @@ fn pump(entry: &settings::Agent, launch: Launch, cx: &mut Context<ChatSession>) 
                 batch.push(event);
             }
             let streaming = this.update(cx, |chat, cx| {
-                let was_streaming = chat.streaming;
-                let was_asking = chat.permission.is_some();
                 for event in batch {
                     chat.apply(event);
                 }
                 cx.notify();
-                // The turn's end and a prompt's arrival, as the only place that
-                // can see them: `apply` takes no app to speak to, and a session
-                // read from outside cannot tell a turn that has just stopped
-                // from one that was never running.
-                let finished = was_streaming && !chat.streaming;
-                let asking = !was_asking && chat.permission.is_some();
-                if finished || asking {
-                    let notify = references::current(cx)
-                        .is_some_and(|workspace| workspace.read(cx).settings.notify_turns);
-                    if asking {
-                        notify::permission_requested(chat, notify, cx);
-                    } else {
-                        notify::turn_finished(chat, notify, cx);
-                    }
-                }
                 chat.streaming
             });
             match streaming {

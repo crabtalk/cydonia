@@ -10,7 +10,7 @@
 //! build running outside an app bundle — `cargo run` — has no identity to post
 //! under, so nothing arrives. Nothing here treats any of that as an error.
 
-use crate::model::session::ChatSession;
+use crate::model::{session::ChatSession, workspace::references};
 use bezel::gpui::{App, SharedString, SystemNotification};
 
 /// The prefix a session's notification is tagged with. The tag is the session,
@@ -22,24 +22,47 @@ const TAG: &str = "session:";
 /// How much of the agent's last word the body carries.
 const BODY: usize = 140;
 
-/// Tell the system a turn has finished, if anything should be said at all.
-pub fn turn_finished(chat: &ChatSession, notify: bool, cx: &mut App) {
-    post(chat, body(chat), notify, cx);
+/// What one session's notifications have said, kept by its pump and shown the
+/// session after every change to it.
+#[derive(Default)]
+pub struct Outbox {
+    /// Whether the session was streaming when last seen.
+    streaming: bool,
+    /// The tool call of the prompt pending when last seen.
+    prompt: Option<String>,
+    /// Whether the notification under the session's tag is the prompt's.
+    asking: bool,
 }
 
-/// Tell the system an agent is waiting on a permission prompt, under the same
-/// rule as [`turn_finished`].
-///
-/// This is the one a background session most needs said: a finished turn can
-/// wait to be read, but a prompt holds the turn until someone answers it. The
-/// tag is the session's, so the turn's own notification replaces this one once
-/// the prompt is answered and the turn ends.
-pub fn permission_requested(chat: &ChatSession, notify: bool, cx: &mut App) {
-    let Some(prompt) = &chat.permission else {
-        return;
-    };
-    let body = clipped(&format!("Needs permission: {}", prompt.title));
-    post(chat, body, notify, cx);
+impl Outbox {
+    /// Say what changed since the session was last seen: a turn finished, or a
+    /// prompt opened, replaced, answered or dropped.
+    ///
+    /// A prompt that goes away takes its notification with it. The tag is the
+    /// session's, so a finished turn's notification replaces a prompt's.
+    pub fn see(&mut self, chat: &ChatSession, cx: &mut App) {
+        let finished = self.streaming && !chat.streaming;
+        let prompt = chat.permission.as_ref();
+        let changed = prompt.map(|prompt| &prompt.call) != self.prompt.as_ref();
+        self.streaming = chat.streaming;
+        self.prompt = prompt.map(|prompt| prompt.call.clone());
+        if !finished && !changed {
+            return;
+        }
+        if changed && self.asking {
+            cx.dismiss_system_notification(&tag(chat));
+            self.asking = false;
+        }
+        let notify = references::current(cx)
+            .is_some_and(|workspace| workspace.read(cx).settings.notify_turns);
+        if finished && post(chat, body(chat), notify, cx) {
+            self.asking = false;
+        }
+        if changed && let Some(prompt) = prompt {
+            let body = clipped(&format!("Needs permission: {}", prompt.title));
+            self.asking = post(chat, body, notify, cx);
+        }
+    }
 }
 
 /// Which session a notification came back from, or `None` for one posted by
@@ -48,25 +71,29 @@ pub fn session_of(tag: &str) -> Option<u64> {
     tag.strip_prefix(TAG)?.parse().ok()
 }
 
-/// `notify` is the setting; the app being in the background is the rest of the
-/// answer.
-fn post(chat: &ChatSession, body: String, notify: bool, cx: &mut App) {
+/// Post under `chat`'s tag, if anything should be said at all, and answer
+/// whether it was. `notify` is the setting.
+fn post(chat: &ChatSession, body: String, notify: bool, cx: &mut App) -> bool {
     if !notify || chat.closed || in_front(cx) {
-        return;
+        return false;
     }
     cx.show_system_notification(SystemNotification {
-        tag: SharedString::from(format!("{TAG}{}", chat.id)),
+        tag: SharedString::from(tag(chat)),
         title: SharedString::from(chat.label()),
         body: SharedString::from(body),
         actions: Vec::new(),
     });
+    true
+}
+
+fn tag(chat: &ChatSession) -> String {
+    format!("{TAG}{}", chat.id)
 }
 
 /// Whether one of the app's windows is the one the user is in.
 ///
 /// Not [`App::active_window`]: on macOS it reads `mainWindow`, which stays set
-/// after the app moves to the background, so it never reported the app as away
-/// and nothing was ever posted.
+/// after the app moves to the background.
 fn in_front(cx: &mut App) -> bool {
     cx.windows().into_iter().any(|handle| {
         handle
