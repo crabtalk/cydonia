@@ -2,7 +2,7 @@
 //! the sidebar and the chat column are hung in.
 
 #[cfg(feature = "desktop")]
-use crate::view::{component::terminal::TerminalPanel, pane, settings};
+use crate::view::{component::terminal::TerminalPanel, settings};
 use crate::{
     model::{
         session::ChatSession,
@@ -135,8 +135,6 @@ actions!(
         PrevEntry,
         NextPane,
         PrevPane,
-        NextInStack,
-        PrevInStack,
         ClosePane,
         ZoomPane,
         CopySelection,
@@ -261,10 +259,6 @@ pub fn bindings() -> Vec<KeyBinding> {
         // trick for the same reason.
         KeyBinding::new("ctrl-tab", NextEntry, Some("Cydonia")),
         KeyBinding::new("ctrl-shift-tab", PrevEntry, Some("Cydonia")),
-        // The same chords, taken by a pane holding a stack while the focus is
-        // in it.
-        KeyBinding::new("ctrl-tab", NextInStack, Some(pane::STACK_CONTEXT)),
-        KeyBinding::new("ctrl-shift-tab", PrevInStack, Some(pane::STACK_CONTEXT)),
         // The panes of a space, on the chords beside the ones that step
         // through entries.
         KeyBinding::new("ctrl-alt-tab", NextPane, Some("Cydonia")),
@@ -562,6 +556,10 @@ pub struct Cydonia {
     pub(crate) focus: FocusHandle,
     /// The top band the lights were last centred down — see [`lights::fit`].
     lights_band: f32,
+    /// An entry of the stack ⌃⇥ steps while the strip shows its tabs: one
+    /// picked from its pane's deck. Taken off when another tab of the strip
+    /// comes forward, or an entry moves out to a tab of its own.
+    pub(crate) stack_steps: Option<Member>,
 }
 
 impl Cydonia {
@@ -842,6 +840,7 @@ impl Cydonia {
     /// Bring a tab of the strip forward, and the focus with it.
     pub(crate) fn show_slot(&mut self, slot: &Slot, window: &mut Window, cx: &mut Context<Self>) {
         self.library = None;
+        self.stack_steps = None;
         match slot {
             Slot::Space { space } => {
                 if let Some(ix) = self.workspace.read(cx).space_ix(space) {
@@ -1049,6 +1048,7 @@ impl Cydonia {
             session_watches: Watch::default(),
             sidebar,
             focused: 0,
+            stack_steps: None,
             lights_band: HEADER_HEIGHT,
             sidebar_open: true,
             sidebar_width: SIDEBAR_WIDTH,
@@ -1252,6 +1252,12 @@ impl Cydonia {
             .appearance
             .spaces_in_sidebar
         {
+            self.step_stack(step, window, cx);
+            return;
+        }
+        // The focused pane's stack, once an entry of it was picked from its
+        // deck — see [`Self::stack_steps`].
+        if self.steps_stack(cx) {
             self.step_stack(step, window, cx);
             return;
         }
@@ -1530,12 +1536,6 @@ impl Render for Cydonia {
             }))
             .on_action(cx.listener(|this, _: &NextPane, window, cx| this.step_pane(1, window, cx)))
             .on_action(cx.listener(|this, _: &PrevPane, window, cx| this.step_pane(-1, window, cx)))
-            .on_action(
-                cx.listener(|this, _: &NextInStack, window, cx| this.step_stack(1, window, cx)),
-            )
-            .on_action(
-                cx.listener(|this, _: &PrevInStack, window, cx| this.step_stack(-1, window, cx)),
-            )
             .on_action(
                 cx.listener(|this, _: &ClosePane, window, cx| this.close_focused_pane(window, cx)),
             )

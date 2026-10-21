@@ -11,15 +11,12 @@ pub mod title;
 
 pub(crate) use tab::{Tab, TabMenu};
 
-use crate::{model::workspace::Workspace, view::window::root::Cydonia};
+use crate::view::window::root::Cydonia;
 use artifact::space::Member;
 use bezel::gpui::{
     Context, Entity, MouseButton, SharedString, StyleRefinement, WeakEntity, Window, div,
     prelude::*,
 };
-
-/// The key context of a pane holding more than one entry.
-pub(crate) const STACK_CONTEXT: &str = "Stack";
 
 /// Where a pane stands against the window's top edge, while the window draws
 /// no top row of its own and the title rows along that edge are it — see
@@ -43,23 +40,15 @@ pub(crate) struct Pane {
     /// The entry in front of its stack, which every drop and close is aimed
     /// at.
     pub(crate) entry: Member,
-    workspace: Entity<Workspace>,
     root: WeakEntity<Cydonia>,
     /// The tab on the entry, once the window has made it.
     pub(crate) tab: Option<Entity<Tab>>,
 }
 
 impl Pane {
-    pub(crate) fn new(
-        entry: Member,
-        workspace: Entity<Workspace>,
-        root: WeakEntity<Cydonia>,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        cx.observe(&workspace, |_, _, cx| cx.notify()).detach();
+    pub(crate) fn new(entry: Member, root: WeakEntity<Cydonia>) -> Self {
         Self {
             entry,
-            workspace,
             root,
             tab: None,
         }
@@ -79,17 +68,11 @@ impl Render for Pane {
             None => div().flex_1().into_any_element(),
         };
         let root = self.root.clone();
-        let workspace = self.workspace.read(cx);
-        let stacked = workspace.stack_of(&self.entry).len() > 1;
         div()
             .id(SharedString::from(format!("pane-{key}")))
-            // With the context but without this, a pane claims chords that
-            // never reach it: an action runs through the focused element's
-            // ancestors, and a pane showing a board holds nothing that takes
-            // the focus — see [`Tab::focus`]. The tab's handle: the body, the
-            // composer and [`Cydonia::focus_pane`] all answer for it.
+            // The tab's focus handle, which the body, the composer and
+            // [`Cydonia::focus_pane`] all answer for — see [`Tab::focus`].
             .when_some(focus, |pane, focus| pane.track_focus(&focus))
-            .when(stacked, |pane| pane.key_context(STACK_CONTEXT))
             .size_full()
             .min_w_0()
             .min_h_0()

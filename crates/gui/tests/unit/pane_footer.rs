@@ -48,8 +48,8 @@ fn arranged_session_measures_its_own_composer(cx: &mut gpui::TestAppContext) {
             root.sync_leaves(window, cx);
             let tab = root.leaves[0].clone();
             // The pane a space would hold this tab in.
-            let (workspace, owner) = (root.workspace.clone(), cx.entity().downgrade());
-            let pane = cx.new(|cx| crate::view::pane::Pane::new(member.clone(), workspace, owner, cx));
+            let owner = cx.entity().downgrade();
+            let pane = cx.new(|_| crate::view::pane::Pane::new(member.clone(), owner));
             pane.update(cx, |pane, _| pane.tab = Some(tab.clone()));
             root.panes.push(pane);
             let composer = tab.read(cx).composer.clone();
