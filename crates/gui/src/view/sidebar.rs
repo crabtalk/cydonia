@@ -21,7 +21,10 @@ use crate::{
             watch::Watch,
         },
         search::Search,
-        window::{reach::InWindow, root::Cydonia},
+        window::{
+            reach::InWindow,
+            root::{self, Cydonia},
+        },
     },
 };
 use artifact::{kind::Kind, space::Member};
@@ -578,9 +581,10 @@ pub(crate) fn row(
     selected: bool,
     lifted: bool,
     indent: u8,
+    trail: f32,
     theme: &Theme,
 ) -> Stateful<Div> {
-    row_frame(id, group, indent)
+    row_frame(id, group, indent, trail)
         // A carried row is drawn inside [`Sidebar::sidebar_ghost`]'s frame.
         .when(lifted, |el| el.m_0())
         .when(!lifted && selected, |el| {
@@ -596,18 +600,20 @@ pub(crate) fn row(
 
 /// A row's place in the column with none of its washes: what a line that is
 /// never selected and takes no hover wash — a section's heading — stands in.
+/// `trail` is what it stands off the column's right edge by — see
+/// [`Sidebar::trail`].
 pub(crate) fn row_frame(
     id: impl Into<gpui::ElementId>,
     group: &'static str,
     indent: u8,
+    trail: f32,
 ) -> Stateful<Div> {
-    use crate::view::window::root;
     div()
         .id(id)
         .group(group)
         .h(px(ROW_PILL))
         .ml(px(root::SIDEBAR_GUTTER))
-        .mr(px(root::SIDEBAR_GUTTER))
+        .mr(px(trail))
         .px(px(root::SIDEBAR_GUTTER))
         // Levels rather than a flag: a row a space holds is one step under
         // whatever its neighbours are at, and with the project's own indent on
@@ -733,6 +739,16 @@ impl Sidebar {
     }
 
     /// The list as it stands.
+    /// What a row stands off the column's right edge by: the gutter, or
+    /// nothing while floating, where the column already stands as far from
+    /// the cards as two cards stand apart.
+    fn trail(&self, cx: &App) -> f32 {
+        match self.workspace.read(cx).settings.appearance.floating {
+            true => 0.,
+            false => root::SIDEBAR_GUTTER,
+        }
+    }
+
     fn list<'a>(&self, cx: &'a App) -> List<'a> {
         List::new(&self.workspace, &self.search, cx)
     }
@@ -1112,7 +1128,6 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        use crate::view::window::root;
         let Dragged::Row(row) = item else {
             return Empty.into_any_element();
         };
@@ -1122,7 +1137,7 @@ impl Sidebar {
             .upgrade()
             .map_or(root::SIDEBAR_WIDTH, |root| root.read(cx).sidebar_width);
         div()
-            .w(px(width - 2. * root::SIDEBAR_GUTTER))
+            .w(px(width - root::SIDEBAR_GUTTER - self.trail(cx)))
             .h(px(self.shape(row, cx).pill()))
             .rounded(px(Theme::control_radius()))
             .overflow_hidden()

@@ -409,12 +409,6 @@ impl Cydonia {
                 lights: !sidebar_open && entry == left,
                 toggle: !panel_open && entry == right,
             };
-            if pane.read(cx).top != edge.top {
-                pane.update(cx, |pane, cx| {
-                    pane.top = edge.top;
-                    cx.notify();
-                });
-            }
             if let Some(tab) = pane.read(cx).tab.clone()
                 && tab.read(cx).edge != edge
             {

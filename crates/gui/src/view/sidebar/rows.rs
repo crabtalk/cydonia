@@ -390,6 +390,7 @@ impl Sidebar {
             return Empty.into_any_element();
         };
         let theme = Theme::of(cx).clone();
+        let trail = self.trail(cx);
         let workspace = self.workspace.read(cx);
         let Some((project, ix)) = entry.located(workspace) else {
             return Empty.into_any_element();
@@ -482,6 +483,7 @@ impl Sidebar {
             selected,
             lifted,
             self.list(cx).indent_of(entry),
+            trail,
             &theme,
         );
         let pill = self.shape(entry, cx).pill();
@@ -558,6 +560,7 @@ impl Sidebar {
     /// A press opens it.
     fn app_row(&self, entry: &Row, id: &str, lifted: bool, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
+        let trail = self.trail(cx);
         let workspace = self.workspace.read(cx);
         let Some(program) = workspace.program(id, cx) else {
             return Empty.into_any_element();
@@ -572,6 +575,7 @@ impl Sidebar {
             light.selected(),
             lifted,
             self.list(cx).indent_of(entry),
+            trail,
             &theme,
         )
         .child(
@@ -710,6 +714,7 @@ impl Sidebar {
     /// step below everything still in hand.
     fn archive_divider(&self, project: usize, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
+        let trail = self.trail(cx);
         let Some(held) = self.workspace.read(cx).projects.get(project) else {
             return Empty.into_any_element();
         };
@@ -721,6 +726,7 @@ impl Sidebar {
             false,
             false,
             indent,
+            trail,
             &theme,
         )
         .child(theme.disclosure(open).text_color(theme.text_faint))
@@ -742,6 +748,7 @@ impl Sidebar {
     /// the pointer is on the heading.
     fn heading_row(&self, heading: Heading, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
+        let trail = self.trail(cx);
         let workspace = self.workspace.read(cx);
         let folded =
             self.search.read(cx).query().is_none() && workspace.section_folded(heading.key());
@@ -772,7 +779,7 @@ impl Sidebar {
                 }))
         });
         // A row's frame without its washes, the label ahead of its chevron.
-        row_frame(group, group, 0)
+        row_frame(group, group, 0, trail)
             .text_color(theme.text_faint)
             .child(
                 div()
@@ -946,6 +953,7 @@ impl Sidebar {
     /// query, how many it found, and the × that clears it.
     pub(super) fn search_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
+        let trail = self.trail(cx);
         let chord = keymap::label(Command::Search, &self.workspace.read(cx).settings.shortcuts);
         let raise = cx.listener(|this, _, window, cx| {
             this.defer_window(window, cx, |root, window, cx| {
@@ -959,57 +967,65 @@ impl Sidebar {
                 None => text,
             };
             let count = search.rows(cx).map_or(0, |rows| rows.len());
-            return row("applied-search", "applied-search", false, false, 0, &theme)
-                .flex_none()
-                .min_w_0()
-                .mb(px(4.))
-                .child(
-                    icons::icon(icons::text::Search)
-                        .size(px(14.))
-                        .text_color(theme.text_muted),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .text_style(TextStyle::Body)
-                        .text_color(theme.text)
-                        .child(label),
-                )
-                .child(
-                    div()
-                        .flex_none()
-                        .text_style(TextStyle::Caption)
-                        .text_color(theme.text_muted)
-                        .child(match ready {
-                            false => "…".to_owned(),
-                            true => count.to_string(),
-                        }),
-                )
-                .child(
-                    theme
-                        .ghost("clear-workspace-search")
-                        .debug_selector(|| "clear-workspace-search".into())
-                        .flex_none()
-                        .size(px(24.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(
-                            icons::icon(icons::notifications::X)
-                                .size(px(14.))
-                                .text_color(theme.text_muted),
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            cx.stop_propagation();
-                            this.search.update(cx, Search::clear);
-                        })),
-                )
-                .on_click(raise)
-                .into_any_element();
+            return row(
+                "applied-search",
+                "applied-search",
+                false,
+                false,
+                0,
+                trail,
+                &theme,
+            )
+            .flex_none()
+            .min_w_0()
+            .mb(px(4.))
+            .child(
+                icons::icon(icons::text::Search)
+                    .size(px(14.))
+                    .text_color(theme.text_muted),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_style(TextStyle::Body)
+                    .text_color(theme.text)
+                    .child(label),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .text_style(TextStyle::Caption)
+                    .text_color(theme.text_muted)
+                    .child(match ready {
+                        false => "…".to_owned(),
+                        true => count.to_string(),
+                    }),
+            )
+            .child(
+                theme
+                    .ghost("clear-workspace-search")
+                    .debug_selector(|| "clear-workspace-search".into())
+                    .flex_none()
+                    .size(px(24.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        icons::icon(icons::notifications::X)
+                            .size(px(14.))
+                            .text_color(theme.text_muted),
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.search.update(cx, Search::clear);
+                    })),
+            )
+            .on_click(raise)
+            .into_any_element();
         }
-        row("search-row", "search-row", false, false, 0, &theme)
+        row("search-row", "search-row", false, false, 0, trail, &theme)
             .flex_none()
             .mb(px(4.))
             .child(
@@ -1034,27 +1050,36 @@ impl Sidebar {
         let theme = Theme::of(cx).clone();
         let open = self.lit.library;
         let tone = tint(open, false, &theme);
-        row("library-entry", "library-entry", open, false, 0, &theme)
-            .flex_none()
-            .mb(px(4.))
-            .child(
-                icons::icon(icons::text::LibraryBig)
-                    .size(px(14.))
-                    .text_color(tone),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .text_style(TextStyle::Body)
-                    .text_color(tone)
-                    .child("Library"),
-            )
-            .on_click(cx.listener(|this, _, window, cx| {
-                this.defer_window(window, cx, |root, window, cx| {
-                    root.toggle_library(window, cx)
-                });
-            }))
-            .into_any_element()
+        let trail = self.trail(cx);
+        row(
+            "library-entry",
+            "library-entry",
+            open,
+            false,
+            0,
+            trail,
+            &theme,
+        )
+        .flex_none()
+        .mb(px(4.))
+        .child(
+            icons::icon(icons::text::LibraryBig)
+                .size(px(14.))
+                .text_color(tone),
+        )
+        .child(
+            div()
+                .flex_1()
+                .text_style(TextStyle::Body)
+                .text_color(tone)
+                .child("Library"),
+        )
+        .on_click(cx.listener(|this, _, window, cx| {
+            this.defer_window(window, cx, |root, window, cx| {
+                root.toggle_library(window, cx)
+            });
+        }))
+        .into_any_element()
     }
 
     /// The line at the foot of the column: the gear that opens the settings

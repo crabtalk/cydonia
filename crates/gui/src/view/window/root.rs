@@ -1,10 +1,6 @@
 //! Root view: the window's grid, the state the chrome owns, and the frame
 //! the sidebar and the chat column are hung in.
 
-use crate::model::workspace::{Opening, Slot};
-use crate::view::kit::menu::Menu;
-use crate::view::window::chrome;
-use crate::view::window::lights::{self, Lights};
 #[cfg(feature = "desktop")]
 use crate::view::{component::terminal::TerminalPanel, pane, settings};
 use crate::{
@@ -12,7 +8,7 @@ use crate::{
         session::ChatSession,
         settings::Settings,
         state::State,
-        workspace::{Reloaded, Showing, Workspace},
+        workspace::{Opening, Reloaded, Showing, Slot, Workspace},
     },
     view::{
         board,
@@ -20,17 +16,20 @@ use crate::{
             composer::{Composer, ComposerEvent},
             meter,
         },
-        kit::watch::Watch,
+        kit::{menu::Menu, watch::Watch},
         pane::{Pane, Tab},
         sidebar::{Dragged, Row, Sidebar},
-        window::menubar::CloseWindow,
-        window::modal::ModalLayer,
-        window::section::Section,
+        window::{
+            chrome,
+            lights::{self, Lights},
+            menubar::CloseWindow,
+            modal::ModalLayer,
+            section::Section,
+        },
     },
 };
 use anyhow::Result;
-use artifact::kind::Kind;
-use artifact::space::Member;
+use artifact::{kind::Kind, space::Member};
 use bezel::{
     gpui::{
         self, AnyElement, App, Axis, Bounds, Context, Div, DragMoveEvent, Empty, Entity,
@@ -67,7 +66,8 @@ pub(crate) const SIDEBAR_GUTTER: f32 = 8.;
 /// transition before gpui moves them, so anywhere else they jump.
 pub(crate) const HEADER_HEIGHT: f32 = 32.;
 
-/// The row at the top of a card: a pane's title row, the right panel's tabs.
+/// A pane's title row and the right panel's tab row, away from the window's
+/// top.
 pub(crate) const CARD_ROW_HEIGHT: f32 = 32.;
 
 /// The room the pill keeps above and below its content.
@@ -221,13 +221,14 @@ pub(crate) fn band() -> Div {
         .pr(px(BUTTON_EDGE))
 }
 
-/// Where the toolbar's own controls start at the window's left edge: the
-/// button whose glyph stands [`LIGHTS_GAP`] past the green light, or in full
-/// screen, where there are no lights, in line with the sidebar rows' icons.
-pub(crate) fn toolbar_inset(window: &Window, cx: &App) -> f32 {
+/// Where the toolbar's own controls start at the window's left edge, under a
+/// top band `band` tall: the button whose glyph stands [`LIGHTS_GAP`] past the
+/// green light, or in full screen, where there are no lights, in line with
+/// the sidebar rows' icons.
+pub(crate) fn toolbar_inset(window: &Window, band: f32, cx: &App) -> f32 {
     match (window.is_fullscreen(), cfg!(target_os = "macos")) {
         (true, _) => 2. * SIDEBAR_GUTTER - BUTTON_SLACK,
-        (false, true) => Lights::of(cx).end() + LIGHTS_GAP - BUTTON_SLACK,
+        (false, true) => Lights::of(cx).end(band) + LIGHTS_GAP - BUTTON_SLACK,
         (false, false) => HEADER_INSET,
     }
 }
@@ -366,7 +367,7 @@ pub fn open(settings: Settings, state: State, cx: &mut App) -> Result<WindowHand
         },
         |window, cx| {
             appearance::observe_window(window, cx).detach();
-            lights::fit(window, cx);
+            lights::fit(window, HEADER_HEIGHT, cx);
             cx.new(|cx| {
                 let mut root = Cydonia::new(settings, state, window, cx);
                 root.restore_panel_layout();
@@ -559,6 +560,8 @@ pub struct Cydonia {
     /// Where the focus rests when no field holds it — a board, a table and a
     /// transcript have none — so the bindings below always have a path here.
     pub(crate) focus: FocusHandle,
+    /// The top band the lights were last centred down — see [`lights::fit`].
+    lights_band: f32,
 }
 
 impl Cydonia {
@@ -609,8 +612,8 @@ impl Cydonia {
         self.session_watches = watches;
     }
 
-    /// The sidebar's column: the band the window draws at its top — the
-    /// lights, the fold with back and forward, the grip — over the sidebar.
+    /// The sidebar's column: the band at its top, where the window's corner
+    /// controls stand and which the window is dragged by, over the sidebar.
     fn sidebar_column(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::of(cx).clone();
         let floating = self.workspace.read(cx).settings.appearance.floating;
@@ -623,19 +626,11 @@ impl Cydonia {
             .when(!floating, |column| column.bg(theme.sidebar_bg()))
             .flex()
             .flex_col()
-            // The fold just past the lights, where the window's top row puts
-            // it with the sidebar folded.
-            .child({
-                let corners = chrome::Corners {
-                    left: true,
-                    right: false,
-                };
-                band()
-                    .pl(px(corners.lead(0., window, cx)))
-                    .children(corners.left_caption(window, cx))
-                    .child(self.fold_controls(cx))
-                    .child(chrome::grip("sidebar-grip", &self.drag, window))
-            })
+            .child(chrome::top_band(self.tabs_on_top(cx)).child(chrome::grip(
+                "sidebar-grip",
+                &self.drag,
+                window,
+            )))
             .child(
                 self.sidebar.clone().cached(
                     gpui::StyleRefinement::default()
@@ -657,9 +652,9 @@ impl Cydonia {
 
     /// Tell the strip where it stands against the window's chrome.
     fn sync_strip(&mut self, cx: &mut Context<Self>) {
-        let (sidebar_open, panel_open) = (self.sidebar_open, self.changes.is_some());
+        let sidebar_open = self.sidebar_open;
         self.strip
-            .update(cx, |strip, cx| strip.seat(sidebar_open, panel_open, cx));
+            .update(cx, |strip, cx| strip.seat(sidebar_open, cx));
     }
 
     /// Tell each pane whether it is the one with the focus, where that moved.
@@ -1041,6 +1036,9 @@ impl Cydonia {
             let (workspace, root) = (workspace.clone(), cx.entity().downgrade());
             cx.new(|cx| crate::view::window::strip::Strip::new(workspace, root, cx))
         };
+        // Whether the strip shows its tabs sets the height of the band the
+        // window draws its corner controls and the sidebar's top in.
+        cx.observe(&strip, |_, _, cx| cx.notify()).detach();
         let mut this = Self {
             strip,
             meter: cx.new(Stats::new),
@@ -1051,6 +1049,7 @@ impl Cydonia {
             session_watches: Watch::default(),
             sidebar,
             focused: 0,
+            lights_band: HEADER_HEIGHT,
             sidebar_open: true,
             sidebar_width: SIDEBAR_WIDTH,
             #[cfg(feature = "desktop")]
@@ -1482,6 +1481,11 @@ impl Cydonia {
 impl Render for Cydonia {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.track_history(cx);
+        let band = chrome::top_height(self.tabs_on_top(cx));
+        if self.lights_band != band {
+            lights::fit(window, band, cx);
+            self.lights_band = band;
+        }
         self.sync_leaves(window, cx);
         self.sync_changes(window, cx);
         self.sync_items(cx);
@@ -1593,6 +1597,7 @@ impl Render for Cydonia {
                     .meter
                     .then(|| meter::panel("app-meter", &self.meter_at, &self.meter, window)),
             )
+            .child(self.corner_controls(window, cx))
             // Over every column and every floating control: nothing behind it
             // is answerable while it is asking.
             .child(self.modals.clone());

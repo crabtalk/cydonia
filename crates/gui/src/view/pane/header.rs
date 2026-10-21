@@ -4,7 +4,6 @@
 use crate::{
     model::workspace::Showing,
     view::{
-        component::panel::changes_toggle,
         sidebar::Row,
         window::{
             chrome,
@@ -99,15 +98,15 @@ impl Cydonia {
     }
 
     /// The window's band over what stands where the panes would be — the
-    /// library, or the launch view: past the lights or the left caption
-    /// buttons, the fold while the sidebar is shut, the library's name, the
-    /// right panel's toggle and the right caption buttons.
+    /// library, or the launch view: the library's name, between the room the
+    /// window's corner controls stand in.
     pub(crate) fn window_band(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         // The window's top left is the sidebar's while it is open.
         let corners = chrome::Corners {
             left: !self.sidebar_open,
             right: true,
+            tabs: false,
         };
         let title = self.library.is_some().then(|| {
             div()
@@ -118,28 +117,16 @@ impl Cydonia {
                 .text_color(theme.text)
                 .child("Library")
         });
-        root::band()
+        chrome::top_band(false)
             .absolute()
             .top_0()
             .left_0()
             .right_0()
             .gap(px(8.))
             .pl(px(corners.lead(root::HEADER_INSET, window, cx)))
-            .when(corners.flush_right(window, cx), |band| band.pr_0())
-            .children(corners.left_caption(window, cx))
-            // The fold belongs to whichever column runs along the window's
-            // left edge, so with the sidebar gone it is this one's.
-            .children((!self.sidebar_open).then(|| self.fold_controls(cx)))
+            .pr(px(corners.trail(root::BUTTON_EDGE, window, cx)))
             .children(title)
             .child(chrome::grip("header-grip", &self.drag, window))
-            .children(
-                // Nothing to open it on where there is no directory in front
-                // — see [`Cydonia::shell_cwd`].
-                self.shell_cwd(cx)
-                    .is_some()
-                    .then(|| changes_toggle(self.changes_open, cx)),
-            )
-            .children(corners.right_caption(window, cx))
             .into_any_element()
     }
 }

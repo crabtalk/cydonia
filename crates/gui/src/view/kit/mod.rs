@@ -12,6 +12,7 @@ pub mod link;
 pub mod menu;
 pub mod new;
 pub mod orb;
+pub mod pager;
 pub mod rename;
 pub mod selection;
 pub mod stamp;

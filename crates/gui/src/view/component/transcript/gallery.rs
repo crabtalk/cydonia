@@ -1,6 +1,6 @@
 use crate::{
     model::workspace::Workspace,
-    view::component::image_preview::{Preview, page_dot},
+    view::{component::image_preview::Preview, kit::pager},
 };
 use bezel::{
     gpui::{
@@ -178,14 +178,21 @@ impl Render for Gallery {
                         .flex()
                         .justify_center()
                         .children((0..self.images.len()).map(|index| {
-                            page_dot("image-dot", index, index == self.selected, &theme).on_click(
-                                cx.listener(move |this, _, _, cx| {
+                            pager::dot(
+                                "image-dot",
+                                index,
+                                index == self.selected,
+                                format!("Image {}", index + 1),
+                                &theme,
+                            )
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
                                     this.selected = index;
                                     this.drag = 0.;
                                     this.press = None;
                                     cx.notify();
-                                }),
-                            )
+                                },
+                            ))
                         })),
                 )
             })

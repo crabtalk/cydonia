@@ -13,7 +13,7 @@ use crate::{
         modals::desktop::DesktopOnly,
         window::{
             chrome,
-            root::{Cydonia, ToggleChanges},
+            root::{self, Cydonia, ToggleChanges},
         },
     },
 };
@@ -29,7 +29,6 @@ use bezel::{
         icons,
         menu::Item,
         tabs,
-        titlebar::CaptionSide,
         tooltip::Tooltip,
         widgets::{ButtonStyle, Buttons as _},
     },
@@ -141,8 +140,8 @@ pub struct Panel {
     offers: PanelTabs,
     /// Whose settings the panel's files read.
     workspace: WeakEntity<Workspace>,
-    /// Its tab row is the right end of the window's top row, and ends with
-    /// the panel's own toggle — see [`Cydonia::sync_edges`].
+    /// Its tab row is the right end of the window's top row, and leaves room
+    /// for the window's corner controls — see [`Cydonia::sync_edges`].
     pub(crate) on_top: bool,
 }
 
@@ -635,6 +634,23 @@ impl Render for Panel {
             self.focus(window, cx);
         }
         let theme = Theme::of(cx).clone();
+        let floating = self
+            .workspace
+            .upgrade()
+            .is_some_and(|workspace| workspace.read(cx).settings.appearance.floating);
+        // Floating, the panel is a card. While its tab row is part of the
+        // window's top row, the row is on the chrome over the card, lined up
+        // with it, and the card holds the rest.
+        let on_chrome = floating && self.on_top;
+        let inset = match on_chrome {
+            true => Theme::CONTENT_INSET / 2.,
+            false => 0.,
+        };
+        let (outer, card) = match (floating, on_chrome) {
+            (true, true) => (div(), chrome::card(true, cx)),
+            (true, false) => (bezel::ui::window::content(true, cx), div()),
+            (false, _) => (div(), div()),
+        };
         let launchers = self.launchers();
         let popup = self
             .menu
@@ -748,8 +764,10 @@ impl Render for Panel {
                     }))
                     .into_any_element()
             });
-        div()
-            .size_full()
+        outer
+            .flex_1()
+            .min_w_0()
+            .min_h_0()
             .flex()
             .flex_col()
             .key_context("SessionPanel")
@@ -795,11 +813,21 @@ impl Render for Panel {
             .on_action(cx.listener(|this, _: &NextTab, window, cx| this.cycle(1, window, cx)))
             .on_action(cx.listener(|this, _: &PrevTab, window, cx| this.cycle(-1, window, cx)))
             .child(
-                crate::view::window::root::band()
-                    .h(px(crate::view::window::root::CARD_ROW_HEIGHT))
-                    // A card's row, not the window's.
-                    .pl(px(crate::view::window::root::CARD_EDGE))
-                    .pr(px(crate::view::window::root::CARD_EDGE))
+                root::band()
+                    .h(px(root::CARD_ROW_HEIGHT))
+                    .pl(px(inset + root::CARD_EDGE))
+                    .pr(px(match self.on_top {
+                        true => {
+                            chrome::Corners {
+                                left: false,
+                                right: true,
+                                tabs: false,
+                            }
+                            .trail(0., window, cx)
+                                - inset
+                        }
+                        false => inset + root::CARD_EDGE,
+                    }))
                     .gap(px(6.))
                     // The strip only while it holds a tab.
                     .when(!self.strip.is_empty(), |band| {
@@ -931,111 +959,125 @@ impl Render for Panel {
                                     }),
                             )
                             .children(popup),
-                    )
-                    .when(self.on_top, |band| {
-                        band.child(changes_toggle(true, cx))
-                            .children(chrome::caption(CaptionSide::Right, window, cx))
-                    }),
+                    ),
             )
-            .when_some(self.closing, |panel, id| {
-                panel.child(
-                    div()
-                        .p(px(8.))
-                        .text_style(TextStyle::Caption)
-                        .child("Save changes before closing?")
-                        .child(
-                            div()
-                                .flex()
-                                .gap(px(12.))
-                                .child(
-                                    div()
-                                        .id("file-close-save")
-                                        .cursor_pointer()
-                                        .child("Save and close")
-                                        .on_click(cx.listener(move |this, _, window, cx| {
-                                            let file = this.contents.get(&id).and_then(|tab| {
-                                                match &tab.content {
-                                                    Content::File(file) => Some(file.clone()),
-                                                    _ => None,
-                                                }
-                                            });
-                                            if file.is_some_and(|file| {
-                                                file.update(cx, |file, cx| file.save(false, cx))
-                                            }) {
-                                                this.remove(id, cx);
-                                                this.focus(window, cx);
-                                            }
-                                        })),
-                                )
-                                .child(
-                                    div()
-                                        .id("file-close-discard")
-                                        .cursor_pointer()
-                                        .child("Discard")
-                                        .on_click(cx.listener(move |this, _, window, cx| {
-                                            this.remove(id, cx);
-                                            this.focus(window, cx);
-                                        })),
-                                )
-                                .child(
-                                    div()
-                                        .id("file-close-cancel")
-                                        .cursor_pointer()
-                                        .child("Cancel")
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.closing = None;
-                                            cx.notify();
-                                        })),
-                                ),
-                        ),
-                )
-            })
             .child(
-                div()
-                    .flex_1()
+                card.flex_1()
                     .min_h_0()
                     .flex()
-                    .on_drag_move(
-                        cx.listener(|this, event: &DragMoveEvent<FilesResize>, _, cx| {
-                            let available = f32::from(event.bounds.size.width);
-                            let min = 80_f32.min(available / 2.);
-                            this.files_width =
-                                f32::from(event.bounds.right() - event.event.position.x)
-                                    .clamp(min, (available * 0.8).max(min));
-                            cx.notify();
-                        }),
-                    )
-                    .when(!(self.files_open && self.strip.is_empty()), |row| {
-                        row.child(div().flex_1().min_w_0().child(body))
-                    })
-                    .when(self.files_open, |row| {
-                        row.children(self.files.clone().map(|files| {
+                    .flex_col()
+                    .when_some(self.closing, |panel, id| {
+                        panel.child(
                             div()
-                                .when(self.strip.is_empty(), |tree| tree.flex_1().w_full())
-                                .when(!self.strip.is_empty(), |tree| {
-                                    tree.w(px(self.files_width))
-                                        .max_w(gpui::relative(0.8))
-                                        .flex_none()
-                                })
-                                .relative()
-                                .child(files)
-                                .when(!self.strip.is_empty(), |tree| {
-                                    tree.child(
-                                        crate::view::component::divider::divider(
-                                            &theme,
-                                            Axis::Horizontal,
+                                .p(px(8.))
+                                .text_style(TextStyle::Caption)
+                                .child("Save changes before closing?")
+                                .child(
+                                    div()
+                                        .flex()
+                                        .gap(px(12.))
+                                        .child(
+                                            div()
+                                                .id("file-close-save")
+                                                .cursor_pointer()
+                                                .child("Save and close")
+                                                .on_click(cx.listener(
+                                                    move |this, _, window, cx| {
+                                                        let file = this.contents.get(&id).and_then(
+                                                            |tab| match &tab.content {
+                                                                Content::File(file) => {
+                                                                    Some(file.clone())
+                                                                }
+                                                                _ => None,
+                                                            },
+                                                        );
+                                                        if file.is_some_and(|file| {
+                                                            file.update(cx, |file, cx| {
+                                                                file.save(false, cx)
+                                                            })
+                                                        }) {
+                                                            this.remove(id, cx);
+                                                            this.focus(window, cx);
+                                                        }
+                                                    },
+                                                )),
                                         )
-                                        .id("files-split")
-                                        .absolute()
-                                        .top_0()
-                                        .left(px(-crate::view::component::divider::HIT / 2.))
-                                        .on_drag(FilesResize, |_, _, _, cx| cx.new(|_| Empty)),
-                                    )
-                                })
-                        }))
-                    }),
+                                        .child(
+                                            div()
+                                                .id("file-close-discard")
+                                                .cursor_pointer()
+                                                .child("Discard")
+                                                .on_click(cx.listener(
+                                                    move |this, _, window, cx| {
+                                                        this.remove(id, cx);
+                                                        this.focus(window, cx);
+                                                    },
+                                                )),
+                                        )
+                                        .child(
+                                            div()
+                                                .id("file-close-cancel")
+                                                .cursor_pointer()
+                                                .child("Cancel")
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.closing = None;
+                                                    cx.notify();
+                                                })),
+                                        ),
+                                ),
+                        )
+                    })
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_h_0()
+                            .flex()
+                            .on_drag_move(cx.listener(
+                                |this, event: &DragMoveEvent<FilesResize>, _, cx| {
+                                    let available = f32::from(event.bounds.size.width);
+                                    let min = 80_f32.min(available / 2.);
+                                    this.files_width =
+                                        f32::from(event.bounds.right() - event.event.position.x)
+                                            .clamp(min, (available * 0.8).max(min));
+                                    cx.notify();
+                                },
+                            ))
+                            .when(!(self.files_open && self.strip.is_empty()), |row| {
+                                row.child(div().flex_1().min_w_0().child(body))
+                            })
+                            .when(self.files_open, |row| {
+                                row.children(self.files.clone().map(|files| {
+                                    div()
+                                        .when(self.strip.is_empty(), |tree| tree.flex_1().w_full())
+                                        .when(!self.strip.is_empty(), |tree| {
+                                            tree.w(px(self.files_width))
+                                                .max_w(gpui::relative(0.8))
+                                                .flex_none()
+                                        })
+                                        .relative()
+                                        .child(files)
+                                        .when(!self.strip.is_empty(), |tree| {
+                                            tree.child(
+                                                crate::view::component::divider::divider(
+                                                    &theme,
+                                                    Axis::Horizontal,
+                                                )
+                                                .id("files-split")
+                                                .absolute()
+                                                .top_0()
+                                                .left(
+                                                    px(-crate::view::component::divider::HIT / 2.),
+                                                )
+                                                .on_drag(FilesResize, |_, _, _, cx| {
+                                                    cx.new(|_| Empty)
+                                                }),
+                                            )
+                                        })
+                                }))
+                            }),
+                    )
+                    .child(status),
             )
-            .child(status)
     }
 }
 

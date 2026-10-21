@@ -348,7 +348,7 @@ fn show_or_open(workspace: Entity<Workspace>, section: Section, cx: &mut App) {
             // onto every window on each appearance switch, which is what keeps
             // the main window's frost alive and would frost this one with it.
             appearance::keep_background(window, cx);
-            crate::view::window::lights::fit(window, cx);
+            crate::view::window::lights::fit(window, HEADER_HEIGHT, cx);
             cx.new(|cx| SettingsWindow::new(workspace, section, cx))
         },
     )

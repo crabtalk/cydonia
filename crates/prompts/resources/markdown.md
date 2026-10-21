@@ -172,18 +172,34 @@ code, quotes, lists, task lists, thematic breaks and pipe tables. Use four
 spaces for nested list levels, and keep table cells on one line. Escape
 literal pipes in table cells with `\|`.
 
-Raw HTML is literal text, not layout. Underline, text colors, `==highlight==`,
-math typesetting, footnotes and special callout blocks are not enabled.
-A ` ```mermaid ` fence holding a flowchart, state diagram or class diagram is
-drawn as a diagram; any other kind of mermaid, or source that does not parse,
-shows as code. Use an image for other diagrams.
-
-A drawn mermaid fence and an `"embed"` card can be given a height, in whole
-pixels, for the whole block: after the fence's language (` ```mermaid 360 `)
-or after the title's form (`"embed 360"`). Leave it out for the block's own
-height. Dragging the block's bottom edge in the editor writes it.
+Raw HTML is literal text, not layout. Underline, text colors, math
+typesetting, footnotes and special callout blocks are not enabled.
 
 Avoid relying on nested quote depth or combinations such as a list inside a
 quote: the editor flattens mixed containers. Soft and hard line breaks share
 one representation. Exact source formatting is not preserved across editor
 saves.
+
+## Diagrams and charts
+
+A ` ```mermaid ` fence is drawn as a diagram, for every diagram type of
+Mermaid 12.1, opened by its usual first keyword:
+
+- Diagrams: `flowchart` (or `graph`), `sequenceDiagram`, `classDiagram`,
+  `stateDiagram`, `erDiagram`, `requirementDiagram`, `C4Context` and the other
+  C4 keywords, `architecture`, `block`, `packet`, `mindmap`, `gitGraph`,
+  `kanban`, `timeline`, `gantt`, `journey`, `info`.
+- Charts: `pie`, `xychart` (bars and lines over one axis, several series),
+  `quadrantChart`, `sankey`, `radar-beta`, `treemap`.
+- Beta types: `agentflow-beta`, `usecase-beta`, `railroad-beta`,
+  `treeView-beta`, `venn-beta`, `cynefin-beta`, `wardley-beta`,
+  `swimlane-beta`, `ishikawa`, `eventmodeling`.
+
+Source that does not parse shows as code. Draw a chart from values already
+computed: write each number into the source. A ` ```chart ` or
+` ```vega-lite ` fence is not drawn; it shows as code.
+
+A drawn mermaid fence and an `"embed"` card can be given a height, in whole
+pixels, for the whole block: after the fence's language (` ```mermaid 360 `)
+or after the title's form (`"embed 360"`). Leave it out for the block's own
+height. Dragging the block's bottom edge in the editor writes it.

@@ -1,7 +1,10 @@
 //! Shared image-preview frame and controls.
 use crate::{
     model::workspace::Workspace,
-    view::component::file::pictures::{Assets, Pictures},
+    view::{
+        component::file::pictures::{Assets, Pictures},
+        kit::pager,
+    },
 };
 use bezel::{
     gpui::{
@@ -13,7 +16,6 @@ use bezel::{
         context_menu::{ContextMenu, Place},
         icons, popover, surface,
         tooltip::Tooltip,
-        widgets,
     },
 };
 use markdown::PictureMenu;
@@ -353,8 +355,14 @@ impl Preview {
         };
         let dots = (self.images.len() > 1).then(|| {
             div().flex().children((0..self.images.len()).map(|index| {
-                page_dot("preview-dot", index, index == self.selected, &theme)
-                    .on_click(cx.listener(move |this, _, _, cx| this.select(index, cx)))
+                pager::dot(
+                    "preview-dot",
+                    index,
+                    index == self.selected,
+                    format!("Image {}", index + 1),
+                    &theme,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| this.select(index, cx)))
             }))
         });
         // The two ends share the room left over, so the dots stay centred.
@@ -449,27 +457,4 @@ impl Render for Preview {
             },
         )
     }
-}
-
-/// The dot standing for image `index` of several, the one shown filled, named
-/// `name` with its index.
-pub(crate) fn page_dot(
-    name: &'static str,
-    index: usize,
-    shown: bool,
-    theme: &Theme,
-) -> gpui::Stateful<gpui::Div> {
-    div()
-        .id((name, index))
-        .debug_selector(move || format!("{name}-{index}"))
-        .size(px(24.))
-        .flex()
-        .items_center()
-        .justify_center()
-        .cursor_pointer()
-        .tooltip(move |window, cx| Tooltip::text(format!("Image {}", index + 1), window, cx))
-        .child(widgets::status_dot(match shown {
-            true => theme.text,
-            false => theme.text_faint.opacity(0.4),
-        }))
 }

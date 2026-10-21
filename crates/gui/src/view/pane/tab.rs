@@ -13,7 +13,7 @@ use crate::{
             find::{self, DismissFind},
         },
         table,
-        window::{reach::InWindow, root::Cydonia},
+        window::{chrome, reach::InWindow, root::Cydonia},
     },
 };
 use artifact::kind::Kind;
@@ -351,6 +351,24 @@ impl Render for Tab {
         };
         let composer = self.composer.clone();
         let title = self.title_row(window, cx);
+        let floating = self.workspace.read(cx).settings.appearance.floating;
+        // Floating, what the tab shows is on a card, the focused pane's with
+        // the stronger edge. The title row is on the chrome over it while it
+        // is part of the window's top row, and the card's own first row
+        // anywhere else.
+        let on_chrome = floating && self.edge.top;
+        let card = match (floating, on_chrome) {
+            (true, true) => chrome::card(true, cx),
+            (true, false) => bezel::ui::window::content(true, cx),
+            (false, _) => div(),
+        }
+        .when(floating && self.focused, |card| {
+            card.border_color(theme.border_strong)
+        });
+        let (over, inside) = match on_chrome {
+            true => (title, None),
+            false => (None, title),
+        };
         div()
             .relative()
             .flex_1()
@@ -360,17 +378,27 @@ impl Render for Tab {
             .flex_col()
             .on_action(cx.listener(Self::commit_info))
             .on_action(cx.listener(Self::dismiss_info))
-            .children(title)
-            .child(body)
-            .children(footer)
-            .children(selection)
-            // The whole pane takes a dropped picture for the composer.
-            .when(session.is_some(), |pane| {
-                pane.on_drop(move |paths: &bezel::gpui::ExternalPaths, _, cx| {
-                    composer.update(cx, |composer, cx| composer.drop_paths(paths, cx));
-                })
-                .child(crate::view::detail::drop_wash(&theme))
-            })
+            .children(over)
+            .child(
+                // A flex item rather than full size: the card's margin is what
+                // leaves the gap, and a full-size card overflows by it.
+                card.relative()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .children(inside)
+                    .child(body)
+                    .children(footer)
+                    .children(selection)
+                    // The whole pane takes a dropped picture for the composer.
+                    .when(session.is_some(), |pane| {
+                        pane.on_drop(move |paths: &bezel::gpui::ExternalPaths, _, cx| {
+                            composer.update(cx, |composer, cx| composer.drop_paths(paths, cx));
+                        })
+                        .child(crate::view::detail::drop_wash(&theme))
+                    }),
+            )
             .children(drawer)
     }
 }

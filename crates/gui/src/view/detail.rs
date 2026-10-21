@@ -13,7 +13,10 @@ use crate::{
             new::{self, New},
             text::ShownPath as _,
         },
-        window::root::{self, Cydonia, NewArticle, NewBoard, NewSession, NewTable},
+        window::{
+            chrome,
+            root::{self, Cydonia, NewArticle, NewBoard, NewSession, NewTable},
+        },
     },
 };
 use artifact::{kind::Kind, session::chat::ChatItem, space::Member};
@@ -643,11 +646,12 @@ impl Cydonia {
         // way: its ends are the window's, as the lights are. None where the
         // panes' title rows are it — see [`Cydonia::sync_edges`].
         let on_top = self.panes_on_top(cx);
+        let height = chrome::top_height(self.tabs_on_top(cx));
         let top = (!on_top).then(|| {
             div()
                 .flex_none()
                 .relative()
-                .h(px(root::HEADER_HEIGHT))
+                .h(px(height))
                 .when(!floating, |top| {
                     top.bg(bezel::ui::window::content_fill(false, &theme))
                 })
@@ -655,11 +659,7 @@ impl Cydonia {
                     true => self
                         .strip
                         .clone()
-                        .cached(
-                            gpui::StyleRefinement::default()
-                                .w_full()
-                                .h(px(root::HEADER_HEIGHT)),
-                        )
+                        .cached(gpui::StyleRefinement::default().w_full().h(px(height)))
                         .into_any_element(),
                     false => self.window_band(window, cx),
                 })
@@ -750,12 +750,13 @@ impl Cydonia {
                     ))
                     .child(main)
                     .children(changes.clone().filter(|_| beside).map(|panel| {
-                        bezel::ui::window::content(floating, cx)
-                            .when(on_top, |card| card.mt_0())
+                        div()
                             .relative()
                             .w(px(width))
                             .min_w_0()
                             .flex_none()
+                            .flex()
+                            .flex_col()
                             .child(panel)
                     }))
                     // Over the chat rather than beside it. The chat stays in
@@ -764,9 +765,11 @@ impl Cydonia {
                     // widened again — and the panel is laid on the content's
                     // own fill, so nothing reads through.
                     .children(changes.clone().filter(|_| !beside).map(|panel| {
-                        bezel::ui::window::content(floating, cx)
+                        div()
                             .absolute()
                             .inset_0()
+                            .flex()
+                            .flex_col()
                             .bg(bezel::ui::window::content_fill(floating, &theme))
                             .child(panel)
                     }))

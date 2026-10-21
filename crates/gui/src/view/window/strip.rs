@@ -1,11 +1,10 @@
-//! The window's strip: a tab for each entry and space the window holds, and
-//! the window's own controls at its ends — past the lights, the fold while the
-//! sidebar is shut, the right panel's toggle and the right caption buttons.
+//! The window's strip: a tab for each entry and space the window holds, the
+//! room at its ends that the window's corner controls stand in — see
+//! [`crate::view::window::chrome`].
 
 use crate::{
     model::workspace::{Slot, Workspace},
     view::{
-        component::panel::changes_toggle,
         kit::{
             icon,
             menu::{self, MenuHost},
@@ -24,7 +23,8 @@ use crate::{
 use artifact::reference::Reference;
 use bezel::{
     gpui::{
-        self, Context, Entity, MouseButton, SharedString, WeakEntity, Window, div, prelude::*, px,
+        self, App, Context, Entity, MouseButton, SharedString, WeakEntity, Window, div, prelude::*,
+        px,
     },
     theme::Theme,
     ui::{
@@ -57,9 +57,6 @@ pub(crate) struct Strip {
     /// The name field, on the tab of the space it renames.
     rename: Rename,
     sidebar_open: bool,
-    /// Whether the right panel is up, which the toggle at the strip's end
-    /// says.
-    panel_open: bool,
 }
 
 impl Strip {
@@ -77,15 +74,21 @@ impl Strip {
             menu: ContextMenu::default(),
             rename,
             sidebar_open: true,
-            panel_open: false,
         }
     }
 
-    /// Where the strip stands against the window's own chrome.
-    pub(crate) fn seat(&mut self, sidebar_open: bool, panel_open: bool, cx: &mut Context<Self>) {
-        if (self.sidebar_open, self.panel_open) != (sidebar_open, panel_open) {
+    /// Whether the strip shows its tabs: more than one, or one being renamed.
+    /// None while the sidebar lists the spaces: it says what is open.
+    pub(crate) fn tracked(&self, cx: &App) -> bool {
+        let workspace = self.workspace.read(cx);
+        !workspace.settings.appearance.spaces_in_sidebar
+            && (workspace.strip().len() > 1 || self.rename.what.is_some())
+    }
+
+    /// Whether the sidebar stands at the window's top left beside the strip.
+    pub(crate) fn seat(&mut self, sidebar_open: bool, cx: &mut Context<Self>) {
+        if self.sidebar_open != sidebar_open {
             self.sidebar_open = sidebar_open;
-            self.panel_open = panel_open;
             cx.notify();
         }
     }
@@ -267,12 +270,12 @@ impl Render for Strip {
         let strip: Vec<Slot> = workspace.strip().to_vec();
         let front = workspace.front_slot().cloned();
         let floating = workspace.settings.appearance.floating;
-        let spaces_listed = workspace.settings.appearance.spaces_in_sidebar;
+        let tracked = self.tracked(cx);
         // The window's top left is the sidebar's while it is open.
-        let fold = !self.sidebar_open;
         let corners = chrome::Corners {
-            left: fold,
+            left: !self.sidebar_open,
             right: true,
+            tabs: tracked,
         };
         // The row runs edge to edge; its tabs start where the cards below do.
         let lead = corners.lead(
@@ -283,14 +286,9 @@ impl Render for Strip {
             window,
             cx,
         );
-        let (fold_controls, grip) = match self.root.upgrade() {
-            Some(root) => root.update(cx, |root, cx| {
-                (
-                    fold.then(|| root.fold_controls(cx).into_any_element()),
-                    chrome::grip("strip-grip", &root.drag, window),
-                )
-            }),
-            None => (None, div().into_any_element()),
+        let grip = match self.root.upgrade() {
+            Some(root) => chrome::grip("strip-grip", &root.read(cx).drag, window),
+            None => div().into_any_element(),
         };
         let tabs: Vec<_> = strip
             .iter()
@@ -299,8 +297,6 @@ impl Render for Strip {
                 (Dragged::Tab(slot.clone()), el)
             })
             .collect();
-        // No tabs while the sidebar lists the spaces: it says what is open.
-        let tracked = !spaces_listed && (strip.len() > 1 || self.rename.what.is_some());
         let mut model = tabs::Strip::new();
         for slot in &strip {
             model.open(Dragged::Tab(slot.clone()));
@@ -308,26 +304,16 @@ impl Render for Strip {
         if let Some(front) = &front {
             model.activate(&Dragged::Tab(front.clone()));
         }
-        // A control over the drag layer takes its own presses.
-        let shield = |control: gpui::AnyElement| div().flex_none().occlude().child(control);
-        root::band()
+        chrome::top_band(tracked)
             .id("window-strip")
             .relative()
             .w_full()
             .gap(px(BAR_GAP))
             .pl(px(lead))
-            .when(corners.flush_right(window, cx), |el| el.pr_0())
+            .pr(px(corners.trail(root::BUTTON_EDGE, window, cx)))
             // Under the whole row: any of it no control stands on moves the
             // window, as a titlebar does.
             .child(div().absolute().inset_0().flex().child(grip))
-            .children(corners.left_caption(window, cx).map(shield))
-            // The fold belongs to whichever column runs along the window's left
-            // edge, so with the sidebar gone it is the strip's.
-            .children(fold_controls.map(|controls| {
-                shield(controls)
-                    .mr(px(root::HEADER_INSET - BAR_GAP))
-                    .into_any_element()
-            }))
             // The tabs on a track of their own, which scrolls sideways once
             // they no longer fit: the controls keep their places while it does.
             // One tab has no track, back while its name is typed.
@@ -350,15 +336,11 @@ impl Render for Strip {
                         })),
                 )
             })
-            // Empty row kept before the toggle, so the window can be taken
-            // by it however many tabs there are.
+            // Empty row kept at the end, so the window can be taken by it
+            // however many tabs there are.
             .child(match tracked {
                 true => div().flex_none().w(px(DRAG_ROOM)),
                 false => div().flex_1(),
             })
-            .child(shield(
-                changes_toggle(self.panel_open, cx).into_any_element(),
-            ))
-            .children(corners.right_caption(window, cx).map(shield))
     }
 }

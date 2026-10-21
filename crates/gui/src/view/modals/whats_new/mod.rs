@@ -7,14 +7,17 @@ pub(crate) mod release;
 use crate::{
     model::{version::Version, workspace::Workspace},
     view::{
-        kit::dialog::{answers, dialog},
+        kit::{
+            dialog::{Press, answers, dialog},
+            pager,
+        },
         window::root::{Cydonia, WhatsNew},
     },
 };
 use bezel::{
     gpui::{
         App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Window, div,
-        prelude::*,
+        prelude::*, px,
     },
     theme::Theme,
     ui::popover,
@@ -64,6 +67,17 @@ impl Notes {
     }
 }
 
+impl Notes {
+    /// Turn to page `page` of the notes.
+    fn show(&mut self, page: usize, cx: &mut Context<Self>) {
+        self.body.update(cx, |body, cx| {
+            body.page = page;
+            cx.notify();
+        });
+        cx.notify();
+    }
+}
+
 impl EventEmitter<DismissEvent> for Notes {}
 
 impl Focusable for Notes {
@@ -75,22 +89,50 @@ impl Focusable for Notes {
 impl Render for Notes {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::of(cx).clone();
-        let mut content = vec![
+        let page = self.body.read(cx).page;
+        let pages = release::HEADLINES.len();
+        let last = page + 1 >= pages;
+        // One dot a page, where there is more than one.
+        let dots = (pages > 1).then(|| {
+            div().flex().children((0..pages).map(|at| {
+                pager::dot(
+                    "whats-new-page",
+                    at,
+                    at == page,
+                    format!("Page {}", at + 1),
+                    &theme,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| this.show(at, cx)))
+            }))
+        });
+        let answer: Press = match last {
+            true => Box::new(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
+            false => Box::new(cx.listener(move |this, _, _, cx| this.show(page + 1, cx))),
+        };
+        let content = vec![
             popover::dialog_title(&theme, format!("What's new in {}", release::VERSION))
                 .into_any_element(),
-            popover::dialog_body(&theme, release::HEADLINE).into_any_element(),
+            popover::dialog_body(&theme, release::HEADLINES[page]).into_any_element(),
+            self.body.clone().into_any_element(),
+            div()
+                .mt(px(4.))
+                .flex()
+                .flex_row()
+                .items_center()
+                .children(dots)
+                .child(
+                    answers(
+                        &theme,
+                        "whats-new",
+                        None,
+                        if last { "Done" } else { "Next" },
+                        answer,
+                    )
+                    .mt_0()
+                    .flex_1(),
+                )
+                .into_any_element(),
         ];
-        content.push(self.body.clone().into_any_element());
-        content.push(
-            answers(
-                &theme,
-                "whats-new",
-                None,
-                "Done",
-                Box::new(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
-            )
-            .into_any_element(),
-        );
         let dialog = dialog(
             "whats-new-dialog",
             &theme,

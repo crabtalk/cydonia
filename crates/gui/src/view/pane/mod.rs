@@ -13,12 +13,9 @@ pub(crate) use tab::{Tab, TabMenu};
 
 use crate::{model::workspace::Workspace, view::window::root::Cydonia};
 use artifact::space::Member;
-use bezel::{
-    gpui::{
-        App, Context, Entity, MouseButton, SharedString, StyleRefinement, WeakEntity, Window, div,
-        prelude::*,
-    },
-    theme::Theme,
+use bezel::gpui::{
+    Context, Entity, MouseButton, SharedString, StyleRefinement, WeakEntity, Window, div,
+    prelude::*,
 };
 
 /// The key context of a pane holding more than one entry.
@@ -30,13 +27,13 @@ pub(crate) const STACK_CONTEXT: &str = "Stack";
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Edge {
     /// Its title row is part of the window's top row: the window is dragged
-    /// by it, and a floating card has no margin above it.
+    /// by it.
     pub top: bool,
     /// It is at the window's top left with the sidebar folded: its title row
-    /// clears the lights and holds the sidebar's fold.
+    /// leaves room for the window's top-left corner controls.
     pub lights: bool,
     /// It is at the window's top right with the right panel down: its title
-    /// row ends with the panel's toggle.
+    /// row leaves room for the window's top-right corner controls.
     pub toggle: bool,
 }
 
@@ -50,16 +47,9 @@ pub(crate) struct Pane {
     root: WeakEntity<Cydonia>,
     /// The tab on the entry, once the window has made it.
     pub(crate) tab: Option<Entity<Tab>>,
-    /// Its title row is part of the window's top row — see [`Edge::top`].
-    pub(crate) top: bool,
 }
 
 impl Pane {
-    /// Whether this pane's tab holds the window's focus.
-    pub(crate) fn focused(&self, cx: &App) -> bool {
-        self.tab.as_ref().is_some_and(|tab| tab.read(cx).focused)
-    }
-
     pub(crate) fn new(
         entry: Member,
         workspace: Entity<Workspace>,
@@ -72,14 +62,12 @@ impl Pane {
             workspace,
             root,
             tab: None,
-            top: false,
         }
     }
 }
 
 impl Render for Pane {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = Theme::of(cx).clone();
         let key = arrangement::key_of(&self.entry);
         let front = self.entry.clone();
         let tab = self.tab.clone();
@@ -92,10 +80,7 @@ impl Render for Pane {
         };
         let root = self.root.clone();
         let workspace = self.workspace.read(cx);
-        let floating = workspace.settings.appearance.floating;
         let stacked = workspace.stack_of(&self.entry).len() > 1;
-        // The focused pane's card has the stronger edge.
-        let strong = theme.border_strong;
         div()
             .id(SharedString::from(format!("pane-{key}")))
             // With the context but without this, a pane claims chords that
@@ -135,21 +120,6 @@ impl Render for Pane {
                         .ok();
                 }
             })
-            .child(
-                // A flex item rather than full size: the card's margin is what
-                // leaves the gap, and a full-size card overflows by it.
-                match floating {
-                    true => bezel::ui::window::content(true, cx)
-                        .when(self.focused(cx), |card| card.border_color(strong))
-                        .when(self.top, |card| card.mt_0()),
-                    false => div(),
-                }
-                .relative()
-                .flex_1()
-                .min_h_0()
-                .flex()
-                .flex_col()
-                .child(body),
-            )
+            .child(body)
     }
 }

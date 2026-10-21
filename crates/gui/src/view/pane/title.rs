@@ -1,13 +1,13 @@
 //! A pane's title row, over what it shows: its kind's mark and what it is on,
 //! the field that renames it, a board's identity panel, an article's
 //! comments, the `···` holding the entry's menu, the move and the expand of
-//! a pane beside others, and the `×` that closes it. Along the window's top
-//! edge, while it has no top row of its own, also what that row holds at the
-//! pane's place in it — see [`crate::view::pane::Edge`].
+//! a pane beside others, and the `×` that closes it. Floating, it stands on
+//! the chrome over the pane's card. Along the window's top edge, while the
+//! window has no top row of its own, it is that row at the pane's place —
+//! see [`crate::view::pane::Edge`].
 
 use super::{Tab, TabMenu, header::Naming};
 use crate::view::{
-    component::panel::changes_toggle,
     kit::{
         icon,
         menu::{self, MenuHost as _},
@@ -65,16 +65,32 @@ impl Tab {
         let corners = chrome::Corners {
             left: edge.lights,
             right: edge.toggle,
+            tabs: false,
+        };
+        let floating = self.workspace.read(cx).settings.appearance.floating;
+        // On the chrome over the card, the row lines up with the card, which
+        // stands in from the pane's edges by its margin. The pane stands in
+        // from the window's edges by as much.
+        let on_chrome = floating && edge.top;
+        let inset = match on_chrome {
+            true => Theme::CONTENT_INSET / 2.,
+            false => 0.,
+        };
+        let lead = match corners.left {
+            true => corners.lead(0., window, cx) - inset,
+            false if on_chrome => inset + root::CARD_EDGE,
+            false => root::HEADER_INSET,
+        };
+        let trail = match corners.right {
+            true => corners.trail(0., window, cx) - inset,
+            false => inset + root::CARD_EDGE,
         };
         let row = div()
             .group(TITLE_GROUP)
             .flex_none()
             .h(px(root::CARD_ROW_HEIGHT))
-            .pl(px(corners.lead(root::HEADER_INSET, window, cx)))
-            .pr(px(match corners.flush_right(window, cx) {
-                true => 0.,
-                false => root::CARD_EDGE,
-            }))
+            .pl(px(lead))
+            .pr(px(trail))
             .flex()
             .flex_row()
             .items_center()
@@ -236,30 +252,19 @@ impl Tab {
                     });
                 }))
         });
-        // The window's: its fold at the top left, and the empty stretch it is
-        // dragged by.
-        let (fold, grip) = match (edge.top, self.root.upgrade()) {
-            (true, Some(root)) => root.update(cx, |root, cx| {
-                (
-                    edge.lights.then(|| root.fold_controls(cx)),
-                    Some(chrome::grip("pane-grip", &root.drag, window)),
-                )
-            }),
-            _ => (None, None),
+        // Along the window's top, the empty stretch the window is dragged by.
+        let grip = match (edge.top, self.root.upgrade()) {
+            (true, Some(root)) => Some(chrome::grip("pane-grip", &root.read(cx).drag, window)),
+            _ => None,
         };
-        let toggle = edge.toggle.then(|| changes_toggle(false, cx));
         Some(
-            row.children(corners.left_caption(window, cx))
-                .children(fold)
-                .child(name)
+            row.child(name)
                 .children(grip)
                 .children(comments)
                 .children(menu)
                 .children(shift)
                 .children(zoom)
                 .children(close)
-                .children(toggle)
-                .children(corners.right_caption(window, cx))
                 .into_any_element(),
         )
     }
