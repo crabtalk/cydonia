@@ -1,8 +1,7 @@
 # Cydonia for agents
 
 Read this before changing anything. It holds the rules every change to this
-repository follows, from a person or an agent. `CLAUDE.md` imports it; nothing
-else repeats it.
+repository follows, from a person or an agent. `CLAUDE.md` imports it.
 
 Existing code does not follow every rule here yet: many doc comments argue for
 their design. When the code around a change disagrees with this file, follow
@@ -10,30 +9,9 @@ this file, and never copy the divergence into new code.
 
 # Pull requests
 
-- Target `main`, one change per pull request.
-- A pull request is squash-merged, so its title is the commit: Conventional
-  Commits, `type(scope): summary`, one line. No version number in the title.
-- The body is a few lines or short bullets: what changed and how it was tested.
-- No AI attribution anywhere: no `Co-Authored-By: Claude …`, no "Generated with
-  …", no badge or footer, in commits, pull request bodies, comments or issues.
-- Never add, edit or delete CI (`.github/workflows/`, `.github/scripts/`,
-  anything a CI run executes) in a pull request without asking in an issue
-  first.
-
-# Before you push
-
-CI runs these with `RUSTFLAGS=-D warnings`. Run them first:
-
-```sh
-cargo fmt --all --check
-cargo clippy --workspace --all-targets
-```
-
-Run tests with `cargo nextest run` (`cargo install cargo-nextest`), filtered to
-the crates and tests the change touches.
-
-A change you could not check says so in the pull request, with what was left
-unchecked.
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening one: what a pull
+request needs, the checks to run before pushing, and how to run the app to
+check a change.
 
 # Docs and comments
 

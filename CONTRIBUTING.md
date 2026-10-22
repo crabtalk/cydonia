@@ -1,24 +1,37 @@
 # Contributing
 
-The rules a change follows — commits, docs and comments, Rust style, where UI
-code goes — are in [AGENTS.md](AGENTS.md). They hold for code written by hand
-and by an agent alike; point your agent at that file.
+How code is written here — docs and comments, Rust style, where UI code goes —
+is in [AGENTS.md](AGENTS.md). It holds for code written by hand and by an agent
+alike; point your agent at that file. This one covers getting a change in.
 
 ## Pull requests
 
-- Open them against `main`.
-- One change per pull request. The title becomes the squashed commit, so write
-  it in Conventional Commits form, `type(scope): summary`, with no version
-  number.
-- Keep the body short: what changed, and how you tested it.
-- No AI attribution in commits, pull requests or issues.
-- The CLA check must pass before a pull request can be merged.
+- Target `main`, one change per pull request.
+- A pull request is squash-merged, so its title is the commit: Conventional
+  Commits, `type(scope): summary`, one line. No version number in the title.
+- The body is a few lines or short bullets: what changed and how it was tested.
+- No AI attribution anywhere: no `Co-Authored-By: Claude …`, no "Generated with
+  …", no badge or footer, in commits, pull request bodies, comments or issues.
+- Never add, edit or delete CI (`.github/workflows/`, `.github/scripts/`,
+  anything a CI run executes) in a pull request without asking in an issue
+  first.
+- The CLA check must pass before a pull request is merged.
 
-## Checks
+## Before you push
 
-CI runs `cargo fmt --all --check` and `cargo clippy --workspace --all-targets`
-with warnings as errors, and builds on Linux and Windows. Run the first two
-before pushing, and the tests the change touches with `cargo nextest run`.
+CI runs these with `RUSTFLAGS=-D warnings`, and builds on Linux and Windows.
+Run them first:
+
+```sh
+cargo fmt --all --check
+cargo clippy --workspace --all-targets
+```
+
+Run tests with `cargo nextest run` (`cargo install cargo-nextest`), filtered to
+the crates and tests the change touches.
+
+A change you could not check says so in the pull request, with what was left
+unchecked.
 
 ## Running the app
 
