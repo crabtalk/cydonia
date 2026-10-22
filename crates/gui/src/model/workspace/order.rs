@@ -19,7 +19,7 @@ impl Workspace {
     /// What `state.toml` calls the entry a pane would be put on.
     ///
     /// `None` for a session with no file yet: the order is written down, and a
-    /// session that has had no turn has no name to write.
+    /// session with no record has no name to write.
     pub fn entry_of(&self, project: usize, showing: Showing, cx: &App) -> Option<state::Entry> {
         let member = self.member_of(project, showing, cx)?;
         let member = member.entry()?;

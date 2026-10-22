@@ -87,9 +87,8 @@ impl Workspace {
         self.member_of(self.project_of(id)?, super::Showing::Session(id), cx)
     }
 
-    /// Give a session the name that keeps, minting its file if it has none —
-    /// what anything pointing at a session from outside the process needs, and
-    /// a session has no file until its first turn is written.
+    /// Give a session the name that keeps, and write its file — what anything
+    /// pointing at a session from outside the process needs.
     pub fn retain_session(&mut self, id: u64, cx: &mut Context<Self>) -> Option<String> {
         let record = self.update_session(id, cx, ChatSession::retain_panel)??;
         cx.notify();
@@ -179,8 +178,7 @@ impl Workspace {
         }
         self.projects[ix].active = Some(id);
         self.active = Some(ix);
-        // A session has no file until its first turn is written, so one that
-        // has said nothing is not yet somewhere to come back to.
+        // A session with no file yet is not somewhere to come back to.
         if let Some(record) = self.projects[ix]
             .session(id, cx)
             .and_then(|chat| chat.filed().map(str::to_owned))

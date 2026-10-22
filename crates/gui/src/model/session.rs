@@ -531,14 +531,15 @@ impl ChatSession {
         Some(chat)
     }
 
-    /// The id this session is filed under, minted now if it has none.
-    ///
-    /// A card sent to a session writes the session down on the click that sent
-    /// it, and until then a session that has said nothing has no id to be
-    /// written down.
+    /// The id this session is filed under, minted now if it has none. A
+    /// session minted here is written to its file before this returns: the
+    /// tools find a session by its file.
     pub fn mint_record(&mut self) -> Option<&str> {
         if self.record.is_none() {
             self.record = self.store().create_session().ok();
+            if self.record.is_some() {
+                self.write();
+            }
         }
         if self.number.is_none() {
             self.number = self
@@ -596,9 +597,7 @@ impl ChatSession {
             return None;
         }
         self.mint_record()?;
-        let _ = self.store().save_session(&self.to_record());
-        self.written = true;
-        self.save_preferences();
+        self.write();
         self.record.clone()
     }
 
@@ -610,13 +609,18 @@ impl ChatSession {
         if self.unsaid() && self.fork.is_none() {
             return;
         }
-        let store = self.store();
         self.mint_record();
         if self.record.is_some() {
-            let _ = store.save_session(&self.to_record());
-            self.written = true;
-            self.save_preferences();
+            self.write();
         }
+    }
+
+    /// Write the transcript under the session's record, and its choices
+    /// beside it. The history must be loaded.
+    fn write(&mut self) {
+        let _ = self.store().save_session(&self.to_record());
+        self.written = true;
+        self.save_preferences();
     }
 
     /// Point the session at an agent again, replaying the conversation the
