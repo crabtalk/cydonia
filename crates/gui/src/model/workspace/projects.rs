@@ -128,28 +128,33 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Whichever project is at `path`, by the path the sidebar holds it under
-    /// or by what that resolves to.
+    /// Whichever project is at `path`: the path the sidebar holds it under, or
+    /// what that resolved to when it was opened ([`Project::settled`]).
     ///
+    /// Makes no filesystem call. A path that
+    /// names an open project only once resolved — another symlink to it — is
+    /// settled by the caller first, as [`Self::settled_project_at`] does.
+    pub fn project_at(&self, path: &Path) -> Option<usize> {
+        self.projects
+            .iter()
+            .position(|open| open.path == path || open.settled == path)
+    }
+
+    /// [`Self::project_at`] for a path from outside the app, resolved first.
     /// The tools settle a path before handing it over and the directory picker
     /// does not — see `mcp::tools::project` — so `/tmp/x` on the rail and
-    /// `/private/tmp/x` from a tool are one project, and opening the second
-    /// would otherwise list the same directory twice.
-    pub fn project_at(&self, path: &Path) -> Option<usize> {
-        let settled = path.canonicalize().ok();
-        self.projects.iter().position(|open| {
-            open.path == path
-                || open
-                    .path
-                    .canonicalize()
-                    .is_ok_and(|held| held == path || settled.as_ref() == Some(&held))
+    /// `/private/tmp/x` from a tool are one project.
+    fn settled_project_at(&self, path: &Path) -> Option<usize> {
+        self.project_at(path).or_else(|| {
+            let settled = path.canonicalize().ok()?;
+            self.project_at(&settled)
         })
     }
 
     /// Bring the project at `path` forward, opening it where it is not on the
     /// rail at all. What the tools ask for; the sidebar names a row instead.
     fn open_project_at(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        match self.project_at(&path) {
+        match self.settled_project_at(&path) {
             Some(ix) => self.select_project(ix, cx),
             None => self.open_project(path, cx),
         }
@@ -157,7 +162,7 @@ impl Workspace {
 
     /// Close whichever project is at `path`, if one is.
     fn close_project_at(&mut self, path: &Path, cx: &mut Context<Self>) {
-        let Some(ix) = self.project_at(path) else {
+        let Some(ix) = self.settled_project_at(path) else {
             return;
         };
         self.close_project(ix, cx);

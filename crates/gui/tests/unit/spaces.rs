@@ -128,6 +128,22 @@ fn a_space_is_written_beside_the_config(cx: &mut gpui::TestAppContext) {
     );
 }
 
+/// A project opened under one path is found by the path it resolves to — the
+/// scratch directory sits under `/var`, which macOS resolves to `/private/var`.
+#[gpui::test]
+fn a_project_is_found_by_the_path_it_resolves_to(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("settled");
+    let (workspace, _, _) = two_boards(&scratch, cx);
+    let opened = scratch.project("one");
+    let settled = opened.canonicalize().unwrap();
+
+    workspace.update(cx, |workspace, _| {
+        assert_eq!(workspace.project_at(&opened), Some(0));
+        assert_eq!(workspace.project_at(&settled), Some(0));
+        assert_eq!(workspace.project_at(&scratch.0.join("other")), None);
+    });
+}
+
 /// The whole point of a space being the window's: one arrangement can hold a
 /// pane on one repository beside a pane on another.
 #[gpui::test]

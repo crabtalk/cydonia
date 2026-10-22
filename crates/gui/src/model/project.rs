@@ -77,6 +77,9 @@ impl HeldSession {
 
 pub struct Project {
     pub path: PathBuf,
+    /// `path` as the filesystem resolves it, read once when the project is
+    /// opened; `path` itself where it does not resolve.
+    pub settled: PathBuf,
     pub sessions: Vec<HeldSession>,
     pub active: Option<u64>,
     pub boards: Vec<HeldBoard>,
@@ -124,6 +127,7 @@ impl Project {
                 .collect(),
             articles: article::list(&path),
             data: Data::attach(&Home::Project(path.clone())),
+            settled: path.canonicalize().unwrap_or_else(|_| path.clone()),
             path,
             sessions: Vec::new(),
             active: None,

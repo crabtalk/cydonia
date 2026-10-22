@@ -146,6 +146,16 @@ pub(crate) enum Row {
     App(String),
 }
 
+/// The rows the sidebar lists and what is read off them, index for index.
+#[derive(Clone, Default)]
+struct Listing {
+    rows: Rc<Vec<Row>>,
+    shapes: Rc<Vec<Shape>>,
+    places: Rc<HashMap<Row, Place>>,
+    /// Whether each row is listed by a label filter, and so not dragged.
+    narrowed: Rc<Vec<bool>>,
+}
+
 /// How a row is drawn, which is what its height follows.
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum Shape {
@@ -677,6 +687,9 @@ pub(crate) struct Sidebar {
     /// The drag domain of the list: a row moves within it, or out onto a pane.
     pub(crate) sort: drag::Domain<(), Dragged>,
     rail: ListState,
+    /// The list as [`Self::relist`] last worked it out. Render reads it and
+    /// never works it out.
+    listing: Listing,
     /// The rows `rail` holds measurements for, with how each was drawn. A row
     /// whose shape changes is spliced out and measured again.
     measured: Vec<(Row, Shape)>,
@@ -701,8 +714,8 @@ impl Sidebar {
         let rename = Rename::new(workspace.clone(), |this: &mut Self| &mut this.rename, cx);
         #[allow(unused_mut)]
         let mut subscriptions = vec![
-            cx.observe(&workspace, |_, _, cx| cx.notify()),
-            cx.observe(&search, |_, _, cx| cx.notify()),
+            cx.observe(&workspace, |this, _, cx| this.relisted(cx)),
+            cx.observe(&search, |this, _, cx| this.relisted(cx)),
         ];
         // The notice at its foot is the updater's, and the updater moves on its
         // own clock — and from the other window, where the Developer switch
@@ -718,7 +731,7 @@ impl Sidebar {
                     .unwrap_or_else(|_| Empty.into_any_element())
             }
         });
-        Self {
+        let mut this = Self {
             workspace,
             root,
             search,
@@ -728,6 +741,7 @@ impl Sidebar {
             rename,
             sort,
             rail: ListState::new(0, ListAlignment::Top, px(OVERDRAW)),
+            listing: Listing::default(),
             measured: Vec::new(),
             tick: None,
             boards: Watch::default(),
@@ -735,10 +749,29 @@ impl Sidebar {
             listed: HashMap::new(),
             sessions: Watch::default(),
             _subscriptions: subscriptions,
-        }
+        };
+        this.relist(cx);
+        this
     }
 
-    /// The list as it stands.
+    /// Work the list out again from the workspace and the applied search.
+    fn relist(&mut self, cx: &App) {
+        let list = self.list(cx);
+        let rows = list.rows();
+        self.listing = Listing {
+            shapes: Rc::new(self.shapes(&rows, cx)),
+            places: Rc::new(list.row_places(&rows)),
+            narrowed: Rc::new(rows.iter().map(|row| list.narrowed(row)).collect()),
+            rows: Rc::new(rows),
+        };
+    }
+
+    /// [`Self::relist`], and redraw.
+    fn relisted(&mut self, cx: &mut Context<Self>) {
+        self.relist(cx);
+        cx.notify();
+    }
+
     /// What a row stands off the column's right edge by: the gutter, or
     /// nothing while floating, where the column already stands as far from
     /// the cards as two cards stand apart.
@@ -753,20 +786,30 @@ impl Sidebar {
         List::new(&self.workspace, &self.search, cx)
     }
 
-    /// The rows drawn: the list's, less the rows of a project or a space whose
-    /// heading is being carried, down to the next heading.
-    fn drawn(&self, cx: &App) -> Vec<Row> {
-        let mut rows = self.list(cx).rows();
-        if let Some(Dragged::Row(head @ Row::Group(_))) = self.sort.carried()
-            && let Some(at) = rows.iter().position(|row| *row == head)
-        {
-            let end = rows[at + 1..]
-                .iter()
-                .position(|row| matches!(row, Row::Heading(_) | Row::Group(_)))
-                .map_or(rows.len(), |after| at + 1 + after);
-            rows.drain(at + 1..end);
+    /// The listing drawn: the list's, less the rows of a project or a space
+    /// whose heading is being carried, down to the next heading.
+    fn drawn(&self) -> Listing {
+        let listing = &self.listing;
+        let rows = &listing.rows;
+        let Some(Dragged::Row(head @ Row::Group(_))) = self.sort.carried() else {
+            return listing.clone();
+        };
+        let Some(at) = rows.iter().position(|row| *row == head) else {
+            return listing.clone();
+        };
+        let end = rows[at + 1..]
+            .iter()
+            .position(|row| matches!(row, Row::Heading(_) | Row::Group(_)))
+            .map_or(rows.len(), |after| at + 1 + after);
+        fn cut<T: Clone>(all: &[T], gone: std::ops::Range<usize>) -> Rc<Vec<T>> {
+            Rc::new([&all[..gone.start], &all[gone.end..]].concat())
         }
-        rows
+        Listing {
+            rows: cut(rows, at + 1..end),
+            shapes: cut(&listing.shapes, at + 1..end),
+            places: listing.places.clone(),
+            narrowed: cut(&listing.narrowed, at + 1..end),
+        }
     }
 
     /// What the window is showing, handed over as it changes.
@@ -785,7 +828,7 @@ impl Sidebar {
             let extended = this.extended(cx);
             let listed = Listed::of(chat.read(cx), extended);
             if this.listed.insert(chat.read(cx).id, listed.clone()) != Some(listed) {
-                cx.notify();
+                this.relisted(cx);
             }
         });
         self.sessions = sessions;
@@ -965,11 +1008,13 @@ impl Sidebar {
     /// as shows it, so a step to the neighbour below moves the list by a row
     /// rather than throwing the one you came from off the top of it.
     pub(crate) fn reveal(&mut self, row: &Row, cx: &mut Context<Self>) {
-        let rows = self.list(cx).rows();
+        // Called straight after the change that put the row in the list,
+        // before the workspace's observers have run.
+        self.relist(cx);
+        let Listing { rows, shapes, .. } = self.listing.clone();
         let Some(ix) = rows.iter().position(|at| at == row) else {
             return;
         };
-        let shapes = self.shapes(&rows, cx);
         self.sync(&rows, &shapes);
         let tops = tops(&shapes);
         let scroll = self.scrolled(&tops);
@@ -985,14 +1030,14 @@ impl Sidebar {
 
     /// Take the list back to where a group starts, heading and all.
     fn scroll_to_group(&mut self, group: &Group, cx: &mut Context<Self>) {
-        let rows = self.list(cx).rows();
+        self.relist(cx);
+        let Listing { rows, shapes, .. } = self.listing.clone();
         let Some(at) = rows
             .iter()
             .position(|row| matches!(row, Row::Group(at) if at == group))
         else {
             return;
         };
-        let shapes = self.shapes(&rows, cx);
         self.sync(&rows, &shapes);
         self.rail.scroll_to(ListOffset {
             item_ix: at,
@@ -1033,13 +1078,14 @@ impl Sidebar {
     /// The rows as one drag region over the list: an entry moves within the
     /// region of its project it is in, a project's or a space's heading among
     /// the headings of its kind, and either can be carried out onto a pane.
-    fn sidebar_list(&mut self, rows: Vec<Row>, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let shapes = self.shapes(&rows, cx);
+    fn sidebar_list(&mut self, drawn: Listing, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let Listing {
+            rows,
+            shapes,
+            places,
+            narrowed,
+        } = drawn;
         self.sync(&rows, &shapes);
-        let list = self.list(cx);
-        let places = Rc::new(list.row_places(&rows));
-        let narrowed: Vec<bool> = rows.iter().map(|row| list.narrowed(row)).collect();
-        let rows = Rc::new(rows);
         let view = cx.entity().downgrade();
         let list = gpui::list(self.rail.clone(), move |ix, window, cx| {
             let Some(row) = rows.get(ix).cloned() else {
@@ -1078,11 +1124,12 @@ impl Sidebar {
     fn pinned_head(
         &self,
         rows: &[Row],
+        shapes: &[Shape],
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let head = |row: &Row| matches!(row, Row::Group(_));
-        let tops = tops(&self.shapes(rows, cx));
+        let tops = tops(shapes);
         let scroll = self.scrolled(&tops);
         let first = self
             .rail
@@ -1297,15 +1344,16 @@ impl Render for Sidebar {
         self.watch_sessions(window, cx);
         let programs: Vec<_> = self.workspace.read(cx).programs().cloned().collect();
         let mut apps = std::mem::take(&mut self.apps);
-        apps.set(&programs, cx);
+        // A build names an app's row, and the apps are listed by name.
+        apps.set_in(&programs, window, cx, |this, _, _, cx| this.relisted(cx));
         self.apps = apps;
         let extended = self.extended(cx);
         if extended {
             self.watch_boards(cx);
         }
         self.keep_time(extended, cx);
-        let rows = self.drawn(cx);
-        let pinned = self.pinned_head(&rows, window, cx);
+        let drawn = self.drawn();
+        let pinned = self.pinned_head(&drawn.rows, &drawn.shapes, window, cx);
         let visibility = self
             .workspace
             .read(cx)
@@ -1324,7 +1372,7 @@ impl Render for Sidebar {
                     .flex_1()
                     .min_h_0()
                     .overflow_hidden()
-                    .child(self.sidebar_list(rows, cx))
+                    .child(self.sidebar_list(drawn, cx))
                     .children(pinned)
                     .child(
                         scrollbars::Overlay::new(
