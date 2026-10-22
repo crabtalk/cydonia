@@ -21,13 +21,14 @@ fn rail_requires_clear_space_in_the_conversation_pane() {
 use super::*;
 use bezel::gpui::{self, Render};
 
-struct RailView(ChatSession, f32, State);
+struct RailView(ChatSession, f32, State, Rc<Rows>);
 
 impl RailView {
     fn new(chat: ChatSession, height: f32) -> Self {
         let state = State::default();
-        state.list.sync((0..8).collect());
-        Self(chat, height, state)
+        let rows = Rc::new(Rows::of(&chat, &state, true));
+        state.list.sync(rows.rows.clone());
+        Self(chat, height, state, rows)
     }
 }
 
@@ -36,23 +37,24 @@ impl Render for RailView {
         // What `transcript::render` does before it builds the rail: every row on
         // screen goes back to unmeasured, so a rail that reads the list's
         // measurements during render reads nothing.
-        let keys: Vec<usize> = (0..8).collect();
         for ix in self.2.list.visible_range() {
-            if let Some(key) = keys.get(ix) {
+            if let Some(key) = self.3.rows.get(ix) {
                 self.2.list.invalidate(key);
             }
         }
+        let tail = self.3.rows.len() - 1;
         div()
             .relative()
             .w(px(100.))
             .h(px(self.1))
             .child(self.2.list.render(
-                |ix, _, _| {
+                // A question and its answer: eighty pixels a turn.
+                move |ix, _, _| {
                     div()
-                        .h(if ix == 7 {
+                        .h(if ix == tail {
                             px(root::composer_height() + root::COMPOSER_BOTTOM + PAD)
                         } else {
-                            px(80.)
+                            px(40.)
                         })
                         .into_any_element()
                 },
@@ -65,7 +67,7 @@ impl Render for RailView {
                     view: gpui::WeakEntity::new_invalid(),
                     workspace: gpui::WeakEntity::new_invalid(),
                 },
-                &turns(&self.0.items),
+                &self.3,
                 px(100.),
                 None,
                 window,

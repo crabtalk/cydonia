@@ -5,6 +5,9 @@
 //! wherever it falls, and tool calls and thoughts are the work.** Each run of
 //! work collapses under its own header, in the place it happened, so a turn
 //! that ends on a tool call still shows the prose before it as prose.
+//!
+//! The list draws a turn as rows — see [`rows::Row`] — so a frame builds the
+//! rows on screen, not every item of the turns they belong to.
 
 use crate::{
     model::{
@@ -12,6 +15,7 @@ use crate::{
         workspace::{Member, Workspace},
     },
     view::{
+        component::transcript::rows::{Row, Rows},
         kit::{
             bubble, orb,
             selection::Selections,
@@ -50,6 +54,7 @@ use markdown::{
 };
 mod follow;
 pub(crate) mod gallery;
+mod rows;
 use std::{
     cell::{Cell, RefCell},
     collections::{HashMap, HashSet},
@@ -156,8 +161,11 @@ pub struct State {
     galleries: RefCell<HashMap<usize, bezel::gpui::Entity<gallery::Gallery>>>,
     /// The preview agent messages open their images in, made on first use.
     preview: RefCell<Option<bezel::gpui::Entity<super::image_preview::Preview>>>,
-    list: bezel::ui::list::VariableList<usize>,
-    focused_turn: Cell<Option<(usize, usize)>>,
+    list: bezel::ui::list::VariableList<Row>,
+    /// The rows [`render`] last listed.
+    rows: RefCell<Rc<Rows>>,
+    /// The row holding the selection, and the selected item.
+    focused_row: Cell<Option<(usize, usize)>>,
     rail_selection: Rc<Cell<Option<RailSelection>>>,
     /// The turns shift-clicked on the rail, from 0 and in order, and the menu
     /// over them.
@@ -172,7 +180,7 @@ pub struct State {
     /// frame after.
     showing: Rc<RefCell<Range<usize>>>,
     pub(crate) footer_height: Rc<Cell<Pixels>>,
-    /// Keyed by the turn's first item index.
+    /// Which runs of work are open, keyed by the run's first item index.
     work: HashMap<usize, Takeover>,
     /// Tool items whose output is showing, and thoughts that are open, by item
     /// index.
@@ -209,18 +217,17 @@ impl State {
             .set_follow_mode(bezel::gpui::FollowMode::Tail);
     }
 
-    /// Mark `hit` as the one the reader is on, and scroll its turn into
-    /// view.
-    pub(crate) fn show_find(&mut self, items: &[ChatItem], hit: Option<(usize, Selection)>) {
+    /// Mark `hit` as the one the reader is on, and scroll its item into view.
+    fn show_find(&mut self, rows: Rows, hit: Option<(usize, Selection)>) {
         self.find_current = hit;
         let Some((item, _)) = hit else { return };
-        let turns = turns(items);
         // A pane opened this frame has no rows yet, and the first paint's sync
         // would drop a scroll aimed past them.
-        self.list.sync(keys(&turns));
-        if let Some(turn) = turns.iter().position(|turn| turn.range.contains(&item)) {
-            self.list.scroll_to(turn);
+        self.list.sync(rows.rows.clone());
+        if let Some(row) = rows.row_of(item) {
+            self.list.scroll_to(row);
         }
+        *self.rows.borrow_mut() = Rc::new(rows);
     }
 
     /// Whether the pointer is dragging the head of item `ix`'s selection.
@@ -379,20 +386,16 @@ impl State {
             turn: ix,
             offset: None,
         }));
-        self.list.scroll_to(ix);
+        if let Some(&row) = self.rows.borrow().first.get(ix) {
+            self.list.scroll_to(row);
+        }
     }
 }
 
 /// A question and the answer it drew.
+#[derive(Clone)]
 struct Turn {
     range: Range<usize>,
-}
-
-/// The list's row keys: each turn by its first item, then the tail row.
-fn keys(turns: &[Turn]) -> Vec<usize> {
-    let mut keys: Vec<_> = turns.iter().map(|turn| turn.range.start).collect();
-    keys.push(usize::MAX);
-    keys
 }
 
 fn turns(items: &[ChatItem]) -> Vec<Turn> {
@@ -719,8 +722,8 @@ impl Searchable for SessionView {
             .map(|query| hits(&chat.items, &query))
             .unwrap_or_default();
         let hit = self.find.current(hits.len()).map(|ix| hits[ix]);
-        let items = chat.items.clone();
-        self.state.show_find(&items, hit);
+        let rows = Rows::of(chat, &self.state, true);
+        self.state.show_find(rows, hit);
         cx.notify();
     }
 }
@@ -850,35 +853,46 @@ fn render(
     let id = chat.id;
     let state = hold.state;
     state.find.replace(find);
-    let turns = turns(&chat.items);
+    let rows = Rc::new(Rows::of(chat, state, true));
     let nested = matches!(drawn, Drawn::Nested | Drawn::Attached);
     let attached = drawn == Drawn::Attached;
     let pane = drawn == Drawn::Pane;
     let list = state.list.clone();
-    let keys = keys(&turns);
-    list.sync(keys.clone());
+    // The row before the first one that changed: the room it keeps under
+    // itself, and a tool row's box, answer to the row after it.
+    let before = {
+        let held = state.rows.borrow();
+        held.rows
+            .iter()
+            .zip(&rows.rows)
+            .take_while(|(was, is)| was == is)
+            .count()
+            .checked_sub(1)
+    };
+    list.sync(rows.rows.clone());
+    // The rows on screen, the row an update streams into, and the tail under
+    // it. Every other row keeps the height it was measured at.
+    let last = rows.rows.len().saturating_sub(2);
     for ix in list
         .visible_range()
-        .chain(turns.len().saturating_sub(1)..keys.len())
+        .chain(before)
+        .chain(last..rows.rows.len())
     {
-        if let Some(key) = keys.get(ix) {
+        if let Some(key) = rows.rows.get(ix) {
             list.invalidate(key);
         }
     }
-    let selected_turn = state.selection.held().and_then(|(item, _)| {
-        turns
-            .iter()
-            .position(|turn| turn.range.contains(&item))
-            .map(|turn| (turn, item))
-    });
-    let previous_focus = state.focused_turn.replace(selected_turn);
-    if previous_focus != selected_turn {
-        if let Some((index, _)) = previous_focus.filter(|(ix, _)| *ix < keys.len()) {
+    *state.rows.borrow_mut() = rows.clone();
+    let selected_row = state
+        .selection
+        .held()
+        .and_then(|(item, _)| Some((rows.row_of(item)?, item)));
+    let previous_focus = state.focused_row.replace(selected_row);
+    if previous_focus != selected_row {
+        if let Some((index, _)) = previous_focus.filter(|(ix, _)| *ix < rows.rows.len()) {
             list.focus_item(index, None);
         }
-        if let Some((item, _)) = state.selection.held()
-            && let Some((index, _)) = selected_turn
-        {
+        if let Some((index, item)) = selected_row {
             list.focus_item(index, state.selection.focus_of(item));
         }
     }
@@ -892,11 +906,11 @@ fn render(
     let view = hold.view.clone();
     let visible_view = view.clone();
     let edge_view = view.clone();
-    let count = turns.len();
     let rewind: Rewind = Rc::new(rewind);
+    let (listed, visible_rows) = (rows.clone(), rows.clone());
     let virtual_content = list.render(
         move |index, window, cx| {
-            if index == count {
+            if listed.rows.get(index) == Some(&Row::Tail) {
                 return content_row(
                     div()
                         .children(queued(window, cx))
@@ -918,27 +932,22 @@ fn render(
                         return Empty.into_any_element();
                     };
                     chat.update(cx, |chat, cx| {
-                        let Some(turn) = turns.get(index) else {
-                            return Empty.into_any_element();
-                        };
-                        let running = chat.streaming && index + 1 == count;
+                        let last =
+                            listed.turn.get(index).map(|turn| turn + 1) == Some(listed.turns.len());
                         content_row(
                             div()
                                 .relative()
                                 .px(px(24.))
                                 .when(index == 0, |row| row.pt(px(PAD)))
-                                .child(zone(
+                                .child(block(
                                     chat,
                                     &hold,
-                                    turn,
-                                    running,
-                                    (index + 1 == count).then(|| rewind.clone()),
+                                    &listed,
+                                    index,
+                                    last.then(|| rewind.clone()),
                                     window,
                                     cx,
-                                ))
-                                .when(running && turn.range.len() <= 1, |row| {
-                                    row.child(working(chat, &hold, turn.range.start, cx))
-                                }),
+                                )),
                         )
                         .into_any_element()
                     })
@@ -951,19 +960,11 @@ fn render(
             }
         },
         move |range, window, cx| {
+            let items = visible_rows.items_near(range);
             let _ = visible_view.update(cx, |view, cx| {
-                let Some(items) = view
-                    .workspace
-                    .read(cx)
-                    .session(id, cx)
-                    .map(|chat| turns_for_cache(&chat.items, range))
-                else {
-                    return;
-                };
-                let turns = items;
-                view.state.selection.retain(|ix| turns.contains(ix));
+                view.state.selection.retain(|ix| items.contains(ix));
                 view.state.galleries.borrow_mut().retain(|ix, gallery| {
-                    turns.contains(ix) || gallery.read(cx).is_preview_open(cx)
+                    items.contains(ix) || gallery.read(cx).is_preview_open(cx)
                 });
             });
             window.request_animation_frame();
@@ -1002,7 +1003,7 @@ fn render(
             rail(
                 chat,
                 hold,
-                &self::turns(&chat.items),
+                &rows,
                 px(rail_room(pane_width)),
                 Some({
                     let workspace = hold.workspace.clone();
@@ -1073,8 +1074,10 @@ fn excerpt(
     window: &mut Window,
     cx: &mut Context<ChatSession>,
 ) -> AnyElement {
-    let turns = turns(&chat.items);
-    let to = to.min(turns.len());
+    let rows = Rows::of(chat, hold.state, false);
+    let to = to.min(rows.turns.len());
+    let from = from.min(to);
+    let shown = (0..rows.rows.len()).filter(|at| (from..to).contains(&rows.turn[*at]));
     crate::view::kit::link::enter_nested(cx);
     let drawn = div()
         .flex()
@@ -1082,11 +1085,9 @@ fn excerpt(
         .px(px(24.))
         .py(px(PAD))
         .children(
-            turns
-                .get(from.min(to)..to)
-                .unwrap_or_default()
-                .iter()
-                .map(|turn| zone(chat, hold, turn, false, None, window, cx)),
+            shown
+                .map(|at| block(chat, hold, &rows, at, None, window, cx))
+                .collect::<Vec<_>>(),
         )
         .into_any_element();
     crate::view::kit::link::leave_nested(cx);
@@ -1099,21 +1100,6 @@ fn content_row(content: impl IntoElement) -> bezel::gpui::Div {
         .flex()
         .justify_center()
         .child(div().w_full().max_w(px(CONTENT_MAX_WIDTH)).child(content))
-}
-
-/// Retain nearby turns so small scrolls can reuse their layout and gallery state.
-fn turns_for_cache(items: &[ChatItem], range: Range<usize>) -> Range<usize> {
-    let turns = turns(items);
-    let start = range.start.saturating_sub(2);
-    let end = (range.end + 2).min(turns.len());
-    turns
-        .get(start)
-        .map(|turn| turn.range.start)
-        .unwrap_or(items.len())
-        ..turns
-            .get(end.saturating_sub(1))
-            .map(|turn| turn.range.end)
-            .unwrap_or(items.len())
 }
 
 #[derive(Clone, Copy)]
@@ -1130,7 +1116,7 @@ struct RailSelection {
 /// last turn reads only once the pane has scrolled far enough for it to head
 /// the run; following the tail does not put it there.
 fn reading_turn(
-    list: &bezel::ui::list::VariableList<usize>,
+    list: &bezel::ui::list::VariableList<Row>,
     count: usize,
     showing: &Range<usize>,
     selection: &Cell<Option<RailSelection>>,
@@ -1150,8 +1136,8 @@ fn reading_turn(
 }
 
 /// The run of turns on screen, walked from the list's own measurements: the
-/// row it is scrolled to, and every row after it that starts above the
-/// composer.
+/// turns of the row it is scrolled to, and of every row after it that starts
+/// above the composer.
 ///
 /// A row counts for as little as a sliver of itself.
 ///
@@ -1165,10 +1151,12 @@ fn reading_turn(
 /// backward fill that puts rows on screen writes the row it reached back —
 /// see `ListAlignment::Top` in gpui's list.
 fn visible_turns(
-    list: &bezel::ui::list::VariableList<usize>,
-    count: usize,
+    list: &bezel::ui::list::VariableList<Row>,
+    rows: &Rows,
     inset: Pixels,
 ) -> Range<usize> {
+    // Every row but the tail.
+    let count = rows.rows.len().saturating_sub(1);
     let floor = list.state.viewport_bounds().bottom() - inset;
     let start = list.state.logical_scroll_top().item_ix.min(count);
     let mut end = start;
@@ -1178,7 +1166,7 @@ fn visible_turns(
             _ => break,
         }
     }
-    start..end
+    rows.turns_of(start..end)
 }
 
 /// How far the column of marks is moved off centre, so that the turn being
@@ -1261,7 +1249,7 @@ fn range_menu<V: 'static>(
 fn rail<V: 'static>(
     chat: &ChatSession,
     hold: &Hold,
-    turns: &[Turn],
+    rows: &Rc<Rows>,
     room: Pixels,
     link: Option<OnLink>,
     window: &mut Window,
@@ -1270,6 +1258,7 @@ fn rail<V: 'static>(
     // The marks' padding reaches toward the text, so it comes off the room
     // before bezel is asked: a hitbox over the prose would swallow presses
     // meant for it.
+    let turns = &rows.turns;
     if turns.is_empty() || !scroll::rail_fits(room - px(2. * MARK_PAD)) {
         return Empty.into_any_element();
     }
@@ -1307,7 +1296,8 @@ fn rail<V: 'static>(
         .flex()
         .flex_col()
         .items_center()
-        .child(
+        .child({
+            let listed = rows.clone();
             canvas(
                 move |_, window, _| {
                     // Capture the actual position after a tick jump is clamped by layout.
@@ -1319,7 +1309,7 @@ fn rail<V: 'static>(
                     }
                     // The list has laid out by now, so its rows answer for
                     // their bounds again.
-                    let run = visible_turns(&handle, count, inset);
+                    let run = visible_turns(&handle, &listed, inset);
                     let moved = *shown.borrow() != run;
                     if moved {
                         *shown.borrow_mut() = run;
@@ -1330,8 +1320,8 @@ fn rail<V: 'static>(
                 },
                 |_, _, _, _| {},
             )
-            .absolute(),
-        )
+            .absolute()
+        })
         // The opening is its own element so that a column longer than it is
         // cut off at the padding rather than painted through it.
         .child(
@@ -1355,6 +1345,7 @@ fn rail<V: 'static>(
                     }
                     .filter(|asked| !asked.is_empty());
                     let handle = hold.state.list.clone();
+                    let first = rows.first[ix];
                     let selection = hold.state.rail_selection.clone();
                     let in_range = range.is_some_and(|(from, to)| (from..=to).contains(&ix));
                     let menu = link
@@ -1385,7 +1376,7 @@ fn rail<V: 'static>(
                                 turn: ix,
                                 offset: None,
                             }));
-                            handle.scroll_to(ix);
+                            handle.scroll_to(first);
                             if ix + 1 == count {
                                 handle.state.set_follow_mode(bezel::gpui::FollowMode::Tail);
                             }
@@ -1411,310 +1402,333 @@ fn rail<V: 'static>(
 /// What the last message's edit button runs, given that message's item.
 type Rewind = Rc<dyn Fn(usize, &mut Window, &mut bezel::gpui::App)>;
 
-/// One turn. `rewind` is there on the last turn only.
-fn zone(
+/// The row at `at` of `rows`, with the room it keeps from the rows around it.
+/// `rewind` is there on the last turn's question only.
+fn block(
     chat: &ChatSession,
     hold: &Hold,
-    turn: &Turn,
-    running: bool,
+    rows: &Rows,
+    at: usize,
     rewind: Option<Rewind>,
     window: &mut Window,
     cx: &mut Context<ChatSession>,
 ) -> AnyElement {
     let theme = Theme::of(cx).clone();
-    let first = turn.range.start;
-    let turn_at = turns(&chat.items)
-        .iter()
-        .position(|held| held.range.start == first)
-        .unwrap_or_default();
-    let mut zone = div().flex().flex_col().gap(px(10.)).pb(px(28.));
-    if let Some(ChatItem::User(text)) = chat.items.get(first) {
-        let (doc, images) = gallery::document(text);
-        let gallery = (!images.is_empty()).then(|| {
-            hold.state
-                .galleries
-                .borrow_mut()
-                .entry(first)
-                .or_insert_with(|| {
-                    let workspace = hold.workspace.clone();
-                    cx.new(|cx| gallery::Gallery::new(images, &chat.cwd, workspace, cx))
-                })
-                .clone()
-        });
-        let group = SharedString::from(format!("user-message-{}-{first}", chat.id));
-        let fork_group = SharedString::from(format!("fork-message-{}-{first}", chat.id));
-        let copy_group = SharedString::from(format!("copy-message-{}-{first}", chat.id));
-        let caption_size = TextStyle::Caption.painted();
-        let button_size = px(caption_size * 2.);
-        let copied = text.clone();
-        let id = chat.id;
-        let copy_done = hold.state.copy_feedback.contains_key(&first);
-        let timestamp = chat
-            .sent_at
-            .get(&first)
-            .and_then(|seconds| stamp::clock(u128::from(*seconds) * 1000));
-        zone = zone.child(
-            div()
-                .group(group.clone())
-                .self_end()
-                .max_w(px(440.))
-                .when(gallery.is_some(), |row| row.w(px(440.)).max_w_full())
+    let Some(&row) = rows.rows.get(at) else {
+        return Empty.into_any_element();
+    };
+    let turn = rows.turn[at];
+    let opens = rows.first.get(turn) == Some(&at);
+    let running = rows.running && turn + 1 == rows.turns.len();
+    let drawn = match row {
+        Row::Asked(first) => match chat.items.get(first) {
+            Some(ChatItem::User(text)) => asked(chat, hold, first, text, turn, rewind, window, cx),
+            _ => Empty.into_any_element(),
+        },
+        Row::Said(ix) => match &chat.items[ix] {
+            ChatItem::Agent(text) => prose(chat, hold, ix, text, window, cx),
+            ChatItem::Notice { text, .. } => div()
+                .opacity(0.65)
+                .child(prose(chat, hold, ix, text, window, cx))
+                .into_any_element(),
+            ChatItem::Process { command, output } => {
+                let (command, output) = (command.clone(), output.clone());
+                process(hold, ix, &command, &output, cx)
+            }
+            _ => div().into_any_element(),
+        },
+        Row::Work(start) => {
+            let span = rows.spans[at].clone();
+            let steps = chat.items[span.clone()]
+                .iter()
+                .filter(|item| matches!(item, ChatItem::Tool { .. }))
+                .count();
+            let open = rows.rows.get(at + 1) == Some(&Row::Step(start));
+            work_header(hold, chat.streaming, start, steps, open, cx)
+        }
+        Row::Step(ix) => {
+            let first = rows.rows.get(at - 1) == Some(&Row::Work(ix));
+            let is_tool = |row: Option<&Row>| match row {
+                Some(Row::Step(ix)) => matches!(chat.items[*ix], ChatItem::Tool { .. }),
+                _ => false,
+            };
+            let boxed = is_tool(Some(&row));
+            let (after, before) = (
+                is_tool(rows.rows.get(at - 1)),
+                is_tool(rows.rows.get(at + 1)),
+            );
+            let step = match &chat.items[ix] {
+                ChatItem::Thinking { text, .. } => thought(hold, ix, text, cx),
+                ChatItem::Tool { .. } => {
+                    tool_box(tool(chat, hold, ix, cx), !after, !before, &theme)
+                }
+                _ => div().into_any_element(),
+            };
+            // The step's gap to the one above is inside the run's rule, so the
+            // rule runs unbroken down the run; the run's own gap is outside it.
+            return div()
+                .when(first, |row| row.pt(px(10.)))
+                .when(rows.ends_turn(at), |row| row.pb(px(28.)))
+                .child(
+                    div()
+                        .ml(px(10.))
+                        .pl(px(12.))
+                        .border_l_1()
+                        .border_color(theme.border)
+                        .when(!first && !(boxed && after), |row| row.pt(px(8.)))
+                        .child(step),
+                )
+                .into_any_element();
+        }
+        Row::Tail => Empty.into_any_element(),
+    };
+    // A question with nothing after it yet, in the turn in flight: the word
+    // and the orb stand under it, keeping the turn's room under themselves.
+    let waiting = (running && rows.ends_turn(at) && matches!(row, Row::Asked(_)))
+        .then(|| working(chat, hold, rows.turns[turn].range.start, cx));
+    div()
+        .when(!opens, |row| row.pt(px(10.)))
+        .when(rows.ends_turn(at) && waiting.is_none(), |row| {
+            row.pb(px(28.))
+        })
+        .child(drawn)
+        .children(waiting.map(|waiting| div().pt(px(28.)).child(waiting)))
+        .into_any_element()
+}
+
+/// A turn's question: the user's bubble, and the buttons under it. `turn` is
+/// its turn, from 0.
+#[allow(clippy::too_many_arguments)]
+fn asked(
+    chat: &ChatSession,
+    hold: &Hold,
+    first: usize,
+    text: &str,
+    turn: usize,
+    rewind: Option<Rewind>,
+    window: &mut Window,
+    cx: &mut Context<ChatSession>,
+) -> AnyElement {
+    let theme = Theme::of(cx).clone();
+    let (doc, images) = gallery::document(text);
+    let gallery = (!images.is_empty()).then(|| {
+        hold.state
+            .galleries
+            .borrow_mut()
+            .entry(first)
+            .or_insert_with(|| {
+                let workspace = hold.workspace.clone();
+                cx.new(|cx| gallery::Gallery::new(images, &chat.cwd, workspace, cx))
+            })
+            .clone()
+    });
+    let group = SharedString::from(format!("user-message-{}-{first}", chat.id));
+    let fork_group = SharedString::from(format!("fork-message-{}-{first}", chat.id));
+    let copy_group = SharedString::from(format!("copy-message-{}-{first}", chat.id));
+    let caption_size = TextStyle::Caption.painted();
+    let button_size = px(caption_size * 2.);
+    let copied = text.to_owned();
+    let id = chat.id;
+    let copy_done = hold.state.copy_feedback.contains_key(&first);
+    let timestamp = chat
+        .sent_at
+        .get(&first)
+        .and_then(|seconds| stamp::clock(u128::from(*seconds) * 1000));
+    div()
+        .group(group.clone())
+        .self_end()
+        .max_w(px(440.))
+        .when(gallery.is_some(), |row| row.w(px(440.)).max_w_full())
+        .flex()
+        .flex_col()
+        .gap(px(4.))
+        .child(
+            bubble::bubble(&theme)
+                .when(gallery.is_some(), |bubble| bubble.w_full())
                 .flex()
                 .flex_col()
-                .gap(px(4.))
-                .child(
-                    bubble::bubble(&theme)
-                        .when(gallery.is_some(), |bubble| bubble.w_full())
+                .gap(px(8.))
+                .when(!doc.blocks.is_empty(), |bubble| {
+                    bubble.child(prose(chat, hold, first, text, window, cx))
+                })
+                .children(gallery),
+        )
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_end()
+                .gap(px(caption_size))
+                .pr(px(6.))
+                .text_style(TextStyle::Caption)
+                .text_color(theme.text_faint)
+                // Reserve the row so hovering does not move the conversation.
+                .invisible()
+                .group_hover(group, |row| row.visible())
+                .children(timestamp.map(|text| {
+                    div()
+                        .h(button_size)
+                        .flex_none()
                         .flex()
-                        .flex_col()
-                        .gap(px(8.))
-                        .when(!doc.blocks.is_empty(), |bubble| {
-                            bubble.child(prose(chat, hold, first, text, window, cx))
-                        })
-                        .children(gallery),
-                )
+                        .items_center()
+                        .child(text)
+                }))
                 .child(
                     div()
                         .flex()
+                        .flex_none()
                         .items_center()
-                        .justify_end()
-                        .gap(px(caption_size))
-                        .pr(px(6.))
-                        .text_style(TextStyle::Caption)
-                        .text_color(theme.text_faint)
-                        // Reserve the row so hovering does not move the conversation.
-                        .invisible()
-                        .group_hover(group, |row| row.visible())
-                        .children(timestamp.map(|text| {
+                        .gap(px(caption_size * 0.2))
+                        .children(rewind.map(|rewind| {
+                            let edit_group =
+                                SharedString::from(format!("edit-message-{id}-{first}"));
                             div()
-                                .h(button_size)
+                                .id(("edit-user-message", first))
+                                .group(edit_group.clone())
+                                .size(button_size)
                                 .flex_none()
                                 .flex()
                                 .items_center()
-                                .child(text)
+                                .justify_center()
+                                .cursor_pointer()
+                                .tooltip(|window, cx| Tooltip::text("Edit message", window, cx))
+                                .on_click(move |_, window, cx| rewind(first, window, cx))
+                                .child(
+                                    theme
+                                        .icon_at(TextStyle::Caption, icons::text::Pencil)
+                                        .text_color(theme.text_muted)
+                                        .group_hover(edit_group, |icon| {
+                                            icon.text_color(theme.text)
+                                        }),
+                                )
                         }))
-                        .child(
+                        .child({
+                            let link_group =
+                                SharedString::from(format!("link-message-{id}-{first}"));
+                            let turn = turn + 1;
                             div()
-                                .flex()
+                                .id(("link-user-message", first))
+                                .group(link_group.clone())
+                                .size(button_size)
                                 .flex_none()
+                                .flex()
                                 .items_center()
-                                .gap(px(caption_size * 0.2))
-                                .children(rewind.map(|rewind| {
-                                    let edit_group =
-                                        SharedString::from(format!("edit-message-{id}-{first}"));
-                                    div()
-                                        .id(("edit-user-message", first))
-                                        .group(edit_group.clone())
-                                        .size(button_size)
-                                        .flex_none()
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .cursor_pointer()
-                                        .tooltip(|window, cx| {
-                                            Tooltip::text("Edit message", window, cx)
-                                        })
-                                        .on_click(move |_, window, cx| rewind(first, window, cx))
-                                        .child(
-                                            theme
-                                                .icon_at(TextStyle::Caption, icons::text::Pencil)
-                                                .text_color(theme.text_muted)
-                                                .group_hover(edit_group, |icon| {
-                                                    icon.text_color(theme.text)
-                                                }),
-                                        )
-                                }))
-                                .child({
-                                    let link_group =
-                                        SharedString::from(format!("link-message-{id}-{first}"));
-                                    let turn = turn_at + 1;
-                                    div()
-                                        .id(("link-user-message", first))
-                                        .group(link_group.clone())
-                                        .size(button_size)
-                                        .flex_none()
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .cursor_pointer()
-                                        .tooltip(|window, cx| {
-                                            Tooltip::text("Copy link to turn", window, cx)
-                                        })
-                                        .on_click({
-                                            let workspace = hold.workspace.clone();
-                                            move |_, _, cx| {
-                                                let _ = workspace.update(cx, |workspace, cx| {
-                                                    if let Some(link) =
-                                                        workspace.turn_link(id, turn, turn, cx)
-                                                    {
-                                                        cx.write_to_clipboard(
-                                                            ClipboardItem::new_string(link),
-                                                        );
-                                                    }
-                                                });
+                                .justify_center()
+                                .cursor_pointer()
+                                .tooltip(|window, cx| {
+                                    Tooltip::text("Copy link to turn", window, cx)
+                                })
+                                .on_click({
+                                    let workspace = hold.workspace.clone();
+                                    move |_, _, cx| {
+                                        let _ = workspace.update(cx, |workspace, cx| {
+                                            if let Some(link) =
+                                                workspace.turn_link(id, turn, turn, cx)
+                                            {
+                                                cx.write_to_clipboard(ClipboardItem::new_string(
+                                                    link,
+                                                ));
                                             }
-                                        })
-                                        .child(
-                                            theme
-                                                .icon_at(TextStyle::Caption, icons::text::Link)
-                                                .text_color(theme.text_muted)
-                                                .group_hover(link_group, |icon| {
-                                                    icon.text_color(theme.text)
-                                                }),
-                                        )
+                                        });
+                                    }
                                 })
                                 .child(
-                                    div()
-                                        .id(("fork-user-message", first))
-                                        .group(fork_group.clone())
-                                        .size(button_size)
-                                        .flex_none()
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .cursor_pointer()
-                                        .tooltip(|window, cx| {
-                                            Tooltip::text("Fork session from here", window, cx)
-                                        })
-                                        .on_click({
-                                            let workspace = hold.workspace.clone();
-                                            move |_, _, cx| {
-                                                let _ = workspace.update(cx, |workspace, cx| {
-                                                    workspace.fork_session(id, first, cx);
-                                                });
-                                            }
-                                        })
-                                        .child(
-                                            theme
-                                                .icon_at(
-                                                    TextStyle::Caption,
-                                                    icons::development::GitFork,
-                                                )
-                                                .text_color(theme.text_muted)
-                                                .group_hover(fork_group, |icon| {
-                                                    icon.text_color(theme.text)
-                                                }),
-                                        ),
+                                    theme
+                                        .icon_at(TextStyle::Caption, icons::text::Link)
+                                        .text_color(theme.text_muted)
+                                        .group_hover(link_group, |icon| {
+                                            icon.text_color(theme.text)
+                                        }),
                                 )
+                        })
+                        .child(
+                            div()
+                                .id(("fork-user-message", first))
+                                .group(fork_group.clone())
+                                .size(button_size)
+                                .flex_none()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .cursor_pointer()
+                                .tooltip(|window, cx| {
+                                    Tooltip::text("Fork session from here", window, cx)
+                                })
+                                .on_click({
+                                    let workspace = hold.workspace.clone();
+                                    move |_, _, cx| {
+                                        let _ = workspace.update(cx, |workspace, cx| {
+                                            workspace.fork_session(id, first, cx);
+                                        });
+                                    }
+                                })
                                 .child(
-                                    div()
-                                        .id(("copy-user-message", first))
-                                        .group(copy_group.clone())
-                                        .size(button_size)
-                                        .flex_none()
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .cursor_pointer()
-                                        .tooltip(move |window, cx| {
-                                            Tooltip::text(
-                                                if copy_done { "Copied" } else { "Copy message" },
-                                                window,
-                                                cx,
-                                            )
-                                        })
-                                        .on_click({
-                                            let view = hold.view.clone();
-                                            move |_, _, cx| {
-                                                cx.write_to_clipboard(ClipboardItem::new_string(
-                                                    copied.clone(),
-                                                ));
-                                                view.update(cx, |view, cx| {
-                                                    let reset = cx.spawn(async move |view, cx| {
-                                                        cx.background_executor()
-                                                            .timer(Duration::from_secs(2))
-                                                            .await;
-                                                        let _ = view.update(cx, |view, cx| {
-                                                            view.state.copy_feedback.remove(&first);
-                                                            cx.notify();
-                                                        });
-                                                    });
-                                                    view.state.copy_feedback.insert(first, reset);
+                                    theme
+                                        .icon_at(TextStyle::Caption, icons::development::GitFork)
+                                        .text_color(theme.text_muted)
+                                        .group_hover(fork_group, |icon| {
+                                            icon.text_color(theme.text)
+                                        }),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .id(("copy-user-message", first))
+                                .group(copy_group.clone())
+                                .size(button_size)
+                                .flex_none()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .cursor_pointer()
+                                .tooltip(move |window, cx| {
+                                    Tooltip::text(
+                                        if copy_done { "Copied" } else { "Copy message" },
+                                        window,
+                                        cx,
+                                    )
+                                })
+                                .on_click({
+                                    let view = hold.view.clone();
+                                    move |_, _, cx| {
+                                        cx.write_to_clipboard(ClipboardItem::new_string(
+                                            copied.clone(),
+                                        ));
+                                        view.update(cx, |view, cx| {
+                                            let reset = cx.spawn(async move |view, cx| {
+                                                cx.background_executor()
+                                                    .timer(Duration::from_secs(2))
+                                                    .await;
+                                                let _ = view.update(cx, |view, cx| {
+                                                    view.state.copy_feedback.remove(&first);
                                                     cx.notify();
-                                                })
-                                                .ok();
-                                            }
+                                                });
+                                            });
+                                            view.state.copy_feedback.insert(first, reset);
+                                            cx.notify();
                                         })
-                                        .child(
-                                            theme
-                                                .icon_at(
-                                                    TextStyle::Caption,
-                                                    if copy_done {
-                                                        icons::notifications::Check
-                                                    } else {
-                                                        icons::text::Copy
-                                                    },
-                                                )
-                                                .text_color(theme.text_muted)
-                                                .group_hover(copy_group, |icon| {
-                                                    icon.text_color(theme.text)
-                                                }),
-                                        ),
+                                        .ok();
+                                    }
+                                })
+                                .child(
+                                    theme
+                                        .icon_at(
+                                            TextStyle::Caption,
+                                            if copy_done {
+                                                icons::notifications::Check
+                                            } else {
+                                                icons::text::Copy
+                                            },
+                                        )
+                                        .text_color(theme.text_muted)
+                                        .group_hover(copy_group, |icon| {
+                                            icon.text_color(theme.text)
+                                        }),
                                 ),
                         ),
                 ),
-        );
-    }
-    let body =
-        (first + usize::from(matches!(chat.items[first], ChatItem::User(_))))..turn.range.end;
-    let mut at = body.start;
-    for run in chat.items[body.clone()].chunk_by(|a, b| interim(a) == interim(b)) {
-        let span = at..at + run.len();
-        at = span.end;
-        if !interim(&run[0]) {
-            for ix in span {
-                zone = zone.child(match &chat.items[ix] {
-                    ChatItem::Agent(text) => prose(chat, hold, ix, text, window, cx),
-                    ChatItem::Notice { text, .. } => div()
-                        .opacity(0.65)
-                        .child(prose(chat, hold, ix, text, window, cx))
-                        .into_any_element(),
-                    ChatItem::Process { command, output } => {
-                        let (command, output) = (command.clone(), output.clone());
-                        process(hold, ix, &command, &output, cx)
-                    }
-                    _ => div().into_any_element(),
-                });
-            }
-            continue;
-        }
-        let steps = run
-            .iter()
-            .filter(|item| matches!(item, ChatItem::Tool { .. }))
-            .count();
-        // Auto-follow the run the turn is still inside, and the person who
-        // presses the header wins from then on.
-        let live = running && span.end == turn.range.end;
-        let open = hold
-            .state
-            .work
-            .get(&span.start)
-            .copied()
-            .unwrap_or_default()
-            .get(live);
-        zone = zone.child(work_header(
-            hold,
-            chat.streaming,
-            span.start,
-            steps,
-            open,
-            cx,
-        ));
-        if open {
-            zone = zone.child(
-                div()
-                    .ml(px(10.))
-                    .pl(px(12.))
-                    .border_l_1()
-                    .border_color(theme.border)
-                    .flex()
-                    .flex_col()
-                    .gap(px(8.))
-                    .children(work(chat, hold, span, cx)),
-            );
-        }
-    }
-    zone.into_any_element()
+        )
+        .into_any_element()
 }
 
 /// Work rather than answer: what the agent did, as against what it said.
@@ -1769,42 +1783,21 @@ fn work_header(
         .into_any_element()
 }
 
-/// One run of work: thoughts, and runs of adjacent tool calls boxed together —
-/// the box boundary is "is this a tool", so a thought between two calls breaks
-/// the box exactly where it should.
-fn work(
-    chat: &ChatSession,
-    hold: &Hold,
-    body: Range<usize>,
-    cx: &mut Context<ChatSession>,
-) -> Vec<AnyElement> {
-    let theme = Theme::of(cx).clone();
-    let is_tool = |item: &ChatItem| matches!(item, ChatItem::Tool { .. });
-    let mut out = Vec::new();
-    let mut ix = body.start;
-    for run in chat.items[body].chunk_by(|a, b| is_tool(a) == is_tool(b)) {
-        if is_tool(&run[0]) {
-            let start = ix;
-            out.push(
-                div()
-                    .rounded(px(Theme::panel_radius()))
-                    .border_1()
-                    .border_color(theme.border)
-                    .overflow_hidden()
-                    .children(
-                        (start..start + run.len()).map(|i| tool(chat, hold, i, i == start, cx)),
-                    )
-                    .into_any_element(),
-            );
-        } else {
-            out.extend(run.iter().enumerate().map(|(at, item)| match item {
-                ChatItem::Thinking { text, .. } => thought(hold, ix + at, text, cx),
-                _ => div().into_any_element(),
-            }));
-        }
-        ix += run.len();
-    }
-    out
+/// One tool call's row of the box adjacent calls share — the box boundary is
+/// "is this a tool", so a thought between two calls breaks the box exactly
+/// where it should. `top` and `bottom` say whether the row is at either end of
+/// its box.
+fn tool_box(row: AnyElement, top: bool, bottom: bool, theme: &Theme) -> AnyElement {
+    let radius = px(Theme::panel_radius());
+    div()
+        .border_x_1()
+        .border_t_1()
+        .border_color(theme.border)
+        .overflow_hidden()
+        .when(top, |el| el.rounded_t(radius))
+        .when(bottom, |el| el.rounded_b(radius).border_b_1())
+        .child(row)
+        .into_any_element()
 }
 
 /// One thought: a single clipped line, or the whole text once opened.
@@ -1895,13 +1888,7 @@ pub fn title(label: &str) -> (SharedString, Option<SharedString>, Option<SharedS
 }
 
 /// One tool call, and what it printed.
-fn tool(
-    chat: &ChatSession,
-    hold: &Hold,
-    ix: usize,
-    first: bool,
-    cx: &mut Context<ChatSession>,
-) -> AnyElement {
+fn tool(chat: &ChatSession, hold: &Hold, ix: usize, cx: &mut Context<ChatSession>) -> AnyElement {
     let theme = Theme::of(cx).clone();
     let ChatItem::Tool {
         kind,
@@ -1918,7 +1905,6 @@ fn tool(
     let meta = (*status == ToolStatus::Running).then(|| SharedString::from("running"));
     let (name, rest, full) = title(label);
     div()
-        .when(!first, |el| el.border_t_1().border_color(theme.border))
         .child(
             theme
                 .step_row(
