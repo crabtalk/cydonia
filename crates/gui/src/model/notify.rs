@@ -13,12 +13,6 @@
 use crate::model::{session::ChatSession, workspace::references};
 use bezel::gpui::{App, SharedString, SystemNotification};
 
-/// The prefix a session's notification is tagged with. The tag is the session,
-/// so a second turn replaces the first rather than stacking a centre full of
-/// them, and the response carries it back — see
-/// [`crate::view::window::root::on_notification`].
-const TAG: &str = "session:";
-
 /// How much of the agent's last word the body carries.
 const BODY: usize = 140;
 
@@ -50,7 +44,7 @@ impl Outbox {
             return;
         }
         if changed && self.asking {
-            cx.dismiss_system_notification(&tag(chat));
+            cx.dismiss_system_notification(&chat.notification_tag());
             self.asking = false;
         }
         let notify = references::current(cx)
@@ -65,12 +59,6 @@ impl Outbox {
     }
 }
 
-/// Which session a notification came back from, or `None` for one posted by
-/// something else.
-pub fn session_of(tag: &str) -> Option<u64> {
-    tag.strip_prefix(TAG)?.parse().ok()
-}
-
 /// Post under `chat`'s tag, if anything should be said at all, and answer
 /// whether it was. `notify` is the setting.
 fn post(chat: &ChatSession, body: String, notify: bool, cx: &mut App) -> bool {
@@ -78,16 +66,12 @@ fn post(chat: &ChatSession, body: String, notify: bool, cx: &mut App) -> bool {
         return false;
     }
     cx.show_system_notification(SystemNotification {
-        tag: SharedString::from(tag(chat)),
+        tag: SharedString::from(chat.notification_tag()),
         title: SharedString::from(chat.label()),
         body: SharedString::from(body),
         actions: Vec::new(),
     });
     true
-}
-
-fn tag(chat: &ChatSession) -> String {
-    format!("{TAG}{}", chat.id)
 }
 
 /// Whether one of the app's windows is the one the user is in.

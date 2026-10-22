@@ -78,6 +78,10 @@ const STREAM_FRAME: Duration = Duration::from_millis(120);
 #[cfg(feature = "desktop")]
 const STDERR_KEEP: usize = 16 * 1024;
 
+/// What a session's notification tag starts with — see
+/// [`ChatSession::notification_tag`].
+const NOTIFICATION_TAG: &str = "session:";
+
 /// How much of the context window the conversation has taken, as the agent
 /// counts it.
 ///
@@ -226,6 +230,19 @@ pub struct ChatSession {
 }
 
 impl ChatSession {
+    /// The tag this session's system notifications are posted under. One per
+    /// session, so a second post replaces the first, and the response carries
+    /// it back — see [`crate::view::window::root::on_notification`].
+    pub fn notification_tag(&self) -> String {
+        format!("{NOTIFICATION_TAG}{}", self.id)
+    }
+
+    /// The id of the session a notification tag names, or `None` for a tag
+    /// posted by something else.
+    pub fn tagged(tag: &str) -> Option<u64> {
+        tag.strip_prefix(NOTIFICATION_TAG)?.parse().ok()
+    }
+
     /// The link to turns `from..=to` of this session, from 1:
     /// `cydonia://<project>#43:5-7`. Nothing for a session without a number
     /// yet.
