@@ -124,7 +124,7 @@ impl BoardView {
             .filter(|card| {
                 !card.busy
                     && workspace
-                        .blocking_boards(&self.board.project, card, cx)
+                        .blocking_boards(self.board.project, card, cx)
                         .next()
                         .is_none()
             })
@@ -155,8 +155,7 @@ impl BoardView {
                 )
             };
             let recent = workspace
-                .project_at(&this.board.project)
-                .and_then(|ix| workspace.projects.get(ix))
+                .project(this.board.project)
                 .map(|project| {
                     project
                         .recent_sessions(cx)
@@ -191,7 +190,7 @@ impl BoardView {
         let Some(text) = self.sent_text(on, sent, &cards, cx) else {
             return;
         };
-        let (on, project) = (on.to_owned(), self.board.project.clone());
+        let (on, project) = (on.to_owned(), self.board.project);
         self.workspace.update(cx, |workspace, cx| {
             let id = match to {
                 To::Session(id) => {
@@ -200,7 +199,7 @@ impl BoardView {
                 }
                 To::New(at) => {
                     let (Some(ix), Some(agent)) =
-                        (workspace.project_at(&project), workspace.agent_at(at, cx))
+                        (workspace.project_ix(project), workspace.agent_at(at, cx))
                     else {
                         return;
                     };
@@ -225,8 +224,9 @@ impl BoardView {
     /// The chips of `cards`, under the lane's name where a lane is sent.
     /// Nothing where none of them has a handle to link.
     fn sent_text(&self, on: &str, sent: &Sent, cards: &[String], cx: &App) -> Option<String> {
-        let board = self.workspace.read(cx).board_at(on, cx)?;
-        let name = reference::project_name(&self.board.project)?;
+        let workspace = self.workspace.read(cx);
+        let board = workspace.board_at(on, cx)?;
+        let name = reference::project_name(workspace.path_of(self.board.project))?;
         let chips: Vec<String> = cards
             .iter()
             .filter_map(|id| {

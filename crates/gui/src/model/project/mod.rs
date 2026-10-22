@@ -1,8 +1,9 @@
 //! A project: a directory, the sessions running in it, its boards and its
 //! articles.
 //!
-//! The path is the whole identity — it is what every session in the project
-//! is spawned with as its `cwd`, and what [`crate::model::state`] persists.
+//! Named by its [`ProjectId`] inside the app. Its path is what every session
+//! in it is spawned with as its `cwd`, and what [`crate::model::state`]
+//! persists.
 
 use crate::{
     data::{Data, Home, Page, Table},
@@ -14,14 +15,15 @@ use crate::{
         workspace::{Showing, Workspace},
     },
 };
-use artifact::board::Board;
-use artifact::kind::Kind;
-use artifact::project::Project as _;
+use artifact::{board::Board, kind::Kind, project::Project as _};
 use bezel::gpui::{App, AppContext as _, Context, Entity};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
 };
+
+mod id;
+pub use id::{ProjectId, ProjectIds};
 
 /// How many rows the table pane reads at once. The count beside them is the
 /// table's own, so a window that does not reach the end says so.
@@ -76,6 +78,7 @@ impl HeldSession {
 }
 
 pub struct Project {
+    pub id: ProjectId,
     pub path: PathBuf,
     pub sessions: Vec<HeldSession>,
     pub active: Option<u64>,
@@ -115,8 +118,9 @@ pub struct Project {
 }
 
 impl Project {
-    pub fn new(path: PathBuf, cx: &mut App) -> Self {
+    pub fn new(id: ProjectId, path: PathBuf, cx: &mut App) -> Self {
         let mut this = Self {
+            id,
             boards: store::open(&path)
                 .boards()
                 .into_iter()
@@ -513,5 +517,5 @@ impl Project {
 }
 
 #[cfg(test)]
-#[path = "../../tests/unit/archive_boards.rs"]
+#[path = "../../../tests/unit/archive_boards.rs"]
 mod archive_tests;

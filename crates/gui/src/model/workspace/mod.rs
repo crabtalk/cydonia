@@ -15,7 +15,7 @@ use crate::{
     model::{
         article::{self, Article},
         fonts,
-        project::Project,
+        project::{Project, ProjectId, ProjectIds},
         session::ChatSession,
         settings::{self, Feature, Settings},
         state::{self, State},
@@ -23,12 +23,10 @@ use crate::{
     },
 };
 use artifact::board::Board;
-use bezel::theme::AppExt as _;
-use bezel::ui::AppExt as _;
 use bezel::{
     gpui::{App, AppContext as _, Context, EntityId, EventEmitter},
-    theme::{Brand, Tint, Vibrancy, appearance::AppearanceMode},
-    ui::icons::Icon,
+    theme::{AppExt as _, Brand, Tint, Vibrancy, appearance::AppearanceMode},
+    ui::{AppExt as _, icons::Icon},
 };
 use cydonia_acp::proto::SessionConfigOptionValue;
 use editor::AppExt as _;
@@ -58,7 +56,7 @@ mod labels;
 mod spaces;
 mod tabs;
 pub use sessions::ArticleChange;
-pub use spaces::Showing;
+pub use spaces::{Entry, Member, Showing, Space};
 pub use tabs::{Opening, Slot};
 mod order;
 mod projects;
@@ -100,6 +98,8 @@ pub struct Workspace {
     pub settings: Settings,
     pub projects: Vec<Project>,
     pub active: Option<usize>,
+    /// Every project path seen, open or not, and its id.
+    ids: ProjectIds,
     pub appearance: AppearanceMode,
     pub cursor_blink: bool,
     /// Session ids are minted here and never reused, so a card's link to the
@@ -135,37 +135,34 @@ pub struct Workspace {
     /// older value stops.
     #[cfg(feature = "desktop")]
     icon_pass: u64,
-    /// What each project was last showing, by project path — where a launch
-    /// puts you back.
-    last: BTreeMap<PathBuf, state::Entry>,
-    /// The hand-arranged order of each project's entries, by project path.
-    /// Empty for a project nobody has dragged a row in, which lists by stamp
-    /// until they do — see [`order`].
-    pub(super) order: BTreeMap<PathBuf, Vec<state::Entry>>,
-    /// The entries pinned to the top of each project's list, by project path
-    /// — see [`order`].
-    pub(super) pinned: BTreeMap<PathBuf, Vec<state::Entry>>,
-    /// What each project's list is ordered by under its pins, by project path
-    /// — see [`order`], which [`state::Sort::Manual`] reads and the other two
-    /// leave alone.
-    pub(super) sort: BTreeMap<PathBuf, state::Sort>,
+    /// What each project was last showing — where a launch puts you back.
+    last: BTreeMap<ProjectId, state::Entry>,
+    /// The hand-arranged order of each project's entries. Empty for a project
+    /// nobody has dragged a row in, which lists by stamp until they do — see
+    /// [`order`].
+    pub(super) order: BTreeMap<ProjectId, Vec<state::Entry>>,
+    /// The entries pinned to the top of each project's list — see [`order`].
+    pub(super) pinned: BTreeMap<ProjectId, Vec<state::Entry>>,
+    /// What each project's list is ordered by under its pins — see [`order`],
+    /// which [`state::Sort::Manual`] reads and the other two leave alone.
+    pub(super) sort: BTreeMap<ProjectId, state::Sort>,
     /// The main window's last frame, carried so the whole-file rewrite in
     /// [`Self::save`] keeps it.
     window: Option<state::Frame>,
     /// The arrangements this machine holds. The window's rather than a
     /// project's: a space can hold panes from several — see [`spaces`]. Which
     /// one is shown is the strip's `front`.
-    pub spaces: Vec<artifact::space::Space>,
+    pub spaces: Vec<Space>,
     /// The window's tabs, and which is in front — see [`tabs`].
     strip: Vec<Slot>,
     front: Option<Slot>,
     /// The tab the next opening replaces — see [`Workspace::open_tab`].
     /// Runtime only.
-    preview: Option<artifact::space::Member>,
+    preview: Option<Member>,
     /// Spaces whose members the sidebar hides, by id.
     folded_spaces: std::collections::HashSet<String>,
     /// The order the sidebar lists each space's members in, by space id.
-    space_order: std::collections::BTreeMap<String, Vec<artifact::space::Member>>,
+    space_order: std::collections::BTreeMap<String, Vec<Member>>,
     /// The sidebar's sections whose rows are hidden, by name.
     folded_sections: std::collections::HashSet<String>,
     /// The palette's commands last run, most recent first.
@@ -180,16 +177,47 @@ pub struct Workspace {
 
 impl Workspace {
     pub fn new(settings: Settings, state: State, cx: &mut Context<Self>) -> Self {
+        // The open projects first, so each id's path is the one its project
+        // is listed under.
+        let mut ids = ProjectIds::default();
         let projects: Vec<Project> = state
             .projects
             .into_iter()
             .map(|path| {
                 let expanded = !state.collapsed.contains(&path);
-                let mut project = Project::new(path, cx);
+                let mut project = Project::new(ids.intern(&path), path, cx);
                 project.expanded = expanded;
                 project
             })
             .collect();
+        let last = ids.intern_keys(state.last);
+        let order = ids.intern_keys(state.order);
+        let pinned = ids.intern_keys(state.pinned);
+        let sort = ids.intern_keys(state.sort);
+        let spaces = Self::in_order(
+            <crate::model::spaces::Shelf as crate::model::spaces::Store>::all()
+                .into_iter()
+                .map(|space| space.map(&mut |path| ids.intern(&path)))
+                .collect(),
+            &state.spaces,
+        );
+        let space_order = state
+            .space_order
+            .into_iter()
+            .map(|(space, members)| {
+                let members = members
+                    .into_iter()
+                    .map(|member| member.map(|path| ids.intern(&path)))
+                    .collect();
+                (space, members)
+            })
+            .collect();
+        let tabs: Option<Vec<Slot>> = state.tabs.map(|tabs| {
+            tabs.into_iter()
+                .map(|slot| slot.map(|path| ids.intern(&path)))
+                .collect()
+        });
+        let front = state.front.map(|slot| slot.map(|path| ids.intern(&path)));
         let active = (!projects.is_empty()).then_some(state.active);
         let restore: Vec<usize> = (0..projects.len()).collect();
         let look = settings.appearance.clone();
@@ -218,24 +246,22 @@ impl Workspace {
             indent_project_rows: look.indent_project_rows,
             wrap_code: look.wrap_code,
             meter: false,
+            ids,
             next_id: 0,
             agent_icons: HashMap::new(),
             #[cfg(feature = "desktop")]
             icon_pass: 0,
-            last: state.last,
-            order: state.order,
-            pinned: state.pinned,
-            sort: state.sort,
+            last,
+            order,
+            pinned,
+            sort,
             window: state.window,
-            spaces: Self::in_order(
-                <crate::model::spaces::Shelf as crate::model::spaces::Store>::all(),
-                &state.spaces,
-            ),
+            spaces,
             strip: Vec::new(),
             front: None,
             preview: None,
             folded_spaces: state.folded_spaces.iter().cloned().collect(),
-            space_order: state.space_order,
+            space_order,
             folded_sections: state.folded_sections.iter().cloned().collect(),
             recent_commands: state.commands,
             release: state.release,
@@ -248,7 +274,7 @@ impl Workspace {
             this.watch_project(ix, cx);
         }
         this.open_last_entry(cx);
-        this.restore_tabs(state.tabs, state.front, state.space, cx);
+        this.restore_tabs(tabs, front, state.space, cx);
         this.bring_up_tabs(cx);
         this.bring_up_space(cx);
         this.load_agent_icons(cx);
@@ -285,12 +311,12 @@ impl Workspace {
                 .filter(|project| !project.expanded)
                 .map(|project| project.path.clone())
                 .collect(),
-            last: self.last.clone(),
-            order: self.order.clone(),
-            pinned: self.pinned.clone(),
-            sort: self.sort.clone(),
+            last: self.ids.path_keys(&self.last),
+            order: self.ids.path_keys(&self.order),
+            pinned: self.ids.path_keys(&self.pinned),
+            sort: self.ids.path_keys(&self.sort),
             space: self.active_space().map(|space| space.id.clone()),
-            spaces: self.spaces.iter().map(|space| space.id.clone()).collect(),
+            spaces: self.space_tabs().map(str::to_owned).collect(),
             folded_spaces: self
                 .spaces
                 .iter()
@@ -301,7 +327,13 @@ impl Workspace {
                 .space_order
                 .iter()
                 .filter(|(id, _)| self.spaces.iter().any(|space| &space.id == *id))
-                .map(|(id, order)| (id.clone(), order.clone()))
+                .map(|(id, order)| {
+                    let order = order
+                        .iter()
+                        .map(|member| member.clone().map(|id| self.path_of(id).to_path_buf()))
+                        .collect();
+                    (id.clone(), order)
+                })
                 .collect(),
             folded_sections: {
                 let mut folded: Vec<String> = self.folded_sections.iter().cloned().collect();
@@ -311,8 +343,15 @@ impl Workspace {
             window: self.window,
             commands: self.recent_commands.clone(),
             release: self.release.clone(),
-            tabs: Some(self.strip.clone()),
-            front: self.front_slot().cloned(),
+            tabs: Some(
+                self.strip
+                    .iter()
+                    .map(|slot| slot.clone().map(|id| self.path_of(id).to_path_buf()))
+                    .collect(),
+            ),
+            front: self
+                .front_slot()
+                .map(|slot| slot.clone().map(|id| self.path_of(id).to_path_buf())),
         });
     }
 

@@ -818,7 +818,7 @@ fn a_space_keeps_the_pane_it_was_focused_on() {
 #[test]
 fn a_zoomed_pane_outlives_the_tab_it_was_zoomed_from() {
     let (a, b, c) = (Member::app("a"), Member::app("b"), Member::app("c"));
-    let mut space = Space::new("1".into(), "space-1", a.clone());
+    let mut space: Space = Space::new("1".into(), "space-1", a.clone());
     assert!(space.insert(&a, &b, Side::Right));
     assert!(space.stack(&b, &c));
 
@@ -838,7 +838,7 @@ fn the_top_edge_is_each_columns_top_pane() {
         Member::app("c"),
         Member::app("d"),
     );
-    let mut space = Space::new("1".into(), "space-1", a.clone());
+    let mut space: Space = Space::new("1".into(), "space-1", a.clone());
     assert_eq!(space.tree.top_fronts(), vec![a.clone()]);
     assert!(space.insert(&a, &b, Side::Right));
     assert!(space.insert(&a, &c, Side::Below));

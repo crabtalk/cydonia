@@ -108,7 +108,7 @@ impl BoardView {
             .iter()
             .filter(|blocker| {
                 workspace
-                    .card_board(&self.board.project, blocker, cx)
+                    .card_board(self.board.project, blocker, cx)
                     .is_some()
             })
             .cloned()
@@ -178,7 +178,7 @@ impl BoardView {
         let mut named = Vec::new();
         for written in &held {
             let Some(title) = workspace
-                .card_board(&self.board.project, written, cx)
+                .card_board(self.board.project, written, cx)
                 .zip(reference::parse(written))
                 .and_then(|(board, reference)| match reference.target {
                     Target::Card { handle, .. } => {
@@ -197,14 +197,11 @@ impl BoardView {
             });
             named.push((name, written.clone()));
         }
-        let home = workspace
-            .project_at(&self.board.project)
-            .and_then(|at| workspace.projects.get(at))
-            .map(|project| project.path.as_path());
+        let home = self.board.project;
         let cards = mention::carded(workspace, cx);
         let ranked: Vec<usize> = match query.trim().is_empty() {
             true => (0..cards.len())
-                .filter(|&ix| Some(cards[ix].path) == home && cards[ix].board.id == self.board.id)
+                .filter(|&ix| cards[ix].home == home && cards[ix].board.id == self.board.id)
                 .collect(),
             false => {
                 let (by_handle, by_text) = mention::Query::parse(query).rank_cards(&cards);
@@ -215,7 +212,7 @@ impl BoardView {
             .into_iter()
             .map(|ix| &cards[ix])
             .filter_map(|carded| {
-                let own = Some(carded.path) == home;
+                let own = carded.home == home;
                 if own && carded.card.id == card {
                     return None;
                 }

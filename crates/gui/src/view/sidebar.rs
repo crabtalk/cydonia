@@ -9,9 +9,10 @@ pub(crate) use list::List;
 
 use crate::{
     model::{
+        project::ProjectId,
         session::ChatSession,
         settings::Features,
-        workspace::{Showing, Workspace},
+        workspace::{Member, Showing, Workspace},
     },
     view::{
         kit::{
@@ -27,7 +28,7 @@ use crate::{
         },
     },
 };
-use artifact::{kind::Kind, space::Member};
+use artifact::kind::Kind;
 use bezel::{
     gpui::{
         self, AnyElement, App, Context, Div, Empty, Entity, Hsla, ListAlignment, ListOffset,
@@ -43,12 +44,7 @@ use bezel::{
         scroll as scrollbars,
     },
 };
-use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
-    rc::Rc,
-    time::Duration,
-};
+use std::{collections::HashMap, path::PathBuf, rc::Rc, time::Duration};
 
 /// The wash a row paints. With 1px either side it is [`ROW_HEIGHT`], the
 /// pitch of headings and rows alike.
@@ -137,13 +133,25 @@ pub(crate) enum Row {
     Heading(Heading),
     /// A project or a space: a heading its entries fold under.
     Group(Group),
-    /// The line the archived entries of the project at this path are folded
-    /// under.
-    Archive(PathBuf),
-    /// An entry of the project at `project`.
-    Entry { project: PathBuf, showing: Showing },
+    /// The line the archived entries of this project are folded under.
+    Archive(ProjectId),
+    /// An entry of `project`.
+    Entry {
+        project: ProjectId,
+        showing: Showing,
+    },
     /// An app, by its id.
     App(String),
+}
+
+/// The rows the sidebar lists and what is read off them, index for index.
+#[derive(Clone, Default)]
+struct Listing {
+    rows: Rc<Vec<Row>>,
+    shapes: Rc<Vec<Shape>>,
+    places: Rc<HashMap<Row, Place>>,
+    /// Whether each row is listed by a label filter, and so not dragged.
+    narrowed: Rc<Vec<bool>>,
 }
 
 /// How a row is drawn, which is what its height follows.
@@ -198,7 +206,7 @@ impl Row {
         let Row::Entry { project, showing } = self else {
             return None;
         };
-        let at = workspace.project_at(project)?;
+        let at = workspace.project_ix(*project)?;
         Some((at, workspace.projects[at].ix_of(showing)?))
     }
 
@@ -206,7 +214,7 @@ impl Row {
     pub(crate) fn member(&self, workspace: &Workspace, cx: &App) -> Option<Member> {
         match self {
             Row::Entry { project, showing } => {
-                workspace.member_of(workspace.project_at(project)?, showing.clone(), cx)
+                workspace.member_of(workspace.project_ix(*project)?, showing.clone(), cx)
             }
             Row::App(id) => Some(Member::app(id.clone())),
             Row::Group(_) | Row::Archive(_) | Row::Heading(_) => None,
@@ -221,7 +229,7 @@ impl Row {
             Member::Entry(entry) => {
                 let (_, showing) = workspace.showing_of(member, cx)?;
                 Some(Row::Entry {
-                    project: entry.project.clone(),
+                    project: entry.project,
                     showing,
                 })
             }
@@ -251,7 +259,7 @@ impl Row {
         let id = *id;
         workspace.update(cx, |workspace, cx| {
             workspace.retain_session(id, cx)?;
-            workspace.member_of(workspace.project_at(project)?, Showing::Session(id), cx)
+            workspace.member_of(workspace.project_ix(*project)?, Showing::Session(id), cx)
         })
     }
 
@@ -259,9 +267,7 @@ impl Row {
     pub(crate) fn label(&self, workspace: &Workspace, cx: &App) -> String {
         let named = || -> Option<String> {
             Some(match self {
-                Row::Group(Group::Project(path)) => {
-                    workspace.projects.get(workspace.project_at(path)?)?.name()
-                }
+                Row::Group(Group::Project(project)) => workspace.project(*project)?.name(),
                 Row::Archive(_) | Row::Heading(_) => return None,
                 Row::App(id) => workspace.program(id, cx)?.read(cx).label(),
                 Row::Group(Group::Space(id)) => workspace.space_by_id(id)?.label().to_owned(),
@@ -297,7 +303,7 @@ impl Row {
             return false;
         };
         workspace
-            .project_at(project)
+            .project_ix(*project)
             .is_some_and(|project| workspace.is_pinned(project, showing.clone(), cx))
     }
 
@@ -361,8 +367,7 @@ impl Heading {
 /// [`Sidebar::group_head`].
 #[derive(Clone, PartialEq, Eq, Debug, Hash)]
 pub(crate) enum Group {
-    /// A project, by its path.
-    Project(PathBuf),
+    Project(ProjectId),
     /// A space, by its id.
     Space(String),
 }
@@ -447,10 +452,10 @@ pub(crate) fn on_disk(path: PathBuf) -> [(Item, Act); 2] {
 
 /// The project an entry row, a project's heading or its archive line belongs
 /// to.
-fn project_of(row: &Row) -> Option<&Path> {
+fn project_of(row: &Row) -> Option<ProjectId> {
     match row {
-        Row::Group(Group::Project(path)) | Row::Archive(path) => Some(path),
-        Row::Entry { project, .. } => Some(project),
+        Row::Group(Group::Project(project)) | Row::Archive(project) => Some(*project),
+        Row::Entry { project, .. } => Some(*project),
         Row::Group(Group::Space(_)) | Row::Heading(_) | Row::App(_) => None,
     }
 }
@@ -556,21 +561,18 @@ pub(crate) fn ghost(label: SharedString, theme: &Theme) -> AnyElement {
 /// An entry's own name in the element tree: two rows must never share one.
 pub(crate) fn key_of(entry: &Row) -> String {
     match entry {
-        Row::Group(Group::Project(path)) => format!("project-{}", path.display()),
+        Row::Group(Group::Project(project)) => format!("project-{project}"),
         Row::Group(Group::Space(id)) => format!("space-{id}"),
         Row::Heading(Heading::Projects) => "projects".to_owned(),
         Row::Heading(Heading::Spaces) => "spaces".to_owned(),
         Row::Heading(Heading::Apps) => "apps".to_owned(),
-        Row::Archive(path) => format!("archive-{}", path.display()),
-        Row::Entry { project, showing } => {
-            let project = project.display();
-            match showing {
-                Showing::Session(id) => format!("session-{project}-{id}"),
-                Showing::Board(id) => format!("board-{project}-{id}"),
-                Showing::Article(id) => format!("article-{project}-{id}"),
-                Showing::Table(key) => format!("table-{project}-{key}"),
-            }
-        }
+        Row::Archive(project) => format!("archive-{project}"),
+        Row::Entry { project, showing } => match showing {
+            Showing::Session(id) => format!("session-{project}-{id}"),
+            Showing::Board(id) => format!("board-{project}-{id}"),
+            Showing::Article(id) => format!("article-{project}-{id}"),
+            Showing::Table(key) => format!("table-{project}-{key}"),
+        },
         Row::App(id) => format!("app-{id}"),
     }
 }
@@ -652,11 +654,10 @@ type MenuRows = Rc<dyn Fn(&mut Sidebar, &mut Context<Sidebar>) -> Vec<(Item, Act
 /// Which of the sidebar's menus is up.
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) enum SidebarMenu {
-    /// The `+` on a project heading, by the project's path: what to start
-    /// here.
-    Add(PathBuf),
-    /// A project heading, by the project's path: what to do to the project.
-    Project(PathBuf),
+    /// The `+` on a project heading: what to start here.
+    Add(ProjectId),
+    /// A project heading: what to do to the project.
+    Project(ProjectId),
     /// The `···` on an entry's row, whichever kind it is, and a space's.
     Entry(Row),
 }
@@ -677,6 +678,9 @@ pub(crate) struct Sidebar {
     /// The drag domain of the list: a row moves within it, or out onto a pane.
     pub(crate) sort: drag::Domain<(), Dragged>,
     rail: ListState,
+    /// The list as [`Self::relist`] last worked it out. Render reads it and
+    /// never works it out.
+    listing: Listing,
     /// The rows `rail` holds measurements for, with how each was drawn. A row
     /// whose shape changes is spliced out and measured again.
     measured: Vec<(Row, Shape)>,
@@ -701,8 +705,8 @@ impl Sidebar {
         let rename = Rename::new(workspace.clone(), |this: &mut Self| &mut this.rename, cx);
         #[allow(unused_mut)]
         let mut subscriptions = vec![
-            cx.observe(&workspace, |_, _, cx| cx.notify()),
-            cx.observe(&search, |_, _, cx| cx.notify()),
+            cx.observe(&workspace, |this, _, cx| this.relisted(cx)),
+            cx.observe(&search, |this, _, cx| this.relisted(cx)),
         ];
         // The notice at its foot is the updater's, and the updater moves on its
         // own clock — and from the other window, where the Developer switch
@@ -718,7 +722,7 @@ impl Sidebar {
                     .unwrap_or_else(|_| Empty.into_any_element())
             }
         });
-        Self {
+        let mut this = Self {
             workspace,
             root,
             search,
@@ -728,6 +732,7 @@ impl Sidebar {
             rename,
             sort,
             rail: ListState::new(0, ListAlignment::Top, px(OVERDRAW)),
+            listing: Listing::default(),
             measured: Vec::new(),
             tick: None,
             boards: Watch::default(),
@@ -735,10 +740,29 @@ impl Sidebar {
             listed: HashMap::new(),
             sessions: Watch::default(),
             _subscriptions: subscriptions,
-        }
+        };
+        this.relist(cx);
+        this
     }
 
-    /// The list as it stands.
+    /// Work the list out again from the workspace and the applied search.
+    fn relist(&mut self, cx: &App) {
+        let list = self.list(cx);
+        let rows = list.rows();
+        self.listing = Listing {
+            shapes: Rc::new(self.shapes(&rows, cx)),
+            places: Rc::new(list.row_places(&rows)),
+            narrowed: Rc::new(rows.iter().map(|row| list.narrowed(row)).collect()),
+            rows: Rc::new(rows),
+        };
+    }
+
+    /// [`Self::relist`], and redraw.
+    fn relisted(&mut self, cx: &mut Context<Self>) {
+        self.relist(cx);
+        cx.notify();
+    }
+
     /// What a row stands off the column's right edge by: the gutter, or
     /// nothing while floating, where the column already stands as far from
     /// the cards as two cards stand apart.
@@ -753,20 +777,30 @@ impl Sidebar {
         List::new(&self.workspace, &self.search, cx)
     }
 
-    /// The rows drawn: the list's, less the rows of a project or a space whose
-    /// heading is being carried, down to the next heading.
-    fn drawn(&self, cx: &App) -> Vec<Row> {
-        let mut rows = self.list(cx).rows();
-        if let Some(Dragged::Row(head @ Row::Group(_))) = self.sort.carried()
-            && let Some(at) = rows.iter().position(|row| *row == head)
-        {
-            let end = rows[at + 1..]
-                .iter()
-                .position(|row| matches!(row, Row::Heading(_) | Row::Group(_)))
-                .map_or(rows.len(), |after| at + 1 + after);
-            rows.drain(at + 1..end);
+    /// The listing drawn: the list's, less the rows of a project or a space
+    /// whose heading is being carried, down to the next heading.
+    fn drawn(&self) -> Listing {
+        let listing = &self.listing;
+        let rows = &listing.rows;
+        let Some(Dragged::Row(head @ Row::Group(_))) = self.sort.carried() else {
+            return listing.clone();
+        };
+        let Some(at) = rows.iter().position(|row| *row == head) else {
+            return listing.clone();
+        };
+        let end = rows[at + 1..]
+            .iter()
+            .position(|row| matches!(row, Row::Heading(_) | Row::Group(_)))
+            .map_or(rows.len(), |after| at + 1 + after);
+        fn cut<T: Clone>(all: &[T], gone: std::ops::Range<usize>) -> Rc<Vec<T>> {
+            Rc::new([&all[..gone.start], &all[gone.end..]].concat())
         }
-        rows
+        Listing {
+            rows: cut(rows, at + 1..end),
+            shapes: cut(&listing.shapes, at + 1..end),
+            places: listing.places.clone(),
+            narrowed: cut(&listing.narrowed, at + 1..end),
+        }
     }
 
     /// What the window is showing, handed over as it changes.
@@ -785,7 +819,7 @@ impl Sidebar {
             let extended = this.extended(cx);
             let listed = Listed::of(chat.read(cx), extended);
             if this.listed.insert(chat.read(cx).id, listed.clone()) != Some(listed) {
-                cx.notify();
+                this.relisted(cx);
             }
         });
         self.sessions = sessions;
@@ -965,11 +999,13 @@ impl Sidebar {
     /// as shows it, so a step to the neighbour below moves the list by a row
     /// rather than throwing the one you came from off the top of it.
     pub(crate) fn reveal(&mut self, row: &Row, cx: &mut Context<Self>) {
-        let rows = self.list(cx).rows();
+        // Called straight after the change that put the row in the list,
+        // before the workspace's observers have run.
+        self.relist(cx);
+        let Listing { rows, shapes, .. } = self.listing.clone();
         let Some(ix) = rows.iter().position(|at| at == row) else {
             return;
         };
-        let shapes = self.shapes(&rows, cx);
         self.sync(&rows, &shapes);
         let tops = tops(&shapes);
         let scroll = self.scrolled(&tops);
@@ -985,14 +1021,14 @@ impl Sidebar {
 
     /// Take the list back to where a group starts, heading and all.
     fn scroll_to_group(&mut self, group: &Group, cx: &mut Context<Self>) {
-        let rows = self.list(cx).rows();
+        self.relist(cx);
+        let Listing { rows, shapes, .. } = self.listing.clone();
         let Some(at) = rows
             .iter()
             .position(|row| matches!(row, Row::Group(at) if at == group))
         else {
             return;
         };
-        let shapes = self.shapes(&rows, cx);
         self.sync(&rows, &shapes);
         self.rail.scroll_to(ListOffset {
             item_ix: at,
@@ -1016,7 +1052,7 @@ impl Sidebar {
         self.defer_window(window, cx, |root, _, cx| root.commit(cx));
         self.workspace.update(cx, |workspace, cx| match group {
             Group::Project(path) => {
-                if let Some(ix) = workspace.project_at(path) {
+                if let Some(ix) = workspace.project_ix(*path) {
                     workspace.toggle_project(ix, cx);
                 }
             }
@@ -1033,13 +1069,14 @@ impl Sidebar {
     /// The rows as one drag region over the list: an entry moves within the
     /// region of its project it is in, a project's or a space's heading among
     /// the headings of its kind, and either can be carried out onto a pane.
-    fn sidebar_list(&mut self, rows: Vec<Row>, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let shapes = self.shapes(&rows, cx);
+    fn sidebar_list(&mut self, drawn: Listing, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let Listing {
+            rows,
+            shapes,
+            places,
+            narrowed,
+        } = drawn;
         self.sync(&rows, &shapes);
-        let list = self.list(cx);
-        let places = Rc::new(list.row_places(&rows));
-        let narrowed: Vec<bool> = rows.iter().map(|row| list.narrowed(row)).collect();
-        let rows = Rc::new(rows);
         let view = cx.entity().downgrade();
         let list = gpui::list(self.rail.clone(), move |ix, window, cx| {
             let Some(row) = rows.get(ix).cloned() else {
@@ -1078,11 +1115,12 @@ impl Sidebar {
     fn pinned_head(
         &self,
         rows: &[Row],
+        shapes: &[Shape],
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let head = |row: &Row| matches!(row, Row::Group(_));
-        let tops = tops(&self.shapes(rows, cx));
+        let tops = tops(shapes);
         let scroll = self.scrolled(&tops);
         let first = self
             .rail
@@ -1164,12 +1202,12 @@ impl Sidebar {
         let above = rows[..gap].iter().filter(|row| *row != carried);
         match carried {
             // Among the groups of its kind, by how many of them are above it.
-            Row::Group(Group::Project(path)) => {
+            Row::Group(Group::Project(project)) => {
                 let to = above
                     .filter(|row| matches!(row, Row::Group(Group::Project(_))))
                     .count();
                 self.workspace
-                    .update(cx, |workspace, cx| workspace.move_project(path, to, cx));
+                    .update(cx, |workspace, cx| workspace.move_project(*project, to, cx));
             }
             Row::Group(Group::Space(id)) => {
                 let to = above
@@ -1226,7 +1264,8 @@ impl Sidebar {
     fn reorder_entries(&mut self, carried: &Row, region: Vec<Row>, cx: &mut Context<Self>) {
         use crate::model::state;
         let workspace = self.workspace.read(cx);
-        let Some(project) = project_of(carried).and_then(|path| workspace.project_at(path)) else {
+        let Some(project) = project_of(carried).and_then(|project| workspace.project_ix(project))
+        else {
             return;
         };
         let rows: Vec<Row> = self
@@ -1297,15 +1336,16 @@ impl Render for Sidebar {
         self.watch_sessions(window, cx);
         let programs: Vec<_> = self.workspace.read(cx).programs().cloned().collect();
         let mut apps = std::mem::take(&mut self.apps);
-        apps.set(&programs, cx);
+        // A build names an app's row, and the apps are listed by name.
+        apps.set_in(&programs, window, cx, |this, _, _, cx| this.relisted(cx));
         self.apps = apps;
         let extended = self.extended(cx);
         if extended {
             self.watch_boards(cx);
         }
         self.keep_time(extended, cx);
-        let rows = self.drawn(cx);
-        let pinned = self.pinned_head(&rows, window, cx);
+        let drawn = self.drawn();
+        let pinned = self.pinned_head(&drawn.rows, &drawn.shapes, window, cx);
         let visibility = self
             .workspace
             .read(cx)
@@ -1324,7 +1364,7 @@ impl Render for Sidebar {
                     .flex_1()
                     .min_h_0()
                     .overflow_hidden()
-                    .child(self.sidebar_list(rows, cx))
+                    .child(self.sidebar_list(drawn, cx))
                     .children(pinned)
                     .child(
                         scrollbars::Overlay::new(

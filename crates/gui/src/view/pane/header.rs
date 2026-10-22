@@ -2,7 +2,7 @@
 //! stand where the panes would be.
 
 use crate::{
-    model::workspace::Showing,
+    model::workspace::{Member, Showing},
     view::{
         sidebar::Row,
         window::{
@@ -11,7 +11,6 @@ use crate::{
         },
     },
 };
-use artifact::space::Member;
 use bezel::{
     gpui::{AnyElement, App, Context, FontWeight, Window, div, prelude::*, px},
     theme::{TextStyle, Theme, Typeset},
@@ -76,7 +75,7 @@ impl Cydonia {
         let workspace = self.workspace.read(cx);
         let open = workspace.projects.get(project)?;
         let row = Row::Entry {
-            project: open.path.clone(),
+            project: open.id,
             showing: showing.clone(),
         };
         let facts = open.facts(&showing, cx)?;

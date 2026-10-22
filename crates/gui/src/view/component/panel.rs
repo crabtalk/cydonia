@@ -1347,7 +1347,11 @@ impl Cydonia {
         )
         .detach();
         cx.subscribe_in(&panel, window, |this, _, _: &OpenFeatures, window, cx| {
-            this.open_settings(crate::view::window::section::Section::Features, window, cx)
+            this.open_settings(
+                Some(crate::view::window::section::Section::Features),
+                window,
+                cx,
+            )
         })
         .detach();
         let tabs = self.workspace.read(cx).settings.features.panel;

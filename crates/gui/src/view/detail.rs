@@ -4,7 +4,7 @@ use crate::{
     model::{
         session::{ChatSession, Choice, Command, Usage},
         session_preferences::{self, Offers},
-        workspace::{ArticleChange, Opening, Showing, Workspace},
+        workspace::{ArticleChange, Member, Opening, Showing, Workspace},
     },
     view::{
         component::{composer, transcript},
@@ -19,7 +19,7 @@ use crate::{
         },
     },
 };
-use artifact::{kind::Kind, session::chat::ChatItem, space::Member};
+use artifact::{kind::Kind, session::chat::ChatItem};
 use bezel::{
     gpui::{
         self, AnyElement, App, Axis, Context, Div, DragMoveEvent, Empty, FocusHandle,
@@ -273,7 +273,7 @@ impl Cydonia {
             return space
                 .entries()
                 .into_iter()
-                .find_map(|pane| pane.project().map(Path::to_path_buf));
+                .find_map(|pane| Some(workspace.path_of(*pane.project()?).to_path_buf()));
         }
         if self.showing(cx) == Some(Kind::Session)
             && let Some(chat) = workspace.active_session(cx)
@@ -750,14 +750,17 @@ impl Cydonia {
                     ))
                     .child(main)
                     .children(changes.clone().filter(|_| beside).map(|panel| {
-                        div()
-                            .relative()
-                            .w(px(width))
-                            .min_w_0()
-                            .flex_none()
-                            .flex()
-                            .flex_col()
-                            .child(panel)
+                        match floating {
+                            true => div(),
+                            false => bezel::ui::window::content(false, cx),
+                        }
+                        .relative()
+                        .w(px(width))
+                        .min_w_0()
+                        .flex_none()
+                        .flex()
+                        .flex_col()
+                        .child(panel)
                     }))
                     // Over the chat rather than beside it. The chat stays in
                     // the tree behind it, so what it was scrolled to and what

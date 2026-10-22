@@ -5,7 +5,7 @@
 //! was made, the way boards are.
 //!
 //! A space holds no entry. It holds the ids of entries that exist beside it,
-//! each by its project's path — see [`Entry`] — so the same session can be a
+//! each by its project — see [`Entry`] — so the same session can be a
 //! member of two spaces and stay one session. A member whose entry has been
 //! deleted resolves to nothing.
 //!
@@ -14,7 +14,7 @@
 
 use crate::{kind::Kind, stamp};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::{collections::HashSet, path::PathBuf};
 
 /// What a space is shown as before it is named.
 pub const UNNAMED: &str = "Untitled";
@@ -135,6 +135,34 @@ fn sized<T>(entry: T, ratio: f64) -> Node<T> {
         entry,
         tabs: Vec::new(),
         front: None,
+    }
+}
+
+impl<T> Node<T> {
+    /// The same tree, each pane's entries turned by `turn`.
+    pub fn map<U>(self, turn: &mut impl FnMut(T) -> U) -> Node<U> {
+        match self {
+            Self::Leaf {
+                ratio,
+                entry,
+                tabs,
+                front,
+            } => Node::Leaf {
+                ratio,
+                entry: turn(entry),
+                tabs: tabs.into_iter().map(&mut *turn).collect(),
+                front: front.map(turn),
+            },
+            Self::Split {
+                ratio,
+                axis,
+                children,
+            } => Node::Split {
+                ratio,
+                axis,
+                children: children.into_iter().map(|child| child.map(turn)).collect(),
+            },
+        }
     }
 }
 
@@ -668,10 +696,13 @@ impl<T: Clone + PartialEq> Node<T> {
 }
 
 /// What a pane is on: one entry of a project, or an app.
+///
+/// `P` names the project: its path as a file holds it, or whatever the reader
+/// names projects by once the file is read — see [`Member::map`].
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(untagged)]
-pub enum Member {
-    Entry(Entry),
+pub enum Member<P = PathBuf> {
+    Entry(Entry<P>),
     /// An app, by its id. It belongs to no project.
     App {
         app: String,
@@ -681,18 +712,14 @@ pub enum Member {
 /// One entry of a project: which project it is in, and which of that
 /// project's things it is.
 ///
-/// The project by its path, because a space spans them — it is kept beside
-/// the app's own config rather than inside any one project, and absolute paths
-/// are what it can name from there. That is also why a space does not travel
-/// with a repository: these paths are this machine's.
+/// In a file the project is its absolute path on this machine.
 ///
 /// By `id` rather than by the `#number` [`crate::entry`] gives out: numbers are
-/// per project, so two projects' `#12` are different entries, and a member has
-/// to say which it means without reading either project's database.
+/// per project, so two projects' `#12` are different entries.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(from = "Written")]
-pub struct Entry {
-    pub project: std::path::PathBuf,
+#[serde(from = "Written<P>")]
+pub struct Entry<P = PathBuf> {
+    pub project: P,
     pub kind: Kind,
     pub id: String,
 }
@@ -700,14 +727,14 @@ pub struct Entry {
 /// An [`Entry`] as a file holds it, before its id is read — see
 /// [`crate::article::stored_id`].
 #[derive(Deserialize)]
-struct Written {
-    project: std::path::PathBuf,
+struct Written<P> {
+    project: P,
     kind: Kind,
     id: String,
 }
 
-impl From<Written> for Entry {
-    fn from(written: Written) -> Self {
+impl<P> From<Written<P>> for Entry<P> {
+    fn from(written: Written<P>) -> Self {
         let id = crate::article::stored_id(written.kind, written.id);
         Self {
             project: written.project,
@@ -717,11 +744,22 @@ impl From<Written> for Entry {
     }
 }
 
-impl Member {
-    /// An entry of the project at `project`.
-    pub fn new(project: impl Into<std::path::PathBuf>, kind: Kind, id: impl Into<String>) -> Self {
+impl<P> Entry<P> {
+    /// The same entry, its project named by `name`.
+    pub fn map<Q>(self, name: impl FnOnce(P) -> Q) -> Entry<Q> {
+        Entry {
+            project: name(self.project),
+            kind: self.kind,
+            id: self.id,
+        }
+    }
+}
+
+impl<P> Member<P> {
+    /// An entry of `project`.
+    pub fn new(project: P, kind: Kind, id: impl Into<String>) -> Self {
         Self::Entry(Entry {
-            project: project.into(),
+            project,
             kind,
             id: id.into(),
         })
@@ -733,7 +771,7 @@ impl Member {
     }
 
     /// The entry it names. `None` for an app.
-    pub fn entry(&self) -> Option<&Entry> {
+    pub fn entry(&self) -> Option<&Entry<P>> {
         match self {
             Self::Entry(entry) => Some(entry),
             Self::App { .. } => None,
@@ -741,7 +779,7 @@ impl Member {
     }
 
     /// The same, owned.
-    pub fn into_entry(self) -> Option<Entry> {
+    pub fn into_entry(self) -> Option<Entry<P>> {
         match self {
             Self::Entry(entry) => Some(entry),
             Self::App { .. } => None,
@@ -749,8 +787,8 @@ impl Member {
     }
 
     /// The project an entry is in. `None` for an app.
-    pub fn project(&self) -> Option<&std::path::Path> {
-        self.entry().map(|entry| entry.project.as_path())
+    pub fn project(&self) -> Option<&P> {
+        self.entry().map(|entry| &entry.project)
     }
 
     pub fn kind(&self) -> Kind {
@@ -767,16 +805,24 @@ impl Member {
             Self::App { app } => app,
         }
     }
+
+    /// The same member, its project named by `name`.
+    pub fn map<Q>(self, name: impl FnOnce(P) -> Q) -> Member<Q> {
+        match self {
+            Self::Entry(entry) => Member::Entry(entry.map(name)),
+            Self::App { app } => Member::App { app },
+        }
+    }
 }
 
-impl From<Entry> for Member {
-    fn from(entry: Entry) -> Self {
+impl<P> From<Entry<P>> for Member<P> {
+    fn from(entry: Entry<P>) -> Self {
         Self::Entry(entry)
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Space {
+pub struct Space<P = PathBuf> {
     /// What names this space for as long as it exists, and what its file is
     /// called. Written into the file as well, the way a board's is: a backend
     /// that keeps spaces in a row has no filename to fall back on.
@@ -797,18 +843,18 @@ pub struct Space {
     /// Before `tree` in the struct, and so in the file: `tree` is a table, and
     /// TOML reads a bare key after one as belonging to it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub zoomed: Option<Member>,
+    pub zoomed: Option<Member<P>>,
     /// The tab last focused. Read through [`Space::focused`]: the pane is
     /// whichever holds it now.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub focused: Option<Member>,
-    pub tree: Node<Member>,
+    pub focused: Option<Member<P>>,
+    pub tree: Node<Member<P>>,
 }
 
-impl Space {
+impl<P: Clone + PartialEq> Space<P> {
     /// A space over one entry. Spaces are made by dragging a second entry
     /// onto the first, so the one already open is what a new one starts from.
-    pub fn new(id: String, name: &str, entry: Member) -> Self {
+    pub fn new(id: String, name: &str, entry: Member<P>) -> Self {
         Self {
             id,
             touched: stamp::now(),
@@ -816,6 +862,19 @@ impl Space {
             zoomed: None,
             focused: None,
             tree: Node::leaf(entry),
+        }
+    }
+
+    /// The same space, each member's project named by `name`.
+    pub fn map<Q>(self, name: &mut impl FnMut(P) -> Q) -> Space<Q> {
+        let mut member = |held: Member<P>| held.map(&mut *name);
+        Space {
+            id: self.id,
+            touched: self.touched,
+            name: self.name,
+            zoomed: self.zoomed.map(&mut member),
+            focused: self.focused.map(&mut member),
+            tree: self.tree.map(&mut member),
         }
     }
 
@@ -827,7 +886,7 @@ impl Space {
         }
     }
 
-    pub fn entries(&self) -> Vec<Member> {
+    pub fn entries(&self) -> Vec<Member<P>> {
         self.tree.entries()
     }
 
@@ -836,7 +895,7 @@ impl Space {
     }
 
     /// Drop members that no longer resolve — see [`Node::prune`].
-    pub fn prune(&mut self, gone: &[Member]) -> bool {
+    pub fn prune(&mut self, gone: &[Member<P>]) -> bool {
         self.leaving(gone);
         self.tree.prune(gone)
     }
@@ -844,8 +903,8 @@ impl Space {
     /// Hand `zoomed` and `focused`, where `gone` holds the entry either names,
     /// to a tab of the same pane that stays. Left as they are where none
     /// stays.
-    fn leaving(&mut self, gone: &[Member]) {
-        let handed = |held: &Option<Member>| {
+    fn leaving(&mut self, gone: &[Member<P>]) {
+        let handed = |held: &Option<Member<P>>| {
             let held = held.as_ref().filter(|held| gone.contains(held))?;
             self.stack_of(held)
                 .into_iter()
@@ -860,7 +919,7 @@ impl Space {
         }
     }
 
-    pub fn contains(&self, entry: &Member) -> bool {
+    pub fn contains(&self, entry: &Member<P>) -> bool {
         self.tree.contains(entry)
     }
 
@@ -868,7 +927,7 @@ impl Space {
     /// pane's edge. Answers whether the pane dropped on was found.
     ///
     /// An entry already shown is moved rather than shown twice.
-    pub fn insert(&mut self, target: &Member, arriving: &Member, side: Side) -> bool {
+    pub fn insert(&mut self, target: &Member<P>, arriving: &Member<P>, side: Side) -> bool {
         match self.contains(arriving) {
             true => self.relocate(arriving, target, side),
             false => self.tree.insert(target, arriving, side),
@@ -877,7 +936,7 @@ impl Space {
 
     /// Move a pane already here to another pane's edge — see
     /// [`Node::relocate`].
-    pub fn relocate(&mut self, entry: &Member, target: &Member, side: Side) -> bool {
+    pub fn relocate(&mut self, entry: &Member<P>, target: &Member<P>, side: Side) -> bool {
         if !self.tree.relocatable(entry, target) {
             return false;
         }
@@ -891,7 +950,7 @@ impl Space {
     ///
     /// An entry is in one pane at a time, so one already here is taken out of
     /// the pane it was in first.
-    pub fn stack(&mut self, target: &Member, arriving: &Member) -> bool {
+    pub fn stack(&mut self, target: &Member<P>, arriving: &Member<P>) -> bool {
         // Already in that stack: a tab let go over its own bar is a drag that
         // changed nothing, and taking it out to put it back would send it to
         // the end of a stack the reader never asked to reorder.
@@ -911,24 +970,24 @@ impl Space {
 
     /// The entries the pane holding this one draws, in stack order. Empty for
     /// an entry no pane here is on.
-    pub fn stack_of(&self, entry: &Member) -> Vec<Member> {
+    pub fn stack_of(&self, entry: &Member<P>) -> Vec<Member<P>> {
         self.pane_holding(entry)
             .map(Node::stack)
             .unwrap_or_default()
     }
 
     /// The tab the pane holding this entry shows — see [`Node::front`].
-    pub fn front_of(&self, entry: &Member) -> Option<Member> {
+    pub fn front_of(&self, entry: &Member<P>) -> Option<Member<P>> {
         self.pane_holding(entry)?.front()
     }
 
     /// The pane holding this entry.
-    fn pane_holding(&self, entry: &Member) -> Option<&Node<Member>> {
+    fn pane_holding(&self, entry: &Member<P>) -> Option<&Node<Member<P>>> {
         self.tree.at_path(&self.tree.path_to(entry)?)
     }
 
     /// Bring a tab to the front of its pane — see [`Node::set_front`].
-    pub fn set_front(&mut self, tab: &Member) -> bool {
+    pub fn set_front(&mut self, tab: &Member<P>) -> bool {
         self.tree.set_front(tab)
     }
 
@@ -939,7 +998,7 @@ impl Space {
     ///
     /// A zoomed pane that is closed leaves the rest unzoomed rather than
     /// standing something else in its place.
-    pub fn remove(&mut self, entry: &Member) -> bool {
+    pub fn remove(&mut self, entry: &Member<P>) -> bool {
         self.leaving(std::slice::from_ref(entry));
         self.tree.remove(entry)
     }
@@ -952,7 +1011,7 @@ impl Space {
     ///
     /// Held by whichever tab the caller named, so a pane zoomed from one of
     /// its tabs stays zoomed when another tab comes forward.
-    pub fn zoom(&mut self, entry: &Member) -> Option<Member> {
+    pub fn zoom(&mut self, entry: &Member<P>) -> Option<Member<P>> {
         let again = self
             .zoomed()
             .is_some_and(|zoomed| self.stack_of(entry).contains(&zoomed));
@@ -962,7 +1021,7 @@ impl Space {
 
     /// Record `tab` as the one focused. Answers whether that changed what is
     /// recorded.
-    pub fn focus(&mut self, tab: &Member) -> bool {
+    pub fn focus(&mut self, tab: &Member<P>) -> bool {
         if !self.contains(tab) || self.focused.as_ref() == Some(tab) {
             return false;
         }
@@ -972,20 +1031,20 @@ impl Space {
 
     /// The entry in front of the pane holding the one last focused, if it is
     /// still here.
-    pub fn focused(&self) -> Option<Member> {
+    pub fn focused(&self) -> Option<Member<P>> {
         self.front_of(self.focused.as_ref()?)
     }
 
     /// The entry in front of the pane last focused, or else of the first pane
     /// laid out.
-    pub fn focused_front(&self) -> Option<Member> {
+    pub fn focused_front(&self) -> Option<Member<P>> {
         self.focused()
             .or_else(|| self.tree.fronts().first().cloned())
     }
 
     /// The entry in front of the pane standing over the others, if it is still
     /// here.
-    pub fn zoomed(&self) -> Option<Member> {
+    pub fn zoomed(&self) -> Option<Member<P>> {
         self.front_of(self.zoomed.as_ref()?)
     }
 }

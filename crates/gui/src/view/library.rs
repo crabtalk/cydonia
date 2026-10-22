@@ -8,6 +8,7 @@
 
 use crate::{
     model::{
+        project::ProjectId,
         settings::Features,
         workspace::{Opening, Showing, Workspace},
     },
@@ -41,7 +42,7 @@ use bezel::{
         widgets::{ButtonStyle, Buttons, Content, Controls},
     },
 };
-use std::{cell::Cell, collections::HashSet, ops::Range, path::PathBuf, rc::Rc};
+use std::{cell::Cell, collections::HashSet, ops::Range, rc::Rc};
 
 mod column;
 
@@ -219,7 +220,7 @@ impl Order {
 pub(crate) struct Shelf {
     tab: Tab,
     status: Archived,
-    project: Option<PathBuf>,
+    project: Option<ProjectId>,
     agent: Option<String>,
     labels: Vec<String>,
     order: Order,
@@ -253,8 +254,8 @@ pub(crate) struct Library {
     labels_picker: Labels,
     tab: Tab,
     status: Archived,
-    /// The one project listed, by its path, or every open one.
-    project: Option<PathBuf>,
+    /// The one project listed, or every open one.
+    project: Option<ProjectId>,
     /// The one agent whose sessions are listed, by name, or every one.
     agent: Option<String>,
     /// The labels listed, any one of them; every listing while empty.
@@ -284,7 +285,7 @@ impl Library {
         Shelf {
             tab: self.tab,
             status: self.status,
-            project: self.project.clone(),
+            project: self.project,
             agent: self.agent.clone(),
             labels: self.labels.clone(),
             order: self.order,
@@ -454,7 +455,7 @@ impl Library {
             if library
                 .project
                 .as_ref()
-                .is_some_and(|picked| *picked != open.path)
+                .is_some_and(|picked| *picked != open.id)
             {
                 continue;
             }
@@ -462,7 +463,7 @@ impl Library {
             let kind = library.tab.kind();
             for (ix, facts) in open.every(kind, cx).enumerate() {
                 let row = Row::Entry {
-                    project: open.path.clone(),
+                    project: open.id,
                     showing: facts.showing,
                 };
                 if !sidebar::shown(&row, features) {
@@ -604,7 +605,7 @@ impl Library {
         cx.notify();
     }
 
-    fn library_project(&mut self, project: Option<PathBuf>, cx: &mut Context<Self>) {
+    fn library_project(&mut self, project: Option<ProjectId>, cx: &mut Context<Self>) {
         let library = &mut *self;
         library.project = project;
         library.selected.clear();
@@ -715,9 +716,9 @@ impl Library {
             return None;
         };
         let workspace = self.workspace.read(cx);
-        let open = &workspace.projects[workspace.project_at(project)?];
+        let open = workspace.project(*project)?;
         let number = open.facts(showing, cx)?.number?;
-        let name = artifact::reference::project_name(project)?;
+        let name = artifact::reference::project_name(&open.path)?;
         Some(Reference::entry(Some(&name), number, None).to_string())
     }
 
@@ -1078,7 +1079,7 @@ impl Library {
 
     fn library_project_rows(&self, cx: &App) -> Vec<(MenuItem, Act<Self>)> {
         let library = self;
-        let picked = library.project.clone();
+        let picked = library.project;
         let mut rows = self.sorts(Field::Project);
         rows.push(menu::row::<Self>(
             MenuItem::action("All projects")
@@ -1087,12 +1088,12 @@ impl Library {
             |this, _, cx| this.library_project(None, cx),
         ));
         rows.extend(self.workspace.read(cx).projects.iter().map(|open| {
-            let path = open.path.clone();
+            let project = open.id;
             menu::row::<Self>(
                 MenuItem::action(open.name())
                     .with_icon(icons::files::Folder)
-                    .checked(picked.as_ref() == Some(&path)),
-                move |this, _, cx| this.library_project(Some(path.clone()), cx),
+                    .checked(picked == Some(project)),
+                move |this, _, cx| this.library_project(Some(project), cx),
             )
         }));
         rows

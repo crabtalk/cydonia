@@ -9,7 +9,7 @@
 //! [`crate::model::settings::Appearance`], and [`crate::model::migrate`] for
 //! the move.
 
-use crate::model::{settings, version::Version};
+use crate::model::{settings, version::Version, workspace::Slot};
 use artifact::kind::Kind;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf};
@@ -99,9 +99,9 @@ pub struct State {
     /// an id whose file has since gone lands on one too.
     #[serde(default)]
     pub space: Option<String>,
-    /// The order the spaces are read back in, by id: the order the sidebar
-    /// lists them in, and the order a space with no tab on the strip joins it
-    /// in. A space this does not name is one made since it was last written,
+    /// The order the spaces are read back in, by id: the order of their tabs
+    /// on the strip when written, and the order a space with no tab on the
+    /// strip joins it in. A space this does not name is one made since it was last written,
     /// and goes before everything here — the same rule `order` above follows
     /// for entries.
     #[serde(default)]
@@ -131,10 +131,10 @@ pub struct State {
     /// [`crate::model::workspace::Workspace::strip`]. Nothing in a file
     /// written before tabs, which lands on the active project's `last`.
     #[serde(default)]
-    pub tabs: Option<Vec<crate::model::workspace::Slot>>,
+    pub tabs: Option<Vec<Slot<PathBuf>>>,
     /// The tab in front. One the strip no longer holds, or none, is its first.
     #[serde(default)]
-    pub front: Option<crate::model::workspace::Slot>,
+    pub front: Option<Slot<PathBuf>>,
 }
 
 /// Where the main window stands, in the platform's logical pixels. For a

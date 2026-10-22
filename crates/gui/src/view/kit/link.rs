@@ -446,9 +446,7 @@ impl Cydonia {
             } => self
                 .workspace
                 .read(cx)
-                .projects
-                .iter()
-                .find(|open| &open.path == project)
+                .project(*project)
                 .and_then(|open| open.boards.get(open.board_ix(id)?))
                 .map(|held| {
                     held.board

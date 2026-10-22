@@ -6,8 +6,10 @@ use crate::model::{
     settings::{Agent, Settings},
     state,
 };
-use bezel::gpui::{self, Render};
-use bezel::ui::AppExt as _;
+use bezel::{
+    gpui::{self, Render},
+    ui::AppExt as _,
+};
 
 struct ChatView {
     view: gpui::Entity<SessionView>,
@@ -43,7 +45,7 @@ fn a_settled_transcript_hides_its_thumb(cx: &mut gpui::TestAppContext) {
     let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));
     workspace.update(cx, |workspace, cx| {
         let cwd = std::path::PathBuf::from("/nonexistent/cydonia-scrollbar-test");
-        let mut project = Project::new(cwd.clone(), cx);
+        let mut project = Project::new(workspace.intern(&cwd), cwd.clone(), cx);
         let record = serde_json::from_value(serde_json::json!({"id":"test", "agent":"test", "title":"", "name":null, "updated":1, "items":[]})).unwrap();
         let mut chat = ChatSession::restore(
             1,

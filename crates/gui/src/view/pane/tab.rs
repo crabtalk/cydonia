@@ -2,7 +2,7 @@
 //! its items, its find bar, its drawer, its formatting bar and its composer.
 
 use crate::{
-    model::workspace::{Showing, Workspace},
+    model::workspace::{Member, Showing, Workspace},
     view::{
         app, article,
         board::{self, info::BoardInfo},
@@ -51,7 +51,7 @@ pub(crate) enum TabMenu {
 pub(crate) struct Tab {
     /// The entry this tab is on, named the way a space names its members —
     /// which project it is in and which of that project's things it is.
-    pub(crate) entry: artifact::space::Member,
+    pub(crate) entry: Member,
     pub(crate) workspace: Entity<Workspace>,
     pub(crate) root: WeakEntity<Cydonia>,
     /// The board views' shared card previews and drag domain — see
@@ -125,7 +125,7 @@ pub(crate) struct Tab {
 impl Tab {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
-        entry: artifact::space::Member,
+        entry: Member,
         workspace: Entity<Workspace>,
         root: WeakEntity<Cydonia>,
         card_docs: Rc<board::Docs>,

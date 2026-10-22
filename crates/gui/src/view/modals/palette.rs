@@ -16,17 +16,18 @@
 //! are as of its last write. Opening a hit in an entry's body puts the query in
 //! its pane's find bar — see [`crate::view::pane::find`].
 
-use crate::model::workspace::Opening;
-use crate::view::kit::{icon::kind_icon, text::CardTitle};
 use crate::{
-    model::workspace::{Showing, Workspace},
+    model::workspace::{Opening, Showing, Workspace},
     view::{
         keymap,
-        kit::link::mention::{self, Linkables},
+        kit::{
+            icon::kind_icon,
+            link::mention::{self, Linkables},
+            text::CardTitle,
+        },
         search::{Found, SETTLE, search_all},
         sidebar::Row,
-        window::menubar,
-        window::root::Cydonia,
+        window::{menubar, root::Cydonia},
     },
 };
 use artifact::{kind::Kind, search::Query};
@@ -204,7 +205,7 @@ impl Hit {
                 let showing = open.stored(found.kind, &found.id, cx)?;
                 let touched = open.facts(&showing, cx)?.touched;
                 let row = Row::Entry {
-                    project: open.path.clone(),
+                    project: open.id,
                     showing,
                 };
                 Some((
@@ -506,7 +507,7 @@ impl Palette {
         };
         let workspace = self.workspace.read(cx);
         workspace
-            .project_at(project)
+            .project_ix(*project)
             .and_then(|at| workspace.labels_of(at, showing, cx))
             .is_some_and(|labels| labels.iter().any(|held| held == label))
     }
@@ -537,7 +538,7 @@ impl Palette {
                         .find(|open| artifact::reference::names(&open.path, &carded.project))?;
                     Some(Hit {
                         row: Row::Entry {
-                            project: project.path.clone(),
+                            project: project.id,
                             showing: Showing::Board(carded.board.id.clone()),
                         },
                         snippet: None,

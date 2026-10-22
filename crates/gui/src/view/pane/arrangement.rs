@@ -5,7 +5,7 @@
 //! means. This is only how it lands on the window.
 
 use crate::{
-    model::workspace::Slot,
+    model::workspace::{Member, Slot, Space},
     view::{
         component::divider,
         kit::{icon, menu},
@@ -14,7 +14,7 @@ use crate::{
         window::root::Cydonia,
     },
 };
-use artifact::space::{Axis as Split, Member, Node, Side, Space};
+use artifact::space::{Axis as Split, Node, Side};
 use bezel::{
     gpui::{
         AnyElement, App, Axis, Bounds, Context, DragMoveEvent, Empty, Entity, Pixels, SharedString,
@@ -430,7 +430,7 @@ impl Cydonia {
             return false;
         }
         let workspace = self.workspace.read(cx);
-        let (Some(space), Some(at)) = (workspace.arranged(), workspace.project_at(project)) else {
+        let (Some(space), Some(at)) = (workspace.arranged(), workspace.project_ix(*project)) else {
             return false;
         };
         space.tree.fronts().iter().any(|shown| {
@@ -867,16 +867,11 @@ impl Cydonia {
 }
 
 /// A member as something that can be an element id: an entry by which
-/// project and which of its things — two projects can hold the same id, so
-/// the path is part of it — or an app by its id.
+/// project and which of its things — two projects can hold the same id — or
+/// an app by its id.
 pub(crate) fn key_of(member: &Member) -> SharedString {
     SharedString::from(match member {
-        Member::Entry(entry) => format!(
-            "{}::{:?}::{}",
-            entry.project.display(),
-            entry.kind,
-            entry.id
-        ),
+        Member::Entry(entry) => format!("{}::{:?}::{}", entry.project, entry.kind, entry.id),
         Member::App { app } => format!("app::{app}"),
     })
 }

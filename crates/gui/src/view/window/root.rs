@@ -2,7 +2,7 @@
 //! the sidebar and the chat column are hung in.
 
 #[cfg(feature = "desktop")]
-use crate::view::{component::terminal::TerminalPanel, settings};
+use crate::model::workspace::Member;
 use crate::{
     model::{
         session::ChatSession,
@@ -15,9 +15,11 @@ use crate::{
         component::{
             composer::{Composer, ComposerEvent},
             meter,
+            terminal::TerminalPanel,
         },
         kit::{menu::Menu, watch::Watch},
         pane::{Pane, Tab},
+        settings,
         sidebar::{Dragged, Row, Sidebar},
         window::{
             chrome,
@@ -29,7 +31,7 @@ use crate::{
     },
 };
 use anyhow::Result;
-use artifact::{kind::Kind, space::Member};
+use artifact::kind::Kind;
 use bezel::{
     gpui::{
         self, AnyElement, App, Axis, Bounds, Context, Div, DragMoveEvent, Empty, Entity,
@@ -156,9 +158,9 @@ pub struct NewSessionWith {
     pub agent: String,
 }
 
-/// Bring the tab at `index` of the window's strip forward — `cmd-1` through
-/// `cmd-8` — or its last for `None`, `cmd-9`. An index past the last tab does
-/// nothing.
+/// Bring the tab at `index` of [`Workspace::numbered_tabs`] forward — `cmd-1`
+/// through `cmd-8` — or its last for `None`, `cmd-9`. An index past the last
+/// tab does nothing.
 #[derive(Clone, Debug, PartialEq, gpui::Action)]
 #[action(namespace = cydonia, no_json)]
 pub struct SwitchTab {
@@ -736,6 +738,7 @@ impl Cydonia {
             .arrangement(cx)
             .map(|space| space.tree.fronts())
             .unwrap_or_default();
+        let workspace = self.workspace.read(cx);
         let shown: Vec<mcp::rail::Shown> = self
             .leaves
             .iter()
@@ -744,7 +747,7 @@ impl Cydonia {
             .filter_map(|(ix, leaf)| {
                 let entry = leaf.read(cx).entry.entry()?;
                 Some(mcp::rail::Shown {
-                    project: entry.project.clone(),
+                    project: workspace.path_of(entry.project).to_path_buf(),
                     kind: kind(entry.kind)?,
                     id: entry.id.clone(),
                     focused: ix == self.focused,
@@ -1268,7 +1271,7 @@ impl Cydonia {
             return;
         };
         let workspace = self.workspace.read(cx);
-        let Some(project) = entry.project().and_then(|path| workspace.project_at(path)) else {
+        let Some(project) = entry.project().and_then(|path| workspace.project_ix(*path)) else {
             return;
         };
         let showing = Row::of_member(&entry, workspace, cx);
@@ -1361,7 +1364,7 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_settings(Section::General, window, cx);
+        self.open_settings(None, window, cx);
     }
 
     pub(crate) fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
@@ -1392,9 +1395,11 @@ impl Cydonia {
         self.close_project(ix, cx);
     }
 
+    /// Show the settings at `section`. `None` leaves settings already open on
+    /// the section they show, and opens them at General.
     pub(crate) fn open_settings(
         &mut self,
-        section: Section,
+        section: Option<Section>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1404,7 +1409,7 @@ impl Cydonia {
             settings::open(self.workspace.clone(), section, cx);
         }
         #[cfg(not(feature = "desktop"))]
-        self.settings_sheet(section, window, cx);
+        self.settings_sheet(section.unwrap_or(Section::General), window, cx);
     }
 
     pub(crate) fn open_project_action(
@@ -1518,13 +1523,13 @@ impl Render for Cydonia {
                 cx.listener(|this, _, window, cx| this.go_forward(&GoForward, window, cx)),
             )
             .on_action(cx.listener(|this, at: &SwitchTab, window, cx| {
-                let strip = this.workspace.read(cx).strip();
-                let last = strip.len().checked_sub(1);
+                let tabs = this.workspace.read(cx).numbered_tabs();
+                let last = tabs.len().checked_sub(1);
                 let Some(slot) = at
                     .index
                     .or(last)
                     .filter(|ix| Some(*ix) <= last)
-                    .and_then(|ix| strip.get(ix).cloned())
+                    .and_then(|ix| tabs.get(ix).map(|slot| (*slot).clone()))
                 else {
                     return;
                 };

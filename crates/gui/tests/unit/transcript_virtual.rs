@@ -27,7 +27,7 @@ fn long_session_renders_nearby_turns_and_navigates_without_losing_selection(
     let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));
     workspace.update(cx, |workspace, cx| {
         let cwd = std::path::PathBuf::from("/nonexistent/cydonia-virtual-test");
-        let mut project = Project::new(cwd.clone(), cx);
+        let mut project = Project::new(workspace.intern(&cwd), cwd.clone(), cx);
         let record = serde_json::from_value(serde_json::json!({"id":"test", "agent":"test", "title":"", "name":null, "updated":1, "items":[]})).unwrap();
         let mut chat = ChatSession::restore(1, cwd, Agent {name:"test".into(), id:None, command:String::new(), args:vec![], env:Default::default()}, record);
         for i in 0..1000 { chat.items.push(ChatItem::User(format!("Question {i}"))); chat.items.push(ChatItem::Agent(format!("Answer {i}\n\nAnother paragraph with **bold** text."))); }
@@ -81,14 +81,15 @@ fn long_session_renders_nearby_turns_and_navigates_without_losing_selection(
     view.read_with(&visual, |view, _| {
         assert!(view.state.selection.laid_out() < 100);
         assert!(view.state.list.state.is_following_tail());
-        view.state.list.scroll_to(300);
+        view.state.reveal_turn(300);
     });
     visual.update(|window, _| window.refresh());
     visual.run_until_parked();
     view.read_with(&visual, |view, _| {
         assert!(view.state.selection.is_laid_out(600));
         assert!(view.state.selection.laid_out() < 100);
-        assert_eq!(view.state.list.state.logical_scroll_top().item_ix, 300);
+        // A question and its answer are a row each.
+        assert_eq!(view.state.list.state.logical_scroll_top().item_ix, 600);
     });
     workspace.update(&mut visual, |workspace, cx| {
         workspace.with_session(1, cx, |chat| {
@@ -97,7 +98,7 @@ fn long_session_renders_nearby_turns_and_navigates_without_losing_selection(
     });
     visual.run_until_parked();
     view.read_with(&visual, |view, _| {
-        assert_eq!(view.state.list.state.logical_scroll_top().item_ix, 300)
+        assert_eq!(view.state.list.state.logical_scroll_top().item_ix, 600)
     });
     let focus = view.update(&mut visual, |view, _| {
         {
@@ -121,7 +122,7 @@ fn long_session_renders_nearby_turns_and_navigates_without_losing_selection(
     });
     visual.update(|window, cx| window.focus(&focus, cx));
     visual.run_until_parked();
-    view.read_with(&visual, |view, _| view.state.list.scroll_to(800));
+    view.read_with(&visual, |view, _| view.state.reveal_turn(800));
     visual.update(|window, _| window.refresh());
     visual.run_until_parked();
     visual.simulate_keystrokes("cmd-c");
@@ -132,5 +133,73 @@ fn long_session_renders_nearby_turns_and_navigates_without_losing_selection(
                 .as_deref(),
             Some("Question")
         )
+    });
+}
+
+/// A turn in flight with hundreds of tool calls lists each call as a row of
+/// its own, so a frame draws the calls on screen and not the whole run.
+#[gpui::test]
+fn a_running_turn_lists_its_work_a_step_at_a_time(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| Theme::install(bezel::theme::Appearance::Light, cx));
+    let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));
+    workspace.update(cx, |workspace, cx| {
+        let cwd = std::path::PathBuf::from("/nonexistent/cydonia-running-test");
+        let mut project = Project::new(workspace.intern(&cwd), cwd.clone(), cx);
+        let record = serde_json::from_value(serde_json::json!({"id":"test", "agent":"test", "title":"", "name":null, "updated":1, "items":[]})).unwrap();
+        let mut chat = ChatSession::restore(1, cwd, Agent {name:"test".into(), id:None, command:String::new(), args:vec![], env:Default::default()}, record);
+        chat.items.push(ChatItem::User("Do a lot".into()));
+        for ix in 0..600 {
+            chat.items.push(ChatItem::Tool {
+                id: ix.to_string(),
+                kind: cydonia_acp::proto::ToolKind::Read,
+                label: format!("Read file {ix}"),
+                status: artifact::session::chat::ToolStatus::Success,
+                output: String::new(),
+            });
+        }
+        chat.streaming = true;
+        project.sessions.push(crate::model::project::HeldSession::new(chat, cx));
+        workspace.projects.push(project);
+    });
+    let window = cx.add_window(|_, cx| ChatView {
+        view: cx.new(|cx| {
+            SessionView::new(
+                1,
+                None,
+                Drawn::Pane,
+                0.,
+                workspace.clone(),
+                gpui::WeakEntity::new_invalid(),
+                cx,
+            )
+        }),
+        width: 1000.,
+    });
+    let view = window.read_with(cx, |chat, _| chat.view.clone()).unwrap();
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.run_until_parked();
+    let listed = |view: &SessionView| {
+        let rows = view.state.rows.borrow();
+        let steps = rows
+            .rows
+            .iter()
+            .filter(|row| matches!(row, Row::Step(_)))
+            .count();
+        (steps, view.state.list.visible_range().len())
+    };
+    view.read_with(&visual, |view, _| {
+        let (steps, visible) = listed(view);
+        assert_eq!(steps, 600, "the live run is open, a row per call");
+        assert!(visible < 50, "{visible} rows on screen");
+    });
+    workspace.update(&mut visual, |workspace, cx| {
+        workspace.with_session(1, cx, |chat| {
+            chat.items.push(ChatItem::Agent("Done".into()))
+        })
+    });
+    visual.run_until_parked();
+    view.read_with(&visual, |view, _| {
+        let (_, visible) = listed(view);
+        assert!(visible < 50, "{visible} rows on screen after an update");
     });
 }

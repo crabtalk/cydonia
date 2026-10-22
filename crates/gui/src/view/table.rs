@@ -5,7 +5,7 @@
 
 use crate::{
     data::ColType,
-    model::workspace::{Opening, Workspace},
+    model::workspace::{Entry, Member, Opening, Workspace},
     view::{
         kit::{
             add,
@@ -14,7 +14,6 @@ use crate::{
         window::root::{Cydonia, NewTable},
     },
 };
-use artifact::space::{Entry, Member};
 use bezel::{
     gpui::{
         self, AnyElement, App, Context, Div, Entity, Focusable as _, KeyBinding, SharedString,

@@ -6,7 +6,10 @@
 
 use super::Tab;
 use crate::{
-    model::workspace::{Opening, Showing, references::Part},
+    model::{
+        project::ProjectId,
+        workspace::{Entry as SpaceEntry, Member, Opening, Showing, references::Part},
+    },
     view::{
         board::{BoardView, DrawerAt, PaneState},
         kit::watch::Watch,
@@ -14,7 +17,7 @@ use crate::{
         window::{reach::InWindow as _, root::Cydonia},
     },
 };
-use artifact::{board::Page, reference::Reference, space::Member};
+use artifact::{board::Page, reference::Reference};
 use bezel::{
     gpui::{
         self, AnyElement, App, Context, Div, Entity, EntityId, FocusHandle, KeyBinding, Pixels,
@@ -246,7 +249,7 @@ impl Tab {
     /// already shows it.
     pub(crate) fn open_page(
         &mut self,
-        board: artifact::space::Entry,
+        board: SpaceEntry,
         page: Page,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -625,7 +628,7 @@ impl Cydonia {
     /// Hold the rows of every table a drawer shows, so its preview has a page
     /// to draw — see [`crate::model::project::Project::hold_pages`].
     pub(crate) fn hold_drawn_tables(&mut self, cx: &mut Context<Self>) {
-        let held: Vec<(std::path::PathBuf, String)> = {
+        let held: Vec<(ProjectId, String)> = {
             let workspace = self.workspace.read(cx);
             self.leaves
                 .iter()

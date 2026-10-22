@@ -283,31 +283,39 @@ pub struct SettingsWindow {
     error: Option<SharedString>,
 }
 
-/// Open the window, or bring the open one forward — a second settings window
-/// would be two views of one preference. One open over another workspace
-/// than `workspace`, left by a workspace window that has since closed, is
-/// drawn again over `workspace`.
+/// Open the window at `section`, or bring the open one forward — a second
+/// settings window would be two views of one preference. The open one moves
+/// to `section`, and stays on the section it shows for `None`; a new one opens
+/// at General for `None`. One open over another workspace than `workspace`,
+/// left by a workspace window that has since closed, is drawn again over
+/// `workspace`.
 ///
 /// Deferred: an action dispatched in the settings window runs while gpui holds
 /// that window, and a held window reads as closed.
 #[cfg(feature = "desktop")]
-pub fn open(workspace: Entity<Workspace>, section: Section, cx: &mut App) {
+pub fn open(workspace: Entity<Workspace>, section: Option<Section>, cx: &mut App) {
     cx.defer(move |cx| show_or_open(workspace, section, cx));
 }
 
 #[cfg(feature = "desktop")]
-fn show_or_open(workspace: Entity<Workspace>, section: Section, cx: &mut App) {
+fn show_or_open(workspace: Entity<Workspace>, section: Option<Section>, cx: &mut App) {
     let open = cx
         .windows()
         .into_iter()
         .find_map(|window| window.downcast::<SettingsWindow>());
     if let Some(handle) = open {
-        let shown = match handle.read(cx).map(|this| this.workspace == workspace) {
-            Ok(true) => handle.update(cx, |this, window, cx| {
-                this.show(section, cx);
+        let shown = match handle
+            .read(cx)
+            .map(|this| (this.workspace == workspace, this.section))
+        {
+            Ok((true, _)) => handle.update(cx, |this, window, cx| {
+                if let Some(section) = section {
+                    this.show(section, cx);
+                }
                 window.activate_window();
             }),
-            Ok(false) => AnyWindowHandle::from(handle).update(cx, |_, window, cx| {
+            Ok((false, shown)) => AnyWindowHandle::from(handle).update(cx, |_, window, cx| {
+                let section = section.unwrap_or(shown);
                 window.replace_root(cx, |_, cx| {
                     SettingsWindow::new(workspace.clone(), section, cx)
                 });
@@ -349,7 +357,7 @@ fn show_or_open(workspace: Entity<Workspace>, section: Section, cx: &mut App) {
             // the main window's frost alive and would frost this one with it.
             appearance::keep_background(window, cx);
             crate::view::window::lights::fit(window, HEADER_HEIGHT, cx);
-            cx.new(|cx| SettingsWindow::new(workspace, section, cx))
+            cx.new(|cx| SettingsWindow::new(workspace, section.unwrap_or(Section::General), cx))
         },
     )
     .ok();

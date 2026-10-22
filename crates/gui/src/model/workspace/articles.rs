@@ -4,8 +4,7 @@
 //! `use super::*`: these methods work on the same struct and reach the same
 //! names as the rest of it.
 use super::*;
-use artifact::article::properties::CommentDisplay;
-use artifact::kind::Kind;
+use artifact::{article::properties::CommentDisplay, kind::Kind};
 
 impl Workspace {
     /// A fresh document in the active project, opened as it lands — an empty
@@ -90,9 +89,11 @@ impl Workspace {
         if from == to {
             return;
         }
-        let (Some(source), Some(target)) = (
-            self.projects.get(from).map(|open| open.path.clone()),
-            self.projects.get(to).map(|open| open.path.clone()),
+        let (Some(source), Some((target, target_path))) = (
+            self.projects.get(from).map(|open| open.id),
+            self.projects
+                .get(to)
+                .map(|open| (open.id, open.path.clone())),
         ) else {
             return;
         };
@@ -106,7 +107,7 @@ impl Workspace {
         article.write(cx);
         let content = article.path.clone();
         let id = article.id.clone();
-        let Ok(arrived) = artifact::article::move_to(&content, &target) else {
+        let Ok(arrived) = artifact::article::move_to(&content, &target_path) else {
             return;
         };
         // Its sessions went with it, and are held where it landed.
@@ -118,8 +119,8 @@ impl Workspace {
                 self.restore_record(to, stored, cx);
             }
         }
-        self.reload_project(&source, cx);
-        self.reload_project(&target, cx);
+        self.reload_project(source, cx);
+        self.reload_project(target, cx);
     }
 
     /// Let go of the sessions opened under article `id` in the project at

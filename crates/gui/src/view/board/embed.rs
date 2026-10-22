@@ -2,8 +2,10 @@
 //! board, so whatever it is embedded in redraws when the card changes.
 
 use super::{Docs, Tags, card_preview};
-use crate::model::workspace::references;
-use crate::view::{kit::watch::Watch, window::root::Cydonia};
+use crate::{
+    model::{project::ProjectId, workspace::references},
+    view::{kit::watch::Watch, window::root::Cydonia},
+};
 use artifact::board::Board;
 use bezel::{
     gpui::{
@@ -18,7 +20,7 @@ use std::{path::PathBuf, rc::Rc};
 pub(crate) struct CardEmbed {
     board: Entity<Board>,
     /// The project the board is in, where the card's blockers resolve.
-    home: PathBuf,
+    home: ProjectId,
     card: String,
     /// The link it was embedded by, which pressing it opens.
     reference: String,
@@ -36,7 +38,7 @@ impl CardEmbed {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         board: Entity<Board>,
-        home: PathBuf,
+        home: ProjectId,
         card: String,
         reference: String,
         base: Option<PathBuf>,
@@ -72,7 +74,7 @@ impl Render for CardEmbed {
             .map(|card| {
                 workspace
                     .read(cx)
-                    .blocking_boards(&self.home, card, cx)
+                    .blocking_boards(self.home, card, cx)
                     .cloned()
                     .collect()
             })
@@ -84,7 +86,7 @@ impl Render for CardEmbed {
         };
         let handle = board.handle_of(card).unwrap_or_default();
         let name = board.name.clone();
-        let tags = Tags::of(card, &self.home, workspace.read(cx), cx);
+        let tags = Tags::of(card, self.home, workspace.read(cx), cx);
         let text = card.text.clone();
         let (doc, shortened) = self.docs.preview(&text);
         let (root, reference) = (self.root.clone(), self.reference.clone());

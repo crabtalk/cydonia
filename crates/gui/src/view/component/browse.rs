@@ -169,8 +169,10 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Entity<Panel>> {
-        let workspace = self.workspace.read(cx);
-        let project = workspace.projects[workspace.project_at(path)?].path.clone();
+        let id = self
+            .workspace
+            .update(cx, |workspace, _| workspace.intern(path));
+        let project = self.workspace.read(cx).project(id)?.path.clone();
         let cwd = if self
             .workspace
             .read(cx)

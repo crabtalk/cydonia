@@ -31,7 +31,7 @@ The commands without a chord are reachable from the menu. ⌘N is the session, a
 three more `New` chords would spend letters you may want for your own. ⌘W closes
 a tab in a space.
 
-While the focus is in a pane holding a stack, ⌃⇥ and ⇧⌃⇥ step through the stack instead of the window's tabs. With **Spaces in sidebar** on, the window's tabs are not drawn, and ⌃⇥ steps through the focused pane's stack alone. ⌘1–9 always pick the window's tabs.
+While the focus is in a pane holding a stack, ⌃⇥ and ⇧⌃⇥ step through the stack instead of the window's tabs. With **Spaces in sidebar** on, the window's tabs are not drawn, and ⌃⇥ steps through the focused pane's stack alone. ⌘1–9 pick the window's tabs, or with **Spaces in sidebar** on the spaces, in the order the sidebar lists them.
 
 ## Changing one
 

@@ -2,7 +2,10 @@
 //! then titles.
 
 use super::*;
-use crate::{model::workspace::Showing, view::sidebar::Row};
+use crate::{
+    model::{project::ProjectIds, workspace::Showing},
+    view::sidebar::Row,
+};
 
 fn entry(project: &str, active: bool, number: u64, title: &str, key: Option<&str>) -> Linkable {
     Linkable {
@@ -23,7 +26,7 @@ fn entry(project: &str, active: bool, number: u64, title: &str, key: Option<&str
             None => Kind::Article,
         },
         row: Row::Entry {
-            project: project.into(),
+            project: ProjectIds::default().intern(std::path::Path::new(project)),
             showing: Showing::Article(number.to_string()),
         },
     }

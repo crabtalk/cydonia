@@ -11,13 +11,21 @@
 //!
 //! There is no `new_space` a menu calls: a space is made by dragging a
 //! second entry onto the one already open — see [`Workspace::arrange`].
-use super::tabs::Slot;
-use super::*;
+use super::{tabs::Slot, *};
 use crate::model::spaces::{Shelf, Store as _};
 use artifact::{
     kind::Kind,
-    space::{Entry, Member, Side, Space},
+    space::{self, Side},
 };
+
+/// What a pane is on, its project named by id.
+pub type Member = space::Member<ProjectId>;
+
+/// An entry of a project, named by id.
+pub type Entry = space::Entry<ProjectId>;
+
+/// A space, its members' projects named by id.
+pub type Space = space::Space<ProjectId>;
 
 /// What a pane shows, resolved from the member a space names: an entry of
 /// one project, by the id it has there.
@@ -96,7 +104,7 @@ impl Workspace {
     }
 
     /// The space's members in the order the sidebar lists them.
-    pub fn listed_members(&self, space: &artifact::space::Space) -> Vec<Member> {
+    pub fn listed_members(&self, space: &Space) -> Vec<Member> {
         let mut members = space.entries();
         if let Some(order) = self.space_order.get(&space.id) {
             members.sort_by_key(|member| order.iter().position(|at| at == member).map(|at| at + 1));
@@ -130,18 +138,23 @@ impl Workspace {
         self.spaces.iter().find(|space| space.id == id)
     }
 
-    /// Carry a space to another place in the list.
+    /// Carry a space to place `to` among the spaces: its tab moves among the
+    /// strip's space tabs, past the tabs of entries between them.
     pub fn move_space(&mut self, id: &str, to: usize, cx: &mut Context<Self>) {
-        let Some(from) = self.space_ix(id) else {
+        let order: Vec<&str> = self.space_tabs().collect();
+        let Some(from) = order.iter().position(|at| *at == id) else {
             return;
         };
-        if from == to || to >= self.spaces.len() {
+        let Some(target) = order.get(to).filter(|_| from != to) else {
             return;
-        }
-        let space = self.spaces.remove(from);
-        self.spaces.insert(to, space);
-        self.save();
-        cx.notify();
+        };
+        let to = Slot::Space {
+            space: (*target).to_owned(),
+        };
+        let moving = Slot::Space {
+            space: id.to_owned(),
+        };
+        self.reorder_slot(&moving, &to, cx);
     }
 
     /// Show a space: its tab in front of the strip. The projects its panes are
@@ -154,8 +167,9 @@ impl Workspace {
         let wanted: Vec<PathBuf> = space
             .entries()
             .into_iter()
-            .filter_map(|member| member.project().map(Path::to_path_buf))
-            .filter(|path| !self.projects.iter().any(|open| open.path == *path))
+            .filter_map(|member| member.project().copied())
+            .filter(|project| self.project_ix(*project).is_none())
+            .map(|project| self.path_of(project).to_path_buf())
             .filter(|path| path.is_dir())
             .collect();
         let id = space.id.clone();
@@ -217,7 +231,8 @@ impl Workspace {
             // The first drag. The space starts as the pane that was there,
             // which is what the arrival is being put beside.
             _ => {
-                let space = Shelf::create(target.clone())?;
+                let over = target.clone().map(|id| self.path_of(id).to_path_buf());
+                let space = Shelf::create(over)?.map(&mut |path| self.ids.intern(&path));
                 self.spaces.insert(0, space);
                 0
             }
@@ -233,8 +248,8 @@ impl Workspace {
         if !place(space) {
             return None;
         }
-        Shelf::save(space);
         let id = space.id.clone();
+        self.write_space(at);
         self.replace_slot(
             &Slot::Entry(target.clone()),
             Slot::Space { space: id.clone() },
@@ -291,7 +306,7 @@ impl Workspace {
         if !space.remove(member) {
             return false;
         }
-        Shelf::save(space);
+        self.write_space(ix);
         cx.notify();
         true
     }
@@ -303,9 +318,8 @@ impl Workspace {
             self.front_tab(&Slot::Entry(member.clone()), cx);
             return;
         };
-        let space = &mut self.spaces[ix];
-        if space.set_front(member) {
-            Shelf::save(space);
+        if self.spaces[ix].set_front(member) {
+            self.write_space(ix);
             cx.notify();
         }
     }
@@ -313,11 +327,11 @@ impl Workspace {
     /// Record the pane on `entry` as the open space's focused one. Writes the
     /// space back and notifies nobody.
     pub fn set_focused(&mut self, entry: &Member) {
-        let Some(space) = self.active_space_mut() else {
+        let Some(ix) = self.space() else {
             return;
         };
-        if space.focus(entry) {
-            Shelf::save(space);
+        if self.spaces[ix].focus(entry) {
+            self.write_space(ix);
         }
     }
 
@@ -476,9 +490,9 @@ impl Workspace {
     }
 
     pub fn rename_space(&mut self, id: &str, name: String, cx: &mut Context<Self>) {
-        if let Some(space) = self.spaces.iter_mut().find(|space| space.id == id) {
-            space.name = name.trim().to_owned();
-            Shelf::save(space);
+        if let Some(ix) = self.space_ix(id) {
+            self.spaces[ix].name = name.trim().to_owned();
+            self.write_space(ix);
             cx.notify();
         }
     }
@@ -495,7 +509,6 @@ impl Workspace {
     /// Only for projects that are open: a member in a project this window has
     /// never opened is not missing, only out of reach.
     pub fn prune_spaces(&mut self, cx: &mut Context<Self>) {
-        let open: Vec<PathBuf> = self.projects.iter().map(|open| open.path.clone()).collect();
         let gone: Vec<Vec<Member>> = self
             .spaces
             .iter()
@@ -506,15 +519,15 @@ impl Workspace {
                     .filter(|member| {
                         member
                             .project()
-                            .is_none_or(|project| open.iter().any(|at| at == project))
+                            .is_none_or(|project| self.project_ix(*project).is_some())
                             && !self.lists(member, cx)
                     })
                     .collect()
             })
             .collect();
-        for (space, gone) in self.spaces.iter_mut().zip(gone) {
-            if !gone.is_empty() && space.prune(&gone) {
-                Shelf::save(space);
+        for (ix, gone) in gone.into_iter().enumerate() {
+            if !gone.is_empty() && self.spaces[ix].prune(&gone) {
+                self.write_space(ix);
             }
         }
         // A tab is on an entry of an open project, or it goes.
@@ -527,12 +540,9 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Where the open project `member` is in is listed, found by the path the
-    /// member names exactly. Nothing for an app.
+    /// Where the open project `member` is in is listed. Nothing for an app.
     pub fn member_project(&self, member: &Member) -> Option<usize> {
-        self.projects
-            .iter()
-            .position(|open| Some(open.path.as_path()) == member.project())
+        self.project_ix(*member.project()?)
     }
 
     /// Whether what `member` names is here to show: an app that is installed,
@@ -565,14 +575,14 @@ impl Workspace {
         };
         let open = self.projects.get(project)?;
         let record = open.session(id, cx)?.record.clone()?;
-        Some(Member::new(open.path.clone(), Kind::Session, record))
+        Some(Member::new(open.id, Kind::Session, record))
     }
 
     /// [`Self::member_of`] for a board, an article or a table, whose id is
     /// its file. Nothing for a session.
     fn filed_member(&self, project: usize, showing: Showing) -> Option<Entry> {
         let open = self.projects.get(project)?;
-        let project = open.path.clone();
+        let project = open.id;
         let (kind, id) = match showing {
             Showing::Session(_) => return None,
             Showing::Board(id) => {
@@ -595,21 +605,21 @@ impl Workspace {
     pub fn board_member(&self, project: usize, ix: usize) -> Option<Member> {
         let open = self.projects.get(project)?;
         let id = open.boards.get(ix)?.id.clone();
-        Some(Member::new(open.path.clone(), Kind::Board, id))
+        Some(Member::new(open.id, Kind::Board, id))
     }
 
     /// The member naming the article listed at `ix` in `project`.
     pub fn article_member(&self, project: usize, ix: usize) -> Option<Member> {
         let open = self.projects.get(project)?;
         let id = open.articles.get(ix)?.id.clone();
-        Some(Member::new(open.path.clone(), Kind::Article, id))
+        Some(Member::new(open.id, Kind::Article, id))
     }
 
     /// The member naming the table listed at `ix` in `project`.
     pub fn table_member(&self, project: usize, ix: usize) -> Option<Member> {
         let open = self.projects.get(project)?;
         let key = open.tables.get(ix)?.key.clone();
-        Some(Member::new(open.path.clone(), Kind::Table, key))
+        Some(Member::new(open.id, Kind::Table, key))
     }
 
     /// Which open project `member` is in, and where it is listed among its
@@ -777,12 +787,22 @@ impl Workspace {
 
     /// Change the open space and write it back, if the change took.
     fn edit_space(&mut self, cx: &mut Context<Self>, edit: impl FnOnce(&mut Space) -> bool) {
-        if let Some(space) = self.active_space_mut()
-            && edit(space)
+        if let Some(ix) = self.space()
+            && edit(&mut self.spaces[ix])
         {
-            Shelf::save(space);
+            self.write_space(ix);
             cx.notify();
         }
+    }
+
+    /// Write the space at `ix` to its file, each project by its path.
+    fn write_space(&mut self, ix: usize) {
+        let Some(space) = self.spaces.get(ix) else {
+            return;
+        };
+        let mut written = space.clone().map(&mut |id| self.ids.path(id).to_path_buf());
+        Shelf::save(&mut written);
+        self.spaces[ix].touched = written.touched;
     }
 }
 

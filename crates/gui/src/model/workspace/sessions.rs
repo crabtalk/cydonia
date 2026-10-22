@@ -4,10 +4,12 @@
 //! `use super::*`: these methods work on the same struct and reach the same
 //! names as the rest of it.
 use super::*;
-use crate::model::project::HeldSession;
-use crate::model::session_preferences::{self, OfferCache};
-use artifact::kind::Kind;
-use artifact::project::Project as _;
+use crate::model::{
+    project::HeldSession,
+    session_preferences::{self, OfferCache},
+    workspace::Member,
+};
+use artifact::{kind::Kind, project::Project as _};
 use bezel::gpui::Entity;
 
 /// One pick on an article's composer before its session exists, which changes
@@ -81,13 +83,12 @@ impl Workspace {
 
     /// The member that names a session wherever it is open — what finds the
     /// tab holding it. Nothing for one with no record id yet.
-    pub fn member_of_session(&self, id: u64, cx: &App) -> Option<artifact::space::Member> {
+    pub fn member_of_session(&self, id: u64, cx: &App) -> Option<Member> {
         self.member_of(self.project_of(id)?, super::Showing::Session(id), cx)
     }
 
-    /// Give a session the name that keeps, minting its file if it has none —
-    /// what anything pointing at a session from outside the process needs, and
-    /// a session has no file until its first turn is written.
+    /// Give a session the name that keeps, and write its file — what anything
+    /// pointing at a session from outside the process needs.
     pub fn retain_session(&mut self, id: u64, cx: &mut Context<Self>) -> Option<String> {
         let record = self.update_session(id, cx, ChatSession::retain_panel)??;
         cx.notify();
@@ -177,8 +178,7 @@ impl Workspace {
         }
         self.projects[ix].active = Some(id);
         self.active = Some(ix);
-        // A session has no file until its first turn is written, so one that
-        // has said nothing is not yet somewhere to come back to.
+        // A session with no file yet is not somewhere to come back to.
         if let Some(record) = self.projects[ix]
             .session(id, cx)
             .and_then(|chat| chat.filed().map(str::to_owned))
@@ -510,7 +510,8 @@ impl Workspace {
     /// happens where either is not held.
     pub fn start_in(&mut self, path: &Path, agent: &str, content: String, cx: &mut Context<Self>) {
         let entry = named(&self.settings.agents, Some(agent), agent).cloned();
-        if let (Some(ix), Some(entry)) = (self.project_at(path), entry) {
+        let project = self.ids.intern(path);
+        if let (Some(ix), Some(entry)) = (self.project_ix(project), entry) {
             self.new_session_in(ix, entry, Some(content), false, cx);
         }
     }

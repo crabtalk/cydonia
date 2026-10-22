@@ -2,7 +2,7 @@
 //! it, name it, and the rows of its menu — whichever view's menu asked.
 
 use crate::{
-    model::workspace::{Opening, Showing},
+    model::workspace::{Member, Opening, Showing},
     view::{
         article::TogglePlainText,
         keymap::{self, Command},
@@ -11,10 +11,7 @@ use crate::{
         window::root::Cydonia,
     },
 };
-use artifact::{
-    board::{Page, View},
-    space::Member,
-};
+use artifact::board::{Page, View};
 use bezel::{
     gpui::{App, Context, Window},
     ui::{icons, menu::Item},
@@ -65,12 +62,12 @@ impl Cydonia {
         let workspace = self.workspace.read(cx);
         match row {
             Row::Group(Group::Project(path)) => {
-                if let Some(ix) = workspace.project_at(path) {
+                if let Some(ix) = workspace.project_ix(*path) {
                     self.select_project(ix, cx);
                 }
             }
             Row::Archive(path) => {
-                if let Some(ix) = workspace.project_at(path) {
+                if let Some(ix) = workspace.project_ix(*path) {
                     self.commit(cx);
                     self.workspace
                         .update(cx, |workspace, cx| workspace.toggle_archive(ix, cx));
@@ -139,7 +136,7 @@ impl Cydonia {
             return;
         };
         self.workspace.update(cx, |workspace, cx| {
-            if let Some(project) = workspace.project_at(project) {
+            if let Some(project) = workspace.project_ix(*project) {
                 workspace.pin(project, showing.clone(), on, cx);
             }
         });
@@ -239,7 +236,7 @@ impl Cydonia {
                 .workspace
                 .read(cx)
                 .board_member(project, ix)
-                .and_then(artifact::space::Member::into_entry)
+                .and_then(Member::into_entry)
             {
                 let on = match &host {
                     Host::Tab(tab) => Some(tab.clone()),
@@ -539,7 +536,7 @@ impl Cydonia {
             let member = entry.member(self.workspace.read(cx), cx);
             self.put_away_arranged(member.as_ref(), window, cx);
             self.workspace.update(cx, |workspace, cx| {
-                if let Some(project) = workspace.project_at(project) {
+                if let Some(project) = workspace.project_ix(*project) {
                     workspace.unpin_entry(project, showing.clone(), cx);
                 }
                 if let Some(member) = member {

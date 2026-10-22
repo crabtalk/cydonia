@@ -6,8 +6,7 @@
 //! Going back is going to that entry, wherever it is shown now, scrolled to
 //! where it was left; or to the library, narrowed as it was left.
 
-use crate::model::workspace::Opening;
-use artifact::space::Member;
+use crate::model::workspace::{Member, Opening};
 use bezel::{
     gpui::{Context, Div, IntoElement, ListOffset, Pixels, Point, Window, div, prelude::*},
     motion::{Fade, Painter},
@@ -290,7 +289,7 @@ impl Cydonia {
         let workspace = self.workspace.read(cx);
         let (project, showing) = workspace.showing_of(member, cx)?;
         Some(Row::Entry {
-            project: workspace.projects.get(project)?.path.clone(),
+            project: workspace.projects.get(project)?.id,
             showing,
         })
     }

@@ -11,7 +11,7 @@
 //! nobody paired, and a rename out of the tree looks like one into it. So a
 //! knock carries nothing: the answer to any of them is the same re-read.
 
-use crate::model::{store, workspace::Workspace};
+use crate::model::{project::ProjectId, store, workspace::Workspace};
 use artifact::project::Project as _;
 use bezel::gpui::{Context, Task};
 use futures::{StreamExt as _, channel::mpsc};
@@ -46,10 +46,10 @@ impl Watch {
     /// Watch a project's `.cydonia/`, and reconcile the project whenever it
     /// moves.
     ///
-    /// The project is found again by path on each pass rather than held by
+    /// The project is found again by id on each pass rather than held by
     /// index: the rail can be reordered and projects closed while this runs,
     /// and the index it was armed on would by then be somebody else's.
-    pub fn open(root: PathBuf, cx: &mut Context<Workspace>) -> Self {
+    pub fn open(root: PathBuf, project: ProjectId, cx: &mut Context<Workspace>) -> Self {
         let pump = cx.spawn(async move |workspace, cx| {
             loop {
                 let (tx, mut knocks) = mpsc::unbounded();
@@ -73,7 +73,7 @@ impl Watch {
                     cx.background_executor().timer(settle).await;
                     while knocks.try_recv().is_ok() {}
                     let held = workspace
-                        .update(cx, |workspace, cx| workspace.reload_project(&root, cx))
+                        .update(cx, |workspace, cx| workspace.reload_project(project, cx))
                         .is_ok();
                     // The workspace went away, and the watch goes with it.
                     if !held {

@@ -8,7 +8,7 @@ use crate::{
     model::{
         article,
         palette::Washes,
-        workspace::{Opening, Showing, Workspace},
+        workspace::{Entry, Opening, Showing, Workspace},
     },
     view::{
         component::{
@@ -25,7 +25,6 @@ use crate::{
         window::root::{Cydonia, NewArticle},
     },
 };
-use artifact::space::Entry;
 use bezel::{
     gpui::{
         self, AnyElement, App, Context, CursorStyle, Div, Entity, Focusable as _, KeyBinding,
@@ -742,7 +741,7 @@ impl ArticleView {
     /// Where the article is listed, as `(project, index)`, while it is open.
     fn located(&self, cx: &App) -> Option<(usize, usize)> {
         let workspace = self.workspace.read(cx);
-        let project = workspace.project_at(&self.article.project)?;
+        let project = workspace.project_ix(self.article.project)?;
         let at = workspace.projects[project].article_ix(&self.article.id)?;
         Some((project, at))
     }
@@ -1373,7 +1372,7 @@ impl ArticleView {
         let open = workspace.projects.get(project)?;
         let article = open.articles.get(at)?;
         let target = Target::Page(Row::Entry {
-            project: open.path.clone(),
+            project: open.id,
             showing: Showing::Article(article.id.clone()),
         });
         let labels = article.labels.clone();

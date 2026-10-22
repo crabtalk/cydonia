@@ -8,6 +8,7 @@ use super::{
 };
 use crate::{
     model::{
+        project::ProjectId,
         state,
         workspace::{Opening, Showing},
     },
@@ -25,7 +26,6 @@ use crate::{
         window::{
             reach::InWindow as _,
             root::{self, Cydonia, NewSession, OpenProject},
-            section::Section,
         },
     },
 };
@@ -46,10 +46,7 @@ use bezel::{
         widgets::{ButtonStyle, Buttons, Content, Layout},
     },
 };
-use std::{
-    path::{Path, PathBuf},
-    rc::Rc,
-};
+use std::rc::Rc;
 
 /// A line of an extended row under its name: small, muted, cut to one line.
 fn detail(text: String, theme: &Theme) -> Div {
@@ -76,7 +73,7 @@ impl Sidebar {
     ) -> Stateful<Div> {
         let inner = match row {
             Row::Group(group) => self.group_head(group.clone(), false, lifted, window, cx),
-            Row::Archive(path) => match self.workspace.read(cx).project_at(path) {
+            Row::Archive(path) => match self.workspace.read(cx).project_ix(*path) {
                 Some(ix) => self.archive_divider(ix, cx),
                 None => Empty.into_any_element(),
             },
@@ -152,7 +149,7 @@ impl Sidebar {
         let (name, folded, marks, space_id): (String, bool, (Icon, Icon), Option<String>) =
             match &group {
                 Group::Project(path) => match workspace
-                    .project_at(path)
+                    .project_ix(*path)
                     .and_then(|ix| workspace.projects.get(ix))
                 {
                     Some(project) => (
@@ -179,9 +176,9 @@ impl Sidebar {
         let folded = folded && self.search.read(cx).query().is_none();
         let key = key_of(&Row::Group(group.clone()));
         let (menu, add) = match &group {
-            Group::Project(path) => (
-                SidebarMenu::Project(path.clone()),
-                Some(SidebarMenu::Add(path.clone())),
+            Group::Project(project) => (
+                SidebarMenu::Project(*project),
+                Some(SidebarMenu::Add(*project)),
             ),
             Group::Space(_) => (SidebarMenu::Entry(Row::Group(group.clone())), None),
         };
@@ -207,9 +204,9 @@ impl Sidebar {
                 .into_any_element(),
         };
         let menu_rows: MenuRows = match &group {
-            Group::Project(path) => {
-                let path = path.clone();
-                Rc::new(move |this, cx| this.project_rows(&path, cx))
+            Group::Project(project) => {
+                let project = *project;
+                Rc::new(move |this, cx| this.project_rows(project, cx))
             }
             Group::Space(_) => {
                 let row = Row::Group(group.clone());
@@ -278,7 +275,7 @@ impl Sidebar {
             )
             .child(label)
             .children(match &group {
-                Group::Project(path) => self.label_filter_chip(path, cx),
+                Group::Project(project) => self.label_filter_chip(*project, cx),
                 Group::Space(_) => None,
             })
             // Ahead of the `+`, which is the one that gets pressed: sorting
@@ -299,25 +296,25 @@ impl Sidebar {
                 // A space's is drawn by the row around it — see
                 // [`Self::sidebar_row`].
                 .children(match &group {
-                    Group::Project(path) => self.project_menu(path, window, cx),
+                    Group::Project(project) => self.project_menu(*project, window, cx),
                     Group::Space(_) => None,
                 }),
             )
             .children(match &group {
-                Group::Project(path) => Some(
+                Group::Project(project) => Some(
                     self.menu_button(
                         SharedString::from(format!("group-add-{key}")),
                         reveal,
                         icons::math::Plus,
-                        SidebarMenu::Add(path.clone()),
+                        SidebarMenu::Add(*project),
                         MenuPlace::Below,
                         Rc::new({
-                            let path = path.clone();
-                            move |this, cx| this.add_rows(&path, cx)
+                            let project = *project;
+                            move |this, cx| this.add_rows(project, cx)
                         }),
                         cx,
                     )
-                    .children(self.add_menu(path, window, cx)),
+                    .children(self.add_menu(*project, window, cx)),
                 ),
                 Group::Space(_) => None,
             })
@@ -336,18 +333,17 @@ impl Sidebar {
         // note has to be here too — read stale, a right press would swallow.
         // A space's opens from the row around it, as an entry's does.
         let head = match &group {
-            Group::Project(path) => self
-                .menu_trigger(head, SidebarMenu::Project(path.clone()), cx)
+            Group::Project(project) => self
+                .menu_trigger(head, SidebarMenu::Project(*project), cx)
                 .on_mouse_down(
                     MouseButton::Right,
                     cx.listener({
-                        let path = path.clone();
+                        let project = *project;
                         move |this, press: &gpui::MouseDownEvent, window, cx| {
-                            let path = path.clone();
                             this.toggle_menu(
-                                SidebarMenu::Project(path.clone()),
+                                SidebarMenu::Project(project),
                                 MenuPlace::At(press.position),
-                                move |this, _, cx| Self::through(this.project_rows(&path, cx)),
+                                move |this, _, cx| Self::through(this.project_rows(project, cx)),
                                 window,
                                 cx,
                             );
@@ -719,7 +715,7 @@ impl Sidebar {
             return Empty.into_any_element();
         };
         let open = held.archive_open;
-        let indent = self.list(cx).indent_of(&Row::Archive(held.path.clone()));
+        let indent = self.list(cx).indent_of(&Row::Archive(held.id));
         row(
             ("archive", project),
             "archive-row",
@@ -812,9 +808,9 @@ impl Sidebar {
     /// With more than one agent installed the session row asks which, since
     /// the one `⌘N` would pick is whoever the project last talked to — which
     /// leaves every other agent with no way in.
-    fn add_rows(&self, path: &Path, cx: &App) -> Vec<(Item, Act)> {
+    fn add_rows(&self, project: ProjectId, cx: &App) -> Vec<(Item, Act)> {
         let workspace = self.workspace.read(cx);
-        let Some(ix) = workspace.project_at(path) else {
+        let Some(ix) = workspace.project_ix(project) else {
             return Vec::new();
         };
         new::rows(new::offered(workspace), |kind| {
@@ -833,23 +829,23 @@ impl Sidebar {
         })
     }
 
-    /// The `+` menu of the project at `path`, while it is up.
+    /// The `+` menu of `project`, while it is up.
     fn add_menu(
         &self,
-        path: &Path,
+        project: ProjectId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        let ix = self.workspace.read(cx).project_at(path)?;
+        let ix = self.workspace.read(cx).project_ix(project)?;
         let id = SharedString::from(format!("add-menu-{ix}"));
-        self.menu_here(&SidebarMenu::Add(path.to_path_buf()), id, window, cx)
+        self.menu_here(&SidebarMenu::Add(project), id, window, cx)
     }
 
     /// The label a project's list is narrowed to, on its heading, with a ×
     /// that lists every entry again.
-    fn label_filter_chip(&self, path: &Path, cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn label_filter_chip(&self, project: ProjectId, cx: &mut Context<Self>) -> Option<AnyElement> {
         let workspace = self.workspace.read(cx);
-        let ix = workspace.project_at(path)?;
+        let ix = workspace.project_ix(project)?;
         let label = workspace.projects[ix].label.clone()?;
         let theme = Theme::of(cx).clone();
         Some(
@@ -902,11 +898,12 @@ impl Sidebar {
 
     /// What a press on the heading opens. Removing closes the tab — the
     /// directory and everything in it stays where it is.
-    fn project_rows(&self, path: &Path, cx: &App) -> Vec<(Item, Act)> {
-        let Some(ix) = self.workspace.read(cx).project_at(path) else {
+    fn project_rows(&self, project: ProjectId, cx: &App) -> Vec<(Item, Act)> {
+        let workspace = self.workspace.read(cx);
+        let Some(ix) = workspace.project_ix(project) else {
             return Vec::new();
         };
-        let sort = self.workspace.read(cx).sort_of(ix);
+        let sort = workspace.sort_of(ix);
         let by = |label: &'static str, mode: state::Sort| {
             menu::row::<Cydonia>(
                 Item::action(label).checked(sort == mode),
@@ -928,7 +925,7 @@ impl Sidebar {
             ],
         )];
         rows.extend(self.label_filter_menu(ix, cx));
-        rows.extend(on_disk(PathBuf::from(path)));
+        rows.extend(on_disk(workspace.path_of(project).to_path_buf()));
         rows.push(menu::row::<Cydonia>(
             Item::action("Remove project").with_icon(icons::files::FolderMinus),
             move |this, _, cx| this.close_project(ix, cx),
@@ -940,13 +937,13 @@ impl Sidebar {
     /// under the `···` from the button.
     fn project_menu(
         &self,
-        path: &Path,
+        project: ProjectId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        let ix = self.workspace.read(cx).project_at(path)?;
+        let ix = self.workspace.read(cx).project_ix(project)?;
         let id = SharedString::from(format!("project-menu-{ix}"));
-        self.menu_here(&SidebarMenu::Project(path.to_path_buf()), id, window, cx)
+        self.menu_here(&SidebarMenu::Project(project), id, window, cx)
     }
 
     /// The row that raises the palette, or — while a query is applied — the
@@ -1120,7 +1117,7 @@ impl Sidebar {
                     )
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.defer_window(window, cx, |root, window, cx| {
-                            root.open_settings(Section::General, window, cx)
+                            root.open_settings(None, window, cx)
                         });
                     })),
             )
