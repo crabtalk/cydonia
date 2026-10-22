@@ -410,7 +410,7 @@ pub fn open(settings: Settings, state: State, cx: &mut App) -> Result<WindowHand
 /// since gone opens nothing but the app.
 pub fn on_notification(cx: &mut App) {
     cx.on_system_notification_response(|response, cx| {
-        let Some(id) = crate::model::notify::session_of(&response.tag) else {
+        let Some(id) = ChatSession::tagged(&response.tag) else {
             return;
         };
         cx.activate(true);
