@@ -33,8 +33,8 @@ there is the project's source. More in
   off
 - [Installing agents](https://cydonia.sh/docs/agents/install): from the ACP
   registry, or your own
-- [References](https://cydonia.sh/docs/working/references): `#12` and what
-  agents can do with it
+- [References](https://cydonia.sh/docs/working/references): the numbers
+  entries go by, and how agents use them
 
 ## Development
 
