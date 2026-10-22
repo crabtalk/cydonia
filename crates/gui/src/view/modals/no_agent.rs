@@ -62,7 +62,7 @@ impl Render for NoAgent {
                         let root = this.root.clone();
                         window.defer(cx, move |window, cx| {
                             root.update(cx, |root, cx| {
-                                root.open_settings(Section::Agents, window, cx)
+                                root.open_settings(Some(Section::Agents), window, cx)
                             })
                             .ok();
                         });

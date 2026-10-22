@@ -26,7 +26,6 @@ use crate::{
         window::{
             reach::InWindow as _,
             root::{self, Cydonia, NewSession, OpenProject},
-            section::Section,
         },
     },
 };
@@ -1118,7 +1117,7 @@ impl Sidebar {
                     )
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.defer_window(window, cx, |root, window, cx| {
-                            root.open_settings(Section::General, window, cx)
+                            root.open_settings(None, window, cx)
                         });
                     })),
             )

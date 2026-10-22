@@ -1364,7 +1364,7 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_settings(Section::General, window, cx);
+        self.open_settings(None, window, cx);
     }
 
     pub(crate) fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
@@ -1395,9 +1395,11 @@ impl Cydonia {
         self.close_project(ix, cx);
     }
 
+    /// Show the settings at `section`. `None` leaves settings already open on
+    /// the section they show, and opens them at General.
     pub(crate) fn open_settings(
         &mut self,
-        section: Section,
+        section: Option<Section>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1407,7 +1409,7 @@ impl Cydonia {
             settings::open(self.workspace.clone(), section, cx);
         }
         #[cfg(not(feature = "desktop"))]
-        self.settings_sheet(section, window, cx);
+        self.settings_sheet(section.unwrap_or(Section::General), window, cx);
     }
 
     pub(crate) fn open_project_action(

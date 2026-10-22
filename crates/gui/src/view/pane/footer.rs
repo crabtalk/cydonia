@@ -357,7 +357,7 @@ impl Tab {
                     .id("install-agent-empty")
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.defer_window(window, cx, |root, window, cx| {
-                            root.open_settings(Section::Agents, window, cx)
+                            root.open_settings(Some(Section::Agents), window, cx)
                         });
                     })),
             )
