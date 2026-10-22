@@ -4,7 +4,11 @@
 use super::{Part, card, entry, passage};
 use crate::{
     data::{ColType, Column, Data},
-    model::{article::Disk, project::Project, workspace::Showing},
+    model::{
+        article::Disk,
+        project::{Project, ProjectIds},
+        workspace::Showing,
+    },
 };
 use artifact::{
     project::{Project as _, fs},
@@ -66,7 +70,7 @@ fn a_handle_names_its_card_on_the_keyed_board(cx: &mut gpui::TestAppContext) {
         let second = board.add_card(&column, "Second".into()).unwrap().clone();
         store.save_board(&mut board).unwrap();
         let handle = second.handle.unwrap();
-        let project = Project::new(dir.clone(), cx);
+        let project = Project::new(ProjectIds::default().intern(&dir), dir.clone(), cx);
 
         let found = card(&project, "dev", handle, "dev-2", cx).ok().unwrap();
         let Some(Part::Card(named)) = found.part else {
@@ -96,7 +100,7 @@ fn a_number_names_a_table(cx: &mut gpui::TestAppContext) {
             .create("Prices", None, &[column], None)
             .unwrap()
             .key;
-        let project = Project::new(dir.clone(), cx);
+        let project = Project::new(ProjectIds::default().intern(&dir), dir.clone(), cx);
         let number = project.tables[0].number.unwrap();
 
         let (showing, title) = entry(&project, number, cx).unwrap();

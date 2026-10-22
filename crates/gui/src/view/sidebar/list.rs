@@ -56,7 +56,7 @@ impl<'a> List<'a> {
         if split.is_some()
             && let Some(open) = self.workspace.projects.get(project)
         {
-            rows.push(Row::Archive(open.path.clone()));
+            rows.push(Row::Archive(open.id));
             if open.archive_open {
                 rows.extend(entries);
             }
@@ -79,7 +79,7 @@ impl<'a> List<'a> {
         // times and the case is never shown from here.
         let folded = |name: &str| name.to_lowercase();
         let row = |showing| Row::Entry {
-            project: open.path.clone(),
+            project: open.id,
             showing,
         };
         // Apps are listed under their own heading — see [`Self::apps`].
@@ -185,7 +185,7 @@ impl<'a> List<'a> {
         match group {
             Group::Project(path) => self
                 .workspace
-                .project_at(path)
+                .project_ix(*path)
                 .map(|ix| self.entries(ix))
                 .unwrap_or_default(),
             Group::Space(id) => self
@@ -224,7 +224,7 @@ impl<'a> List<'a> {
             return false;
         };
         let workspace = self.workspace;
-        let Some(at) = workspace.project_at(project) else {
+        let Some(at) = workspace.project_ix(*project) else {
             return false;
         };
         let Some(label) = &workspace.projects[at].label else {
@@ -243,7 +243,7 @@ impl<'a> List<'a> {
         };
         let workspace = self.workspace;
         workspace
-            .project_at(project)
+            .project_ix(*project)
             .is_some_and(|at| workspace.projects[at].label.is_some())
     }
 
@@ -261,7 +261,7 @@ impl<'a> List<'a> {
         let workspace = self.workspace;
         match group {
             Group::Project(path) => workspace
-                .project_at(path)
+                .project_ix(*path)
                 .is_some_and(|ix| !workspace.projects[ix].expanded),
             Group::Space(id) => workspace.space_folded(id),
         }
@@ -291,7 +291,7 @@ impl<'a> List<'a> {
         let projects = workspace
             .projects
             .iter()
-            .map(|open| Group::Project(open.path.clone()));
+            .map(|open| Group::Project(open.id));
         let spaces = workspace
             .spaces
             .iter()
@@ -313,7 +313,7 @@ impl<'a> List<'a> {
                     let members = match &group {
                         Group::Project(path) => self.ungrouped(
                             workspace
-                                .project_at(path)
+                                .project_ix(*path)
                                 .map(|ix| self.ranked(ix))
                                 .unwrap_or_default()
                                 .into_iter()
@@ -403,7 +403,7 @@ impl<'a> List<'a> {
                         Some(Group::Space(id)) => format!("space-{id}").into(),
                         _ => format!(
                             "entries-{}-{}-{}",
-                            project.display(),
+                            project,
                             row.pinned(self.workspace, self.cx),
                             row.archived(self.workspace, self.cx),
                         )

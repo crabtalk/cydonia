@@ -3,17 +3,17 @@
 //! finds it where the pane left it.
 
 use super::{Tab, find::Searchable as _};
-use crate::view::{
-    app::AppView,
-    article::ArticleView,
-    board::BoardView,
-    component::transcript::{Drawn, SessionView},
-    table::TableView,
+use crate::{
+    model::workspace::{Entry, Member},
+    view::{
+        app::AppView,
+        article::ArticleView,
+        board::BoardView,
+        component::transcript::{Drawn, SessionView},
+        table::TableView,
+    },
 };
-use artifact::{
-    kind::Kind,
-    space::{Entry, Member},
-};
+use artifact::kind::Kind;
 use bezel::gpui::{App, AppContext as _, Context, Entity};
 
 impl Tab {

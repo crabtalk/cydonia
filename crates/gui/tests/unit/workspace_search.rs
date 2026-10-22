@@ -2,8 +2,10 @@
 
 use super::*;
 use crate::view::window::root::Cydonia;
-use bezel::gpui::{Context, Entity, IntoElement, Window, div, prelude::*, px};
-use bezel::theme::Theme;
+use bezel::{
+    gpui::{Context, Entity, IntoElement, Window, div, prelude::*, px},
+    theme::Theme,
+};
 
 #[test]
 fn the_title_outranks_the_body_and_earlier_blocks_outrank_later() {
@@ -38,7 +40,8 @@ fn workspace_search_keeps_results_beyond_the_palette_limit(cx: &mut gpui::TestAp
     window
         .update(cx, |this, window, cx| {
             this.workspace.update(cx, |workspace, cx| {
-                let mut project = crate::model::project::Project::new(root.clone(), cx);
+                let mut project =
+                    crate::model::project::Project::new(workspace.intern(&root), root.clone(), cx);
                 project.expanded = false;
                 workspace.projects.push(project);
             });
@@ -150,9 +153,10 @@ fn applied_board_search_has_visible_working_exit_controls(cx: &mut gpui::TestApp
         let root = cx.new(|cx| Cydonia::new(Default::default(), Default::default(), window, cx));
         root.update(cx, |root, cx| {
             root.workspace.update(cx, |workspace, cx| {
+                let id = workspace.intern(&dir);
                 workspace
                     .projects
-                    .push(crate::model::project::Project::new(dir.clone(), cx));
+                    .push(crate::model::project::Project::new(id, dir.clone(), cx));
                 workspace.active = Some(0);
             });
             root.open_board(0, 0, crate::model::workspace::Opening::Preview, window, cx);

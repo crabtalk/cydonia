@@ -5,10 +5,7 @@
 //! Saved in `state.toml`. A space's tab names the space by id, and closing it
 //! deletes the space.
 use super::*;
-use artifact::{
-    kind::Kind,
-    space::{Member, Space},
-};
+use artifact::{kind::Kind, space};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 
@@ -21,19 +18,28 @@ pub enum Opening {
     Kept,
 }
 
-/// One tab of the window's strip.
+/// One tab of the window's strip. `P` names a project, as
+/// [`space::Member`]'s does.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
-pub enum Slot {
+pub enum Slot<P = ProjectId> {
     /// One entry, or an app.
-    Entry(Member),
+    Entry(space::Member<P>),
     /// A space, by its id.
     Space { space: String },
 }
 
-impl Slot {
+impl<P> Slot<P> {
+    /// The same tab, its project named by `name`.
+    pub fn map<Q>(self, name: impl FnOnce(P) -> Q) -> Slot<Q> {
+        match self {
+            Self::Entry(member) => Slot::Entry(member.map(name)),
+            Self::Space { space } => Slot::Space { space },
+        }
+    }
+
     /// The entry it is on. Nothing for a space.
-    pub fn entry(&self) -> Option<&Member> {
+    pub fn entry(&self) -> Option<&space::Member<P>> {
         match self {
             Self::Entry(member) => Some(member),
             Self::Space { .. } => None,

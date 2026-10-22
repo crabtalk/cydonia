@@ -29,7 +29,7 @@ fn pending_image_only_message_has_a_gallery_and_retains_preview(cx: &mut gpui::T
             root.workspace.update(cx, |workspace, cx| {
                 workspace.settings.features.sessions = true;
                 let cwd = std::path::PathBuf::from("/nonexistent/cydonia-queue-test");
-                let mut project = Project::new(cwd.clone(), cx);
+                let mut project = Project::new(workspace.intern(&cwd), cwd.clone(), cx);
                 let record = serde_json::from_value(serde_json::json!({
                     "id":"test", "agent":"test", "title":"", "name":null, "updated":1, "items":[]
                 }))
@@ -89,7 +89,7 @@ fn a_queue_is_drawn_only_under_the_session_it_is_waiting_in(cx: &mut gpui::TestA
             root.workspace.update(cx, |workspace, cx| {
                 workspace.settings.features.sessions = true;
                 let cwd = std::path::PathBuf::from("/nonexistent/cydonia-queue-test");
-                let mut project = Project::new(cwd.clone(), cx);
+                let mut project = Project::new(workspace.intern(&cwd), cwd.clone(), cx);
                 for id in [1, 2] {
                     let record = serde_json::from_value(serde_json::json!({
                         "id":"test", "agent":"test", "title":"", "name":null,

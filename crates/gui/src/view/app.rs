@@ -5,21 +5,20 @@
 //! caret, selection and composition, a select's open menu, scroll, focus and
 //! hover. The app hears a committed change as an event.
 
-use crate::model::workspace::Opening;
 use crate::{
     model::{
         apps::{
             Answer, Build, Call, CallId, Command, Event, Fetcher as _, Http, Manifest, Node,
             Origin, Program, Runner as _, Runtime,
         },
-        workspace::Workspace,
+        workspace::{Member, Opening, Workspace},
     },
     view::{
         kit::link::Links,
         window::root::{Cydonia, LoadApp},
     },
 };
-use artifact::{app::Loaded, space::Member};
+use artifact::app::Loaded;
 use bezel::{
     gpui::{
         self, AnyElement, Context, ElementId, Entity, EntityInputHandler as _, ImageSource,

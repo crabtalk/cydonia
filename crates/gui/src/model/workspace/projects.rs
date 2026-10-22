@@ -32,7 +32,7 @@ impl Workspace {
             while let Some(change) = asks.next().await {
                 let held = workspace
                     .update(cx, |workspace, cx| match change {
-                        Change::Open(path) => workspace.open_project_at(path, cx),
+                        Change::Open(path) => workspace.open_project(path, cx),
                         Change::Close(path) => workspace.close_project_at(&path, cx),
                         Change::Send { session, message } => {
                             workspace.send_to_record(&session, message, cx)
@@ -67,11 +67,12 @@ impl Workspace {
     /// who had done nothing but name a folder. A session is opened where one is
     /// asked for, and ⌘N is where.
     pub fn open_project(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        if let Some(ix) = self.projects.iter().position(|p| p.path == path) {
+        let id = self.ids.intern(&path);
+        if let Some(ix) = self.project_ix(id) {
             self.select_project(ix, cx);
             return;
         }
-        self.projects.push(Project::new(path, cx));
+        self.projects.push(Project::new(id, path, cx));
         let ix = self.projects.len() - 1;
         self.restore_sessions(ix, cx);
         self.watch_project(ix, cx);
@@ -109,8 +110,8 @@ impl Workspace {
     /// Carry a project to another place in the list. `active` follows the
     /// project it points at rather than the index it sits on: which one is in
     /// front has nothing to do with what order they are listed in.
-    pub fn move_project(&mut self, path: &Path, to: usize, cx: &mut Context<Self>) {
-        let Some(from) = self.project_at(path) else {
+    pub fn move_project(&mut self, project: ProjectId, to: usize, cx: &mut Context<Self>) {
+        let Some(from) = self.project_ix(project) else {
             return;
         };
         if from == to || to >= self.projects.len() {
@@ -128,41 +129,31 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Whichever project is at `path`: the path the sidebar holds it under, or
-    /// what that resolved to when it was opened ([`Project::settled`]).
-    ///
-    /// Makes no filesystem call. A path that
-    /// names an open project only once resolved — another symlink to it — is
-    /// settled by the caller first, as [`Self::settled_project_at`] does.
-    pub fn project_at(&self, path: &Path) -> Option<usize> {
-        self.projects
-            .iter()
-            .position(|open| open.path == path || open.settled == path)
+    /// The id of the project at `path`, open or not. A path from outside the
+    /// app becomes an id here.
+    pub fn intern(&mut self, path: &Path) -> ProjectId {
+        self.ids.intern(path)
     }
 
-    /// [`Self::project_at`] for a path from outside the app, resolved first.
-    /// The tools settle a path before handing it over and the directory picker
-    /// does not — see `mcp::tools::project` — so `/tmp/x` on the rail and
-    /// `/private/tmp/x` from a tool are one project.
-    fn settled_project_at(&self, path: &Path) -> Option<usize> {
-        self.project_at(path).or_else(|| {
-            let settled = path.canonicalize().ok()?;
-            self.project_at(&settled)
-        })
+    /// The path `project` is written under.
+    pub fn path_of(&self, project: ProjectId) -> &Path {
+        self.ids.path(project)
     }
 
-    /// Bring the project at `path` forward, opening it where it is not on the
-    /// rail at all. What the tools ask for; the sidebar names a row instead.
-    fn open_project_at(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        match self.settled_project_at(&path) {
-            Some(ix) => self.select_project(ix, cx),
-            None => self.open_project(path, cx),
-        }
+    /// Where the open project `project` is listed. Nothing where it is shut.
+    pub fn project_ix(&self, project: ProjectId) -> Option<usize> {
+        self.projects.iter().position(|open| open.id == project)
+    }
+
+    /// The open project `project`. Nothing where it is shut.
+    pub fn project(&self, project: ProjectId) -> Option<&Project> {
+        self.projects.iter().find(|open| open.id == project)
     }
 
     /// Close whichever project is at `path`, if one is.
     fn close_project_at(&mut self, path: &Path, cx: &mut Context<Self>) {
-        let Some(ix) = self.settled_project_at(path) else {
+        let id = self.ids.intern(path);
+        let Some(ix) = self.project_ix(id) else {
             return;
         };
         self.close_project(ix, cx);
@@ -174,11 +165,11 @@ impl Workspace {
         if ix >= self.projects.len() {
             return;
         }
-        let path = self.projects[ix].path.clone();
+        let id = self.projects[ix].id;
         let gone: Vec<_> = self
             .tab_strip()
             .into_iter()
-            .filter(|member| member.project() == Some(path.as_path()))
+            .filter(|member| member.project() == Some(&id))
             .collect();
         self.drop_tabs(&gone, cx);
         self.projects.remove(ix);
@@ -206,7 +197,7 @@ impl Workspace {
         let Some(entry) = self
             .projects
             .get(ix)
-            .and_then(|open| self.last.get(&open.path))
+            .and_then(|open| self.last.get(&open.id))
         else {
             return;
         };
@@ -255,13 +246,13 @@ impl Workspace {
     /// entry, and this is how the view learns which one of the four it was.
     pub fn landing(&self) -> Option<Kind> {
         let open = self.active_project()?;
-        self.last.get(&open.path).map(|entry| entry.kind)
+        self.last.get(&open.id).map(|entry| entry.kind)
     }
 
     /// The active project, and the entry it was last showing.
-    pub fn landed(&self) -> Option<(&Path, &state::Entry)> {
+    pub fn landed(&self) -> Option<(ProjectId, &state::Entry)> {
         let open = self.active_project()?;
-        Some((&open.path, self.last.get(&open.path)?))
+        Some((open.id, self.last.get(&open.id)?))
     }
 
     /// Remember the entry a project is now showing, so the next launch lands on
@@ -289,8 +280,7 @@ impl Workspace {
         let Some(open) = self.projects.get(project) else {
             return;
         };
-        self.last
-            .insert(open.path.clone(), state::Entry { kind, id });
+        self.last.insert(open.id, state::Entry { kind, id });
         self.prune_archived(cx);
         self.save();
     }
@@ -336,21 +326,25 @@ impl Workspace {
     /// shows up without anyone asking for it. Every way of opening a project
     /// arrives here, and closing one drops the watch with the project.
     pub(super) fn watch_project(&mut self, ix: usize, cx: &mut Context<Self>) {
-        let Some(path) = self.projects.get(ix).map(|open| open.path.clone()) else {
+        let Some((path, id)) = self
+            .projects
+            .get(ix)
+            .map(|open| (open.path.clone(), open.id))
+        else {
             return;
         };
-        let watch = Watch::open(path, cx);
+        let watch = Watch::open(path, id, cx);
         if let Some(project) = self.projects.get_mut(ix) {
             project.watch = Some(watch);
         }
     }
 
-    /// Re-read one project off disk and reconcile it. Addressed by path rather
+    /// Re-read one project off disk and reconcile it. Addressed by id rather
     /// than by index because the watch that calls this outlives any index it
     /// could have been armed with — the rail is reorderable, and closing a
     /// project shifts every one after it.
-    pub fn reload_project(&mut self, path: &Path, cx: &mut Context<Self>) {
-        let Some(ix) = self.projects.iter().position(|open| open.path == path) else {
+    pub fn reload_project(&mut self, project: ProjectId, cx: &mut Context<Self>) {
+        let Some(ix) = self.project_ix(project) else {
             return;
         };
         if self.projects[ix].reload(cx) {

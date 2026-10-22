@@ -2,7 +2,7 @@
 //! the sidebar and the chat column are hung in.
 
 #[cfg(feature = "desktop")]
-use crate::view::{component::terminal::TerminalPanel, settings};
+use crate::model::workspace::Member;
 use crate::{
     model::{
         session::ChatSession,
@@ -15,9 +15,11 @@ use crate::{
         component::{
             composer::{Composer, ComposerEvent},
             meter,
+            terminal::TerminalPanel,
         },
         kit::{menu::Menu, watch::Watch},
         pane::{Pane, Tab},
+        settings,
         sidebar::{Dragged, Row, Sidebar},
         window::{
             chrome,
@@ -29,7 +31,7 @@ use crate::{
     },
 };
 use anyhow::Result;
-use artifact::{kind::Kind, space::Member};
+use artifact::kind::Kind;
 use bezel::{
     gpui::{
         self, AnyElement, App, Axis, Bounds, Context, Div, DragMoveEvent, Empty, Entity,
@@ -736,6 +738,7 @@ impl Cydonia {
             .arrangement(cx)
             .map(|space| space.tree.fronts())
             .unwrap_or_default();
+        let workspace = self.workspace.read(cx);
         let shown: Vec<mcp::rail::Shown> = self
             .leaves
             .iter()
@@ -744,7 +747,7 @@ impl Cydonia {
             .filter_map(|(ix, leaf)| {
                 let entry = leaf.read(cx).entry.entry()?;
                 Some(mcp::rail::Shown {
-                    project: entry.project.clone(),
+                    project: workspace.path_of(entry.project).to_path_buf(),
                     kind: kind(entry.kind)?,
                     id: entry.id.clone(),
                     focused: ix == self.focused,
@@ -1268,7 +1271,7 @@ impl Cydonia {
             return;
         };
         let workspace = self.workspace.read(cx);
-        let Some(project) = entry.project().and_then(|path| workspace.project_at(path)) else {
+        let Some(project) = entry.project().and_then(|path| workspace.project_ix(*path)) else {
             return;
         };
         let showing = Row::of_member(&entry, workspace, cx);

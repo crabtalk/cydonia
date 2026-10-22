@@ -2,9 +2,9 @@
 
 use crate::model::{
     session::ChatSession,
-    workspace::{Showing, Workspace},
+    workspace::{Member, Showing, Workspace},
 };
-use artifact::{kind::Kind, space::Member};
+use artifact::kind::Kind;
 use bezel::{
     gpui::App,
     ui::icons::{self, Icon},

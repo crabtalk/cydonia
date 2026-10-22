@@ -9,7 +9,7 @@
 //! [`crate::model::settings::Appearance`], and [`crate::model::migrate`] for
 //! the move.
 
-use crate::model::{settings, version::Version};
+use crate::model::{settings, version::Version, workspace::Slot};
 use artifact::kind::Kind;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf};
@@ -131,10 +131,10 @@ pub struct State {
     /// [`crate::model::workspace::Workspace::strip`]. Nothing in a file
     /// written before tabs, which lands on the active project's `last`.
     #[serde(default)]
-    pub tabs: Option<Vec<crate::model::workspace::Slot>>,
+    pub tabs: Option<Vec<Slot<PathBuf>>>,
     /// The tab in front. One the strip no longer holds, or none, is its first.
     #[serde(default)]
-    pub front: Option<crate::model::workspace::Slot>,
+    pub front: Option<Slot<PathBuf>>,
 }
 
 /// Where the main window stands, in the platform's logical pixels. For a

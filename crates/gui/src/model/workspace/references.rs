@@ -2,14 +2,17 @@
 //! among the open projects — see [`artifact::reference`].
 
 use super::{Showing, Workspace};
-use crate::model::{article::Disk, project::Project};
-use artifact::board::{
-    Board,
-    blocking::{Found, Shelf},
+use crate::model::{
+    article::Disk,
+    project::{Project, ProjectId},
 };
-use artifact::error::Error;
 use artifact::{
     article::anchor,
+    board::{
+        Board,
+        blocking::{Found, Shelf},
+    },
+    error::Error,
     kind::Kind,
     reference::{self, Span, Target, Within},
 };
@@ -22,7 +25,7 @@ use std::{
 
 /// An entry a reference resolved to.
 pub struct Resolved {
-    pub project: PathBuf,
+    pub project: ProjectId,
     pub showing: Showing,
     pub kind: Kind,
     pub number: u64,
@@ -116,7 +119,7 @@ impl Workspace {
             (Some(_), _) => unreachable!("refused by `reference::fits`"),
         };
         Ok(Resolved {
-            project: project.path.clone(),
+            project: project.id,
             showing,
             kind,
             number,
@@ -128,7 +131,7 @@ impl Workspace {
     /// The board holding the card `text` names, `text` being a card
     /// reference as written in the project at `home`. Nothing for one naming
     /// no card.
-    pub fn card_board(&self, home: &Path, text: &str, cx: &App) -> Option<&Entity<Board>> {
+    pub fn card_board(&self, home: ProjectId, text: &str, cx: &App) -> Option<&Entity<Board>> {
         let reference = reference::parse(text)?;
         let Target::Card { key, handle } = reference.target else {
             return None;
@@ -143,7 +146,7 @@ impl Workspace {
     /// of the project at `home`.
     pub fn blocking_boards<'a>(
         &'a self,
-        home: &'a Path,
+        home: ProjectId,
         card: &'a artifact::board::Card,
         cx: &'a App,
     ) -> impl Iterator<Item = &'a Entity<Board>> {
@@ -164,13 +167,13 @@ impl Workspace {
 
     /// The project `name` names, or with none the one at `home`, else the
     /// active one.
-    fn named_project(&self, name: Option<&str>, home: Option<&Path>) -> Option<&Project> {
+    fn named_project(&self, name: Option<&str>, home: Option<ProjectId>) -> Option<&Project> {
         match (name, home) {
             (Some(name), _) => self
                 .projects
                 .iter()
                 .find(|project| reference::names(&project.path, name)),
-            (None, Some(home)) => self.projects.get(self.project_at(home)?),
+            (None, Some(home)) => self.project(home),
             (None, None) => self.active_project(),
         }
     }
@@ -233,7 +236,7 @@ fn card(
         return Err(format!("{text} is on a board with no number"));
     };
     Ok(Resolved {
-        project: project.path.clone(),
+        project: project.id,
         showing: Showing::Board(board.id.clone()),
         kind: Kind::Board,
         number,
@@ -299,13 +302,16 @@ pub struct Held<'a> {
 
 impl Shelf for Held<'_> {
     fn project(&self, from: &Path, name: Option<&str>) -> Option<PathBuf> {
+        let from = self.workspace.ids.find(from)?;
         let project = self.workspace.named_project(name, Some(from))?;
         Some(project.path.clone())
     }
 
     fn card(&self, project: &Path, key: &str, handle: u64) -> Option<Found> {
-        let at = self.workspace.project_at(project)?;
-        let board = self.workspace.projects[at]
+        let project = self.workspace.ids.find(project)?;
+        let board = self
+            .workspace
+            .project(project)?
             .keyed_board(key, self.cx)?
             .read(self.cx);
         Some(Found {

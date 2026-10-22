@@ -4,14 +4,17 @@
 //! `use super::*`: these methods work on the same struct and reach the same
 //! names as the rest of it.
 use super::*;
-use artifact::board::{
-    self,
-    blocking::{self, Counterpart, Edit, Place},
-    key,
+use crate::model::workspace::Entry;
+use artifact::{
+    board::{
+        self,
+        blocking::{self, Counterpart, Edit, Place},
+        key,
+    },
+    error::{Act, Error},
+    kind::Kind,
+    project::Project as _,
 };
-use artifact::error::{Act, Error};
-use artifact::kind::Kind;
-use artifact::project::Project as _;
 use bezel::gpui::Entity;
 use std::collections::HashSet;
 
@@ -20,7 +23,7 @@ impl Workspace {
     /// the rest of the board.
     pub fn save_page_draft(
         &mut self,
-        member: &artifact::space::Entry,
+        member: &Entry,
         page: &board::Page,
         base: &str,
         text: &str,
@@ -29,7 +32,7 @@ impl Workspace {
         let open = self
             .projects
             .iter_mut()
-            .find(|open| open.path == member.project)
+            .find(|open| open.id == member.project)
             .ok_or("The project is no longer open.")?;
         let store = open.store();
         // Twice at most: a save refused as stale is another writer landing

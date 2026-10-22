@@ -7,11 +7,13 @@
 //! point the config directory somewhere of their own.
 
 use super::*;
-use crate::model::spaces::Shelf;
-use crate::model::workspace::Showing;
-use crate::model::{settings::Settings, state};
-use artifact::kind::Kind;
-use artifact::space::{Member, Side};
+use crate::model::{
+    settings::Settings,
+    spaces::Shelf,
+    state,
+    workspace::{Member, Showing},
+};
+use artifact::{kind::Kind, space::Side};
 
 /// A scratch project or two, torn down when the test ends — and a config
 /// directory beside them that the test's writes land in.
@@ -128,8 +130,9 @@ fn a_space_is_written_beside_the_config(cx: &mut gpui::TestAppContext) {
     );
 }
 
-/// A project opened under one path is found by the path it resolves to — the
-/// scratch directory sits under `/var`, which macOS resolves to `/private/var`.
+/// A project opened under one path has the id of the path it resolves to —
+/// the scratch directory sits under `/var`, which macOS resolves to
+/// `/private/var`.
 #[gpui::test]
 fn a_project_is_found_by_the_path_it_resolves_to(cx: &mut gpui::TestAppContext) {
     let scratch = Scratch::new("settled");
@@ -138,9 +141,12 @@ fn a_project_is_found_by_the_path_it_resolves_to(cx: &mut gpui::TestAppContext) 
     let settled = opened.canonicalize().unwrap();
 
     workspace.update(cx, |workspace, _| {
-        assert_eq!(workspace.project_at(&opened), Some(0));
-        assert_eq!(workspace.project_at(&settled), Some(0));
-        assert_eq!(workspace.project_at(&scratch.0.join("other")), None);
+        let id = workspace.projects[0].id;
+        assert_eq!(workspace.intern(&opened), id);
+        assert_eq!(workspace.intern(&settled), id);
+        let other = workspace.intern(&scratch.0.join("other"));
+        assert_ne!(other, id);
+        assert_eq!(workspace.project_ix(other), None);
     });
 }
 
@@ -174,7 +180,7 @@ fn a_space_can_span_projects(cx: &mut gpui::TestAppContext) {
     let projects: Vec<_> = read
         .entries()
         .into_iter()
-        .map(|member| member.project().map(std::path::Path::to_path_buf))
+        .map(|member| member.project().cloned())
         .collect();
     assert_ne!(projects[0], projects[1], "written as two projects' entries");
 }
@@ -187,7 +193,11 @@ fn a_member_in_a_shut_project_resolves_to_nothing(cx: &mut gpui::TestAppContext)
     let (workspace, a, _) = two_boards(&scratch, cx);
 
     workspace.update(cx, |workspace, cx| {
-        let elsewhere = Member::new(scratch.project("two"), Kind::Board, a.id());
+        let elsewhere = Member::new(
+            workspace.intern(&scratch.project("two")),
+            Kind::Board,
+            a.id(),
+        );
         assert!(workspace.showing_of(&elsewhere, cx).is_none());
         // The same id in a project that *is* open still resolves.
         assert!(workspace.showing_of(&a, cx).is_some());
@@ -288,7 +298,11 @@ fn moving_a_pane_swaps_it_and_is_written(cx: &mut gpui::TestAppContext) {
         workspace.active_space().expect("open").id.clone()
     });
 
-    assert_eq!(Shelf::read(&id).expect("on disk").entries(), vec![b, a]);
+    let written = |member: Member| member.map(|_| scratch.project("one"));
+    assert_eq!(
+        Shelf::read(&id).expect("on disk").entries(),
+        vec![written(b), written(a)]
+    );
 }
 
 /// Archiving a space is archiving what it arranges, and the arrangement goes
@@ -538,7 +552,9 @@ fn a_drop_off_the_edge_stacks_the_arrival(cx: &mut gpui::TestAppContext) {
         assert_eq!(workspace.strip(), &[Slot::Space { space: id.clone() }]);
 
         workspace.set_front(&a, cx);
-        let read = Shelf::read(&id).expect("on disk");
+        let read = Shelf::read(&id)
+            .expect("on disk")
+            .map(&mut |path| workspace.intern(&path));
         assert_eq!(read.front_of(&b), Some(a.clone()), "written");
     });
 }
@@ -756,7 +772,11 @@ fn a_space_keeps_the_place_it_was_dragged_to(cx: &mut gpui::TestAppContext) {
         assert_eq!(ids(workspace), moved);
         assert_eq!(workspace.space(), Some(1), "and it is still the open one");
 
-        let reread: Vec<String> = Workspace::in_order(Shelf::all(), &moved)
+        let all = Shelf::all()
+            .into_iter()
+            .map(|space| space.map(&mut |path| workspace.intern(&path)))
+            .collect();
+        let reread: Vec<String> = Workspace::in_order(all, &moved)
             .into_iter()
             .map(|space| space.id)
             .collect();

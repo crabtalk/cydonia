@@ -1,7 +1,7 @@
 //! The order a project's entries are listed in. The sidebar only moves a row
 //! when it is dragged; nothing a write does reorders the list.
 //!
-//! The list is held by project path and written to `state.toml`, beside the
+//! The list is held by project and written to `state.toml`, beside the
 //! entry each project was last showing. Not in the project's own `.cydonia/`:
 //! an arrangement is what one person likes looking at, the way a space is,
 //! and neither is the project's source — see [`crate::model::spaces`].
@@ -11,9 +11,9 @@
 //! moves the moment a neighbour is made or dropped.
 
 use super::{Showing, Workspace};
-use crate::model::state;
+use crate::model::{project::ProjectId, state};
 use bezel::gpui::{App, Context};
-use std::{collections::BTreeMap, path::PathBuf};
+use std::collections::BTreeMap;
 
 impl Workspace {
     /// What `state.toml` calls the entry a pane would be put on.
@@ -49,14 +49,14 @@ impl Workspace {
     /// Where an entry sits in its project's list of `ranks`.
     fn rank_in(
         &self,
-        ranks: &BTreeMap<PathBuf, Vec<state::Entry>>,
+        ranks: &BTreeMap<ProjectId, Vec<state::Entry>>,
         project: usize,
         showing: Showing,
         cx: &App,
     ) -> Option<usize> {
-        let path = &self.projects.get(project)?.path;
+        let id = self.projects.get(project)?.id;
         let entry = self.entry_of(project, showing, cx)?;
-        ranks.get(path)?.iter().position(|held| *held == entry)
+        ranks.get(&id)?.iter().position(|held| *held == entry)
     }
 
     pub fn is_pinned(&self, project: usize, showing: Showing, cx: &App) -> bool {
@@ -76,7 +76,7 @@ impl Workspace {
         let Some(open) = self.projects.get(project) else {
             return;
         };
-        let held = self.pinned.entry(open.path.clone()).or_default();
+        let held = self.pinned.entry(open.id).or_default();
         held.retain(|pin| *pin != entry);
         if on {
             held.push(entry);
@@ -94,7 +94,7 @@ impl Workspace {
         let Some(open) = self.projects.get(project) else {
             return;
         };
-        if let Some(held) = self.pinned.get_mut(&open.path) {
+        if let Some(held) = self.pinned.get_mut(&open.id) {
             held.retain(|pin| *pin != entry);
         }
         self.save();
@@ -108,7 +108,7 @@ impl Workspace {
         let Some(open) = self.projects.get(project) else {
             return;
         };
-        self.order.insert(open.path.clone(), order);
+        self.order.insert(open.id, order);
         self.save();
         cx.notify();
     }
@@ -117,7 +117,7 @@ impl Workspace {
     pub fn sort_of(&self, project: usize) -> state::Sort {
         self.projects
             .get(project)
-            .and_then(|open| self.sort.get(&open.path))
+            .and_then(|open| self.sort.get(&open.id))
             .copied()
             .unwrap_or_default()
     }
@@ -129,7 +129,7 @@ impl Workspace {
         let Some(open) = self.projects.get(project) else {
             return;
         };
-        self.sort.insert(open.path.clone(), sort);
+        self.sort.insert(open.id, sort);
         self.save();
         cx.notify();
     }
@@ -144,7 +144,7 @@ impl Workspace {
         let Some(open) = self.projects.get(project) else {
             return;
         };
-        self.pinned.insert(open.path.clone(), pinned);
+        self.pinned.insert(open.id, pinned);
         self.save();
         cx.notify();
     }

@@ -9,9 +9,10 @@ pub(crate) use list::List;
 
 use crate::{
     model::{
+        project::ProjectId,
         session::ChatSession,
         settings::Features,
-        workspace::{Showing, Workspace},
+        workspace::{Member, Showing, Workspace},
     },
     view::{
         kit::{
@@ -27,7 +28,7 @@ use crate::{
         },
     },
 };
-use artifact::{kind::Kind, space::Member};
+use artifact::kind::Kind;
 use bezel::{
     gpui::{
         self, AnyElement, App, Context, Div, Empty, Entity, Hsla, ListAlignment, ListOffset,
@@ -43,12 +44,7 @@ use bezel::{
         scroll as scrollbars,
     },
 };
-use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
-    rc::Rc,
-    time::Duration,
-};
+use std::{collections::HashMap, path::PathBuf, rc::Rc, time::Duration};
 
 /// The wash a row paints. With 1px either side it is [`ROW_HEIGHT`], the
 /// pitch of headings and rows alike.
@@ -137,11 +133,13 @@ pub(crate) enum Row {
     Heading(Heading),
     /// A project or a space: a heading its entries fold under.
     Group(Group),
-    /// The line the archived entries of the project at this path are folded
-    /// under.
-    Archive(PathBuf),
-    /// An entry of the project at `project`.
-    Entry { project: PathBuf, showing: Showing },
+    /// The line the archived entries of this project are folded under.
+    Archive(ProjectId),
+    /// An entry of `project`.
+    Entry {
+        project: ProjectId,
+        showing: Showing,
+    },
     /// An app, by its id.
     App(String),
 }
@@ -208,7 +206,7 @@ impl Row {
         let Row::Entry { project, showing } = self else {
             return None;
         };
-        let at = workspace.project_at(project)?;
+        let at = workspace.project_ix(*project)?;
         Some((at, workspace.projects[at].ix_of(showing)?))
     }
 
@@ -216,7 +214,7 @@ impl Row {
     pub(crate) fn member(&self, workspace: &Workspace, cx: &App) -> Option<Member> {
         match self {
             Row::Entry { project, showing } => {
-                workspace.member_of(workspace.project_at(project)?, showing.clone(), cx)
+                workspace.member_of(workspace.project_ix(*project)?, showing.clone(), cx)
             }
             Row::App(id) => Some(Member::app(id.clone())),
             Row::Group(_) | Row::Archive(_) | Row::Heading(_) => None,
@@ -231,7 +229,7 @@ impl Row {
             Member::Entry(entry) => {
                 let (_, showing) = workspace.showing_of(member, cx)?;
                 Some(Row::Entry {
-                    project: entry.project.clone(),
+                    project: entry.project,
                     showing,
                 })
             }
@@ -261,7 +259,7 @@ impl Row {
         let id = *id;
         workspace.update(cx, |workspace, cx| {
             workspace.retain_session(id, cx)?;
-            workspace.member_of(workspace.project_at(project)?, Showing::Session(id), cx)
+            workspace.member_of(workspace.project_ix(*project)?, Showing::Session(id), cx)
         })
     }
 
@@ -269,9 +267,7 @@ impl Row {
     pub(crate) fn label(&self, workspace: &Workspace, cx: &App) -> String {
         let named = || -> Option<String> {
             Some(match self {
-                Row::Group(Group::Project(path)) => {
-                    workspace.projects.get(workspace.project_at(path)?)?.name()
-                }
+                Row::Group(Group::Project(project)) => workspace.project(*project)?.name(),
                 Row::Archive(_) | Row::Heading(_) => return None,
                 Row::App(id) => workspace.program(id, cx)?.read(cx).label(),
                 Row::Group(Group::Space(id)) => workspace.space_by_id(id)?.label().to_owned(),
@@ -307,7 +303,7 @@ impl Row {
             return false;
         };
         workspace
-            .project_at(project)
+            .project_ix(*project)
             .is_some_and(|project| workspace.is_pinned(project, showing.clone(), cx))
     }
 
@@ -371,8 +367,7 @@ impl Heading {
 /// [`Sidebar::group_head`].
 #[derive(Clone, PartialEq, Eq, Debug, Hash)]
 pub(crate) enum Group {
-    /// A project, by its path.
-    Project(PathBuf),
+    Project(ProjectId),
     /// A space, by its id.
     Space(String),
 }
@@ -457,10 +452,10 @@ pub(crate) fn on_disk(path: PathBuf) -> [(Item, Act); 2] {
 
 /// The project an entry row, a project's heading or its archive line belongs
 /// to.
-fn project_of(row: &Row) -> Option<&Path> {
+fn project_of(row: &Row) -> Option<ProjectId> {
     match row {
-        Row::Group(Group::Project(path)) | Row::Archive(path) => Some(path),
-        Row::Entry { project, .. } => Some(project),
+        Row::Group(Group::Project(project)) | Row::Archive(project) => Some(*project),
+        Row::Entry { project, .. } => Some(*project),
         Row::Group(Group::Space(_)) | Row::Heading(_) | Row::App(_) => None,
     }
 }
@@ -566,21 +561,18 @@ pub(crate) fn ghost(label: SharedString, theme: &Theme) -> AnyElement {
 /// An entry's own name in the element tree: two rows must never share one.
 pub(crate) fn key_of(entry: &Row) -> String {
     match entry {
-        Row::Group(Group::Project(path)) => format!("project-{}", path.display()),
+        Row::Group(Group::Project(project)) => format!("project-{project}"),
         Row::Group(Group::Space(id)) => format!("space-{id}"),
         Row::Heading(Heading::Projects) => "projects".to_owned(),
         Row::Heading(Heading::Spaces) => "spaces".to_owned(),
         Row::Heading(Heading::Apps) => "apps".to_owned(),
-        Row::Archive(path) => format!("archive-{}", path.display()),
-        Row::Entry { project, showing } => {
-            let project = project.display();
-            match showing {
-                Showing::Session(id) => format!("session-{project}-{id}"),
-                Showing::Board(id) => format!("board-{project}-{id}"),
-                Showing::Article(id) => format!("article-{project}-{id}"),
-                Showing::Table(key) => format!("table-{project}-{key}"),
-            }
-        }
+        Row::Archive(project) => format!("archive-{project}"),
+        Row::Entry { project, showing } => match showing {
+            Showing::Session(id) => format!("session-{project}-{id}"),
+            Showing::Board(id) => format!("board-{project}-{id}"),
+            Showing::Article(id) => format!("article-{project}-{id}"),
+            Showing::Table(key) => format!("table-{project}-{key}"),
+        },
         Row::App(id) => format!("app-{id}"),
     }
 }
@@ -662,11 +654,10 @@ type MenuRows = Rc<dyn Fn(&mut Sidebar, &mut Context<Sidebar>) -> Vec<(Item, Act
 /// Which of the sidebar's menus is up.
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) enum SidebarMenu {
-    /// The `+` on a project heading, by the project's path: what to start
-    /// here.
-    Add(PathBuf),
-    /// A project heading, by the project's path: what to do to the project.
-    Project(PathBuf),
+    /// The `+` on a project heading: what to start here.
+    Add(ProjectId),
+    /// A project heading: what to do to the project.
+    Project(ProjectId),
     /// The `···` on an entry's row, whichever kind it is, and a space's.
     Entry(Row),
 }
@@ -1061,7 +1052,7 @@ impl Sidebar {
         self.defer_window(window, cx, |root, _, cx| root.commit(cx));
         self.workspace.update(cx, |workspace, cx| match group {
             Group::Project(path) => {
-                if let Some(ix) = workspace.project_at(path) {
+                if let Some(ix) = workspace.project_ix(*path) {
                     workspace.toggle_project(ix, cx);
                 }
             }
@@ -1211,12 +1202,12 @@ impl Sidebar {
         let above = rows[..gap].iter().filter(|row| *row != carried);
         match carried {
             // Among the groups of its kind, by how many of them are above it.
-            Row::Group(Group::Project(path)) => {
+            Row::Group(Group::Project(project)) => {
                 let to = above
                     .filter(|row| matches!(row, Row::Group(Group::Project(_))))
                     .count();
                 self.workspace
-                    .update(cx, |workspace, cx| workspace.move_project(path, to, cx));
+                    .update(cx, |workspace, cx| workspace.move_project(*project, to, cx));
             }
             Row::Group(Group::Space(id)) => {
                 let to = above
@@ -1273,7 +1264,8 @@ impl Sidebar {
     fn reorder_entries(&mut self, carried: &Row, region: Vec<Row>, cx: &mut Context<Self>) {
         use crate::model::state;
         let workspace = self.workspace.read(cx);
-        let Some(project) = project_of(carried).and_then(|path| workspace.project_at(path)) else {
+        let Some(project) = project_of(carried).and_then(|project| workspace.project_ix(project))
+        else {
             return;
         };
         let rows: Vec<Row> = self

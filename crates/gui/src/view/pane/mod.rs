@@ -11,8 +11,7 @@ pub mod title;
 
 pub(crate) use tab::{Tab, TabMenu};
 
-use crate::view::window::root::Cydonia;
-use artifact::space::Member;
+use crate::{model::workspace::Member, view::window::root::Cydonia};
 use bezel::gpui::{
     Context, Entity, MouseButton, SharedString, StyleRefinement, WeakEntity, Window, div,
     prelude::*,

@@ -1,11 +1,18 @@
 use super::*;
-use crate::model::workspace::Opening;
-use crate::model::{project::Project, settings::Settings, state};
-use artifact::kind::Kind;
-use artifact::project::{Project as _, fs};
-use artifact::space::Entry;
-use bezel::gpui::{Modifiers, MouseButton, TestAppContext, VisualTestContext, point, size};
-use bezel::ui::AppExt as _;
+use crate::model::{
+    project::Project,
+    settings::Settings,
+    state,
+    workspace::{Entry, Opening},
+};
+use artifact::{
+    kind::Kind,
+    project::{Project as _, fs},
+};
+use bezel::{
+    gpui::{Modifiers, MouseButton, TestAppContext, VisualTestContext, point, size},
+    ui::AppExt as _,
+};
 
 struct Scratch(std::path::PathBuf);
 impl Scratch {
@@ -74,11 +81,7 @@ fn open(
             .clone(),
     ];
     store.save_board(&mut board).unwrap();
-    let member = Entry {
-        project: scratch.0.clone(),
-        kind: Kind::Board,
-        id: board.id.clone(),
-    };
+    let board_id = board.id.clone();
     cx.update(|cx| {
         Theme::install(bezel::theme::Appearance::Dark, cx);
         input::init(cx);
@@ -90,18 +93,20 @@ fn open(
         let root =
             cx.new(|cx| Cydonia::new(Settings::default(), state::State::default(), window, cx));
         root.update(cx, |root, cx| {
-            root.workspace.update(cx, |workspace, cx| {
-                workspace.projects.push(Project::new(scratch.0.clone(), cx));
+            let member = root.workspace.update(cx, |workspace, cx| {
+                let project = workspace.intern(&scratch.0);
+                workspace
+                    .projects
+                    .push(Project::new(project, scratch.0.clone(), cx));
                 workspace.active = Some(0);
+                Entry {
+                    project,
+                    kind: Kind::Board,
+                    id: board_id.clone(),
+                }
             });
             root.open_board(0, 0, Opening::Preview, window, cx);
-            root.open_page(
-                None,
-                member.clone(),
-                Page::Card(cards[0].clone()),
-                window,
-                cx,
-            );
+            root.open_page(None, member, Page::Card(cards[0].clone()), window, cx);
         });
         cx.observe(&root, |_, _, cx| cx.notify()).detach();
         Host(root)
@@ -110,6 +115,11 @@ fn open(
         .root(cx)
         .unwrap()
         .read_with(cx, |view, _| view.0.clone());
+    let member = root.read_with(cx, |root, cx| Entry {
+        project: root.workspace.read(cx).projects[0].id,
+        kind: Kind::Board,
+        id: board_id,
+    });
     let mut visual = VisualTestContext::from_window(window.into(), cx);
     visual.simulate_resize(size(px(700.), px(600.)));
     visual.update(|window, _| window.refresh());

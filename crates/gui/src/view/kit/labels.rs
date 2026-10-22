@@ -2,8 +2,10 @@
 //! selection's, opened from whichever trigger names it. Each view that hangs one holds its own [`Labels`] and implements
 //! [`LabelHost`].
 
-use crate::model::workspace::Workspace;
-use crate::view::{sidebar::Row, window::root::Cydonia};
+use crate::{
+    model::workspace::Workspace,
+    view::{sidebar::Row, window::root::Cydonia},
+};
 use bezel::{
     gpui::{
         AnyElement, App, AppContext as _, Context, Div, Entity, InteractiveElement, Stateful,
@@ -238,7 +240,7 @@ pub(crate) trait LabelHost: Sized + 'static {
                 let Row::Entry { project, showing } = row else {
                     continue;
                 };
-                let Some(at) = workspace.project_at(&project) else {
+                let Some(at) = workspace.project_ix(project) else {
                     continue;
                 };
                 workspace.swap_label(at, &showing, name, on.then(|| name.to_owned()), cx);
@@ -262,7 +264,7 @@ pub(crate) trait LabelHost: Sized + 'static {
                 let Row::Entry { project, showing } = row else {
                     return None;
                 };
-                let at = workspace.project_at(&project)?;
+                let at = workspace.project_ix(project)?;
                 workspace
                     .labels_of(at, &showing, cx)
                     .map(<[String]>::to_vec)

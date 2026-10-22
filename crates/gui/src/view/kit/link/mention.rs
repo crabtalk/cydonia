@@ -4,9 +4,12 @@
 //! paints: cydonia's mark and the title.
 
 use crate::{
-    model::workspace::{
-        Showing, Workspace,
-        references::{self, Part},
+    model::{
+        project::ProjectId,
+        workspace::{
+            Showing, Workspace,
+            references::{self, Part},
+        },
     },
     view::{
         kit::{
@@ -27,7 +30,6 @@ use bezel::{
 };
 use editor::Mention;
 use markdown::Preview;
-use std::path::Path;
 
 /// Rows the menu lists at most.
 pub(crate) const SHOWN: usize = 20;
@@ -84,7 +86,7 @@ pub(crate) fn read(workspace: &Workspace, cx: &App) -> Linkables {
                 .to_string()
         };
         let row = |showing: Showing| Row::Entry {
-            project: project.path.clone(),
+            project: project.id,
             showing,
         };
         let linkable =
@@ -209,8 +211,8 @@ pub(crate) enum Named {
 pub(crate) struct Carded<'a> {
     /// The directory name of the project it is in.
     pub(crate) project: String,
-    /// The project's directory.
-    pub(crate) path: &'a Path,
+    /// The project it is in.
+    pub(crate) home: ProjectId,
     /// In the active project, the one a bare `DEV-12` means.
     pub(crate) active: bool,
     pub(crate) board: &'a Board,
@@ -238,7 +240,7 @@ impl Carded<'_> {
 }
 
 pub(crate) fn carded<'a>(workspace: &'a Workspace, cx: &'a App) -> Vec<Carded<'a>> {
-    let active = workspace.active_project().map(|project| &project.path);
+    let active = workspace.active_project().map(|project| project.id);
     let mut cards = Vec::new();
     for project in &workspace.projects {
         let Some(name) = reference::project_name(&project.path) else {
@@ -251,8 +253,8 @@ pub(crate) fn carded<'a>(workspace: &'a Workspace, cx: &'a App) -> Vec<Carded<'a
                 };
                 cards.push(Carded {
                     project: name.to_string(),
-                    path: &project.path,
-                    active: active == Some(&project.path),
+                    home: project.id,
+                    active: active == Some(project.id),
                     board,
                     card,
                     number,

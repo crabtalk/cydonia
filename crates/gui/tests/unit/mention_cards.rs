@@ -2,6 +2,7 @@
 //! project or the one named, then cards whose text holds the query.
 
 use super::*;
+use crate::model::project::ProjectIds;
 
 fn board(key: &str, texts: &[&str]) -> Board {
     let mut board = Board::new(key.to_lowercase(), key);
@@ -20,7 +21,7 @@ fn carded<'a>(project: &'a str, active: bool, board: &'a Board) -> Vec<Carded<'a
         .flat_map(|column| &column.cards)
         .map(|card| Carded {
             project: project.to_owned(),
-            path: std::path::Path::new(project),
+            home: ProjectIds::default().intern(std::path::Path::new(project)),
             active,
             board,
             card,
@@ -143,7 +144,7 @@ fn a_bare_number_names_the_entry_of_that_number_before_cards() {
         archived: false,
         kind: Kind::Article,
         row: Row::Entry {
-            project: "cloud".into(),
+            project: ProjectIds::default().intern(std::path::Path::new("cloud")),
             showing: crate::model::workspace::Showing::Article(number.to_string()),
         },
     };

@@ -1,8 +1,7 @@
 //! Labels in the library: the column, the filter on its heading, and the
 //! selection's Label button — each opens [`crate::view::kit::labels`]'s picker.
 
-use super::Library;
-use super::ROW_GROUP;
+use super::{Library, ROW_GROUP};
 use crate::view::{
     kit::labels::{LabelHost as _, Target},
     sidebar::Row,
@@ -90,8 +89,8 @@ impl Library {
         let project = library
             .project
             .as_ref()
-            .and_then(|path| workspace.project_at(path))
-            .map(|at| SharedString::from(format!("Project: {}", workspace.projects[at].name())));
+            .and_then(|project| workspace.project(*project))
+            .map(|open| SharedString::from(format!("Project: {}", open.name())));
         let agent = library
             .agent
             .as_ref()

@@ -7,7 +7,10 @@
 //! that ends on a tool call still shows the prose before it as prose.
 
 use crate::{
-    model::{session::ChatSession, workspace::Workspace},
+    model::{
+        session::ChatSession,
+        workspace::{Member, Workspace},
+    },
     view::{
         kit::{
             bubble, orb,
@@ -23,7 +26,6 @@ use crate::{
 use artifact::{
     search::Query,
     session::chat::{ChatItem, ToolStatus},
-    space::Member,
     text::{clip, one_line},
 };
 
