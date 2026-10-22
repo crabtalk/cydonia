@@ -750,14 +750,17 @@ impl Cydonia {
                     ))
                     .child(main)
                     .children(changes.clone().filter(|_| beside).map(|panel| {
-                        div()
-                            .relative()
-                            .w(px(width))
-                            .min_w_0()
-                            .flex_none()
-                            .flex()
-                            .flex_col()
-                            .child(panel)
+                        match floating {
+                            true => div(),
+                            false => bezel::ui::window::content(false, cx),
+                        }
+                        .relative()
+                        .w(px(width))
+                        .min_w_0()
+                        .flex_none()
+                        .flex()
+                        .flex_col()
+                        .child(panel)
                     }))
                     // Over the chat rather than beside it. The chat stays in
                     // the tree behind it, so what it was scrolled to and what
