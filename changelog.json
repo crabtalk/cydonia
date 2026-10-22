@@ -1,8 +1,21 @@
 [
   {
+    "version": "0.2.5",
+    "date": "2026-10-22",
+    "summary": "Fixes to the order of spaces, the Settings window and the right panel in the Flat layout, and a faster sidebar and transcript.",
+    "changed": [
+      "List the sidebar's rows, and lay out a running turn, faster in large projects and long sessions"
+    ],
+    "fixed": [
+      "Switch spaces with ⌘1 to ⌘9 in the order the sidebar lists them, which is now the order of their tabs",
+      "Keep the open Settings window on the section it shows when ⌘, brings it forward",
+      "Fill the right panel like the content beside it in the Flat layout, where the window showed through it",
+      "Find a new session through the Cydonia tools as soon as it has a number"
+    ]
+  },
+  {
     "version": "0.2.4",
     "date": "2026-10-22",
-    "nightly": true,
     "summary": "Each window has one strip of tabs, a tab for each entry and each space, and a pane can hold a stack of entries. Spaces can be listed in the sidebar in place of the tabs.",
     "new": [
       "Open entries and spaces as tabs in one strip along the top of the window, reordered by dragging and scrolled sideways once they no longer fit",
