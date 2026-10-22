@@ -306,7 +306,6 @@ impl SettingsWindow {
         let on = workspace.indent_project_rows;
         let fits = workspace.settings.appearance.settings_sidebar_fits;
         let extended = workspace.settings.appearance.extended_sidebar;
-        let spaces = workspace.settings.appearance.spaces_in_sidebar;
         let lights = workspace.settings.appearance.traffic_lights;
         group(&theme, "Sidebar")
             .child(
@@ -340,20 +339,6 @@ impl SettingsWindow {
                         move |this, cx| {
                             this.workspace.update(cx, |workspace, cx| {
                                 workspace.set_extended_sidebar(!extended, cx);
-                            });
-                        },
-                    ))
-                    .child(self.switch_row(
-                        Switch::new(
-                            "spaces-in-sidebar",
-                            "Spaces in sidebar",
-                            "List each space with its entries under it, in place of the window's tabs.",
-                            spaces,
-                        ),
-                        cx,
-                        move |this, cx| {
-                            this.workspace.update(cx, |workspace, cx| {
-                                workspace.set_spaces_in_sidebar(!spaces, cx);
                             });
                         },
                     ))

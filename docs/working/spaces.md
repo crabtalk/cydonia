@@ -9,13 +9,13 @@ The window splits into panes, and entries drag between them. Each pane draws fro
 
 ## Tabs
 
-An entry dropped on the middle of a pane joins its stack, in front. A pane holding a stack draws a deck at the head of its title row; a click on the deck lists the stack, to bring another entry to the front or move the one in front to a tab of its own — with **Spaces in sidebar** on, to a pane of its own beside this one. While the focus is in a pane holding a stack, ⌃⇥ and ⇧⌃⇥ step through the stack instead of the window's tabs, and ⌘1–9 still pick the window's tabs.
+An entry dropped on the middle of a pane joins its stack, in front. A pane holding a stack draws a deck at the head of its title row; a click on the deck lists the stack, to bring another entry to the front or move the one in front to a tab of its own — with **Spaces in sidebar** on, to a pane of its own beside this one. While the focus is in a pane holding a stack, ⌃⇥ and ⇧⌃⇥ step through the stack instead of the window's tabs, and ⌘1–9 still pick the window's tabs, or with **Spaces in sidebar** on the spaces, in the order the sidebar lists them.
 
 ⌘W closes a tab in a space. Archiving or deleting the entry a tab shows closes its pane and moves the focus to the top-left pane.
 
 ## Spaces
 
-A space is an arrangement of entries, saved with a tab of its own on the window's strip. One space can span projects. With **Settings › Appearance › Spaces in sidebar** on, the sidebar lists each space with its entries grouped under it, and leaves those entries out of their projects. The window then has no row of tabs: the title rows of the panes along its top edge are its top row, the window is dragged by their empty stretch, and the right panel's toggle ends the rightmost one. ⌃⇥ steps through the focused pane's stack, and does nothing in a pane holding one entry.
+A space is an arrangement of entries, saved with a tab of its own on the window's strip. One space can span projects. With **Settings › Features › Spaces in sidebar** on, the sidebar lists each space with its entries grouped under it, and leaves those entries out of their projects. The window then has no row of tabs: the title rows of the panes along its top edge are its top row, the window is dragged by their empty stretch, and the right panel's toggle ends the rightmost one. ⌃⇥ steps through the focused pane's stack, and does nothing in a pane holding one entry.
 
 ## The panels around them
 

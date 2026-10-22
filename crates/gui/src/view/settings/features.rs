@@ -93,6 +93,7 @@ impl SettingsWindow {
                         .map(|(ix, feature)| self.feature_row(ix, 0, feature, cx)),
                 ),
             )
+            .child(group(&theme, "Spaces").child(theme.group_box().child(self.spaces_row(cx))))
             .child(
                 group(&theme, "Right panel").child(
                     theme.group_box().children(
@@ -112,6 +113,32 @@ impl SettingsWindow {
                 |body| body.child(self.apps_group(cx)),
             )
             .into_any_element()
+    }
+
+    fn spaces_row(&self, cx: &Context<Self>) -> AnyElement {
+        let on = self
+            .workspace
+            .read(cx)
+            .settings
+            .appearance
+            .spaces_in_sidebar;
+        self.switch_row(
+            Switch::new(
+                "spaces-in-sidebar",
+                "Spaces in sidebar",
+                "List each space with its entries under it, in place of the window's tabs.",
+                on,
+            )
+            .first(true)
+            .glyph(icons::layout::LayoutDashboard)
+            .truncate(),
+            cx,
+            move |this, cx| {
+                this.workspace.update(cx, |workspace, cx| {
+                    workspace.set_spaces_in_sidebar(!on, cx);
+                });
+            },
+        )
     }
 
     /// `offset` keeps the element ids of the second group clear of the first's.
