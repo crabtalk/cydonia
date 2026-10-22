@@ -35,8 +35,7 @@ unchecked.
 
 ## Running the app
 
-`cargo run` starts it. [fixtures](https://github.com/crabtalk/fixtures) is a
-demo project to open it against.
+`cargo run` starts it.
 
 On macOS, some features need the app bundle rather than a bare binary. System
 notifications are one: a binary run from `cargo run` has no identity to post
