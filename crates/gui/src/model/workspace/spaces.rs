@@ -138,18 +138,23 @@ impl Workspace {
         self.spaces.iter().find(|space| space.id == id)
     }
 
-    /// Carry a space to another place in the list.
+    /// Carry a space to place `to` among the spaces: its tab moves among the
+    /// strip's space tabs, past the tabs of entries between them.
     pub fn move_space(&mut self, id: &str, to: usize, cx: &mut Context<Self>) {
-        let Some(from) = self.space_ix(id) else {
+        let order: Vec<&str> = self.space_tabs().collect();
+        let Some(from) = order.iter().position(|at| *at == id) else {
             return;
         };
-        if from == to || to >= self.spaces.len() {
+        let Some(target) = order.get(to).filter(|_| from != to) else {
             return;
-        }
-        let space = self.spaces.remove(from);
-        self.spaces.insert(to, space);
-        self.save();
-        cx.notify();
+        };
+        let to = Slot::Space {
+            space: (*target).to_owned(),
+        };
+        let moving = Slot::Space {
+            space: id.to_owned(),
+        };
+        self.reorder_slot(&moving, &to, cx);
     }
 
     /// Show a space: its tab in front of the strip. The projects its panes are

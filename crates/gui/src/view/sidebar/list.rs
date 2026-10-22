@@ -293,9 +293,8 @@ impl<'a> List<'a> {
             .iter()
             .map(|open| Group::Project(open.id));
         let spaces = workspace
-            .spaces
-            .iter()
-            .map(|space| Group::Space(space.id.clone()));
+            .space_tabs()
+            .map(|space| Group::Space(space.to_owned()));
         // The projects' heading whether or not any are open: it holds the way
         // to open one. After the projects, the spaces, because a space is not
         // inside one.

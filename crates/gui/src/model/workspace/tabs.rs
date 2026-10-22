@@ -79,6 +79,22 @@ impl Workspace {
         }
     }
 
+    /// The spaces by id, in the order the strip holds their tabs. The sidebar
+    /// lists them in this order.
+    pub fn space_tabs(&self) -> impl Iterator<Item = &str> {
+        self.strip.iter().filter_map(Slot::space)
+    }
+
+    /// The tabs `cmd-1` through `cmd-9` count, in order: the strip's, or only
+    /// its spaces' while the sidebar lists the spaces.
+    pub fn numbered_tabs(&self) -> Vec<&Slot> {
+        let spaces_only = self.settings.appearance.spaces_in_sidebar;
+        self.strip
+            .iter()
+            .filter(|slot| !spaces_only || slot.space().is_some())
+            .collect()
+    }
+
     /// The entries the strip holds as tabs of their own, in strip order.
     pub fn tab_strip(&self) -> Vec<Member> {
         self.strip.iter().filter_map(Slot::entry).cloned().collect()

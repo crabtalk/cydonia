@@ -99,9 +99,9 @@ pub struct State {
     /// an id whose file has since gone lands on one too.
     #[serde(default)]
     pub space: Option<String>,
-    /// The order the spaces are read back in, by id: the order the sidebar
-    /// lists them in, and the order a space with no tab on the strip joins it
-    /// in. A space this does not name is one made since it was last written,
+    /// The order the spaces are read back in, by id: the order of their tabs
+    /// on the strip when written, and the order a space with no tab on the
+    /// strip joins it in. A space this does not name is one made since it was last written,
     /// and goes before everything here — the same rule `order` above follows
     /// for entries.
     #[serde(default)]

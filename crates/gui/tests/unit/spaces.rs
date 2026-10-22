@@ -758,19 +758,22 @@ fn a_space_keeps_the_place_it_was_dragged_to(cx: &mut gpui::TestAppContext) {
         workspace.arrange(&c, &d, Side::Right, cx);
 
         let ids = |workspace: &Workspace| -> Vec<String> {
-            workspace
-                .spaces
-                .iter()
-                .map(|space| space.id.clone())
-                .collect()
+            workspace.space_tabs().map(str::to_owned).collect()
         };
+        let open = |workspace: &Workspace| workspace.active_space().map(|space| space.id.clone());
         let before = ids(workspace);
-        assert_eq!(workspace.space(), Some(0), "the newest is the open one");
+        let front = open(workspace);
 
         workspace.move_space(&before[0], 1, cx);
         let moved = vec![before[1].clone(), before[0].clone()];
         assert_eq!(ids(workspace), moved);
-        assert_eq!(workspace.space(), Some(1), "and it is still the open one");
+        assert_eq!(open(workspace), front, "the open one is still open");
+        let numbered: Vec<_> = workspace
+            .numbered_tabs()
+            .into_iter()
+            .filter_map(|slot| slot.space().map(str::to_owned))
+            .collect();
+        assert_eq!(numbered, moved, "cmd-N counts the spaces in that order");
 
         let all = Shelf::all()
             .into_iter()

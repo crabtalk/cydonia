@@ -158,9 +158,9 @@ pub struct NewSessionWith {
     pub agent: String,
 }
 
-/// Bring the tab at `index` of the window's strip forward — `cmd-1` through
-/// `cmd-8` — or its last for `None`, `cmd-9`. An index past the last tab does
-/// nothing.
+/// Bring the tab at `index` of [`Workspace::numbered_tabs`] forward — `cmd-1`
+/// through `cmd-8` — or its last for `None`, `cmd-9`. An index past the last
+/// tab does nothing.
 #[derive(Clone, Debug, PartialEq, gpui::Action)]
 #[action(namespace = cydonia, no_json)]
 pub struct SwitchTab {
@@ -1521,13 +1521,13 @@ impl Render for Cydonia {
                 cx.listener(|this, _, window, cx| this.go_forward(&GoForward, window, cx)),
             )
             .on_action(cx.listener(|this, at: &SwitchTab, window, cx| {
-                let strip = this.workspace.read(cx).strip();
-                let last = strip.len().checked_sub(1);
+                let tabs = this.workspace.read(cx).numbered_tabs();
+                let last = tabs.len().checked_sub(1);
                 let Some(slot) = at
                     .index
                     .or(last)
                     .filter(|ix| Some(*ix) <= last)
-                    .and_then(|ix| strip.get(ix).cloned())
+                    .and_then(|ix| tabs.get(ix).map(|slot| (*slot).clone()))
                 else {
                     return;
                 };

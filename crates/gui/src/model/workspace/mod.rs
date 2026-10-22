@@ -316,7 +316,7 @@ impl Workspace {
             pinned: self.ids.path_keys(&self.pinned),
             sort: self.ids.path_keys(&self.sort),
             space: self.active_space().map(|space| space.id.clone()),
-            spaces: self.spaces.iter().map(|space| space.id.clone()).collect(),
+            spaces: self.space_tabs().map(str::to_owned).collect(),
             folded_spaces: self
                 .spaces
                 .iter()
