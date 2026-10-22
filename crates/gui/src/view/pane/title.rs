@@ -68,22 +68,16 @@ impl Tab {
             tabs: false,
         };
         let floating = self.workspace.read(cx).settings.appearance.floating;
-        // On the chrome over the card, the row lines up with the card, which
-        // stands in from the pane's edges by its margin. The pane stands in
-        // from the window's edges by as much.
+        // The pane stands in from the window's edges by the column's padding.
         let on_chrome = floating && edge.top;
-        let inset = match on_chrome {
-            true => Theme::CONTENT_INSET / 2.,
-            false => 0.,
-        };
         let lead = match corners.left {
-            true => corners.lead(0., window, cx) - inset,
-            false if on_chrome => inset + root::CARD_EDGE,
+            true => corners.lead(0., window, cx) - root::card_gap(floating),
+            false if on_chrome => root::CARD_EDGE,
             false => root::HEADER_INSET,
         };
         let trail = match corners.right {
-            true => corners.trail(0., window, cx) - inset,
-            false => inset + root::CARD_EDGE,
+            true => corners.trail(0., window, cx) - root::card_gap(floating),
+            false => root::CARD_EDGE,
         };
         let row = div()
             .group(TITLE_GROUP)

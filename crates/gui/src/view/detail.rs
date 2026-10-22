@@ -712,11 +712,12 @@ impl Cydonia {
             .min_h_0()
             .flex()
             .flex_col()
+            .gap(px(root::card_gap(floating)))
             .on_drag_move(
                 cx.listener(|this, event: &DragMoveEvent<TerminalResize>, _, cx| {
                     let gap = root::card_gap(this.workspace.read(cx).settings.appearance.floating);
                     this.terminal_height = Some(panel_height(
-                        Some(f32::from(event.bounds.bottom() - event.event.position.y) - gap),
+                        Some(f32::from(event.bounds.bottom() - event.event.position.y) - gap / 2.),
                         f32::from(event.bounds.size.height),
                     ));
                     this.save_panel_layout_settled(cx);
@@ -731,6 +732,7 @@ impl Cydonia {
                     .min_h_0()
                     .flex()
                     .flex_row()
+                    .gap(px(root::card_gap(floating)))
                     .on_drag_move(cx.listener(
                         |this, event: &DragMoveEvent<ChangesResize>, _, cx| {
                             let available = f32::from(event.bounds.size.width);
@@ -738,7 +740,7 @@ impl Cydonia {
                                 this.workspace.read(cx).settings.appearance.floating,
                             );
                             let dragged =
-                                f32::from(event.bounds.right() - event.event.position.x) - gap;
+                                f32::from(event.bounds.right() - event.event.position.x) - gap / 2.;
                             if available > 0. {
                                 this.changes_share = Some(
                                     panel_width(Some(dragged / available), available) / available,
@@ -787,7 +789,7 @@ impl Cydonia {
                             .id("changes-split")
                             .absolute()
                             .top_0()
-                            .right(px(width + root::card_gap(floating)
+                            .right(px(width + root::card_gap(floating) / 2.
                                 - crate::view::component::divider::HIT / 2.))
                             .on_drag(ChangesResize, |_, _, _, cx| cx.new(|_| Empty)),
                         )
@@ -805,12 +807,13 @@ impl Cydonia {
                         .id("terminal-split")
                         .absolute()
                         .left_0()
-                        .bottom(px(height + root::card_gap(floating)
+                        .bottom(px(height + root::card_gap(floating) / 2.
                             - crate::view::component::divider::HIT / 2.))
                         .on_drag(TerminalResize, |_, _, _, cx| cx.new(|_| Empty)),
                 )
             });
-        // Floating, the cards leave the column half the inset to pad itself by.
+        // Floating, the column stands the cards off the window's sides and
+        // bottom; the band above leaves its own room.
         div()
             .flex_1()
             .min_w_0()
@@ -825,11 +828,8 @@ impl Cydonia {
                     .min_h_0()
                     .flex()
                     .flex_col()
-                    .when(floating, |column| {
-                        column
-                            .px(px(Theme::CONTENT_INSET / 2.))
-                            .pb(px(Theme::CONTENT_INSET / 2.))
-                    })
+                    .px(px(root::card_gap(floating)))
+                    .pb(px(root::card_gap(floating)))
                     .child(panels),
             )
             .into_any_element()

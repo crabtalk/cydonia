@@ -11,7 +11,7 @@ use crate::{
         kit::{icon, menu},
         pane::{Edge, Pane},
         sidebar::{Dragged, Row},
-        window::root::Cydonia,
+        window::root::{self, Cydonia},
     },
 };
 use artifact::space::{Axis as Split, Node, Side};
@@ -115,9 +115,7 @@ impl Cydonia {
                     .inset_0()
                     .bg(fill)
                     .when(floating, |backing| {
-                        backing
-                            .m(px(Theme::CONTENT_INSET / 2.))
-                            .rounded(px(Theme::panel_radius()))
+                        backing.rounded(px(Theme::panel_radius()))
                     });
                 div()
                     .relative()
@@ -214,10 +212,19 @@ impl Cydonia {
                             this.move_seam(&here, drag.at, fraction, cx);
                         }
                     }));
+                // Floating, half the gap between two cards on each side that
+                // faces a sibling: the gutter is centred on the seam, and the
+                // shares stay fractions of the whole split.
+                let half = px(root::card_gap(floating) / 2.);
+                let last = children.len() - 1;
                 for (ix, child) in children.iter().enumerate() {
                     path.push(ix);
                     let body = self.node(child, path, empty, window, cx);
                     path.pop();
+                    let (before, after) = (
+                        if ix > 0 { half } else { px(0.) },
+                        if ix < last { half } else { px(0.) },
+                    );
                     row = row.child(
                         div()
                             .min_w_0()
@@ -229,8 +236,16 @@ impl Cydonia {
                             .flex()
                             .flex_col()
                             .map(|el| match axis {
-                                Split::Horizontal => el.w(relative(child.ratio() as f32)).h_full(),
-                                Split::Vertical => el.h(relative(child.ratio() as f32)).w_full(),
+                                Split::Horizontal => el
+                                    .w(relative(child.ratio() as f32))
+                                    .h_full()
+                                    .pl(before)
+                                    .pr(after),
+                                Split::Vertical => el
+                                    .h(relative(child.ratio() as f32))
+                                    .w_full()
+                                    .pt(before)
+                                    .pb(after),
                             })
                             .child(body),
                     );
@@ -285,11 +300,9 @@ impl Cydonia {
                 .into_any_element(),
             None => div().flex_1().into_any_element(),
         };
-        let body = self.dock.pane(
-            entry.clone(),
-            px(crate::view::window::root::CARD_ROW_HEIGHT),
-            body,
-        );
+        let body = self
+            .dock
+            .pane(entry.clone(), px(root::CARD_ROW_HEIGHT), body);
         // No fill: flat, the panes sit on the fill the column under the strip
         // paints once; floating, each pane draws its own card.
         let (places, named) = (self.pane_places.clone(), entry.clone());

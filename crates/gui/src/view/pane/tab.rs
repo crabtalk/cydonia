@@ -13,7 +13,7 @@ use crate::{
             find::{self, DismissFind},
         },
         table,
-        window::{chrome, reach::InWindow, root::Cydonia},
+        window::{reach::InWindow, root::Cydonia},
     },
 };
 use artifact::kind::Kind;
@@ -357,10 +357,9 @@ impl Render for Tab {
         // is part of the window's top row, and the card's own first row
         // anywhere else.
         let on_chrome = floating && self.edge.top;
-        let card = match (floating, on_chrome) {
-            (true, true) => chrome::card(true, cx),
-            (true, false) => bezel::ui::window::content(true, cx),
-            (false, _) => div(),
+        let card = match floating {
+            true => bezel::ui::window::content(true, cx),
+            false => div(),
         }
         .when(floating && self.focused, |card| {
             card.border_color(theme.border_strong)
@@ -380,8 +379,6 @@ impl Render for Tab {
             .on_action(cx.listener(Self::dismiss_info))
             .children(over)
             .child(
-                // A flex item rather than full size: the card's margin is what
-                // leaves the gap, and a full-size card overflows by it.
                 card.relative()
                     .flex_1()
                     .min_h_0()

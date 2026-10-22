@@ -189,8 +189,9 @@ pub(crate) fn composer_width() -> f32 {
     COMPOSER_COLUMN - 2. * COMPOSER_MARGIN
 }
 
-/// The chrome between two floating cards, and between a card and the
-/// sidebar: a seam stands in its middle. Nothing where the content is flat.
+/// The chrome around a floating card: between two cards, between a card and
+/// the sidebar, and between a card and the window's sides and bottom. A seam
+/// stands in the middle of the gaps. Nothing where the content is flat.
 pub(crate) fn card_gap(floating: bool) -> f32 {
     match floating {
         true => Theme::CONTENT_INSET,

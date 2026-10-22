@@ -56,12 +56,6 @@ pub fn top_band(tabs: bool) -> Div {
     root::band().h(px(top_height(tabs)))
 }
 
-/// A card under a row of the window's top band: bezel's content card with
-/// nothing above it but that row.
-pub fn card(floating: bool, cx: &App) -> Div {
-    bezel::ui::window::content(floating, cx).mt_0()
-}
-
 /// Which of the window's top corners a row along its top edge reaches: the
 /// left one under the lights, the left caption buttons and the sidebar's fold,
 /// the right one under the panel's toggle and the right caption buttons.
