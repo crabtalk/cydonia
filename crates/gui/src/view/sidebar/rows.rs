@@ -145,6 +145,7 @@ impl Sidebar {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = Theme::of(cx).clone();
+        let trail = self.trail(cx);
         let workspace = self.workspace.read(cx);
         let (name, folded, marks, space_id): (String, bool, (Icon, Icon), Option<String>) =
             match &group {
@@ -223,20 +224,27 @@ impl Sidebar {
                 }
             }))
             // Pinned it runs edge to edge, and past the band it shows in at
-            // the top and the bottom — see [`PINNED_BLEED`]. The label keeps
-            // the x the pill's own margin and padding put it at.
+            // the top and the bottom — see [`PINNED_BLEED`]. The label and the
+            // buttons keep the x the pill's own margin and padding put them at.
+            //
+            // The right side is an entry row's, so the buttons end where a
+            // row's do; the left is 2 short of it, which the fold button's
+            // own padding makes up, so its mark stands over the rows' marks.
             .when(pinned, |el| {
                 el.absolute()
                     .top(px(-PINNED_BLEED))
                     .left_0()
                     .right_0()
                     .h(px(ROW_HEIGHT + 2. * PINNED_BLEED))
-                    .px(px(8. + 6.))
+                    .pl(px(root::SIDEBAR_GUTTER + 6.))
+                    .pr(px(trail + root::SIDEBAR_GUTTER))
             })
             .when(!pinned, |el| {
                 el.relative()
-                    .mx(px(8.))
-                    .px(px(6.))
+                    .ml(px(root::SIDEBAR_GUTTER))
+                    .mr(px(trail))
+                    .pl(px(6.))
+                    .pr(px(root::SIDEBAR_GUTTER))
                     .h(px(ROW_PILL))
                     .rounded(px(Theme::control_radius()))
             })
