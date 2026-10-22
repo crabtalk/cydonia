@@ -531,15 +531,16 @@ impl ChatSession {
         Some(chat)
     }
 
-    /// The id this session is filed under, minted now if it has none. A
-    /// session minted here is written to its file before this returns: the
-    /// tools find a session by its file.
+    /// The id this session is filed under, minted now if it has none. The
+    /// session is on disk under it before this returns, whether the id was
+    /// minted here or when the session opened: the tools find a session by
+    /// its file.
     pub fn mint_record(&mut self) -> Option<&str> {
         if self.record.is_none() {
             self.record = self.store().create_session().ok();
-            if self.record.is_some() {
-                self.write();
-            }
+        }
+        if self.record.is_some() && !self.written {
+            self.write();
         }
         if self.number.is_none() {
             self.number = self

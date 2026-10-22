@@ -285,12 +285,14 @@ fn missing_archive_cannot_be_overwritten_with_an_empty_transcript() {
 }
 
 /// A session given its number before anything is said in it is on disk under
-/// that number, where the tools look for it.
+/// that number, where the tools look for it — one opened in the app holds its
+/// record id from the start, with no file under it.
 #[test]
 fn minting_a_record_writes_the_session() {
     let scratch = Scratch::new();
     let mut chat = scratch.chat();
-    chat.record = None;
+    chat.record = fs::Project::new(&scratch.0).create_session().ok();
+    chat.written = false;
     assert!(chat.unsaid());
     let record = chat.mint_record().unwrap().to_owned();
     assert!(chat.filed().is_some());
