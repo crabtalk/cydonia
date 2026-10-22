@@ -75,6 +75,8 @@ there is the project's source.
 app against; `cargo run --example covers -- ../fixtures` gives its articles their
 pictures.
 
+To send a change, read [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## License
 
 [MIT](LICENSE)
