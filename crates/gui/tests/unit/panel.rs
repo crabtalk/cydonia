@@ -395,3 +395,43 @@ fn switched_off_tabs_leave_the_launchers_and_close(cx: &mut gpui::TestAppContext
         })
         .unwrap();
 }
+
+#[gpui::test]
+fn a_file_opened_in_the_panel_takes_the_editing_keys(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| {
+        Theme::install(Appearance::Dark, cx);
+        crate::view::keymap::bind_all(&crate::model::settings::Shortcuts::default(), cx);
+    });
+    let path = std::env::temp_dir().join(format!("cydonia-panel-keys-{}.rs", std::process::id()));
+    std::fs::write(&path, "abc\ndef\n").unwrap();
+    let window = cx.add_window(|_, cx| Panel::new(std::env::temp_dir(), cx));
+    window
+        .update(cx, |panel, window, cx| {
+            panel.open_file(path.clone(), cx);
+            let Content::File(file) = &panel.ordered().next().unwrap().1.content else {
+                panic!()
+            };
+            file.update(cx, |file, cx| file.receive(Ok("abc\ndef\n".into()), cx));
+            panel.focus(window, cx);
+        })
+        .unwrap();
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.simulate_resize(gpui::size(px(440.), px(600.)));
+    visual.run_until_parked();
+    let cursor = |visual: &mut gpui::VisualTestContext| {
+        window
+            .update(visual, |panel, _, cx| {
+                let Content::File(file) = &panel.ordered().next().unwrap().1.content else {
+                    panic!()
+                };
+                file.read(cx).field.read(cx).cursor()
+            })
+            .unwrap()
+    };
+    let end = cursor(&mut visual);
+    visual.simulate_keystrokes("left");
+    assert_eq!(cursor(&mut visual), end - 1);
+    visual.simulate_keystrokes("up");
+    assert!(cursor(&mut visual) < end - 1);
+    let _ = std::fs::remove_file(path);
+}
