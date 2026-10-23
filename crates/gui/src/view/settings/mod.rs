@@ -21,7 +21,7 @@ use bezel::{
         prelude::*, px,
     },
     motion::{Fade, Painter},
-    theme::{TextStyle, Theme, Typeset},
+    theme::{Selection, TextStyle, Theme, Typeset},
     ui::{
         icons,
         input::{Shape, TextField},
@@ -806,7 +806,7 @@ impl SettingsWindow {
                             .nav_row(
                                 Some(section.glyph().into()),
                                 section.title(),
-                                section == self.section,
+                                Selection::new(section == self.section, true),
                                 Fade::new(painter, format!("section-{ix}")),
                             )
                             .id(("section", ix))

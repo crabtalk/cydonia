@@ -591,7 +591,6 @@ impl Cydonia {
                     .with_icon(icon::entry_icon(&held, workspace, cx))
                     .checked(front.as_ref() == Some(&held));
                 menu::row::<Self>(item, move |this, window, cx| {
-                    this.stack_steps = Some(held.clone());
                     this.bring_forward(&held, window, cx)
                 })
             })
@@ -648,17 +647,6 @@ impl Cydonia {
         if next != at {
             self.bring_forward(&stack[next].clone(), window, cx);
         }
-    }
-
-    /// Whether ⌃⇥ steps the focused pane's stack rather than the strip: an
-    /// entry of that stack is [`Cydonia::stack_steps`].
-    pub(crate) fn steps_stack(&self, cx: &App) -> bool {
-        let (Some(focused), Some(picked)) = (self.focused_entry(cx), self.stack_steps.as_ref())
-        else {
-            return false;
-        };
-        let stack = self.workspace.read(cx).stack_of(&focused);
-        stack.len() > 1 && stack.contains(picked)
     }
 
     /// Put `entry` in front of its stack, or of the strip, and the focus on it.
@@ -857,7 +845,6 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) {
         self.library = None;
-        self.stack_steps = None;
         self.workspace
             .update(cx, |workspace, cx| workspace.join_strip(&arriving, cx));
         self.show_pane(&arriving, window, cx);

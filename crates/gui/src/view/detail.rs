@@ -585,6 +585,9 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) -> Div {
         let floating = self.workspace.read(cx).settings.appearance.floating;
+        let raised = library
+            .as_ref()
+            .is_some_and(|library| library.read(cx).focus.contains_focused(window, cx));
         let body = match library.clone() {
             Some(library) => library
                 .cached(
@@ -603,26 +606,29 @@ impl Cydonia {
             Some(_) => self.drawer_layer(None, window, cx),
             None => Vec::new(),
         };
-        bezel::ui::window::content(floating, cx)
-            .flex_1()
-            .min_h_0()
-            .min_w_0()
-            .relative()
-            .flex()
-            .flex_col()
-            .capture_any_mouse_down(cx.listener(|this, _, _, _| this.pressed_pane = None))
-            .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .flex()
-                    .flex_col()
-                    .overflow_hidden()
-                    .child(body),
-            )
-            .when(!drawer.is_empty(), |card| {
-                card.child(div().absolute().inset_0().children(drawer))
-            })
+        match floating && !raised {
+            true => bezel::ui::window::resting(cx),
+            false => bezel::ui::window::content(floating, cx),
+        }
+        .flex_1()
+        .min_h_0()
+        .min_w_0()
+        .relative()
+        .flex()
+        .flex_col()
+        .capture_any_mouse_down(cx.listener(|this, _, _, _| this.pressed_pane = None))
+        .child(
+            div()
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .overflow_hidden()
+                .child(body),
+        )
+        .when(!drawer.is_empty(), |card| {
+            card.child(div().absolute().inset_0().children(drawer))
+        })
     }
 
     pub(crate) fn detail(
@@ -682,13 +688,16 @@ impl Cydonia {
         // The one panel the window has, under whatever is showing: a space's
         // panes included, which is what the right panel cannot do.
         #[cfg(feature = "desktop")]
-        let terminal = self
-            .terminal
-            .as_ref()
-            .filter(|(visible, _)| *visible)
-            .map(|(_, terminal)| gpui::AnyView::from(terminal.clone()));
+        let terminal =
+            self.terminal
+                .as_ref()
+                .filter(|(visible, _)| *visible)
+                .map(|(_, terminal)| {
+                    let raised = terminal.read(cx).focus.contains_focused(window, cx);
+                    (gpui::AnyView::from(terminal.clone()), raised)
+                });
         #[cfg(not(feature = "desktop"))]
-        let terminal: Option<gpui::AnyView> = None;
+        let terminal: Option<(gpui::AnyView, bool)> = None;
         let changes = self.changes.clone();
         let available = f32::from(window.viewport_size().width)
             - if self.sidebar_open {
@@ -795,11 +804,14 @@ impl Cydonia {
                         )
                     }),
             )
-            .children(terminal.clone().map(|terminal| {
-                bezel::ui::window::content(floating, cx)
-                    .h(px(height))
-                    .flex_none()
-                    .child(terminal)
+            .children(terminal.clone().map(|(terminal, raised)| {
+                match floating && !raised {
+                    true => bezel::ui::window::resting(cx),
+                    false => bezel::ui::window::content(floating, cx),
+                }
+                .h(px(height))
+                .flex_none()
+                .child(terminal)
             }))
             .when(terminal.is_some(), |column| {
                 column.child(

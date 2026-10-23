@@ -20,7 +20,7 @@ use crate::{
         kit::{menu::Menu, watch::Watch},
         pane::{Pane, Tab},
         settings,
-        sidebar::{Dragged, Row, Sidebar},
+        sidebar::{Dragged, Sidebar},
         window::{
             chrome,
             lights::{self, Lights},
@@ -137,6 +137,7 @@ actions!(
         PrevEntry,
         NextPane,
         PrevPane,
+        Unfocus,
         ClosePane,
         ZoomPane,
         CopySelection,
@@ -266,6 +267,9 @@ pub fn bindings() -> Vec<KeyBinding> {
         // through entries.
         KeyBinding::new("ctrl-alt-tab", NextPane, Some("Cydonia")),
         KeyBinding::new("ctrl-alt-shift-tab", PrevPane, Some("Cydonia")),
+        // Below every surface that takes `escape` for itself; the terminal
+        // reads it as a key rather than through a binding.
+        KeyBinding::new("escape", Unfocus, Some("Cydonia && !CydoniaTerminal")),
         KeyBinding::new("ctrl-alt-w", ClosePane, Some("Cydonia")),
         KeyBinding::new("ctrl-alt-z", ZoomPane, Some("Cydonia")),
         // Scope the fallback to the root so focused text surfaces take priority.
@@ -559,10 +563,6 @@ pub struct Cydonia {
     pub(crate) focus: FocusHandle,
     /// The top band the lights were last centred down — see [`lights::fit`].
     lights_band: f32,
-    /// An entry of the stack ⌃⇥ steps while the strip shows its tabs: one
-    /// picked from its pane's deck. Taken off when another tab of the strip
-    /// comes forward, or an entry moves out to a tab of its own.
-    pub(crate) stack_steps: Option<Member>,
 }
 
 impl Cydonia {
@@ -680,7 +680,16 @@ impl Cydonia {
         let (docs, sort) = (self.card_docs.clone(), self.board_sort.clone());
         let applied = self.search.read(cx).query().cloned();
         let pane = cx.new(|cx| {
-            let mut pane = Tab::new(entry, workspace, root, docs, sort, composer.clone(), cx);
+            let mut pane = Tab::new(
+                entry,
+                workspace,
+                root,
+                docs,
+                sort,
+                composer.clone(),
+                window,
+                cx,
+            );
             pane.applied = applied;
             pane
         });
@@ -843,7 +852,6 @@ impl Cydonia {
     /// Bring a tab of the strip forward, and the focus with it.
     pub(crate) fn show_slot(&mut self, slot: &Slot, window: &mut Window, cx: &mut Context<Self>) {
         self.library = None;
-        self.stack_steps = None;
         match slot {
             Slot::Space { space } => {
                 if let Some(ix) = self.workspace.read(cx).space_ix(space) {
@@ -1032,7 +1040,7 @@ impl Cydonia {
         let sidebar = {
             let (workspace, root, search) =
                 (workspace.clone(), cx.entity().downgrade(), search.clone());
-            cx.new(|cx| Sidebar::new(workspace, root, search, cx))
+            cx.new(|cx| Sidebar::new(workspace, root, search, window, cx))
         };
         let strip = {
             let (workspace, root) = (workspace.clone(), cx.entity().downgrade());
@@ -1048,7 +1056,6 @@ impl Cydonia {
             session_watches: Watch::default(),
             sidebar,
             focused: 0,
-            stack_steps: None,
             lights_band: HEADER_HEIGHT,
             sidebar_open: true,
             sidebar_width: SIDEBAR_WIDTH,
@@ -1239,75 +1246,42 @@ impl Cydonia {
         self.cycle_entry(-1, window, cx);
     }
 
-    /// Step to the next entry the project has open, wrapping at the ends — one
-    /// ring over every kind, in the order the sidebar lists them, so a board
-    /// standing alone still has the article above it for a neighbour.
+    /// Step the stack of the pane holding the keyboard focus where it holds
+    /// two or more entries, and the window's tabs anywhere else.
     fn cycle_entry(&mut self, step: isize, window: &mut Window, cx: &mut Context<Self>) {
-        // With the spaces in the sidebar there are no tabs to step through:
-        // the chord is the focused pane's stack's, and nothing else's.
-        if self
-            .workspace
-            .read(cx)
-            .settings
-            .appearance
-            .spaces_in_sidebar
-        {
-            self.step_stack(step, window, cx);
-            return;
+        let stacked = self.leaf().is_some_and(|leaf| {
+            let leaf = leaf.read(cx);
+            leaf.focus.contains_focused(window, cx)
+                && self.workspace.read(cx).stack_of(&leaf.entry).len() > 1
+        });
+        match stacked {
+            true => self.step_stack(step, window, cx),
+            false => self.cycle_tabs(step, window, cx),
         }
-        // The focused pane's stack, once an entry of it was picked from its
-        // deck — see [`Self::stack_steps`].
-        if self.steps_stack(cx) {
-            self.step_stack(step, window, cx);
-            return;
-        }
-        // The strip answers it while it holds more than one tab: the tabs are
-        // what is in front of you.
-        if self.cycle_strip(step, window, cx) {
-            return;
-        }
-        // Nothing on screen is nothing to step from: the launch view is not an
-        // entry, and its neighbour is not another one.
-        let Some(entry) = self.focused_entry(cx) else {
-            return;
-        };
-        let workspace = self.workspace.read(cx);
-        let Some(project) = entry.project().and_then(|path| workspace.project_ix(*path)) else {
-            return;
-        };
-        let showing = Row::of_member(&entry, workspace, cx);
-        // The divider is a line, not a landing.
-        let ring: Vec<Row> = self
-            .list(cx)
-            .entries(project)
-            .into_iter()
-            .filter(|row| !matches!(row, Row::Archive(_)))
-            .collect();
-        let at = showing.and_then(|row| ring.iter().position(|entry| *entry == row));
-        let Some(landing) = stepped(at, ring.len(), step).map(|ix| ring[ix].clone()) else {
-            return;
-        };
-        self.open_row(&landing, Opening::Preview, window, cx);
-        self.sidebar
-            .update(cx, |sidebar, cx| sidebar.reveal(&landing, cx));
     }
 
-    /// Step the strip to its next tab, wrapping at the ends. Says whether it
-    /// did — a strip of one tab leaves the chord to the sidebar's list.
-    fn cycle_strip(&mut self, step: isize, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        let workspace = self.workspace.read(cx);
-        let strip = workspace.strip();
-        if strip.len() < 2 {
-            return false;
+    /// Step to the next of the tabs `cmd-1` through `cmd-9` count, wrapping at
+    /// the ends.
+    fn cycle_tabs(&mut self, step: isize, window: &mut Window, cx: &mut Context<Self>) {
+        let tabs = self.workspace.read(cx).numbered_tabs();
+        if tabs.len() < 2 {
+            return;
         }
-        let at = workspace
+        let at = self
+            .workspace
+            .read(cx)
             .front_slot()
-            .and_then(|front| strip.iter().position(|slot| slot == front));
-        let Some(landing) = stepped(at, strip.len(), step).map(|ix| strip[ix].clone()) else {
-            return false;
+            .and_then(|front| tabs.iter().position(|slot| *slot == front));
+        let Some(landing) = stepped(at, tabs.len(), step).map(|ix| tabs[ix].clone()) else {
+            return;
         };
-        self.show_slot(&landing, window, cx);
-        true
+        self.key_to_slot(&landing, window, cx);
+    }
+
+    /// Bring a tab forward from the keyboard: the focus stays on the window.
+    fn key_to_slot(&mut self, slot: &Slot, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_slot(slot, window, cx);
+        window.focus(&self.focus, cx);
     }
 
     /// Leaving a project is the moment a half-written card has to be filed:
@@ -1534,7 +1508,11 @@ impl Render for Cydonia {
                 else {
                     return;
                 };
-                this.show_slot(&slot, window, cx);
+                this.key_to_slot(&slot, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &Unfocus, window, cx| {
+                window.focus(&this.focus, cx);
+                cx.notify();
             }))
             .on_action(cx.listener(|this, _: &NextPane, window, cx| this.step_pane(1, window, cx)))
             .on_action(cx.listener(|this, _: &PrevPane, window, cx| this.step_pane(-1, window, cx)))

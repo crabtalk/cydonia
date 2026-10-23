@@ -27,7 +27,7 @@ another, and each reports its own progress.
 
 | What | Chord |
 | --- | --- |
-| Step between the panes on screen | ⌃⇥ and ⇧⌃⇥ |
+| Step between the panes on screen | ⌃⌥⇥ and ⇧⌃⌥⇥ |
 | Close a tab in a space | ⌘W |
 | Toggle the sidebar | ⌘B |
 
@@ -35,6 +35,18 @@ Split the window into panes and drag a session into each, or save the
 arrangement as a space — one space can span projects. Each pane draws from
 its own state, so moving the focus does not move what the others are showing.
 See [Panes, tabs and spaces](./../working/spaces.md).
+
+A session shows what it is doing in place of its icon, on its sidebar row and
+its tab:
+
+- an orb while a turn runs;
+- a ring that breathes while the agent asks for permission;
+- a circle with `!` when the last turn failed, until the next message;
+- a filled dot when a turn finished while the session was not on screen, until
+  it is shown.
+
+A space's tab, and its heading in the sidebar, show the most pressing of its
+sessions: asking, then failed, then finished, then running.
 
 ## The board as the status of the work
 

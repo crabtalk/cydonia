@@ -3,12 +3,17 @@
 //! [`crate::view::window::chrome`].
 
 use crate::{
-    model::workspace::{Slot, Workspace},
+    model::{
+        session::Status,
+        workspace::{Showing, Slot, Workspace},
+    },
     view::{
         kit::{
             icon,
             menu::{self, MenuHost},
             rename::{Rename, Renaming},
+            status,
+            watch::Watch,
         },
         pane::arrangement,
         sidebar::Dragged,
@@ -34,6 +39,7 @@ use bezel::{
         tabs,
     },
 };
+use std::collections::HashMap;
 
 /// Between the controls in the strip.
 const BAR_GAP: f32 = 2.;
@@ -57,6 +63,10 @@ pub(crate) struct Strip {
     /// The name field, on the tab of the space it renames.
     rename: Rename,
     sidebar_open: bool,
+    /// Every open session, observed for its status.
+    sessions: Watch,
+    /// Each session's status as the tabs were last drawn.
+    statuses: HashMap<u64, Status>,
 }
 
 impl Strip {
@@ -74,6 +84,8 @@ impl Strip {
             menu: ContextMenu::default(),
             rename,
             sidebar_open: true,
+            sessions: Watch::default(),
+            statuses: HashMap::new(),
         }
     }
 
@@ -140,7 +152,8 @@ impl Strip {
             (slot, &self.rename.what),
             (Slot::Space { space }, Some(Renaming::Space(at))) if at == space
         );
-        let (key, label, menu) = match slot {
+        // `mark` stands in the icon's place while a session is not idle.
+        let (key, label, menu, mark) = match slot {
             Slot::Entry(member) => {
                 let toolbar = self
                     .root
@@ -171,7 +184,13 @@ impl Strip {
                         .with_badge(Reference::entry(Some(&project), number, None).to_string());
                 }
                 let menu = toolbar.is_some_and(|toolbar| toolbar.entry.is_some());
-                (arrangement::key_of(member), label, menu)
+                let mark = match workspace.showing_of(member, cx) {
+                    Some((_, Showing::Session(id))) => {
+                        workspace.session(id, cx).and_then(status::Mark::of)
+                    }
+                    _ => None,
+                };
+                (arrangement::key_of(member), label, menu, mark)
             }
             Slot::Space { space } => {
                 let name = match renaming {
@@ -185,10 +204,15 @@ impl Strip {
                     SharedString::from(format!("space::{space}")),
                     tabs::Label::new(name).with_icon(icons::layout::LayoutDashboard),
                     true,
+                    status::Mark::of_most_pressing(workspace.space_sessions(space, cx)),
                 )
             }
         };
         let preview = slot.entry().is_some() && slot.entry() == workspace.preview_tab();
+        let label = match mark {
+            Some(mark) => label.with_lead(mark.draw(cx)),
+            None => label,
+        };
         let state = match front {
             true => tabs::State::Focused,
             false => tabs::State::Resting,
@@ -265,6 +289,15 @@ impl InWindow for Strip {
 
 impl Render for Strip {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let chats = self.workspace.read(cx).chat_entities();
+        let mut sessions = std::mem::take(&mut self.sessions);
+        sessions.set_in(&chats, window, cx, |this, chat, _, cx| {
+            let (id, now) = (chat.read(cx).id, chat.read(cx).status());
+            if this.statuses.insert(id, now) != Some(now) {
+                cx.notify();
+            }
+        });
+        self.sessions = sessions;
         let theme = Theme::of(cx).clone();
         let workspace = self.workspace.read(cx);
         let strip: Vec<Slot> = workspace.strip().to_vec();

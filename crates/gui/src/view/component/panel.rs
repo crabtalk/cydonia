@@ -642,9 +642,13 @@ impl Render for Panel {
         // window's top row, the row is on the chrome over the card, lined up
         // with it, and the card holds the rest.
         let on_chrome = floating && self.on_top;
+        let surface = || match self.focus.contains_focused(window, cx) {
+            true => bezel::ui::window::content(true, cx),
+            false => bezel::ui::window::resting(cx),
+        };
         let (outer, card) = match (floating, on_chrome) {
-            (true, true) => (div(), bezel::ui::window::content(true, cx)),
-            (true, false) => (bezel::ui::window::content(true, cx), div()),
+            (true, true) => (div(), surface()),
+            (true, false) => (surface(), div()),
             (false, _) => (div(), div()),
         };
         let launchers = self.launchers();

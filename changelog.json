@@ -1,5 +1,28 @@
 [
   {
+    "version": "0.2.6",
+    "date": "2026-10-23",
+    "nightly": true,
+    "summary": "See what each session is doing from its tab, its sidebar row and its space, and which pane has the focus, with Esc to leave a pane.",
+    "new": [
+      "Show what a session is doing in place of its icon, on its sidebar row, its tab and the space holding it: an orb while a turn runs, a breathing ring while the agent asks for permission, a dot when a turn finished while the session was not on screen, and a circle with ! when the last turn failed",
+      "Press Esc to give the focus back to the window from a pane, unless what holds the focus in it takes Esc itself"
+    ],
+    "changed": [
+      "Step through the stack of the pane holding the focus with ⌃⇥ and ⌃⇧⇥, and through the tabs anywhere else, the spaces included while the sidebar lists them",
+      "Show the pane holding the focus by raising its floating card over the others, or by its title's chip in the Flat layout, in place of a stronger edge",
+      "Draw the selected row in the sidebar and the library lighter while the focus is elsewhere"
+    ],
+    "fixed": [
+      "Keep your messages on the right of a session's transcript",
+      "Type into a file in the right panel without clicking it first",
+      "End a project heading's buttons in the sidebar where its rows' buttons end",
+      "Keep the gaps between floating cards even",
+      "Keep the terminal's cursor still while output arrives",
+      "Find a session opened in the app through the Cydonia tools as soon as it is given its number"
+    ]
+  },
+  {
     "version": "0.2.5",
     "date": "2026-10-22",
     "summary": "Fixes to the order of spaces, the Settings window and the right panel in the Flat layout, and a faster sidebar and transcript.",

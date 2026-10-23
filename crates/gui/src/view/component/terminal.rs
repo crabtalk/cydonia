@@ -983,6 +983,7 @@ pub struct TerminalPanel {
     strip: tabs::Strip<usize>,
     reorder: tabs::Reorder<usize>,
     next_id: usize,
+    pub(crate) focus: FocusHandle,
 }
 
 impl EventEmitter<Empty> for TerminalPanel {}
@@ -1004,6 +1005,7 @@ impl TerminalPanel {
             strip: tabs::Strip::new(),
             reorder: tabs::Reorder::new(),
             next_id: 1,
+            focus: cx.focus_handle(),
         };
         panel.add(window, cx);
         panel
@@ -1083,6 +1085,7 @@ impl Render for TerminalPanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::of(cx).clone();
         div()
+            .track_focus(&self.focus)
             .size_full()
             .flex()
             .flex_col()

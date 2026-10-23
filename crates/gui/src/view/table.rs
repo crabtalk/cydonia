@@ -19,7 +19,7 @@ use bezel::{
         self, AnyElement, App, Context, Div, Entity, Focusable as _, KeyBinding, SharedString,
         WeakEntity, Window, actions, div, prelude::*, px,
     },
-    theme::{TextStyle, Theme, Typeset},
+    theme::{Selection, TextStyle, Theme, Typeset},
     ui::{
         context_menu::{ContextMenu, Place},
         icons,
@@ -189,7 +189,13 @@ impl Cydonia {
                         .into_any_element()
                 })
                 .collect();
-            body = body.child(table::row(&theme, &declared, n == 0, false, cells));
+            body = body.child(table::row(
+                &theme,
+                &declared,
+                n == 0,
+                Selection::None,
+                cells,
+            ));
         }
         let count = match page.total as usize == page.rows.len() {
             true => format!("{} rows", page.total),
@@ -630,8 +636,9 @@ impl Render for TableView {
                 cells.push(self.value(*rowid, ix, held.get(ix), cx));
             }
             cells.push(self.row_actions(*rowid, &theme, cx));
-            body =
-                body.child(table::row(&theme, &declared, n == 0, false, cells).group("grid-row"));
+            body = body.child(
+                table::row(&theme, &declared, n == 0, Selection::None, cells).group("grid-row"),
+            );
         }
 
         div()

@@ -564,6 +564,22 @@ impl Workspace {
         Some((at, showing))
     }
 
+    /// The sessions the space `id` holds, those behind another entry in a stack
+    /// included.
+    pub fn space_sessions<'a>(&self, id: &str, cx: &'a App) -> Vec<&'a ChatSession> {
+        let Some(space) = self.space_by_id(id) else {
+            return Vec::new();
+        };
+        space
+            .entries()
+            .iter()
+            .filter_map(|member| match self.showing_of(member, cx)? {
+                (_, Showing::Session(session)) => self.session(session, cx),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// The member that names what a pane is on, so an entry opened from the
     /// sidebar can be put into a space or a tab.
     ///
