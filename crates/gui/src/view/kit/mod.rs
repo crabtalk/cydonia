@@ -16,5 +16,6 @@ pub mod pager;
 pub mod rename;
 pub mod selection;
 pub mod stamp;
+pub mod status;
 pub mod text;
 pub mod watch;

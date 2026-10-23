@@ -642,13 +642,13 @@ impl Render for Panel {
         // window's top row, the row is on the chrome over the card, lined up
         // with it, and the card holds the rest.
         let on_chrome = floating && self.on_top;
-        let inset = match on_chrome {
-            true => Theme::CONTENT_INSET / 2.,
-            false => 0.,
+        let surface = || match self.focus.contains_focused(window, cx) {
+            true => bezel::ui::window::content(true, cx),
+            false => bezel::ui::window::resting(cx),
         };
         let (outer, card) = match (floating, on_chrome) {
-            (true, true) => (div(), chrome::card(true, cx)),
-            (true, false) => (bezel::ui::window::content(true, cx), div()),
+            (true, true) => (div(), surface()),
+            (true, false) => (surface(), div()),
             (false, _) => (div(), div()),
         };
         let launchers = self.launchers();
@@ -815,7 +815,7 @@ impl Render for Panel {
             .child(
                 root::band()
                     .h(px(root::CARD_ROW_HEIGHT))
-                    .pl(px(inset + root::CARD_EDGE))
+                    .pl(px(root::CARD_EDGE))
                     .pr(px(match self.on_top {
                         true => {
                             chrome::Corners {
@@ -824,9 +824,9 @@ impl Render for Panel {
                                 tabs: false,
                             }
                             .trail(0., window, cx)
-                                - inset
+                                - root::card_gap(floating)
                         }
-                        false => inset + root::CARD_EDGE,
+                        false => root::CARD_EDGE,
                     }))
                     .gap(px(6.))
                     // The strip only while it holds a tab.

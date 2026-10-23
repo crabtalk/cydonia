@@ -736,6 +736,17 @@ impl Render for SessionView {
         let id = self.session;
         let chat = self.workspace.read(cx).session_entity(id).cloned();
         self.watch.set(&chat, cx);
+        // In front of a pane, a turn that ended is seen.
+        if let Some(chat) =
+            chat.filter(|chat| matches!(self.drawn, Drawn::Pane) && chat.read(cx).review)
+        {
+            cx.defer(move |cx| {
+                chat.update(cx, |chat, cx| {
+                    chat.review = false;
+                    cx.notify();
+                })
+            });
+        }
         let epoch = self
             .workspace
             .read(cx)
@@ -1487,6 +1498,8 @@ fn block(
     let waiting = (running && rows.ends_turn(at) && matches!(row, Row::Asked(_)))
         .then(|| working(chat, hold, rows.turns[turn].range.start, cx));
     div()
+        // A column, which the question's bubble stands at the end of.
+        .when(matches!(row, Row::Asked(_)), |row| row.flex().flex_col())
         .when(!opens, |row| row.pt(px(10.)))
         .when(rows.ends_turn(at) && waiting.is_none(), |row| {
             row.pb(px(28.))

@@ -24,6 +24,9 @@ use std::{
 const ORB_FPS: f32 = 30.;
 const ORB_LEASE: Duration = Duration::from_millis(300);
 
+/// The orb a session asking for permission wears, and no turn in flight does.
+pub(crate) const ASKING: OrbState = OrbState::Breathing;
+
 /// The still frame an orb holds where motion is turned off — the engine's own
 /// convention, and a pose rather than the empty t = 0 arrangement.
 const ORB_STILL: f32 = 0.6;
@@ -82,7 +85,12 @@ pub(crate) fn of(chat: &ChatSession) -> OrbState {
 /// Stable for the same text: an orb that changed shape between frames would
 /// read as the work changing.
 pub(crate) fn of_text(asked: &str) -> OrbState {
-    OrbState::ALL_STATES[asked_hash(asked) % OrbState::ALL_STATES.len()]
+    let all = OrbState::ALL_STATES;
+    let at = asked_hash(asked) % (all.len() - 1);
+    match all.iter().position(|state| *state == ASKING) {
+        Some(asking) if at >= asking => all[at + 1],
+        _ => all[at],
+    }
 }
 
 /// That orb, drawn, at the time the turn has been running — unbounded, which

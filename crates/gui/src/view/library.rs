@@ -18,7 +18,7 @@ use crate::{
             labels::{LabelHost, Labels},
             menu::{self, Act, MenuHost},
             stamp, text,
-            watch::Watch,
+            watch::{FocusWatch, Watch},
         },
         modals::confirm::Doomed,
         sidebar::{self, Row},
@@ -28,11 +28,11 @@ use crate::{
 use artifact::{archive::Archived, kind::Kind, reference::Reference};
 use bezel::{
     gpui::{
-        self, AnyElement, App, AppContext as _, Context, Div, Entity, Pixels, SharedString,
-        Stateful, Subscription, UniformListScrollHandle, WeakEntity, Window, div, prelude::*, px,
-        uniform_list,
+        self, AnyElement, App, AppContext as _, Context, Div, Entity, FocusHandle, Pixels,
+        SharedString, Stateful, Subscription, UniformListScrollHandle, WeakEntity, Window, div,
+        prelude::*, px, uniform_list,
     },
-    theme::{TextStyle, Theme, Typeset},
+    theme::{Selection, TextStyle, Theme, Typeset},
     ui::{
         context_menu::{ContextMenu, Place},
         icons::{self, Icon},
@@ -271,6 +271,8 @@ pub(crate) struct Library {
     strip: Rc<Cell<Pixels>>,
     /// Every app's program, whose build names its listing.
     apps: Watch,
+    pub(crate) focus: FocusHandle,
+    _focus_watch: FocusWatch,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -298,9 +300,10 @@ impl Library {
         shelf: Shelf,
         workspace: Entity<Workspace>,
         root: WeakEntity<Cydonia>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let library = Self::new(workspace, root, cx);
+        let library = Self::new(workspace, root, window, cx);
         library
             .query
             .update(cx, |field, cx| field.set_content(shelf.query, cx));
@@ -318,8 +321,11 @@ impl Library {
     pub(crate) fn new(
         workspace: Entity<Workspace>,
         root: WeakEntity<Cydonia>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let focus = cx.focus_handle();
+        let focus_watch = FocusWatch::new(&focus, window, cx);
         let query = cx.new(|cx| {
             TextField::new(cx)
                 .with_frame(false)
@@ -352,6 +358,8 @@ impl Library {
             bar: Rc::new(Cell::new(px(0.))),
             strip: Rc::new(Cell::new(px(0.))),
             apps: Watch::default(),
+            focus,
+            _focus_watch: focus_watch,
             _subscriptions: subscriptions,
         }
     }
@@ -388,7 +396,7 @@ impl Cydonia {
             }
             false => {
                 let (workspace, root) = (self.workspace.clone(), cx.entity().downgrade());
-                let library = cx.new(|cx| Library::new(workspace, root, cx));
+                let library = cx.new(|cx| Library::new(workspace, root, window, cx));
                 self.put_up_library(library, window, cx)
             }
         }
@@ -403,7 +411,7 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) {
         let (workspace, root) = (self.workspace.clone(), cx.entity().downgrade());
-        let library = cx.new(|cx| Library::shelved(shelf, workspace, root, cx));
+        let library = cx.new(|cx| Library::shelved(shelf, workspace, root, window, cx));
         self.put_up_library(library, window, cx);
     }
 
@@ -414,10 +422,11 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) {
         self.commit(cx);
-        self.library = Some(library);
         // The panes under it are not drawn, and a focus left in one reaches
         // none of the window's commands.
-        window.focus(&self.focus, cx);
+        let focus = library.read(cx).focus.clone();
+        self.library = Some(library);
+        window.focus(&focus, cx);
         cx.notify();
     }
 }
@@ -768,6 +777,15 @@ impl Library {
             false => self.library_list(listings, window, cx),
         };
         div()
+            .track_focus(&self.focus)
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    if !this.focus.contains_focused(window, cx) {
+                        window.focus(&this.focus, cx);
+                    }
+                }),
+            )
             .size_full()
             .flex()
             .flex_col()
@@ -1384,16 +1402,22 @@ impl Library {
                 Field::Actions => self.library_actions(listing, ix, window, cx),
             })
             .collect();
-        table::row(&theme, columns, ix == 0, checked, cells)
-            .h(px(ROW))
-            .id(("library-row", ix))
-            .group(ROW_GROUP)
-            .cursor_pointer()
-            .on_click(cx.listener({
-                let row = listing.row.clone();
-                move |this, _, window, cx| this.open_listing(&row, window, cx)
-            }))
-            .into_any_element()
+        table::row(
+            &theme,
+            columns,
+            ix == 0,
+            Selection::new(checked, self.focus.contains_focused(window, cx)),
+            cells,
+        )
+        .h(px(ROW))
+        .id(("library-row", ix))
+        .group(ROW_GROUP)
+        .cursor_pointer()
+        .on_click(cx.listener({
+            let row = listing.row.clone();
+            move |this, _, window, cx| this.open_listing(&row, window, cx)
+        }))
+        .into_any_element()
     }
 }
 

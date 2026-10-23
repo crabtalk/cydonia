@@ -31,8 +31,8 @@ use std::{
 use terminal::{
     emulator::{CursorShape, CursorStyle, Emulator, HOLD_TIMEOUT, KeyboardMode, SelectionType},
     view::{
-        self, Batched, GridGeometry, GridSnapshot, Images, KeyEvent, MouseAction, MouseButton,
-        OUTPUT_BATCH_MS, OutputBatch, SELECTION_DRAG_THRESHOLD, TerminalElement,
+        self, GridGeometry, GridSnapshot, Images, KeyEvent, MouseAction, MouseButton,
+        SELECTION_DRAG_THRESHOLD, TerminalElement,
     },
 };
 
@@ -48,6 +48,9 @@ const EDGE_SCROLL_TICK: Duration = Duration::from_millis(50);
 /// Most lines one edge-scroll tick moves, however far past the edge the
 /// pointer is.
 const EDGE_SCROLL_MAX_LINES: i32 = 12;
+
+/// Most PTY output one feed takes from the queue before the grid is drawn.
+const FEED_LIMIT: usize = 256 * 1024;
 
 /// The app's caret as a terminal cursor, when terminals take it.
 fn caret_override(cx: &App) -> Option<CursorStyle> {
@@ -321,10 +324,6 @@ pub struct Terminal {
     status: Option<String>,
     /// Pending release of a render hold, armed while one is on.
     hold: Option<Task<()>>,
-    /// PTY output on its way to the emulator.
-    batch: OutputBatch,
-    /// The batch window's timer, running while the batch is open.
-    flush: Option<Task<()>>,
     /// Which half of its blink the cursor is in.
     cursor_on: bool,
     /// The blink, alive only while focused on a blinking cursor.
@@ -351,8 +350,6 @@ impl Terminal {
             scroll_remainder: 0.,
             status: None,
             hold: None,
-            batch: OutputBatch::default(),
-            flush: None,
             cursor_on: true,
             blink: None,
             _pump: None,
@@ -361,16 +358,19 @@ impl Terminal {
             Ok((shell, mut output)) => {
                 this.shell = Some(shell);
                 this._pump = Some(cx.spawn(async move |this, cx| {
-                    while let Some(bytes) = output.next().await {
-                        if this.update(cx, |this, cx| this.output(bytes, cx)).is_err() {
+                    while let Some(mut bytes) = output.next().await {
+                        // One frame a program writes can arrive over several
+                        // reads: every read already queued is fed with this one.
+                        while bytes.len() < FEED_LIMIT
+                            && let Ok(more) = output.try_recv()
+                        {
+                            bytes.extend_from_slice(&more);
+                        }
+                        if this.update(cx, |this, cx| this.feed(&bytes, cx)).is_err() {
                             return;
                         }
                     }
                     let _ = this.update(cx, |this, cx| {
-                        this.flush = None;
-                        if let Some(bytes) = this.batch.tick() {
-                            this.feed(&bytes, cx);
-                        }
                         this.shell = None;
                         cx.emit(Exited);
                     });
@@ -379,35 +379,6 @@ impl Terminal {
             Err(error) => this.status = Some(format!("Could not start terminal: {error}")),
         }
         this
-    }
-
-    /// Hand one PTY read to the batch, feeding what it gives back.
-    fn output(&mut self, bytes: Vec<u8>, cx: &mut Context<Self>) {
-        match self.batch.push(bytes) {
-            Batched::Open(bytes) => {
-                self.feed(&bytes, cx);
-                self.schedule_flush(cx);
-            }
-            Batched::Full(bytes) => self.feed(&bytes, cx),
-            Batched::Held => {}
-        }
-    }
-
-    /// End the batch window: feed what it held and run another window, or
-    /// close the batch when it held nothing.
-    fn schedule_flush(&mut self, cx: &mut Context<Self>) {
-        self.flush = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor()
-                .timer(Duration::from_millis(OUTPUT_BATCH_MS))
-                .await;
-            let _ = this.update(cx, |this, cx| {
-                this.flush = None;
-                if let Some(bytes) = this.batch.tick() {
-                    this.feed(&bytes, cx);
-                    this.schedule_flush(cx);
-                }
-            });
-        }));
     }
 
     fn feed(&mut self, bytes: &[u8], cx: &mut Context<Self>) {
@@ -1012,6 +983,7 @@ pub struct TerminalPanel {
     strip: tabs::Strip<usize>,
     reorder: tabs::Reorder<usize>,
     next_id: usize,
+    pub(crate) focus: FocusHandle,
 }
 
 impl EventEmitter<Empty> for TerminalPanel {}
@@ -1033,6 +1005,7 @@ impl TerminalPanel {
             strip: tabs::Strip::new(),
             reorder: tabs::Reorder::new(),
             next_id: 1,
+            focus: cx.focus_handle(),
         };
         panel.add(window, cx);
         panel
@@ -1112,6 +1085,7 @@ impl Render for TerminalPanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::of(cx).clone();
         div()
+            .track_focus(&self.focus)
             .size_full()
             .flex()
             .flex_col()

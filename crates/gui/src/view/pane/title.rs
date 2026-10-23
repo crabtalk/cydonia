@@ -19,7 +19,13 @@ use artifact::reference::Reference;
 use bezel::{
     gpui::{AnyElement, Context, FontWeight, SharedString, Window, div, prelude::*, px},
     theme::{TextStyle, Theme, Typeset},
-    ui::{context_menu::Place, icons, tooltip::Tooltip, widgets::Content as _},
+    ui::{
+        context_menu::Place,
+        icons,
+        tabs::{self, State},
+        tooltip::Tooltip,
+        widgets::Content as _,
+    },
 };
 
 /// The hover group a title row is, which its tools show on — the ones other
@@ -57,7 +63,6 @@ impl Tab {
                 .find(|line| !line.trim().is_empty())?;
             Some(line.trim().to_owned().into())
         });
-        let reveal = menu::Reveal::Group(TITLE_GROUP);
         let comments = self
             .article_shown(cx)
             .map(|view| view.read(cx).comments.clone());
@@ -68,22 +73,31 @@ impl Tab {
             tabs: false,
         };
         let floating = self.workspace.read(cx).settings.appearance.floating;
-        // On the chrome over the card, the row lines up with the card, which
-        // stands in from the pane's edges by its margin. The pane stands in
-        // from the window's edges by as much.
+        // Flat, the title stands on a tab's chip, the focused pane's lit.
+        let chip = (!floating).then(|| match self.focus.contains_focused(window, cx) {
+            true => State::Focused,
+            false => State::Front,
+        });
+        let reveal = match chip {
+            Some(State::Focused) => menu::Reveal::Always,
+            _ => menu::Reveal::Group(TITLE_GROUP),
+        };
+        // The pane stands in from the window's edges by the column's padding.
+        // A chip's inset and ring slot stand out into it, so its text lines up
+        // with the content under it.
         let on_chrome = floating && edge.top;
-        let inset = match on_chrome {
-            true => Theme::CONTENT_INSET / 2.,
-            false => 0.,
+        let chip_inset = match chip {
+            Some(_) => tabs::TAB_PAD + 1.,
+            None => 0.,
         };
         let lead = match corners.left {
-            true => corners.lead(0., window, cx) - inset,
-            false if on_chrome => inset + root::CARD_EDGE,
+            true => corners.lead(0., window, cx) - root::card_gap(floating),
+            false if on_chrome => root::CARD_EDGE,
             false => root::HEADER_INSET,
-        };
+        } - chip_inset;
         let trail = match corners.right {
-            true => corners.trail(0., window, cx) - inset,
-            false => inset + root::CARD_EDGE,
+            true => corners.trail(0., window, cx) - root::card_gap(floating),
+            false => root::CARD_EDGE,
         };
         let row = div()
             .group(TITLE_GROUP)
@@ -129,6 +143,22 @@ impl Tab {
                         this.toggle_info(&id, window, cx);
                     }))
             });
+        let label = match chip {
+            Some(state) => tabs::chip(&theme, state).gap_0(),
+            None => div().flex().flex_row().items_center(),
+        }
+        .min_w_0()
+        .child(self.deck(window, cx))
+        .child(title)
+        .children(toolbar.number.map(|number| {
+            div()
+                .flex_none()
+                .ml(px(6.))
+                .text_style(TextStyle::Caption)
+                .font_weight(FontWeight::NORMAL)
+                .text_color(theme.text_muted)
+                .child(Reference::entry(None, number, None).to_string())
+        }));
         let name = div()
             .relative()
             .min_w_0()
@@ -138,17 +168,7 @@ impl Tab {
             .flex()
             .flex_row()
             .items_center()
-            .child(self.deck(window, cx))
-            .child(title)
-            .children(toolbar.number.map(|number| {
-                div()
-                    .flex_none()
-                    .ml(px(6.))
-                    .text_style(TextStyle::Caption)
-                    .font_weight(FontWeight::NORMAL)
-                    .text_color(theme.text_muted)
-                    .child(Reference::entry(None, number, None).to_string())
-            }))
+            .child(label)
             .children(board.as_deref().and_then(|id| self.info_panel(id, cx)));
         let menu = toolbar.entry.map(|entry| {
             let open = self.menu.key() == Some(&TabMenu::Entry);

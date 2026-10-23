@@ -585,6 +585,9 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) -> Div {
         let floating = self.workspace.read(cx).settings.appearance.floating;
+        let raised = library
+            .as_ref()
+            .is_some_and(|library| library.read(cx).focus.contains_focused(window, cx));
         let body = match library.clone() {
             Some(library) => library
                 .cached(
@@ -603,26 +606,29 @@ impl Cydonia {
             Some(_) => self.drawer_layer(None, window, cx),
             None => Vec::new(),
         };
-        bezel::ui::window::content(floating, cx)
-            .flex_1()
-            .min_h_0()
-            .min_w_0()
-            .relative()
-            .flex()
-            .flex_col()
-            .capture_any_mouse_down(cx.listener(|this, _, _, _| this.pressed_pane = None))
-            .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .flex()
-                    .flex_col()
-                    .overflow_hidden()
-                    .child(body),
-            )
-            .when(!drawer.is_empty(), |card| {
-                card.child(div().absolute().inset_0().children(drawer))
-            })
+        match floating && !raised {
+            true => bezel::ui::window::resting(cx),
+            false => bezel::ui::window::content(floating, cx),
+        }
+        .flex_1()
+        .min_h_0()
+        .min_w_0()
+        .relative()
+        .flex()
+        .flex_col()
+        .capture_any_mouse_down(cx.listener(|this, _, _, _| this.pressed_pane = None))
+        .child(
+            div()
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .overflow_hidden()
+                .child(body),
+        )
+        .when(!drawer.is_empty(), |card| {
+            card.child(div().absolute().inset_0().children(drawer))
+        })
     }
 
     pub(crate) fn detail(
@@ -682,13 +688,16 @@ impl Cydonia {
         // The one panel the window has, under whatever is showing: a space's
         // panes included, which is what the right panel cannot do.
         #[cfg(feature = "desktop")]
-        let terminal = self
-            .terminal
-            .as_ref()
-            .filter(|(visible, _)| *visible)
-            .map(|(_, terminal)| gpui::AnyView::from(terminal.clone()));
+        let terminal =
+            self.terminal
+                .as_ref()
+                .filter(|(visible, _)| *visible)
+                .map(|(_, terminal)| {
+                    let raised = terminal.read(cx).focus.contains_focused(window, cx);
+                    (gpui::AnyView::from(terminal.clone()), raised)
+                });
         #[cfg(not(feature = "desktop"))]
-        let terminal: Option<gpui::AnyView> = None;
+        let terminal: Option<(gpui::AnyView, bool)> = None;
         let changes = self.changes.clone();
         let available = f32::from(window.viewport_size().width)
             - if self.sidebar_open {
@@ -712,11 +721,12 @@ impl Cydonia {
             .min_h_0()
             .flex()
             .flex_col()
+            .gap(px(root::card_gap(floating)))
             .on_drag_move(
                 cx.listener(|this, event: &DragMoveEvent<TerminalResize>, _, cx| {
                     let gap = root::card_gap(this.workspace.read(cx).settings.appearance.floating);
                     this.terminal_height = Some(panel_height(
-                        Some(f32::from(event.bounds.bottom() - event.event.position.y) - gap),
+                        Some(f32::from(event.bounds.bottom() - event.event.position.y) - gap / 2.),
                         f32::from(event.bounds.size.height),
                     ));
                     this.save_panel_layout_settled(cx);
@@ -731,6 +741,7 @@ impl Cydonia {
                     .min_h_0()
                     .flex()
                     .flex_row()
+                    .gap(px(root::card_gap(floating)))
                     .on_drag_move(cx.listener(
                         |this, event: &DragMoveEvent<ChangesResize>, _, cx| {
                             let available = f32::from(event.bounds.size.width);
@@ -738,7 +749,7 @@ impl Cydonia {
                                 this.workspace.read(cx).settings.appearance.floating,
                             );
                             let dragged =
-                                f32::from(event.bounds.right() - event.event.position.x) - gap;
+                                f32::from(event.bounds.right() - event.event.position.x) - gap / 2.;
                             if available > 0. {
                                 this.changes_share = Some(
                                     panel_width(Some(dragged / available), available) / available,
@@ -787,17 +798,20 @@ impl Cydonia {
                             .id("changes-split")
                             .absolute()
                             .top_0()
-                            .right(px(width + root::card_gap(floating)
+                            .right(px(width + root::card_gap(floating) / 2.
                                 - crate::view::component::divider::HIT / 2.))
                             .on_drag(ChangesResize, |_, _, _, cx| cx.new(|_| Empty)),
                         )
                     }),
             )
-            .children(terminal.clone().map(|terminal| {
-                bezel::ui::window::content(floating, cx)
-                    .h(px(height))
-                    .flex_none()
-                    .child(terminal)
+            .children(terminal.clone().map(|(terminal, raised)| {
+                match floating && !raised {
+                    true => bezel::ui::window::resting(cx),
+                    false => bezel::ui::window::content(floating, cx),
+                }
+                .h(px(height))
+                .flex_none()
+                .child(terminal)
             }))
             .when(terminal.is_some(), |column| {
                 column.child(
@@ -805,12 +819,13 @@ impl Cydonia {
                         .id("terminal-split")
                         .absolute()
                         .left_0()
-                        .bottom(px(height + root::card_gap(floating)
+                        .bottom(px(height + root::card_gap(floating) / 2.
                             - crate::view::component::divider::HIT / 2.))
                         .on_drag(TerminalResize, |_, _, _, cx| cx.new(|_| Empty)),
                 )
             });
-        // Floating, the cards leave the column half the inset to pad itself by.
+        // Floating, the column stands the cards off the window's sides and
+        // bottom; the band above leaves its own room.
         div()
             .flex_1()
             .min_w_0()
@@ -825,11 +840,8 @@ impl Cydonia {
                     .min_h_0()
                     .flex()
                     .flex_col()
-                    .when(floating, |column| {
-                        column
-                            .px(px(Theme::CONTENT_INSET / 2.))
-                            .pb(px(Theme::CONTENT_INSET / 2.))
-                    })
+                    .px(px(root::card_gap(floating)))
+                    .pb(px(root::card_gap(floating)))
                     .child(panels),
             )
             .into_any_element()

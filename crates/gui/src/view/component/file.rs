@@ -133,6 +133,15 @@ pub struct FileView {
 }
 
 impl FileView {
+    /// Whether a markdown file shows its preview rather than its source.
+    fn previewing(&self) -> bool {
+        self.preview
+            && matches!(
+                self.language,
+                Some(crate::model::language::Language::Markdown)
+            )
+    }
+
     pub fn new(path: PathBuf, workspace: WeakEntity<Workspace>, cx: &mut Context<Self>) -> Self {
         let field = cx.new(|cx| {
             TextField::new(cx)
@@ -777,8 +786,13 @@ impl FileView {
 }
 
 impl Focusable for FileView {
-    fn focus_handle(&self, _: &gpui::App) -> gpui::FocusHandle {
-        self.focus.clone()
+    /// The field while the source shows; the view's own handle over a
+    /// preview, which has no caret.
+    fn focus_handle(&self, cx: &gpui::App) -> gpui::FocusHandle {
+        match self.previewing() {
+            true => self.focus.clone(),
+            false => self.field.focus_handle(cx),
+        }
     }
 }
 
@@ -795,11 +809,7 @@ impl Render for FileView {
                 cx,
             );
         });
-        let markdown = matches!(
-            self.language,
-            Some(crate::model::language::Language::Markdown)
-        );
-        let preview_doc = (markdown && self.preview && self.ready).then(|| {
+        let preview_doc = (self.previewing() && self.ready).then(|| {
             Rc::new(markdown::parse_with(
                 self.field.read(cx).content(),
                 &cx.marks(),
@@ -848,7 +858,7 @@ impl Render for FileView {
             .on_action(|_: &IncreaseTextSize, _, cx| typography::zoom_file(1., cx))
             .on_action(|_: &DecreaseTextSize, _, cx| typography::zoom_file(-1., cx))
             .on_action(|_: &ResetTextSize, _, cx| typography::reset_file_zoom(cx))
-            .when(markdown && self.preview, |panel| {
+            .when(self.previewing(), |panel| {
                 panel
                     .on_action(cx.listener(|this, _: &bezel::ui::input::Copy, _, cx| {
                         let Some(selection) = this.preview_selection else {
@@ -906,7 +916,7 @@ impl Render for FileView {
                 panel.child(div().p(px(16.)).child("Loading file…"))
             })
             .when(self.ready, |panel| {
-                if markdown && self.preview {
+                if self.previewing() {
                     panel.child(
                         div()
                             .id("file-preview")

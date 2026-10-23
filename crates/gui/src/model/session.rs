@@ -131,6 +131,22 @@ pub enum Connection {
     Lost,
 }
 
+/// What a session is doing, most pressing first: a space shows the least of
+/// its sessions'.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Status {
+    /// A permission prompt is open.
+    Asking,
+    /// The last turn ended in a failure, or the agent went away.
+    Failed,
+    /// A turn is in flight.
+    Working,
+    /// A turn ended while the session was not on screen — see
+    /// [`ChatSession::review`].
+    Review,
+    Idle,
+}
+
 /// A slash command the agent offers for this session — what to type, and what
 /// it does. The description is required by the protocol, so a picker can
 /// always say what a name does not.
@@ -213,6 +229,9 @@ pub struct ChatSession {
     /// Its labels, normalised — see [`artifact::label`].
     pub labels: Vec<String>,
     pub streaming: bool,
+    /// A turn ended since the session was last drawn in front of a pane. Held
+    /// while the app runs; never written.
+    pub review: bool,
     pub(crate) last_activity: Instant,
     pub(crate) turn_started: Option<Instant>,
     pub(crate) tool_started: BTreeMap<String, Instant>,
@@ -230,6 +249,29 @@ pub struct ChatSession {
 }
 
 impl ChatSession {
+    pub fn status(&self) -> Status {
+        if self.permission.is_some() {
+            return Status::Asking;
+        }
+        let asked = self
+            .items
+            .iter()
+            .rposition(|item| matches!(item, ChatItem::User(_)))
+            .map_or(0, |at| at + 1);
+        let failed = self.items[asked..]
+            .iter()
+            .any(|item| matches!(item, ChatItem::Notice { failed: true, .. }));
+        if failed || matches!(self.connection, Connection::Lost) {
+            Status::Failed
+        } else if self.streaming {
+            Status::Working
+        } else if self.review {
+            Status::Review
+        } else {
+            Status::Idle
+        }
+    }
+
     /// The tag this session's system notifications are posted under. One per
     /// session, so a second post replaces the first, and the response carries
     /// it back — see [`crate::view::window::root::on_notification`].
@@ -335,6 +377,7 @@ impl ChatSession {
             article: None,
             labels: Vec::new(),
             streaming: false,
+            review: false,
             last_activity: Instant::now(),
             turn_started: None,
             tool_started: BTreeMap::new(),
@@ -398,6 +441,7 @@ impl ChatSession {
             article: record.article,
             labels: record.labels,
             streaming: false,
+            review: false,
             last_activity: Instant::now(),
             turn_started: None,
             tool_started: BTreeMap::new(),
@@ -531,15 +575,16 @@ impl ChatSession {
         Some(chat)
     }
 
-    /// The id this session is filed under, minted now if it has none. A
-    /// session minted here is written to its file before this returns: the
-    /// tools find a session by its file.
+    /// The id this session is filed under, minted now if it has none. The
+    /// session is on disk under it before this returns, whether the id was
+    /// minted here or when the session opened: the tools find a session by
+    /// its file.
     pub fn mint_record(&mut self) -> Option<&str> {
         if self.record.is_none() {
             self.record = self.store().create_session().ok();
-            if self.record.is_some() {
-                self.write();
-            }
+        }
+        if self.record.is_some() && !self.written {
+            self.write();
         }
         if self.number.is_none() {
             self.number = self
@@ -945,6 +990,7 @@ impl ChatSession {
                 }
                 self.finish_thinking();
                 self.streaming = false;
+                self.review = true;
                 match result {
                     Ok(StopReason::EndTurn) => {}
                     Ok(StopReason::Cancelled) => {
@@ -968,6 +1014,7 @@ impl ChatSession {
             Event::Closed => {
                 self.connection = Connection::Lost;
                 self.streaming = false;
+                self.review = true;
                 self.fail_running_tools();
                 self.notice(true, "agent connection lost");
                 self.flush();

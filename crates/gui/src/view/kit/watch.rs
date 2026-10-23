@@ -2,7 +2,7 @@
 //! the views observing it: a cached pane drawing it without a watch keeps
 //! drawing what it held before.
 
-use bezel::gpui::{Context, Entity, EntityId, Subscription, Window};
+use bezel::gpui::{Context, Entity, EntityId, FocusHandle, Subscription, Window};
 
 #[derive(Default)]
 pub(crate) struct Watch(Vec<(EntityId, Subscription)>);
@@ -62,5 +62,26 @@ impl Watch {
                 }
             })
             .collect();
+    }
+}
+
+/// A focus handle a view draws from, observed: the view draws again when the
+/// focus comes into the handle or anything inside it, and when it leaves.
+pub(crate) struct FocusWatch {
+    _subscriptions: [Subscription; 2],
+}
+
+impl FocusWatch {
+    pub(crate) fn new<V: 'static>(
+        focus: &FocusHandle,
+        window: &mut Window,
+        cx: &mut Context<V>,
+    ) -> Self {
+        Self {
+            _subscriptions: [
+                cx.on_focus_in(focus, window, |_, _, cx| cx.notify()),
+                cx.on_focus_out(focus, window, |_, _, _, cx| cx.notify()),
+            ],
+        }
     }
 }

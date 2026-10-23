@@ -17,9 +17,8 @@ use crate::{
         kit::{
             menu::{self, Act, MenuHost},
             new::{self, New},
-            orb,
             rename::Renaming,
-            stamp, text,
+            stamp, status, text,
         },
         modals::palette::{Filter, ToggleSearch},
         search::Search,
@@ -35,7 +34,7 @@ use bezel::{
         SharedString, Stateful, Window, div, prelude::*, px,
     },
     motion::{Fade, Painter},
-    theme::{TextStyle, Theme, Typeset},
+    theme::{Selection, TextStyle, Theme, Typeset},
     ui::{
         context_menu::Place as MenuPlace,
         icons::{self, Icon},
@@ -145,6 +144,7 @@ impl Sidebar {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = Theme::of(cx).clone();
+        let trail = self.trail(cx);
         let workspace = self.workspace.read(cx);
         let (name, folded, marks, space_id): (String, bool, (Icon, Icon), Option<String>) =
             match &group {
@@ -174,6 +174,14 @@ impl Sidebar {
                 },
             };
         let folded = folded && self.search.read(cx).query().is_none();
+        // A space's mark is its most pressing session's, while one is not
+        // idle.
+        let status = match &group {
+            Group::Space(id) => {
+                status::Mark::of_most_pressing(self.workspace.read(cx).space_sessions(id, cx))
+            }
+            Group::Project(_) => None,
+        };
         let key = key_of(&Row::Group(group.clone()));
         let (menu, add) = match &group {
             Group::Project(project) => (
@@ -223,20 +231,27 @@ impl Sidebar {
                 }
             }))
             // Pinned it runs edge to edge, and past the band it shows in at
-            // the top and the bottom — see [`PINNED_BLEED`]. The label keeps
-            // the x the pill's own margin and padding put it at.
+            // the top and the bottom — see [`PINNED_BLEED`]. The label and the
+            // buttons keep the x the pill's own margin and padding put them at.
+            //
+            // The right side is an entry row's, so the buttons end where a
+            // row's do; the left is 2 short of it, which the fold button's
+            // own padding makes up, so its mark stands over the rows' marks.
             .when(pinned, |el| {
                 el.absolute()
                     .top(px(-PINNED_BLEED))
                     .left_0()
                     .right_0()
                     .h(px(ROW_HEIGHT + 2. * PINNED_BLEED))
-                    .px(px(8. + 6.))
+                    .pl(px(root::SIDEBAR_GUTTER + 6.))
+                    .pr(px(trail + root::SIDEBAR_GUTTER))
             })
             .when(!pinned, |el| {
                 el.relative()
-                    .mx(px(8.))
-                    .px(px(6.))
+                    .ml(px(root::SIDEBAR_GUTTER))
+                    .mr(px(trail))
+                    .pl(px(6.))
+                    .pr(px(root::SIDEBAR_GUTTER))
                     .h(px(ROW_PILL))
                     .rounded(px(Theme::control_radius()))
             })
@@ -256,15 +271,23 @@ impl Sidebar {
                     .ghost(SharedString::from(format!("group-fold-{key}")))
                     .flex_none()
                     .p(px(2.))
-                    .child(
-                        icons::icon(match folded {
+                    .child(match status {
+                        Some(status) => div()
+                            .size(px(14.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(status.draw(cx))
+                            .into_any_element(),
+                        None => icons::icon(match folded {
                             false => marks.0,
                             true => marks.1,
                         })
                         .size(px(14.))
                         .text_color(theme.text_muted)
-                        .group_hover("group-head", |el| el.text_color(theme.text)),
-                    )
+                        .group_hover("group-head", |el| el.text_color(theme.text))
+                        .into_any_element(),
+                    })
                     .on_click(cx.listener({
                         let group = group.clone();
                         move |this, _, window, cx| {
@@ -369,7 +392,7 @@ impl Sidebar {
         Some(SessionRow {
             id: chat.id,
             icon: workspace.agent_icon(&chat.entry.name),
-            working: chat.streaming.then(|| orb::Working::of(chat)),
+            status: status::Mark::of(chat),
         })
     }
 
@@ -414,15 +437,14 @@ impl Sidebar {
                 // The agent's own mark, in the label's colour rather than any
                 // of its own: every icon the registry publishes is a
                 // `currentColor` glyph, so tinting is the only colour it will
-                // ever have. While a turn is in flight the orb stands in its
-                // place — the same one the transcript works under.
-                let mark = match session.working {
-                    // Wider than the slot it sits in, and left to spill: the
-                    // orb is a sphere where the marks around it are glyphs,
-                    // and widening the column for it would move every label in
-                    // the sidebar to make room for a row that is only
+                // ever have. While it is not idle its status's mark stands in
+                // its place.
+                let mark = match session.status {
+                    // An orb is wider than the slot it sits in, and left to
+                    // spill: widening the column for it would move every label
+                    // in the sidebar to make room for a row that is only
                     // sometimes working.
-                    Some(working) => working.draw(cx),
+                    Some(status) => status.draw(cx),
                     None => match session.icon {
                         Some(icon) => icons::icon(icon)
                             .size(px(14.))
@@ -476,7 +498,7 @@ impl Sidebar {
         let frame = row(
             id,
             group,
-            selected,
+            Selection::new(selected, self.emphasized),
             lifted,
             self.list(cx).indent_of(entry),
             trail,
@@ -568,7 +590,7 @@ impl Sidebar {
         row(
             SharedString::from(key_of(entry)),
             "app-row",
-            light.selected(),
+            Selection::new(light.selected(), self.emphasized),
             lifted,
             self.list(cx).indent_of(entry),
             trail,
@@ -719,7 +741,7 @@ impl Sidebar {
         row(
             ("archive", project),
             "archive-row",
-            false,
+            Selection::None,
             false,
             indent,
             trail,
@@ -967,7 +989,7 @@ impl Sidebar {
             return row(
                 "applied-search",
                 "applied-search",
-                false,
+                Selection::None,
                 false,
                 0,
                 trail,
@@ -1022,24 +1044,32 @@ impl Sidebar {
             .on_click(raise)
             .into_any_element();
         }
-        row("search-row", "search-row", false, false, 0, trail, &theme)
-            .flex_none()
-            .mb(px(4.))
-            .child(
-                icons::icon(icons::text::Search)
-                    .size(px(14.))
-                    .text_color(theme.text_muted),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .text_style(TextStyle::Body)
-                    .text_color(theme.text_muted)
-                    .child("Search"),
-            )
-            .children(chord.map(|chord| popover::kbd_hint(&theme, chord)))
-            .on_click(raise)
-            .into_any_element()
+        row(
+            "search-row",
+            "search-row",
+            Selection::None,
+            false,
+            0,
+            trail,
+            &theme,
+        )
+        .flex_none()
+        .mb(px(4.))
+        .child(
+            icons::icon(icons::text::Search)
+                .size(px(14.))
+                .text_color(theme.text_muted),
+        )
+        .child(
+            div()
+                .flex_1()
+                .text_style(TextStyle::Body)
+                .text_color(theme.text_muted)
+                .child("Search"),
+        )
+        .children(chord.map(|chord| popover::kbd_hint(&theme, chord)))
+        .on_click(raise)
+        .into_any_element()
     }
 
     /// The row that puts the library up, lit while it is.
@@ -1051,7 +1081,7 @@ impl Sidebar {
         row(
             "library-entry",
             "library-entry",
-            open,
+            Selection::new(open, self.emphasized),
             false,
             0,
             trail,
@@ -1087,22 +1117,26 @@ impl Sidebar {
             Command::OpenSettings,
             &self.workspace.read(cx).settings.shortcuts,
         );
-        // Its buttons pad their glyphs by 8, which the margin makes up to the
-        // column's edge.
+        // Inset as a row is, so the button ends where the rows' buttons end.
         div()
             .flex_none()
-            .mx(px(root::EDGE - 8.))
-            .mb(px(8.))
+            .h(px(ROW_PILL))
+            .ml(px(root::SIDEBAR_GUTTER))
+            .mr(px(self.trail(cx)))
+            .mb(px(root::SIDEBAR_GUTTER))
+            .px(px(root::SIDEBAR_GUTTER))
             .flex()
             .flex_row()
             .items_center()
             .justify_end()
             .child(
                 theme
-                    .ghost("settings")
-                    .px(px(8.))
-                    .py(px(6.))
-                    // The mark alone, like every other control on this line.
+                    .icon_button(
+                        icons::account::Settings,
+                        ButtonStyle::Ghost,
+                        Some(Fade::new(Painter::of(cx), "settings")),
+                    )
+                    .id("settings")
                     // What it opens is said in the tooltip. The chord is read
                     // off the table the keymap was built from rather than
                     // typed beside the label: it is the reader's to move.
@@ -1110,11 +1144,6 @@ impl Sidebar {
                         Some(chord) => Tooltip::with_keystroke("Settings", chord, window, cx),
                         None => Tooltip::text("Settings", window, cx),
                     })
-                    .child(
-                        icons::icon(icons::account::Settings)
-                            .size(px(13.))
-                            .text_color(theme.text_faint),
-                    )
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.defer_window(window, cx, |root, window, cx| {
                             root.open_settings(None, window, cx)

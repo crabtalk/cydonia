@@ -7,13 +7,17 @@ use crate::{
         app, article,
         board::{self, info::BoardInfo},
         component::{composer::Composer, ribbon::Ribbon, transcript},
-        kit::{menu::MenuHost, rename::Rename, watch::Watch},
+        kit::{
+            menu::MenuHost,
+            rename::Rename,
+            watch::{FocusWatch, Watch},
+        },
         pane::{
             Edge,
             find::{self, DismissFind},
         },
         table,
-        window::{chrome, reach::InWindow, root::Cydonia},
+        window::{reach::InWindow, root::Cydonia},
     },
 };
 use artifact::kind::Kind;
@@ -120,6 +124,7 @@ pub(crate) struct Tab {
     pub(crate) info_pressed: bool,
     /// The sessions it draws — see [`Self::watch_sessions`].
     sessions_watch: Watch,
+    _focus_watch: FocusWatch,
 }
 
 impl Tab {
@@ -131,9 +136,12 @@ impl Tab {
         card_docs: Rc<board::Docs>,
         board_sort: bezel::ui::drag::Domain<board::BoardRegion, board::BoardItem>,
         composer: Entity<Composer>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let find_field = find::find_field(cx);
+        let focus = cx.focus_handle();
+        let focus_watch = FocusWatch::new(&focus, window, cx);
         // What the pane draws is read off the model, and a cached pane draws
         // again only when told.
         cx.observe(&workspace, |_, _, cx| cx.notify()).detach();
@@ -150,7 +158,7 @@ impl Tab {
             root,
             card_docs,
             board_sort,
-            focus: cx.focus_handle(),
+            focus,
             focused: false,
             edge: Edge::default(),
             composer,
@@ -172,6 +180,7 @@ impl Tab {
             info: None,
             info_pressed: false,
             sessions_watch: Watch::default(),
+            _focus_watch: focus_watch,
         }
     }
 }
@@ -352,19 +361,16 @@ impl Render for Tab {
         let composer = self.composer.clone();
         let title = self.title_row(window, cx);
         let floating = self.workspace.read(cx).settings.appearance.floating;
-        // Floating, what the tab shows is on a card, the focused pane's with
-        // the stronger edge. The title row is on the chrome over it while it
-        // is part of the window's top row, and the card's own first row
-        // anywhere else.
+        // Floating, what the tab shows is on a card, raised while the pane
+        // holds the keyboard focus. The title row is on the chrome over it
+        // while it is part of the window's top row, and the card's own first
+        // row anywhere else.
         let on_chrome = floating && self.edge.top;
-        let card = match (floating, on_chrome) {
-            (true, true) => chrome::card(true, cx),
-            (true, false) => bezel::ui::window::content(true, cx),
+        let card = match (floating, self.focus.contains_focused(window, cx)) {
+            (true, true) => bezel::ui::window::content(true, cx),
+            (true, false) => bezel::ui::window::resting(cx),
             (false, _) => div(),
-        }
-        .when(floating && self.focused, |card| {
-            card.border_color(theme.border_strong)
-        });
+        };
         let (over, inside) = match on_chrome {
             true => (title, None),
             false => (None, title),
@@ -380,8 +386,6 @@ impl Render for Tab {
             .on_action(cx.listener(Self::dismiss_info))
             .children(over)
             .child(
-                // A flex item rather than full size: the card's margin is what
-                // leaves the gap, and a full-size card overflows by it.
                 card.relative()
                     .flex_1()
                     .min_h_0()

@@ -10,16 +10,16 @@ pub(crate) use list::List;
 use crate::{
     model::{
         project::ProjectId,
-        session::ChatSession,
+        session::{ChatSession, Status},
         settings::Features,
         workspace::{Member, Showing, Workspace},
     },
     view::{
         kit::{
             menu::{self, Act, MenuHost},
-            orb,
             rename::{Rename, Renaming},
-            watch::Watch,
+            status,
+            watch::{FocusWatch, Watch},
         },
         search::Search,
         window::{
@@ -31,11 +31,11 @@ use crate::{
 use artifact::kind::Kind;
 use bezel::{
     gpui::{
-        self, AnyElement, App, Context, Div, Empty, Entity, Hsla, ListAlignment, ListOffset,
-        ListState, SharedString, Stateful, Subscription, Task, WeakEntity, Window, div, prelude::*,
-        px,
+        self, AnyElement, App, Context, Div, Empty, Entity, FocusHandle, Hsla, ListAlignment,
+        ListOffset, ListState, MouseButton, SharedString, Stateful, Subscription, Task, WeakEntity,
+        Window, div, prelude::*, px,
     },
-    theme::{self, TextStyle, Theme, Typeset},
+    theme::{Selection, TextStyle, Theme, Typeset},
     ui::{
         context_menu::{ContextMenu, Place as MenuPlace},
         drag::{self, Carried},
@@ -91,18 +91,16 @@ const INDENT_STEP: f32 = 14.;
 struct SessionRow {
     id: u64,
     icon: Option<Icon>,
-    /// The turn in flight, as the orb needs it: which of the twelve, how long
-    /// it has been running, and the buffer it paints into. `None` when nothing
-    /// is in flight, which is what puts the agent's own mark back.
-    working: Option<orb::Working>,
+    /// Its status's mark. `None` while it is idle, which is what puts the
+    /// agent's own mark back.
+    status: Option<status::Mark>,
 }
 
 /// What the sidebar shows of a session — what moving redraws it.
 #[derive(Clone, PartialEq)]
 struct Listed {
     label: String,
-    streaming: bool,
-    asking: bool,
+    status: Status,
     closed: bool,
     labels: Vec<String>,
     number: Option<u64>,
@@ -114,8 +112,7 @@ impl Listed {
     fn of(chat: &ChatSession, extended: bool) -> Self {
         Self {
             label: chat.label(),
-            streaming: chat.streaming,
-            asking: chat.permission.is_some(),
+            status: chat.status(),
             closed: chat.closed,
             labels: chat.labels.clone(),
             number: chat.number,
@@ -580,22 +577,20 @@ pub(crate) fn key_of(entry: &Row) -> String {
 pub(crate) fn row(
     id: impl Into<gpui::ElementId>,
     group: &'static str,
-    selected: bool,
+    selected: Selection,
     lifted: bool,
     indent: u8,
     trail: f32,
     theme: &Theme,
 ) -> Stateful<Div> {
+    let fill = selected.fill(theme).filter(|_| !lifted);
     row_frame(id, group, indent, trail)
         // A carried row is drawn inside [`Sidebar::sidebar_ghost`]'s frame.
         .when(lifted, |el| el.m_0())
-        .when(!lifted && selected, |el| {
-            el.bg(theme.card_selected_bg())
-                .shadow(theme::glass_selected_shadows())
-        })
+        .when_some(fill, |el, fill| el.bg(fill).shadow(selected.shadows()))
         // Only off the open row: the hover wash is the weaker rung, and
         // painting it over the selection would dim what the pointer is on.
-        .when(!lifted && !selected, |el| {
+        .when(!lifted && !selected.is_selected(), |el| {
             el.hover(|el| el.bg(theme.element_hover))
         })
 }
@@ -692,6 +687,11 @@ pub(crate) struct Sidebar {
     /// What each session's row showed when it was last drawn.
     listed: HashMap<u64, Listed>,
     sessions: Watch,
+    focus: FocusHandle,
+    /// Whether [`Self::focus`] holds the keyboard focus, as of the frame being
+    /// drawn: its selected row is emphasized while it does.
+    emphasized: bool,
+    _focus_watch: FocusWatch,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -700,8 +700,11 @@ impl Sidebar {
         workspace: Entity<Workspace>,
         root: WeakEntity<Cydonia>,
         search: Entity<Search>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let focus = cx.focus_handle();
+        let focus_watch = FocusWatch::new(&focus, window, cx);
         let rename = Rename::new(workspace.clone(), |this: &mut Self| &mut this.rename, cx);
         #[allow(unused_mut)]
         let mut subscriptions = vec![
@@ -739,6 +742,9 @@ impl Sidebar {
             apps: Watch::default(),
             listed: HashMap::new(),
             sessions: Watch::default(),
+            focus,
+            emphasized: false,
+            _focus_watch: focus_watch,
             _subscriptions: subscriptions,
         };
         this.relist(cx);
@@ -1334,6 +1340,7 @@ impl InWindow for Sidebar {
 impl Render for Sidebar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.watch_sessions(window, cx);
+        self.emphasized = self.focus.contains_focused(window, cx);
         let programs: Vec<_> = self.workspace.read(cx).programs().cloned().collect();
         let mut apps = std::mem::take(&mut self.apps);
         // A build names an app's row, and the apps are listed by name.
@@ -1353,6 +1360,17 @@ impl Render for Sidebar {
             .appearance
             .sidebar_scrollbars;
         div()
+            .track_focus(&self.focus)
+            // A press on a row that opens an entry moves the focus on into
+            // its pane.
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    if !this.focus.contains_focused(window, cx) {
+                        window.focus(&this.focus, cx);
+                    }
+                }),
+            )
             .size_full()
             .flex()
             .flex_col()
