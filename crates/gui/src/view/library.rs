@@ -272,7 +272,7 @@ pub(crate) struct Library {
     /// Every app's program, whose build names its listing.
     apps: Watch,
     pub(crate) focus: FocusHandle,
-    _focus_watch: FocusWatch,
+    pub(crate) focus_watch: FocusWatch,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -359,7 +359,7 @@ impl Library {
             strip: Rc::new(Cell::new(px(0.))),
             apps: Watch::default(),
             focus,
-            _focus_watch: focus_watch,
+            focus_watch,
             _subscriptions: subscriptions,
         }
     }

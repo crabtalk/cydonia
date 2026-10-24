@@ -2,7 +2,7 @@
 
 use crate::{
     model::{fonts, typography},
-    view::keymap,
+    view::{keymap, kit::watch::FocusWatch},
 };
 use bezel::{
     gpui::{
@@ -984,6 +984,7 @@ pub struct TerminalPanel {
     reorder: tabs::Reorder<usize>,
     next_id: usize,
     pub(crate) focus: FocusHandle,
+    pub(crate) focus_watch: FocusWatch,
 }
 
 impl EventEmitter<Empty> for TerminalPanel {}
@@ -998,6 +999,8 @@ impl TerminalPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let focus = cx.focus_handle();
+        let focus_watch = FocusWatch::new(&focus, window, cx);
         let mut panel = Self {
             cwd: cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf()),
             next_cwd: Box::new(next_cwd),
@@ -1005,7 +1008,8 @@ impl TerminalPanel {
             strip: tabs::Strip::new(),
             reorder: tabs::Reorder::new(),
             next_id: 1,
-            focus: cx.focus_handle(),
+            focus,
+            focus_watch,
         };
         panel.add(window, cx);
         panel

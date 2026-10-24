@@ -587,7 +587,7 @@ impl Cydonia {
         let floating = self.workspace.read(cx).settings.appearance.floating;
         let raised = library
             .as_ref()
-            .is_some_and(|library| library.read(cx).focus.contains_focused(window, cx));
+            .is_some_and(|library| library.read(cx).focus_watch.within());
         let body = match library.clone() {
             Some(library) => library
                 .cached(
@@ -693,7 +693,7 @@ impl Cydonia {
                 .as_ref()
                 .filter(|(visible, _)| *visible)
                 .map(|(_, terminal)| {
-                    let raised = terminal.read(cx).focus.contains_focused(window, cx);
+                    let raised = terminal.read(cx).focus_watch.within();
                     (gpui::AnyView::from(terminal.clone()), raised)
                 });
         #[cfg(not(feature = "desktop"))]
