@@ -1275,13 +1275,7 @@ impl Cydonia {
         let Some(landing) = stepped(at, tabs.len(), step).map(|ix| tabs[ix].clone()) else {
             return;
         };
-        self.key_to_slot(&landing, window, cx);
-    }
-
-    /// Bring a tab forward from the keyboard: the focus stays on the window.
-    fn key_to_slot(&mut self, slot: &Slot, window: &mut Window, cx: &mut Context<Self>) {
-        self.show_slot(slot, window, cx);
-        window.focus(&self.focus, cx);
+        self.show_slot(&landing, window, cx);
     }
 
     /// Leaving a project is the moment a half-written card has to be filed:
@@ -1508,7 +1502,7 @@ impl Render for Cydonia {
                 else {
                     return;
                 };
-                this.key_to_slot(&slot, window, cx);
+                this.show_slot(&slot, window, cx);
             }))
             .on_action(cx.listener(|this, _: &Unfocus, window, cx| {
                 window.focus(&this.focus, cx);
