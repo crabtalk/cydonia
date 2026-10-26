@@ -5,7 +5,7 @@
 use crate::{
     model::{
         identity::{Avatar, Identity},
-        session_preferences::{Choices, OfferCache},
+        session_preferences::{self, Choices, OfferCache},
         settings,
         workspace::Workspace,
     },
@@ -58,6 +58,8 @@ pub(crate) struct AgentModal {
     draft: Identity,
     /// Whether `draft` is kept already.
     kept: bool,
+    /// The session a new identity is made from, which saving makes its.
+    from: Option<u64>,
     name: Entity<TextField>,
     /// The workspaces on offer, index for index with `workspace`'s rows.
     workspaces: Vec<PathBuf>,
@@ -88,9 +90,9 @@ impl Cydonia {
         self.close_menu(cx);
         let workspace = self.workspace.clone();
         let root = cx.entity().downgrade();
-        let id = edit.id.clone();
+        let (id, from) = (edit.id.clone(), edit.from);
         self.toggle_modal(window, cx, |window, cx| {
-            AgentModal::new(id.as_deref(), workspace, root, window, cx)
+            AgentModal::new(id.as_deref(), from, workspace, root, window, cx)
         });
     }
 }
@@ -98,6 +100,7 @@ impl Cydonia {
 impl AgentModal {
     fn new(
         id: Option<&str>,
+        from: Option<u64>,
         workspace_model: Entity<Workspace>,
         root: WeakEntity<Cydonia>,
         window: &mut Window,
@@ -112,7 +115,20 @@ impl AgentModal {
             .iter()
             .map(|project| project.path.clone())
             .collect();
-        let draft = held.unwrap_or_else(|| {
+        let seed = from
+            .filter(|_| !kept)
+            .and_then(|session| workspace.session(session, cx))
+            .map(|chat| {
+                let choices =
+                    session_preferences::load(&chat.cwd, &chat.entry, chat.record.as_deref());
+                Identity::new(
+                    &chat.entry.name,
+                    chat.cwd.clone(),
+                    chat.entry.reference(),
+                    choices,
+                )
+            });
+        let draft = held.or(seed).unwrap_or_else(|| {
             let cwd = workspace
                 .active_project()
                 .map(|project| project.path.clone())
@@ -170,6 +186,7 @@ impl AgentModal {
         let mut modal = Self {
             draft,
             kept,
+            from: from.filter(|_| !kept),
             name,
             workspaces,
             workspace,
@@ -274,13 +291,21 @@ impl AgentModal {
             name,
             ..self.draft.clone()
         };
-        let kept = self.kept;
+        let (kept, from) = (self.kept, self.from);
         let saved = self.workspace_model.update(cx, |workspace, cx| match kept {
             true => {
                 workspace.update_identity(identity, cx);
                 true
             }
-            false => workspace.create_identity(identity, cx).is_some(),
+            false => {
+                let Some(made) = workspace.create_identity(identity, cx) else {
+                    return false;
+                };
+                if let Some(session) = from {
+                    workspace.give_session(session, &made, cx);
+                }
+                true
+            }
         });
         match saved {
             true => cx.emit(DismissEvent),

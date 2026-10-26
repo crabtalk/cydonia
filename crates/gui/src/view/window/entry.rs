@@ -8,7 +8,7 @@ use crate::{
         keymap::{self, Command},
         kit::{menu, rename::Renaming, stamp, text},
         sidebar::{Group, Lit, Row, on_disk},
-        window::root::Cydonia,
+        window::root::{Cydonia, EditAgent},
     },
 };
 use artifact::board::{Page, View};
@@ -94,8 +94,9 @@ impl Cydonia {
                 }
             }
             Row::App(id) => self.open_app(id, opening, window, cx),
-            // A heading over a section, and nothing to open.
-            Row::Heading(_) => {}
+            // A heading over a section or an agent's sessions, and nothing to
+            // open.
+            Row::Heading(_) | Row::Group(Group::Agent(_)) => {}
         }
     }
 
@@ -291,6 +292,26 @@ impl Cydonia {
                 },
             ));
         }
+        // A session no identity owns, made the first of a new one's.
+        if let Some(Showing::Session(id)) = entry.showing()
+            && self
+                .workspace
+                .read(cx)
+                .session(*id, cx)
+                .is_some_and(|chat| chat.identity.is_none())
+        {
+            let from = *id;
+            held.push(menu::row::<Cydonia>(
+                Item::action("Make agent from this…").with_icon(icons::development::Bot),
+                move |this, window, cx| {
+                    let edit = EditAgent {
+                        id: None,
+                        from: Some(from),
+                    };
+                    this.edit_agent_action(&edit, window, cx)
+                },
+            ));
+        }
         // Only for an entry still in hand: what is put away is not held at
         // the top of anything.
         if !archived && !app && entry.showing().is_some() {
@@ -426,7 +447,12 @@ impl Cydonia {
                     let _ = workspace.delete_app(id, cx);
                 }
                 (Row::Entry { .. }, None)
-                | (Row::Group(Group::Project(_)) | Row::Archive(_) | Row::Heading(_), _) => {}
+                | (
+                    Row::Group(Group::Project(_) | Group::Agent(_))
+                    | Row::Archive(_)
+                    | Row::Heading(_),
+                    _,
+                ) => {}
             }
         });
         if let Some(project) = landing_project

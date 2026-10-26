@@ -432,7 +432,7 @@ impl Cydonia {
                     "Its builds and its own tables go with it; a loaded crate's folder stays. {UNDONE}"
                 ),
             ),
-            Row::Group(Group::Project(_)) | Row::Archive(_) | Row::Heading(_) => {
+            Row::Group(Group::Project(_) | Group::Agent(_)) | Row::Archive(_) | Row::Heading(_) => {
                 (None, UNDONE.to_owned())
             }
         }

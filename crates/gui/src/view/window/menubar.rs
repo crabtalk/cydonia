@@ -280,7 +280,13 @@ fn file_menu() -> Vec<MenuItem> {
         ));
     }
     file.extend([
-        MenuItem::action("New Agent…", EditAgent { id: None }),
+        MenuItem::action(
+            "New Agent…",
+            EditAgent {
+                id: None,
+                from: None,
+            },
+        ),
         MenuItem::action("New Tab", crate::view::modals::palette::NewTab),
         MenuItem::separator(),
         MenuItem::action("New Board", NewBoard),

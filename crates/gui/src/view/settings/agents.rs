@@ -652,6 +652,7 @@ impl SettingsWindow {
                             window.dispatch_action(
                                 Box::new(EditAgent {
                                     id: Some(id.clone()),
+                                    from: None,
                                 }),
                                 cx,
                             )
@@ -667,7 +668,13 @@ impl SettingsWindow {
                         .px(px(10.))
                         .py(px(8.))
                         .on_click(|_, window, cx| {
-                            window.dispatch_action(Box::new(EditAgent { id: None }), cx)
+                            window.dispatch_action(
+                                Box::new(EditAgent {
+                                    id: None,
+                                    from: None,
+                                }),
+                                cx,
+                            )
                         }),
                 ),
             )

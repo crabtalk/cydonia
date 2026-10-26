@@ -67,8 +67,16 @@ nothing is posted while the app is in front. Turn it off with `notify_turns` in
 ## Agents
 
 An agent is a name for an agent program working in one project, with that
-program's mode and model settings. Make one with **File › New Agent…** or **New
-agent** in Settings › Agents, where every agent is listed with **Edit**.
+program's mode and model settings. Make one with **File › New Agent…**, the `+`
+on the sidebar's Agents heading, or **New agent** in Settings › Agents, where
+every agent is listed with **Edit**. **Make agent from this…** on a session's
+`···` makes one from that session's project, program and settings, and the
+session becomes the agent's.
+
+The sidebar lists each agent under Agents with its sessions under it, most
+recently used first. The `+` on an agent starts a session as it, and its `···`
+edits, renames or removes it. A session started any other way stays under its
+project.
 
 - Each agent wears a pixel blob drawn from its id. **Reroll** draws another;
   **Save** keeps the one shown.
@@ -76,7 +84,8 @@ agent** in Settings › Agents, where every agent is listed with **Edit**.
   a session ran on it in that project. Before then there are none to pick.
 - A mode or model picked in the message field of a session started as an agent
   is saved to that agent.
-- **Remove** deletes the agent. Its sessions stay in their project.
+- **Remove** deletes the agent. Its sessions leave the sidebar; the library
+  still lists them.
 
 Agents are kept in `~/.config/cydonia/agents/`, one folder per agent.
 

@@ -76,6 +76,53 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Give the identity with this id the display name `name`. Its handle
+    /// stays.
+    pub fn rename_identity(&mut self, id: &str, name: String, cx: &mut Context<Self>) {
+        let name = name.trim().to_owned();
+        if name.is_empty() {
+            return;
+        }
+        self.edit_identity(id, |identity| identity.name = name, cx);
+        cx.notify();
+    }
+
+    /// Make session `session` the identity's with this id: it takes the
+    /// identity's choices and is filed as it.
+    pub fn give_session(&mut self, session: u64, identity: &str, cx: &mut Context<Self>) {
+        let Some(identity) = self.identity(identity).cloned() else {
+            return;
+        };
+        self.with_session(session, cx, |chat| {
+            chat.adopt(&identity);
+            chat.flush();
+        });
+        cx.notify();
+    }
+
+    /// The open sessions filed as the identity with this id.
+    pub fn identity_sessions<'a>(&self, id: &str, cx: &'a App) -> Vec<&'a ChatSession> {
+        self.projects
+            .iter()
+            .flat_map(|project| project.sessions.iter())
+            .map(|held| held.chat.read(cx))
+            .filter(|chat| chat.identity.as_deref() == Some(id))
+            .collect()
+    }
+
+    /// Whether the sidebar hides the sessions of the identity with this id.
+    pub fn agent_folded(&self, id: &str) -> bool {
+        self.folded_agents.contains(id)
+    }
+
+    pub fn toggle_agent(&mut self, id: &str, cx: &mut Context<Self>) {
+        if !self.folded_agents.remove(id) {
+            self.folded_agents.insert(id.to_owned());
+        }
+        self.save();
+        cx.notify();
+    }
+
     /// Change the identity with this id and write it back. Every session held
     /// as it takes its choices from then on.
     pub(super) fn edit_identity(

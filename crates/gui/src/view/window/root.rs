@@ -169,11 +169,13 @@ pub struct SwitchTab {
 }
 
 /// Raise the agent modal on the identity `id` names, or on a new one for
-/// `None`.
+/// `None`: filled from the session `from` names, which saving makes the new
+/// identity's.
 #[derive(Clone, Debug, PartialEq, gpui::Action)]
 #[action(namespace = cydonia, no_json)]
 pub struct EditAgent {
     pub id: Option<String>,
+    pub from: Option<u64>,
 }
 
 /// The pill at rest, and the agent mark beside it. Half of it is the stadium's
@@ -1162,6 +1164,21 @@ impl Cydonia {
     /// people meet the feature: the notice it raises offers the section that
     /// installs one, the same place the composer's own `Install an agent…`
     /// goes.
+    /// Start a session as the identity with this id, and show it.
+    pub(crate) fn new_session_as(
+        &mut self,
+        identity: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let id = self.workspace.update(cx, |workspace, cx| {
+            workspace.new_session_as(identity, None, cx)
+        });
+        if let Some(id) = id {
+            self.select_session(id, Opening::Kept, window, cx);
+        }
+    }
+
     pub(crate) fn new_session_action(
         &mut self,
         _: &NewSession,
