@@ -130,8 +130,6 @@ pub(crate) enum Row {
     Heading(Heading),
     /// A project or a space: a heading its entries fold under.
     Group(Group),
-    /// The line the archived entries of this project are folded under.
-    Archive(ProjectId),
     /// An entry of `project`.
     Entry {
         project: ProjectId,
@@ -193,7 +191,7 @@ impl Row {
     pub(crate) fn showing(&self) -> Option<&Showing> {
         match self {
             Row::Entry { showing, .. } => Some(showing),
-            Row::Group(_) | Row::Archive(_) | Row::Heading(_) | Row::App(_) => None,
+            Row::Group(_) | Row::Heading(_) | Row::App(_) => None,
         }
     }
 
@@ -214,7 +212,7 @@ impl Row {
                 workspace.member_of(workspace.project_ix(*project)?, showing.clone(), cx)
             }
             Row::App(id) => Some(Member::app(id.clone())),
-            Row::Group(_) | Row::Archive(_) | Row::Heading(_) => None,
+            Row::Group(_) | Row::Heading(_) => None,
         }
     }
 
@@ -268,7 +266,7 @@ impl Row {
         let named = || -> Option<String> {
             Some(match self {
                 Row::Group(Group::Project(project)) => workspace.project(*project)?.name(),
-                Row::Archive(_) | Row::Heading(_) => return None,
+                Row::Heading(_) => return None,
                 Row::App(id) => workspace.program(id, cx)?.read(cx).label(),
                 Row::Group(Group::Space(id)) => workspace.space_by_id(id)?.label().to_owned(),
                 Row::Group(Group::Agent(id)) => workspace.identity(id)?.name.clone(),
@@ -461,7 +459,7 @@ pub(crate) fn on_disk(path: PathBuf) -> [(Item, Act); 2] {
 /// to.
 fn project_of(row: &Row) -> Option<ProjectId> {
     match row {
-        Row::Group(Group::Project(project)) | Row::Archive(project) => Some(*project),
+        Row::Group(Group::Project(project)) => Some(*project),
         Row::Entry { project, .. } => Some(*project),
         Row::Group(Group::Space(_) | Group::Agent(_)) | Row::Heading(_) | Row::App(_) => None,
     }
@@ -575,7 +573,6 @@ pub(crate) fn key_of(entry: &Row) -> String {
         Row::Heading(Heading::Agents) => "agents".to_owned(),
         Row::Heading(Heading::Spaces) => "spaces".to_owned(),
         Row::Heading(Heading::Apps) => "apps".to_owned(),
-        Row::Archive(project) => format!("archive-{project}"),
         Row::Entry { project, showing } => match showing {
             Showing::Session(id) => format!("session-{project}-{id}"),
             Showing::Board(id) => format!("board-{project}-{id}"),
@@ -1081,12 +1078,6 @@ impl Sidebar {
         });
     }
 
-    fn toggle_archive(&mut self, project: usize, window: &mut Window, cx: &mut Context<Self>) {
-        self.defer_window(window, cx, |root, _, cx| root.commit(cx));
-        self.workspace
-            .update(cx, |workspace, cx| workspace.toggle_archive(project, cx));
-    }
-
     /// The rows as one drag region over the list: an entry moves within the
     /// region of its project it is in, a project's or a space's heading among
     /// the headings of its kind, and either can be carried out onto a pane.
@@ -1108,9 +1099,7 @@ impl Sidebar {
                 let lifted = this.sort.carried().as_ref() == Some(&item);
                 let el = this.sidebar_row(&row, lifted, window, cx);
                 match row {
-                    Row::Heading(_) | Row::Archive(_) => {
-                        this.sort.fixed(item, el).into_any_element()
-                    }
+                    Row::Heading(_) => this.sort.fixed(item, el).into_any_element(),
                     _ if narrowed[ix] => this.sort.fixed(item, el).into_any_element(),
                     _ => this.sort.handle(item, el).into_any_element(),
                 }

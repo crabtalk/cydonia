@@ -20,6 +20,7 @@ use crate::{
             rename::Renaming,
             stamp, status, text,
         },
+        library::Shelf,
         modals::palette::{Filter, ToggleSearch},
         search::Search,
         window::{
@@ -73,17 +74,13 @@ impl Sidebar {
     ) -> Stateful<Div> {
         let inner = match row {
             Row::Group(group) => self.group_head(group.clone(), false, lifted, window, cx),
-            Row::Archive(path) => match self.workspace.read(cx).project_ix(*path) {
-                Some(ix) => self.archive_divider(ix, cx),
-                None => Empty.into_any_element(),
-            },
             Row::Entry { .. } => self.entry_row(row, lifted, window, cx),
             Row::App(id) => self.app_row(row, id, lifted, cx),
             Row::Heading(heading) => self.heading_row(*heading, cx),
         };
         let entry = !matches!(
             row,
-            Row::Group(Group::Project(_) | Group::Agent(_)) | Row::Archive(_) | Row::Heading(_)
+            Row::Group(Group::Project(_) | Group::Agent(_)) | Row::Heading(_)
         );
         let pinned = row.pinned(self.workspace.read(cx), cx);
         let pitch = self.shape(row, cx).pitch();
@@ -820,38 +817,6 @@ impl Sidebar {
         self.menu_here(at, "sidebar-entry-menu", window, cx)
     }
 
-    /// The line the archive folds under: what is put away is still listed, a
-    /// step below everything still in hand.
-    fn archive_divider(&self, project: usize, cx: &mut Context<Self>) -> AnyElement {
-        let theme = Theme::of(cx).clone();
-        let trail = self.trail(cx);
-        let Some(held) = self.workspace.read(cx).projects.get(project) else {
-            return Empty.into_any_element();
-        };
-        let open = held.archive_open;
-        let indent = self.list(cx).indent_of(&Row::Archive(held.id));
-        row(
-            ("archive", project),
-            "archive-row",
-            Selection::None,
-            false,
-            indent,
-            trail,
-            &theme,
-        )
-        .child(theme.disclosure(open).text_color(theme.text_faint))
-        .child(
-            div()
-                .flex_none()
-                .text_style(TextStyle::Callout)
-                .text_color(theme.text_faint)
-                .child("Archived"),
-        )
-        .child(div().flex_1().h(px(1.)).bg(theme.border))
-        .on_click(cx.listener(move |this, _, window, cx| this.toggle_archive(project, window, cx)))
-        .into_any_element()
-    }
-
     /// A section's heading: a press folds the section, and the chevron beside
     /// the label, shown while the pointer is on the heading, says which way it
     /// stands. The projects' also holds the way to open another, shown while
@@ -1061,6 +1026,10 @@ impl Sidebar {
             ],
         )];
         rows.extend(self.label_filter_menu(ix, cx));
+        rows.push(menu::row::<Cydonia>(
+            Item::action("Show archived").with_icon(icons::files::Archive),
+            move |this, window, cx| this.open_library(Shelf::archived_in(project), window, cx),
+        ));
         rows.extend(on_disk(workspace.path_of(project).to_path_buf()));
         rows.push(menu::row::<Cydonia>(
             Item::action("Remove project").with_icon(icons::files::FolderMinus),
@@ -1069,8 +1038,6 @@ impl Sidebar {
         rows
     }
 
-    /// The heading's menu, while it is up: at the pointer from a right press,
-    /// under the `···` from the button.
     /// What an identity's `···` holds.
     fn agent_menu_rows(&self, id: &str, cx: &App) -> Vec<(Item, Act)> {
         let Some(name) = self
@@ -1110,6 +1077,8 @@ impl Sidebar {
         ]
     }
 
+    /// The heading's menu, while it is up: at the pointer from a right press,
+    /// under the `···` from the button.
     fn project_menu(
         &self,
         project: ProjectId,

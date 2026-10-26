@@ -379,3 +379,31 @@ fn an_agent_lands_as_a_session_started_as_it(cx: &mut gpui::TestAppContext) {
         })
         .unwrap();
 }
+
+/// An archived entry leaves the sidebar's list; the library is what lists it.
+#[gpui::test]
+fn an_archived_entry_leaves_the_sidebar(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("archived");
+    cx.update(|cx| Theme::install(bezel::theme::Appearance::Light, cx));
+    let window = cx.add_window(|window, cx| {
+        Cydonia::new(Settings::default(), state::State::default(), window, cx)
+    });
+
+    window
+        .update(cx, |root, _, cx| {
+            let (kept, put_away) = root.workspace.update(cx, |workspace, cx| {
+                workspace.open_project(scratch.project("one"), cx);
+                workspace.new_board(0, "Kept".into(), "ONE", cx).ok();
+                workspace.new_board(0, "Put away".into(), "TWO", cx).ok();
+                let id = workspace.projects[0].boards[1].id.clone();
+                let row = |at| Row::of_member(&workspace.board_member(0, at)?, workspace, cx);
+                let rows = (row(0), row(1));
+                workspace.archive_board(&id, true, cx);
+                rows
+            });
+            let rows = root.list(cx).rows();
+            assert!(rows.contains(&kept.expect("a row")), "in use stays");
+            assert!(!rows.contains(&put_away.expect("a row")), "archived leaves");
+        })
+        .unwrap();
+}

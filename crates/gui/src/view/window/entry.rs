@@ -66,13 +66,6 @@ impl Cydonia {
                     self.select_project(ix, cx);
                 }
             }
-            Row::Archive(path) => {
-                if let Some(ix) = workspace.project_ix(*path) {
-                    self.commit(cx);
-                    self.workspace
-                        .update(cx, |workspace, cx| workspace.toggle_archive(ix, cx));
-                }
-            }
             Row::Entry {
                 showing: Showing::Session(id),
                 ..
@@ -447,12 +440,7 @@ impl Cydonia {
                     let _ = workspace.delete_app(id, cx);
                 }
                 (Row::Entry { .. }, None)
-                | (
-                    Row::Group(Group::Project(_) | Group::Agent(_))
-                    | Row::Archive(_)
-                    | Row::Heading(_),
-                    _,
-                ) => {}
+                | (Row::Group(Group::Project(_) | Group::Agent(_)) | Row::Heading(_), _) => {}
             }
         });
         if let Some(project) = landing_project

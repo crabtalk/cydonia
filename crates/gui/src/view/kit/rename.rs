@@ -77,7 +77,6 @@ impl Renaming {
             }
             | Row::App(_)
             | Row::Group(Group::Project(_))
-            | Row::Archive(_)
             | Row::Heading(_) => None,
         }
     }

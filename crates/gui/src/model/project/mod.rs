@@ -106,9 +106,6 @@ pub struct Project {
     held: std::collections::BTreeSet<String>,
     /// Whether the sidebar shows what is under this project's heading.
     pub expanded: bool,
-    /// Whether it shows what is under the archived divider. Folded away by
-    /// default: what was put away is not what you came back for.
-    pub archive_open: bool,
     /// The one label the sidebar lists this project's entries by, or every
     /// entry. Runtime only: a relaunch lists them all.
     pub label: Option<String>,
@@ -138,7 +135,6 @@ impl Project {
             pages: HashMap::new(),
             held: Default::default(),
             expanded: true,
-            archive_open: false,
             label: None,
             watch: None,
         };

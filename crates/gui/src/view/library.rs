@@ -227,6 +227,21 @@ pub(crate) struct Shelf {
     query: String,
 }
 
+impl Shelf {
+    /// What `project` has archived, articles first.
+    pub(crate) fn archived_in(project: ProjectId) -> Self {
+        Self {
+            tab: Tab::Articles,
+            status: Archived::Only,
+            project: Some(project),
+            agent: None,
+            labels: Vec::new(),
+            order: Order::EDITED,
+            query: String::new(),
+        }
+    }
+}
+
 /// Which of the library's menus is up.
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) enum LibraryMenu {

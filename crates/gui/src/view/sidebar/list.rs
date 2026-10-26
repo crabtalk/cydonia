@@ -52,23 +52,14 @@ impl<'a> List<'a> {
         // switch hides it hides here — the entries stay in the project and in
         // memory, and turning it back on lists them again with nothing to
         // rescan.
+        // What is archived is the library's to list.
         entries.retain(|entry| {
-            shown(&entry.row, features)
+            !entry.archived
+                && shown(&entry.row, features)
                 && !self.filtered_out(&entry.row)
                 && !self.claimed(&entry.row)
         });
-        let split = entries.iter().position(|entry| entry.archived);
-        let mut entries = entries.into_iter().map(|entry| entry.row);
-        let mut rows: Vec<Row> = entries.by_ref().take(split.unwrap_or(usize::MAX)).collect();
-        if split.is_some()
-            && let Some(open) = self.workspace.projects.get(project)
-        {
-            rows.push(Row::Archive(open.id));
-            if open.archive_open {
-                rows.extend(entries);
-            }
-        }
-        self.ungrouped(rows)
+        self.ungrouped(entries.into_iter().map(|entry| entry.row).collect())
     }
 
     /// Every one of a project's entries in the order the sidebar lists them,
@@ -156,14 +147,14 @@ impl<'a> List<'a> {
             .is_some_and(|chat| chat.identity.is_some())
     }
 
-    /// The sessions filed as the identity `id`, across the open projects:
-    /// the ones still in use first, each run most recently touched first.
+    /// The sessions filed as the identity `id` and still in use, across the
+    /// open projects, most recently touched first.
     fn agent_rows(&self, id: &str) -> Vec<Row> {
         let (workspace, cx) = (self.workspace, self.cx);
         if !workspace.settings.features.sessions {
             return Vec::new();
         }
-        let mut sessions: Vec<(bool, u128, Row)> = workspace
+        let mut sessions: Vec<(u128, Row)> = workspace
             .projects
             .iter()
             .flat_map(|open| {
@@ -174,17 +165,18 @@ impl<'a> List<'a> {
                             .is_some_and(|chat| chat.identity.as_deref() == Some(id)),
                         _ => false,
                     })
+                    .filter(|facts| !facts.archived)
                     .map(|facts| {
                         let row = Row::Entry {
                             project: open.id,
                             showing: facts.showing,
                         };
-                        (facts.archived, facts.touched, row)
+                        (facts.touched, row)
                     })
             })
             .collect();
-        sessions.sort_by_key(|(archived, touched, _)| (*archived, std::cmp::Reverse(*touched)));
-        let rows = sessions.into_iter().map(|(_, _, row)| row).collect();
+        sessions.sort_by_key(|(touched, _)| std::cmp::Reverse(*touched));
+        let rows = sessions.into_iter().map(|(_, row)| row).collect();
         self.ungrouped(rows)
     }
 
@@ -394,6 +386,7 @@ impl<'a> List<'a> {
                                 .map(|ix| self.ranked(ix))
                                 .unwrap_or_default()
                                 .into_iter()
+                                .filter(|e| !e.archived)
                                 .map(|e| e.row)
                                 .collect(),
                         ),
@@ -476,7 +469,6 @@ impl<'a> List<'a> {
                         group = None;
                         "heading".into()
                     }
-                    Row::Archive(_) => "archive".into(),
                     Row::Group(Group::Project(_)) => "projects".into(),
                     Row::Group(Group::Space(_)) => "spaces".into(),
                     Row::Group(Group::Agent(_)) => "agents".into(),
@@ -485,10 +477,9 @@ impl<'a> List<'a> {
                         Some(Group::Space(id)) => format!("space-{id}").into(),
                         Some(Group::Agent(id)) => format!("agent-{id}").into(),
                         _ => format!(
-                            "entries-{}-{}-{}",
+                            "entries-{}-{}",
                             project,
                             row.pinned(self.workspace, self.cx),
-                            row.archived(self.workspace, self.cx),
                         )
                         .into(),
                     },
