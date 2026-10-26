@@ -130,8 +130,6 @@ pub(crate) enum Row {
     Heading(Heading),
     /// A project or a space: a heading its entries fold under.
     Group(Group),
-    /// The line the archived entries of this project are folded under.
-    Archive(ProjectId),
     /// An entry of `project`.
     Entry {
         project: ProjectId,
@@ -193,7 +191,7 @@ impl Row {
     pub(crate) fn showing(&self) -> Option<&Showing> {
         match self {
             Row::Entry { showing, .. } => Some(showing),
-            Row::Group(_) | Row::Archive(_) | Row::Heading(_) | Row::App(_) => None,
+            Row::Group(_) | Row::Heading(_) | Row::App(_) => None,
         }
     }
 
@@ -214,7 +212,7 @@ impl Row {
                 workspace.member_of(workspace.project_ix(*project)?, showing.clone(), cx)
             }
             Row::App(id) => Some(Member::app(id.clone())),
-            Row::Group(_) | Row::Archive(_) | Row::Heading(_) => None,
+            Row::Group(_) | Row::Heading(_) => None,
         }
     }
 
@@ -241,22 +239,25 @@ impl Row {
     /// no file yet is given one here: a space names its members by file, so
     /// there is nothing to put in one until this runs. Minting it at the drop
     /// rather than at the drag keeps a gesture that went nowhere from leaving
-    /// a session behind on disk.
+    /// a session behind on disk. An agent's heading lands as a new session
+    /// started as it, made at the drop for the same reason.
     pub(crate) fn landed(&self, workspace: &Entity<Workspace>, cx: &mut App) -> Option<Member> {
         if let Some(member) = self.member(workspace.read(cx), cx) {
             return Some(member);
         }
-        let Row::Entry {
-            project,
-            showing: Showing::Session(id),
-        } = self
-        else {
-            return None;
+        let id = match self {
+            Row::Entry {
+                showing: Showing::Session(id),
+                ..
+            } => *id,
+            Row::Group(Group::Agent(identity)) => workspace.update(cx, |workspace, cx| {
+                workspace.new_session_as(identity, None, cx)
+            })?,
+            _ => return None,
         };
-        let id = *id;
         workspace.update(cx, |workspace, cx| {
             workspace.retain_session(id, cx)?;
-            workspace.member_of(workspace.project_ix(*project)?, Showing::Session(id), cx)
+            workspace.member_of(workspace.project_of(id)?, Showing::Session(id), cx)
         })
     }
 
@@ -265,9 +266,10 @@ impl Row {
         let named = || -> Option<String> {
             Some(match self {
                 Row::Group(Group::Project(project)) => workspace.project(*project)?.name(),
-                Row::Archive(_) | Row::Heading(_) => return None,
+                Row::Heading(_) => return None,
                 Row::App(id) => workspace.program(id, cx)?.read(cx).label(),
                 Row::Group(Group::Space(id)) => workspace.space_by_id(id)?.label().to_owned(),
+                Row::Group(Group::Agent(id)) => workspace.identity(id)?.name.clone(),
                 Row::Entry { showing, .. } => {
                     let (project, ix) = self.located(workspace)?;
                     workspace.projects[project]
@@ -334,6 +336,8 @@ impl Row {
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub(crate) enum Heading {
     Projects,
+    /// The agent identities. Drawn while sessions are switched on.
+    Agents,
     /// Drawn only while there is a space.
     Spaces,
     /// The apps listed. Drawn only while there is one.
@@ -345,6 +349,7 @@ impl Heading {
     fn label(self) -> &'static str {
         match self {
             Self::Projects => "Projects",
+            Self::Agents => "Agents",
             Self::Spaces => "Spaces",
             Self::Apps => "Apps",
         }
@@ -353,6 +358,7 @@ impl Heading {
     fn key(self) -> &'static str {
         match self {
             Self::Projects => "projects",
+            Self::Agents => "agents",
             Self::Spaces => "spaces",
             Self::Apps => "apps",
         }
@@ -360,13 +366,15 @@ impl Heading {
 }
 
 /// What entries are listed under: a project holds its own, a space the ones it
-/// arranges. One heading, one fold and one drag for both — see
-/// [`Sidebar::group_head`].
+/// arranges, an agent identity the sessions run as it. One heading and one
+/// fold for all three — see [`Sidebar::group_head`].
 #[derive(Clone, PartialEq, Eq, Debug, Hash)]
 pub(crate) enum Group {
     Project(ProjectId),
     /// A space, by its id.
     Space(String),
+    /// An agent identity, by its id.
+    Agent(String),
 }
 
 /// How a row's entry stands to what the window is showing.
@@ -451,9 +459,9 @@ pub(crate) fn on_disk(path: PathBuf) -> [(Item, Act); 2] {
 /// to.
 fn project_of(row: &Row) -> Option<ProjectId> {
     match row {
-        Row::Group(Group::Project(project)) | Row::Archive(project) => Some(*project),
+        Row::Group(Group::Project(project)) => Some(*project),
         Row::Entry { project, .. } => Some(*project),
-        Row::Group(Group::Space(_)) | Row::Heading(_) | Row::App(_) => None,
+        Row::Group(Group::Space(_) | Group::Agent(_)) | Row::Heading(_) | Row::App(_) => None,
     }
 }
 
@@ -560,10 +568,11 @@ pub(crate) fn key_of(entry: &Row) -> String {
     match entry {
         Row::Group(Group::Project(project)) => format!("project-{project}"),
         Row::Group(Group::Space(id)) => format!("space-{id}"),
+        Row::Group(Group::Agent(id)) => format!("agent-{id}"),
         Row::Heading(Heading::Projects) => "projects".to_owned(),
+        Row::Heading(Heading::Agents) => "agents".to_owned(),
         Row::Heading(Heading::Spaces) => "spaces".to_owned(),
         Row::Heading(Heading::Apps) => "apps".to_owned(),
-        Row::Archive(project) => format!("archive-{project}"),
         Row::Entry { project, showing } => match showing {
             Showing::Session(id) => format!("session-{project}-{id}"),
             Showing::Board(id) => format!("board-{project}-{id}"),
@@ -655,6 +664,8 @@ pub(crate) enum SidebarMenu {
     Project(ProjectId),
     /// The `···` on an entry's row, whichever kind it is, and a space's.
     Entry(Row),
+    /// An agent identity's heading, by its id.
+    Agent(String),
 }
 
 /// The column under the window's band: the search and library rows, the list
@@ -691,7 +702,7 @@ pub(crate) struct Sidebar {
     /// Whether [`Self::focus`] holds the keyboard focus, as of the frame being
     /// drawn: its selected row is emphasized while it does.
     emphasized: bool,
-    _focus_watch: FocusWatch,
+    pub(crate) focus_watch: FocusWatch,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -744,7 +755,7 @@ impl Sidebar {
             sessions: Watch::default(),
             focus,
             emphasized: false,
-            _focus_watch: focus_watch,
+            focus_watch,
             _subscriptions: subscriptions,
         };
         this.relist(cx);
@@ -1063,13 +1074,8 @@ impl Sidebar {
                 }
             }
             Group::Space(id) => workspace.toggle_space(id, cx),
+            Group::Agent(id) => workspace.toggle_agent(id, cx),
         });
-    }
-
-    fn toggle_archive(&mut self, project: usize, window: &mut Window, cx: &mut Context<Self>) {
-        self.defer_window(window, cx, |root, _, cx| root.commit(cx));
-        self.workspace
-            .update(cx, |workspace, cx| workspace.toggle_archive(project, cx));
     }
 
     /// The rows as one drag region over the list: an entry moves within the
@@ -1093,9 +1099,7 @@ impl Sidebar {
                 let lifted = this.sort.carried().as_ref() == Some(&item);
                 let el = this.sidebar_row(&row, lifted, window, cx);
                 match row {
-                    Row::Heading(_) | Row::Archive(_) => {
-                        this.sort.fixed(item, el).into_any_element()
-                    }
+                    Row::Heading(_) => this.sort.fixed(item, el).into_any_element(),
                     _ if narrowed[ix] => this.sort.fixed(item, el).into_any_element(),
                     _ => this.sort.handle(item, el).into_any_element(),
                 }
@@ -1239,6 +1243,8 @@ impl Sidebar {
                     _ => None,
                 });
                 match group {
+                    // An identity's sessions run by when they were touched.
+                    Some(Group::Agent(_)) => {}
                     // The sidebar's order alone: the space's panes stay put.
                     Some(Group::Space(id)) => {
                         let workspace = self.workspace.read(cx);
@@ -1340,7 +1346,7 @@ impl InWindow for Sidebar {
 impl Render for Sidebar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.watch_sessions(window, cx);
-        self.emphasized = self.focus.contains_focused(window, cx);
+        self.emphasized = self.focus_watch.within();
         let programs: Vec<_> = self.workspace.read(cx).programs().cloned().collect();
         let mut apps = std::mem::take(&mut self.apps);
         // A build names an app's row, and the apps are listed by name.

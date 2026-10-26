@@ -11,7 +11,13 @@ use crate::{
         session::{Command, Usage},
         settings::PanelTabs,
     },
-    view::{kit::link::mention, window::root},
+    view::{
+        kit::{
+            link::mention,
+            switch::{Switch, SwitchId},
+        },
+        window::root,
+    },
 };
 use bezel::{
     gpui::{
@@ -120,40 +126,6 @@ pub fn bindings() -> Vec<KeyBinding> {
 pub struct Agent {
     pub name: SharedString,
     pub icon: Option<Icon>,
-}
-
-/// Which request a [`Switch`] is, since the agent offers two shapes of the
-/// same idea.
-#[derive(Clone, PartialEq, Eq)]
-pub enum SwitchId {
-    /// `session/set_mode`. A session has one mode, so it carries no id.
-    Mode,
-    /// `session/set_config_option`, by the option's own id — which is where
-    /// the model lives.
-    Config(SharedString),
-    /// The agent an article's session opens on, offered before there is a
-    /// session to switch. Its options are the configured agents by index.
-    Agent,
-}
-
-/// One value a switch can be set to.
-#[derive(Clone, PartialEq)]
-pub struct SwitchOption {
-    pub id: SharedString,
-    pub name: SharedString,
-}
-
-/// One switchable thing the session offers: the agent's mode, or a config
-/// option. One shape for both — the composer shows a value and reports a pick,
-/// and which request that is stays the session's business.
-#[derive(Clone, PartialEq)]
-pub struct Switch {
-    pub id: SwitchId,
-    /// What the thing is called, shown when it is on a value the agent no
-    /// longer offers — which happens when an update lands mid-pick.
-    pub name: SharedString,
-    pub current: Option<SharedString>,
-    pub options: Vec<SwitchOption>,
 }
 
 /// What a row of the tools menu sends when it is chosen.

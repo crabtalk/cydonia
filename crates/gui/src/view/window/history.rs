@@ -81,7 +81,7 @@ impl Cydonia {
     /// What the window is on: the library while it is up, else the focused
     /// tab's entry.
     fn focused_place(&self, cx: &Context<Self>) -> Option<Place> {
-        if self.library.is_some() {
+        if self.library_shown(cx) {
             return Some(Place::Library);
         }
         self.focused_entry(cx).map(Place::Entry)
@@ -233,7 +233,7 @@ impl Cydonia {
                     self.restore(&next, cx);
                 }
                 (None, Some(Position::Library(shelf))) => self.open_library(shelf, window, cx),
-                (None, _) if self.library.is_none() => self.toggle_library(window, cx),
+                (None, _) if !self.library_shown(cx) => self.show_library(window, cx),
                 (None, _) => {}
             }
             cx.notify();

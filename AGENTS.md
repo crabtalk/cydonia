@@ -117,7 +117,8 @@ columns. Markdown that only GitHub shows — pull request bodies, issues, commen
 - Every dependency is declared in the root `[workspace.dependencies]` and
   inherited with `xxx.workspace = true`. Never a version in a member's
   `Cargo.toml`.
-- Never a `[patch]` section pointing at a local checkout of bezel or zed.
+- A `[patch]` section pointing at a local checkout of bezel is never in a pull
+  request. Never one pointing at a local checkout of zed.
 
 ## Constants
 
@@ -145,12 +146,14 @@ Three layers, from general to specific:
   wears), `pager` (the dots under a run of pages or images), `rename` (the
   inline name field, and what it renames), `stamp` and `text` (formatters, and
   `CardTitle`), `status` (the mark a session's status stands in an icon slot
-  as), `watch` (the entities and focus handles a view draws from,
+  as), `switch` (what an agent can be switched between: its mode and config
+  options), `watch` (the entities and focus handles a view draws from,
   observed).
 - **`crates/gui/src/view/modals/`**: what goes over the window on its
-  `ModalLayer`, raised from more than one screen: `confirm` (the delete
-  question), `new_board`, `install_app` (the reference an app is installed
-  from), `palette` (search and commands), `desktop` (the desktop-only notice),
+  `ModalLayer`, raised from more than one screen: `agent` (an agent identity,
+  new or kept), `confirm` (the delete question), `new_board`, `install_app`
+  (the reference an app is installed from), `palette` (search and commands),
+  `desktop` (the desktop-only notice),
   `no_agent` (a session asked for with no agent installed), `settings` (the
   settings sheet, without the `desktop` feature), `whats_new` (the latest
   release's notes, raised once per notes version; `release.rs` holds them and
@@ -223,6 +226,9 @@ Rules:
   `Editor` per pane (`Editor::for_document`). Undo history and anchors are the
   document's; the selection and the typing run are the editor's.
 - Find reaches an item through `pane::find::Searchable`, pushed by the tab.
+- Whether the focus is inside a view, read while it draws, is its
+  `kit::watch::FocusWatch::within`. `FocusHandle::contains_focused` answers
+  from the frame before, and is for event handlers alone.
 - Updating an entity while it is already being updated panics. A view that acts
   on the window implements `window::reach::InWindow` and goes through
   `defer_window`, and through `InWindow::through` for the window's rows in its

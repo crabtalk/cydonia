@@ -3,14 +3,15 @@
 use crate::{
     model::{
         session::{ChatSession, Choice, Command, Usage},
-        session_preferences::{self, Offers},
-        workspace::{ArticleChange, Member, Opening, Showing, Workspace},
+        session_preferences::Offers,
+        workspace::{ArticleChange, Member, Showing, Workspace},
     },
     view::{
         component::{composer, transcript},
         kit::{
             menu::{self, Menu, MenuHost as _},
             new::{self, New},
+            switch::{Switch, SwitchId, SwitchOption},
             text::ShownPath as _,
         },
         window::{
@@ -37,10 +38,7 @@ use bezel::{
         widgets::Content,
     },
 };
-use cydonia_acp::proto::{
-    PermissionOptionKind, SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory,
-    SessionConfigOptionValue, SessionConfigSelectOptions, SessionModeState,
-};
+use cydonia_acp::proto::{PermissionOptionKind, SessionConfigOptionValue};
 use std::path::{Path, PathBuf};
 
 /// What the chat keeps for itself while the panel stands beside it.
@@ -88,89 +86,6 @@ fn panel_height(preferred: Option<f32>, available: f32) -> f32 {
     let preferred = preferred.unwrap_or(TERMINAL_HEIGHT);
     let min = 120.0_f32.min(available / 2.);
     preferred.clamp(min, (available - 160.).max(min))
-}
-
-/// What `offers` can be switched between, flattened to the one shape the
-/// composer draws: the config options, then the modes. Every composer's agent
-/// menu is built here.
-///
-/// Config first, because the model is a config option and it is the one people
-/// came for. Booleans are left out — a menu of two rows is a toggle wearing a
-/// menu, and the agent menu has nowhere to put a real one yet.
-fn switches_of(offers: &Offers) -> Vec<composer::Switch> {
-    let (modes, config) = (offers.modes.as_ref(), offers.config.as_slice());
-    let mut switches: Vec<composer::Switch> = config
-        .iter()
-        .filter_map(|option| {
-            let SessionConfigKind::Select(select) = &option.kind else {
-                return None;
-            };
-            let options = select_options(&select.options);
-            // A select with nothing to select is a menu with no rows.
-            (!options.is_empty()).then(|| composer::Switch {
-                id: composer::SwitchId::Config(option.id.to_string().into()),
-                name: option.name.clone().into(),
-                current: Some(select.current_value.to_string().into()),
-                options,
-            })
-        })
-        .collect();
-    if let Some(modes) = modes
-        .filter(|modes| !modes.available_modes.is_empty())
-        .filter(|modes| !covered_by_config(config, modes))
-    {
-        switches.push(composer::Switch {
-            id: composer::SwitchId::Mode,
-            name: "Mode".into(),
-            current: Some(modes.current_mode_id.to_string().into()),
-            options: modes
-                .available_modes
-                .iter()
-                .map(|mode| composer::SwitchOption {
-                    id: mode.id.to_string().into(),
-                    name: mode.name.clone().into(),
-                })
-                .collect(),
-        });
-    }
-    switches
-}
-
-/// Whether the agent is already offering these modes as a config option.
-///
-/// Some agents report their modes twice — once through `session/new`'s `modes`
-/// and again as a config option — and two switches onto one piece of state is
-/// two ways to disagree about it. The config option wins: it is the general
-/// mechanism, and its update is what confirms a change.
-///
-/// Matched on the values as well as on the category, because the category is
-/// optional and an agent that leaves it off still sends the same list twice.
-fn covered_by_config(config: &[SessionConfigOption], modes: &SessionModeState) -> bool {
-    config.iter().any(|option| {
-        if option.category == Some(SessionConfigOptionCategory::Mode) {
-            return true;
-        }
-        let SessionConfigKind::Select(select) = &option.kind else {
-            return false;
-        };
-        let values = select_options(&select.options);
-        modes
-            .available_modes
-            .iter()
-            .all(|mode| values.iter().any(|value| value.id.as_ref() == &*mode.id))
-    })
-}
-
-/// A select's values, with a group's rows folded in beside the ungrouped ones.
-/// A switch gets one flat card, and a group is a heading it has nowhere to put.
-fn select_options(options: &SessionConfigSelectOptions) -> Vec<composer::SwitchOption> {
-    session_preferences::select_values(options)
-        .into_iter()
-        .map(|option| composer::SwitchOption {
-            id: option.value.to_string().into(),
-            name: option.name.clone().into(),
-        })
-        .collect()
 }
 
 /// One of the two answers a permission request comes down to, with the *once*
@@ -442,7 +357,7 @@ impl Cydonia {
             .workspace
             .update(cx, |workspace, cx| workspace.new_session(entry, None, cx));
         if let Some(id) = id {
-            self.select_session(id, Opening::Kept, window, cx);
+            self.land_session(id, window, cx);
         }
     }
 
@@ -544,9 +459,9 @@ impl Cydonia {
             && session.is_none()
         {
             let change = match id {
-                composer::SwitchId::Agent => value.parse().ok().map(ArticleChange::Agent),
-                composer::SwitchId::Mode => Some(ArticleChange::Mode(value.to_string())),
-                composer::SwitchId::Config(config) => Some(ArticleChange::Config {
+                SwitchId::Agent => value.parse().ok().map(ArticleChange::Agent),
+                SwitchId::Mode => Some(ArticleChange::Mode(value.to_string())),
+                SwitchId::Config(config) => Some(ArticleChange::Config {
                     id: config.to_string(),
                     value: value.to_string(),
                 }),
@@ -587,7 +502,7 @@ impl Cydonia {
         let floating = self.workspace.read(cx).settings.appearance.floating;
         let raised = library
             .as_ref()
-            .is_some_and(|library| library.read(cx).focus.contains_focused(window, cx));
+            .is_some_and(|library| library.read(cx).focus_watch.within());
         let body = match library.clone() {
             Some(library) => library
                 .cached(
@@ -641,18 +556,21 @@ impl Cydonia {
         // The library stands in for every pane, framed as the launch view is:
         // one card under the window's band, the drawer a card opens in, and no
         // composer.
-        let library = self.library.clone();
+        let library = self.library.clone().filter(|_| self.library_shown(cx));
         let panes = match library {
             Some(_) => None,
             None => self.panes(window, cx),
         };
         // The window's top row, over every column the panel's included: the
-        // strip over a tab, the band over the library or the launch view.
+        // strip over a tab, the library's included, and the band over the
+        // launch view, or over the library with Spaces in sidebar on.
         // Floating, it is on the chrome over the cards. Edge to edge either
         // way: its ends are the window's, as the lights are. None where the
         // panes' title rows are it — see [`Cydonia::sync_edges`].
         let on_top = self.panes_on_top(cx);
-        let height = chrome::top_height(self.workspace.read(cx).settings.appearance.global_tabs());
+        let global = self.workspace.read(cx).settings.appearance.global_tabs();
+        let height = chrome::top_height(global);
+        let strip = panes.is_some() || (library.is_some() && global);
         let top = (!on_top).then(|| {
             div()
                 .flex_none()
@@ -661,7 +579,7 @@ impl Cydonia {
                 .when(!floating, |top| {
                     top.bg(bezel::ui::window::content_fill(false, &theme))
                 })
-                .child(match panes.is_some() {
+                .child(match strip {
                     true => self
                         .strip
                         .clone()
@@ -693,7 +611,7 @@ impl Cydonia {
                 .as_ref()
                 .filter(|(visible, _)| *visible)
                 .map(|(_, terminal)| {
-                    let raised = terminal.read(cx).focus.contains_focused(window, cx);
+                    let raised = terminal.read(cx).focus_watch.within();
                     (gpui::AnyView::from(terminal.clone()), raised)
                 });
         #[cfg(not(feature = "desktop"))]
@@ -883,7 +801,7 @@ pub(crate) struct Pointing {
     activity: Option<composer::Activity>,
     agents: Vec<composer::Agent>,
     current: Option<usize>,
-    switches: Vec<composer::Switch>,
+    switches: Vec<Switch>,
     usage: Option<Usage>,
 }
 
@@ -914,7 +832,7 @@ impl Pointing {
                     .iter()
                     .position(|agent| agent.name == chat.entry.name)
             }),
-            switches: chat.map_or_else(Vec::new, |chat| switches_of(&chat.offered(cx))),
+            switches: chat.map_or_else(Vec::new, |chat| Switch::of(&chat.offered(cx))),
             usage: live.and_then(|chat| chat.usage),
         }
     }
@@ -937,20 +855,20 @@ impl Pointing {
         current: Option<usize>,
         offers: &Offers,
     ) -> Self {
-        let agent = composer::Switch {
-            id: composer::SwitchId::Agent,
+        let agent = Switch {
+            id: SwitchId::Agent,
             name: "Agent".into(),
             current: current.map(|ix| ix.to_string().into()),
             options: agents
                 .iter()
                 .enumerate()
-                .map(|(ix, agent)| composer::SwitchOption {
+                .map(|(ix, agent)| SwitchOption {
                     id: ix.to_string().into(),
                     name: agent.name.clone(),
                 })
                 .collect(),
         };
-        self.switches = std::iter::once(agent).chain(switches_of(offers)).collect();
+        self.switches = std::iter::once(agent).chain(Switch::of(offers)).collect();
         self
     }
 
@@ -1259,14 +1177,14 @@ impl Cydonia {
     fn switch(
         &mut self,
         session: u64,
-        id: &composer::SwitchId,
+        id: &SwitchId,
         value: &SharedString,
         cx: &mut Context<Self>,
     ) {
         let value = value.to_string();
         self.workspace.update(cx, |workspace, cx| match id {
-            composer::SwitchId::Mode => workspace.set_session_mode(session, value, cx),
-            composer::SwitchId::Config(config) => workspace.set_session_config(
+            SwitchId::Mode => workspace.set_session_mode(session, value, cx),
+            SwitchId::Config(config) => workspace.set_session_config(
                 session,
                 config.to_string(),
                 SessionConfigOptionValue::ValueId {
@@ -1275,7 +1193,7 @@ impl Cydonia {
                 cx,
             ),
             // Only offered before a session exists; see `thread_event`.
-            composer::SwitchId::Agent => {}
+            SwitchId::Agent => {}
         });
         cx.notify();
     }

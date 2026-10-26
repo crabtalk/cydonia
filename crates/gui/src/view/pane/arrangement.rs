@@ -5,7 +5,7 @@
 //! means. This is only how it lands on the window.
 
 use crate::{
-    model::workspace::{Member, Slot, Space},
+    model::workspace::{Member, Opening, Slot, Space},
     view::{
         component::divider,
         kit::{icon, menu},
@@ -381,7 +381,7 @@ impl Cydonia {
     /// row: while the sidebar lists the spaces, so the strip has no tabs to
     /// draw, and a pane is in front.
     pub(crate) fn panes_on_top(&self, cx: &App) -> bool {
-        self.library.is_none()
+        !self.library_shown(cx)
             && self
                 .workspace
                 .read(cx)
@@ -439,7 +439,7 @@ impl Cydonia {
             return false;
         };
         // The library stands over every pane.
-        if self.library.is_some() {
+        if self.library_shown(cx) {
             return false;
         }
         let workspace = self.workspace.read(cx);
@@ -494,7 +494,33 @@ impl Cydonia {
                 .space_by_id(space)
                 .map(|space| space.label().to_owned())
                 .unwrap_or_default(),
+            Dragged::Tab(Slot::Library {}) => "Library".to_owned(),
         }
+    }
+
+    /// Put session `id` in front of the focused pane's stack, and the focus in
+    /// its composer. Outside a space, or with no pane focused, it opens as a
+    /// tab of its own.
+    pub(crate) fn land_session(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
+        let arranged = self.workspace.read(cx).active_space().is_some();
+        let target = self.focused_entry(cx).filter(|_| arranged);
+        let Some(target) = target else {
+            return self.select_session(id, Opening::Kept, window, cx);
+        };
+        let member = self.workspace.update(cx, |workspace, cx| {
+            workspace.select_session(id, cx);
+            workspace.mint_record(id, cx)?;
+            workspace.member_of_session(id, cx)
+        });
+        let Some(member) = member else {
+            return;
+        };
+        self.workspace.update(cx, |workspace, cx| {
+            workspace.stack_pane(&target, &member, cx)
+        });
+        self.show_pane(&member, window, cx);
+        self.sync_composer(cx);
+        self.focus_composer_of(id, window, cx);
     }
 
     /// A release on a pane: beside it where it lands on an edge, and in front
@@ -819,7 +845,6 @@ impl Cydonia {
     /// Open a space: the window is arranged by it until an entry no space
     /// holds is opened.
     pub(crate) fn open_space(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
-        self.library = None;
         self.workspace.update(cx, |workspace, cx| {
             workspace.open_space(ix, cx);
         });
@@ -844,7 +869,6 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.library = None;
         self.workspace
             .update(cx, |workspace, cx| workspace.join_strip(&arriving, cx));
         self.show_pane(&arriving, window, cx);

@@ -1006,6 +1006,12 @@ fn drawer_composer() -> bool {
 }
 
 impl Agent {
+    /// What an agent identity names it by: its registry id, or its name for a
+    /// hand-written entry.
+    pub fn reference(&self) -> &str {
+        self.id.as_deref().unwrap_or(&self.name)
+    }
+
     /// Whether every npm package this entry names carries an exact version.
     /// `npx pkg@latest` resolves against the registry on every launch, which is
     /// a different program each time.

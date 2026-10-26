@@ -2,48 +2,50 @@
 //! that has something to show; a release that leaves this file alone raises
 //! nothing on launch.
 
-use crate::{model::workspace::Workspace, view::kit::icon::kind_icon};
+use crate::{
+    model::workspace::Workspace,
+    view::{kit::icon::kind_icon, window::root::EditAgent},
+};
 use artifact::kind::Kind;
 use bezel::{
+    agent::{Face, avatar::Motion, mascot},
     gpui::{
-        AnyElement, App, Context, Div, Entity, Subscription, Task, Window, div, prelude::*, px,
-        relative,
+        AnyElement, Context, Div, Entity, Subscription, Task, Window, div, prelude::*, px, relative,
     },
     theme::{TextStyle, Theme, Typeset},
     ui::{
         icons,
-        tabs::{self, State},
-        widgets::Controls,
+        widgets::{ButtonStyle, Buttons},
     },
 };
 use std::time::Duration;
 
 /// The release these notes are for.
-pub(crate) const VERSION: &str = "0.2.6";
+pub(crate) const VERSION: &str = "0.2.7";
 
 /// Each page's line under the title, in page order.
 pub(super) const HEADLINES: [&str; 1] =
-    ["The pane you are in stands out, and Esc steps back out of it."];
+    ["Name an agent, give it a face, and keep its sessions under it in the sidebar."];
 
-/// The panes the window holds, side by side.
-const PANES: [(Kind, &str); 2] = [(Kind::Board, "Board"), (Kind::Session, "Session")];
+/// The agents the sidebar in miniature lists, each by name and its sessions'
+/// titles.
+const AGENTS: [(&str, [&str; 2]); 2] = [
+    ("Ada", ["Plan the release", "Fix the flaky test"]),
+    ("Turing", ["Review the parser", "Answer the issue"]),
+];
 
-/// Where the focus is at each step of the loop: a pane, by its place in
-/// [`PANES`], or the window after Esc.
-const LOOP: [Option<usize>; 3] = [Some(0), Some(1), None];
+/// Which of [`AGENTS`] are open at each step of the loop; a folded one sleeps.
+const LOOP: [[bool; 2]; 3] = [[true, false], [true, true], [false, true]];
 
-/// How long the focus holds still between two steps of its loop.
-const STEP: Duration = Duration::from_millis(1100);
+/// How long the sidebar holds still between two steps of its loop.
+const STEP: Duration = Duration::from_millis(1400);
 
-/// The window in miniature: how tall it stands, the lights' dots, and how far
-/// a floating card sits in from its edges and from the card beside it.
-const WINDOW_HEIGHT: f32 = 140.;
-const LIGHT: f32 = 8.;
-const INSET: f32 = 4.;
+/// The sidebar in miniature: how tall it stands, and how wide a blob is drawn.
+const SIDEBAR_HEIGHT: f32 = 168.;
+const BLOB: f32 = 14.;
 
-/// What follows the headline: a window in miniature whose focus steps from
-/// one pane to the other and out, drawn in the floating or the flat layout,
-/// and the switch between the two.
+/// What follows the headline: the sidebar's Agents in miniature, an agent
+/// folding to sleep and waking open on a loop, and the way to make one.
 pub(super) struct Body {
     workspace: Entity<Workspace>,
     /// Which of [`HEADLINES`]' pages is shown.
@@ -81,123 +83,100 @@ impl Body {
 impl Render for Body {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::of(cx).clone();
-        let floating = self.workspace.read(cx).settings.appearance.floating;
-        let window = window(floating, LOOP[self.at], &theme, cx);
-        let workspace = self.workspace.clone();
-        let switch = theme
-            .toggle(floating)
-            .id("whats-new-floating")
-            .cursor_pointer()
-            .on_click(move |_, _, cx| {
-                workspace.update(cx, |workspace, cx| workspace.set_floating(!floating, cx))
-            });
+        let sessions = self.workspace.read(cx).settings.features.sessions;
+        let make = sessions.then(|| {
+            div().flex().justify_center().child(
+                theme
+                    .button("New agent…", ButtonStyle::Ghost, None)
+                    .id("whats-new-agent")
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(
+                            Box::new(EditAgent {
+                                id: None,
+                                from: None,
+                            }),
+                            cx,
+                        )
+                    }),
+            )
+        });
         div()
             .py_2()
             .flex()
             .flex_col()
             .gap(px(14.))
-            .child(window)
-            .child(row([
-                side("Flat", &theme),
-                switch.into_any_element(),
-                side("Floating", &theme),
-            ]))
+            .child(sidebar(LOOP[self.at], &theme))
+            .children(make)
     }
 }
 
-/// A window in miniature: its lights along the top and [`PANES`] side by side
-/// under them. Floating, each pane is a card, the focused one raised; flat,
-/// each pane's title stands on a tab's chip, the focused one lit.
-fn window(floating: bool, focus: Option<usize>, theme: &Theme, cx: &App) -> Div {
-    let lights = div()
-        .flex_none()
-        .flex()
-        .gap(px(LIGHT / 2.))
-        .px(px(10.))
-        .py(px(10.))
-        .children((0..3).map(|_| div().size(px(LIGHT)).rounded_full().bg(theme.text_faint)));
-    let panes = PANES.iter().enumerate().map(|(at, (kind, name))| {
-        let focused = focus == Some(at);
-        let title = line(kind_icon(*kind), name, theme);
-        match floating {
-            true => match focused {
-                true => bezel::ui::window::content(true, cx),
-                false => bezel::ui::window::resting(cx),
-            }
-            .flex_1()
-            .p(px(8.))
-            .child(title),
-            false => div()
-                .flex_1()
-                .p(px(6.))
-                .when(at > 0, |pane| pane.border_l_1().border_color(theme.border))
-                .child(
-                    tabs::chip(
-                        theme,
-                        match focused {
-                            true => State::Focused,
-                            false => State::Front,
-                        },
-                    )
-                    .child(title),
-                ),
-        }
-    });
-    let body = div().flex_1().min_h_0().flex().flex_row();
-    let body = match floating {
-        true => body
-            .gap(px(INSET))
-            .px(px(INSET))
-            .pb(px(INSET))
-            .children(panes),
-        false => body
-            .bg(bezel::ui::window::content_fill(false, theme))
-            .border_t_1()
-            .border_color(theme.border)
-            .children(panes),
-    };
+/// The sidebar in miniature: the Agents heading, then each of [`AGENTS`] with
+/// its blob, its sessions under it where `open` says so.
+fn sidebar(open: [bool; 2], theme: &Theme) -> Div {
+    let groups = AGENTS
+        .iter()
+        .zip(open)
+        .map(|((name, sessions), open)| agent(name, sessions, open, theme));
     div()
         .w(relative(1.))
-        .h(px(WINDOW_HEIGHT))
+        .h(px(SIDEBAR_HEIGHT))
         .flex()
         .flex_col()
+        .gap(px(2.))
+        .p(px(10.))
         .overflow_hidden()
-        .rounded(px(INSET * 2.))
+        .rounded(px(8.))
         .border_1()
         .border_color(theme.border)
         .bg(theme.sidebar_bg())
-        .child(lights)
-        .child(body)
+        .child(
+            div()
+                .pb(px(4.))
+                .text_style(TextStyle::Callout)
+                .text_color(theme.text_faint)
+                .child("Agents"),
+        )
+        .children(groups)
 }
 
-/// A pane's title in miniature: its entry's mark and name.
-fn line(icon: icons::Icon, name: &'static str, theme: &Theme) -> Div {
-    div()
+/// One agent: its blob and name, asleep while folded, and its sessions under
+/// it while open.
+fn agent(name: &'static str, sessions: &[&'static str], open: bool, theme: &Theme) -> AnyElement {
+    let face = Face::from(name).motion(match open {
+        true => Motion::default(),
+        false => Motion::ASLEEP,
+    });
+    let head = div()
         .flex()
         .flex_row()
         .items_center()
         .gap(px(6.))
-        .text_style(TextStyle::Caption)
-        .child(icons::icon(icon).size(px(12.)).text_color(theme.text_muted))
-        .child(name)
-}
-
-/// A switch's name beside it.
-fn side(name: &'static str, theme: &Theme) -> AnyElement {
-    div()
+        .py(px(3.))
         .text_style(TextStyle::Callout)
-        .text_color(theme.text_muted)
-        .child(name)
-        .into_any_element()
-}
-
-/// The switch row, centred under the window.
-fn row(children: impl IntoIterator<Item = AnyElement>) -> Div {
+        .text_color(theme.text)
+        .child(div().size(px(BLOB)).flex_none().child(mascot(&face, 0.)))
+        .child(name);
+    let rows = sessions.iter().filter(|_| open).map(|title| {
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(6.))
+            .pl(px(BLOB + 6.))
+            .py(px(2.))
+            .text_style(TextStyle::Caption)
+            .text_color(theme.text_muted)
+            .child(
+                icons::icon(kind_icon(Kind::Session))
+                    .size(px(12.))
+                    .text_color(theme.text_muted),
+            )
+            .child(*title)
+    });
     div()
         .flex()
-        .flex_row()
-        .items_center()
-        .justify_center()
-        .gap(px(8.))
-        .children(children)
+        .flex_col()
+        .child(head)
+        .children(rows)
+        .into_any_element()
 }

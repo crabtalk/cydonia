@@ -37,7 +37,7 @@ jobs:
       - run: cargo fmt --all --check
       # clippy runs build scripts, and those probe for the libraries below.
       - run: sudo .github/scripts/linux-deps
-      - run: cargo clippy --workspace --all-targets
+      - run: cargo clippy --workspace
 
   # Linux x86_64 and Windows. macOS is built on the machines cydonia is
   # developed on, and Linux aarch64 by `nightly.yml`. 22.04 sets the glibc

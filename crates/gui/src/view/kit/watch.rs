@@ -3,6 +3,7 @@
 //! drawing what it held before.
 
 use bezel::gpui::{Context, Entity, EntityId, FocusHandle, Subscription, Window};
+use std::{cell::Cell, rc::Rc};
 
 #[derive(Default)]
 pub(crate) struct Watch(Vec<(EntityId, Subscription)>);
@@ -68,6 +69,7 @@ impl Watch {
 /// A focus handle a view draws from, observed: the view draws again when the
 /// focus comes into the handle or anything inside it, and when it leaves.
 pub(crate) struct FocusWatch {
+    within: Rc<Cell<bool>>,
     _subscriptions: [Subscription; 2],
 }
 
@@ -77,11 +79,28 @@ impl FocusWatch {
         window: &mut Window,
         cx: &mut Context<V>,
     ) -> Self {
+        let within = Rc::new(Cell::new(false));
+        let (entered, left) = (within.clone(), within.clone());
         Self {
+            within,
             _subscriptions: [
-                cx.on_focus_in(focus, window, |_, _, cx| cx.notify()),
-                cx.on_focus_out(focus, window, |_, _, _, cx| cx.notify()),
+                cx.on_focus_in(focus, window, move |_, _, cx| {
+                    entered.set(true);
+                    cx.notify();
+                }),
+                cx.on_focus_out(focus, window, move |_, _, _, cx| {
+                    left.set(false);
+                    cx.notify();
+                }),
             ],
         }
+    }
+
+    /// Whether the focus is in the handle or anything inside it, as of the
+    /// last frame the focus moved in. Unlike
+    /// [`FocusHandle::contains_focused`], which reads the frame before, an
+    /// element drawn for the first time in that frame counts as inside.
+    pub(crate) fn within(&self) -> bool {
+        self.within.get()
     }
 }

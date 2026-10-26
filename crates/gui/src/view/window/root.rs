@@ -24,7 +24,7 @@ use crate::{
         window::{
             chrome,
             lights::{self, Lights},
-            menubar::CloseWindow,
+            menubar::{self, CloseWindow},
             modal::ModalLayer,
             section::Section,
         },
@@ -159,6 +159,14 @@ pub struct NewSessionWith {
     pub agent: String,
 }
 
+/// Start a session as the agent identity `identity` names, in the focused
+/// pane. Dispatched by the File menu, and so by the palette.
+#[derive(Clone, Debug, PartialEq, gpui::Action)]
+#[action(namespace = cydonia, no_json)]
+pub struct NewSessionAs {
+    pub identity: String,
+}
+
 /// Bring the tab at `index` of [`Workspace::numbered_tabs`] forward — `cmd-1`
 /// through `cmd-8` — or its last for `None`, `cmd-9`. An index past the last
 /// tab does nothing.
@@ -166,6 +174,16 @@ pub struct NewSessionWith {
 #[action(namespace = cydonia, no_json)]
 pub struct SwitchTab {
     pub index: Option<usize>,
+}
+
+/// Raise the agent modal on the identity `id` names, or on a new one for
+/// `None`: filled from the session `from` names, which saving makes the new
+/// identity's.
+#[derive(Clone, Debug, PartialEq, gpui::Action)]
+#[action(namespace = cydonia, no_json)]
+pub struct EditAgent {
+    pub id: Option<String>,
+    pub from: Option<u64>,
 }
 
 /// The pill at rest, and the agent mark beside it. Half of it is the stadium's
@@ -554,6 +572,9 @@ pub struct Cydonia {
     /// The menu that is up, of every menu the window's screens open — see
     /// [`crate::view::kit::menu`].
     pub(crate) menu: ContextMenu<Cydonia, Menu>,
+    /// The agent identities the File menu was last built with, by id and
+    /// name.
+    menu_agents: Vec<(String, String)>,
     /// The sidebar's search across projects — see [`crate::view::search`].
     pub(crate) search: Entity<crate::view::search::Search>,
     meter: Entity<Stats>,
@@ -578,10 +599,23 @@ impl Cydonia {
         Some(self.leaf()?.read(cx).entry.clone())
     }
 
-    /// What the model saying something changed asks of the window: the applied
-    /// search read again, and the composers pointed at what they are on.
+    /// What the model saying something changed asks of the window: the File
+    /// menu built again where the agents moved, the applied search read again,
+    /// and the composers pointed at what they are on.
     fn model_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.watch_sessions(window, cx);
+        self.sync_library(window, cx);
+        let agents: Vec<(String, String)> = self
+            .workspace
+            .read(cx)
+            .identities
+            .iter()
+            .map(|identity| (identity.id.clone(), identity.name.clone()))
+            .collect();
+        if agents != self.menu_agents {
+            self.menu_agents = agents;
+            menubar::refresh(cx);
+        }
         self.search.update(cx, crate::view::search::Search::refresh);
         let session = |this: &Self, cx: &App| {
             this.leaf()
@@ -833,7 +867,6 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.library = None;
         match self.workspace.read(cx).space_holding(&member) {
             Some(at) => {
                 if self.workspace.read(cx).space() != Some(at) {
@@ -851,7 +884,6 @@ impl Cydonia {
 
     /// Bring a tab of the strip forward, and the focus with it.
     pub(crate) fn show_slot(&mut self, slot: &Slot, window: &mut Window, cx: &mut Context<Self>) {
-        self.library = None;
         match slot {
             Slot::Space { space } => {
                 if let Some(ix) = self.workspace.read(cx).space_ix(space) {
@@ -863,6 +895,7 @@ impl Cydonia {
                     .update(cx, |workspace, cx| workspace.front_tab(slot, cx));
                 self.refocus(member, window, cx);
             }
+            Slot::Library {} => self.show_library(window, cx),
         }
         cx.notify();
     }
@@ -1099,6 +1132,7 @@ impl Cydonia {
             modals: cx.new(|_| ModalLayer::default()),
             library: None,
             menu: ContextMenu::default(),
+            menu_agents: Vec::new(),
             search,
             focus: cx.focus_handle(),
         };
@@ -1120,6 +1154,7 @@ impl Cydonia {
         .detach();
         // The window comes back on the tabs it was left on.
         this.sync_leaves(window, cx);
+        this.sync_library(window, cx);
         if let Some(front) = this.arrangement(cx).and_then(|space| space.focused_front())
             && let Some(at) = this
                 .leaves
@@ -1145,8 +1180,32 @@ impl Cydonia {
         this
     }
 
+    pub(crate) fn new_session_as_action(
+        &mut self,
+        action: &NewSessionAs,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.new_session_as(&action.identity, window, cx);
+    }
+
+    /// Start a session as the identity with this id, and show it.
+    pub(crate) fn new_session_as(
+        &mut self,
+        identity: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let id = self.workspace.update(cx, |workspace, cx| {
+            workspace.new_session_as(identity, None, cx)
+        });
+        if let Some(id) = id {
+            self.land_session(id, window, cx);
+        }
+    }
+
     /// Open a session on whichever agent the last one ran on, or on the first
-    /// one configured, as a tab of its own.
+    /// one configured, where the focus is — see [`Cydonia::land_session`].
     ///
     /// With none configured there is nothing to open a session *on*. A fresh
     /// install names no agent — see
@@ -1169,7 +1228,7 @@ impl Cydonia {
             .workspace
             .update(cx, |workspace, cx| workspace.new_session(agent, None, cx));
         if let Some(id) = id {
-            self.select_session(id, Opening::Kept, window, cx);
+            self.land_session(id, window, cx);
         }
     }
 
@@ -1275,20 +1334,13 @@ impl Cydonia {
         let Some(landing) = stepped(at, tabs.len(), step).map(|ix| tabs[ix].clone()) else {
             return;
         };
-        self.key_to_slot(&landing, window, cx);
-    }
-
-    /// Bring a tab forward from the keyboard: the focus stays on the window.
-    fn key_to_slot(&mut self, slot: &Slot, window: &mut Window, cx: &mut Context<Self>) {
-        self.show_slot(slot, window, cx);
-        window.focus(&self.focus, cx);
+        self.show_slot(&landing, window, cx);
     }
 
     /// Leaving a project is the moment a half-written card has to be filed:
     /// the spot it points at belongs to the board being navigated away from.
     pub(crate) fn select_project(&mut self, ix: usize, cx: &mut Context<Self>) {
         self.commit(cx);
-        self.library = None;
         self.workspace
             .update(cx, |workspace, cx| workspace.select_project(ix, cx));
     }
@@ -1322,6 +1374,16 @@ impl Cydonia {
         self.enter_member(member, opening, window, cx);
         self.sync_composer(cx);
         self.reveal_applied_match(cx);
+        self.focus_composer_of(id, window, cx);
+    }
+
+    /// Put the caret in the composer of session `id`, where it can be sent to.
+    pub(crate) fn focus_composer_of(
+        &mut self,
+        id: u64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self
             .workspace
             .read(cx)
@@ -1508,7 +1570,7 @@ impl Render for Cydonia {
                 else {
                     return;
                 };
-                this.key_to_slot(&slot, window, cx);
+                this.show_slot(&slot, window, cx);
             }))
             .on_action(cx.listener(|this, _: &Unfocus, window, cx| {
                 window.focus(&this.focus, cx);
@@ -1528,12 +1590,13 @@ impl Render for Cydonia {
             // worth closing a tab from. An element handler runs before the
             // global one that removes the window, so this is where the two
             // meanings part.
-            .on_action(cx.listener(
-                |this, _: &CloseWindow, window, cx| match this.leaf().is_some() {
-                    true => this.close_focused_pane(window, cx),
-                    false => window.remove_window(),
-                },
-            ))
+            .on_action(cx.listener(|this, _: &CloseWindow, window, cx| {
+                match (this.library_shown(cx), this.leaf().is_some()) {
+                    (true, _) => this.close_library(window, cx),
+                    (false, true) => this.close_focused_pane(window, cx),
+                    (false, false) => window.remove_window(),
+                }
+            }))
             .on_action(cx.listener(|this, _: &ZoomPane, _, cx| this.zoom_focused_pane(cx)))
             .on_action(cx.listener(Self::toggle_changes))
             .on_action(cx.listener(Self::copy_selection))

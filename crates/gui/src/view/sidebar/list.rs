@@ -4,7 +4,10 @@
 
 use super::{Group, Heading, Place, Row, shown};
 use crate::{
-    model::{state, workspace::Workspace},
+    model::{
+        state,
+        workspace::{Showing, Workspace},
+    },
     view::search::Search,
 };
 use artifact::kind::Kind;
@@ -49,19 +52,14 @@ impl<'a> List<'a> {
         // switch hides it hides here — the entries stay in the project and in
         // memory, and turning it back on lists them again with nothing to
         // rescan.
-        entries.retain(|entry| shown(&entry.row, features) && !self.filtered_out(&entry.row));
-        let split = entries.iter().position(|entry| entry.archived);
-        let mut entries = entries.into_iter().map(|entry| entry.row);
-        let mut rows: Vec<Row> = entries.by_ref().take(split.unwrap_or(usize::MAX)).collect();
-        if split.is_some()
-            && let Some(open) = self.workspace.projects.get(project)
-        {
-            rows.push(Row::Archive(open.id));
-            if open.archive_open {
-                rows.extend(entries);
-            }
-        }
-        self.ungrouped(rows)
+        // What is archived is the library's to list.
+        entries.retain(|entry| {
+            !entry.archived
+                && shown(&entry.row, features)
+                && !self.filtered_out(&entry.row)
+                && !self.claimed(&entry.row)
+        });
+        self.ungrouped(entries.into_iter().map(|entry| entry.row).collect())
     }
 
     /// Every one of a project's entries in the order the sidebar lists them,
@@ -138,6 +136,67 @@ impl<'a> List<'a> {
         entries
     }
 
+    /// Whether `row` is a session filed as an agent identity: listed under the
+    /// identity while it is held, and nowhere in the sidebar once it is gone.
+    fn claimed(&self, row: &Row) -> bool {
+        let Some(Showing::Session(id)) = row.showing() else {
+            return false;
+        };
+        self.workspace
+            .session(*id, self.cx)
+            .is_some_and(|chat| chat.identity.is_some())
+    }
+
+    /// The sessions filed as the identity `id` and still in use, across the
+    /// open projects, most recently touched first.
+    fn agent_rows(&self, id: &str) -> Vec<Row> {
+        let (workspace, cx) = (self.workspace, self.cx);
+        if !workspace.settings.features.sessions {
+            return Vec::new();
+        }
+        let mut sessions: Vec<(u128, Row)> = workspace
+            .projects
+            .iter()
+            .flat_map(|open| {
+                open.every(Kind::Session, cx)
+                    .filter(|facts| match facts.showing {
+                        Showing::Session(session) => open
+                            .session(session, cx)
+                            .is_some_and(|chat| chat.identity.as_deref() == Some(id)),
+                        _ => false,
+                    })
+                    .filter(|facts| !facts.archived)
+                    .map(|facts| {
+                        let row = Row::Entry {
+                            project: open.id,
+                            showing: facts.showing,
+                        };
+                        (facts.touched, row)
+                    })
+            })
+            .collect();
+        sessions.sort_by_key(|(touched, _)| std::cmp::Reverse(*touched));
+        let rows = sessions.into_iter().map(|(_, row)| row).collect();
+        self.ungrouped(rows)
+    }
+
+    /// The identities listed, by name, for the Agents heading.
+    fn agents(&self) -> Vec<Group> {
+        let mut identities: Vec<(String, Group)> = self
+            .workspace
+            .identities
+            .iter()
+            .map(|identity| {
+                (
+                    identity.name.to_lowercase(),
+                    Group::Agent(identity.id.clone()),
+                )
+            })
+            .collect();
+        identities.sort_by(|a, b| a.0.cmp(&b.0));
+        identities.into_iter().map(|(_, group)| group).collect()
+    }
+
     /// The apps listed, by name, for the Apps heading.
     fn apps(&self) -> Vec<Row> {
         let mut apps: Vec<(String, Row)> = self
@@ -190,6 +249,11 @@ impl<'a> List<'a> {
                 .unwrap_or_default(),
             Group::Space(id) => self
                 .space_rows(id)
+                .into_iter()
+                .filter(|row| !self.filtered_out(row))
+                .collect(),
+            Group::Agent(id) => self
+                .agent_rows(id)
                 .into_iter()
                 .filter(|row| !self.filtered_out(row))
                 .collect(),
@@ -264,6 +328,7 @@ impl<'a> List<'a> {
                 .project_ix(*path)
                 .is_some_and(|ix| !workspace.projects[ix].expanded),
             Group::Space(id) => workspace.space_folded(id),
+            Group::Agent(id) => workspace.agent_folded(id),
         }
     }
 
@@ -278,7 +343,7 @@ impl<'a> List<'a> {
             // A space is not inside a project — it can hold panes from
             // several — so its row starts at the column's edge, where the
             // project headings are.
-            Row::Group(Group::Space(_)) | Row::Heading(_) | Row::App(_) => 0,
+            Row::Group(Group::Space(_) | Group::Agent(_)) | Row::Heading(_) | Row::App(_) => 0,
             _ => u8::from(self.workspace.indent_project_rows),
         }
     }
@@ -299,6 +364,11 @@ impl<'a> List<'a> {
         // to open one. After the projects, the spaces, because a space is not
         // inside one.
         let mut sections = vec![(Heading::Projects, projects.collect::<Vec<_>>())];
+        // The agents' heading whether or not there is one: it holds the way to
+        // make one.
+        if workspace.settings.features.sessions {
+            sections.push((Heading::Agents, self.agents()));
+        }
         if self.lists_spaces() {
             sections.push((Heading::Spaces, spaces.collect()));
         }
@@ -316,14 +386,19 @@ impl<'a> List<'a> {
                                 .map(|ix| self.ranked(ix))
                                 .unwrap_or_default()
                                 .into_iter()
+                                .filter(|e| !e.archived)
                                 .map(|e| e.row)
                                 .collect(),
                         ),
-                        Group::Space(_) => self.members(&group),
+                        Group::Space(_) | Group::Agent(_) => self.members(&group),
                     };
                     let members: Vec<_> = members
                         .into_iter()
-                        .filter(|row| matches.contains(row) && !self.filtered_out(row))
+                        .filter(|row| {
+                            matches.contains(row)
+                                && !self.filtered_out(row)
+                                && (matches!(group, Group::Agent(_)) || !self.claimed(row))
+                        })
                         .collect();
                     if !members.is_empty() {
                         rows.push(Row::Group(group));
@@ -394,17 +469,17 @@ impl<'a> List<'a> {
                         group = None;
                         "heading".into()
                     }
-                    Row::Archive(_) => "archive".into(),
                     Row::Group(Group::Project(_)) => "projects".into(),
                     Row::Group(Group::Space(_)) => "spaces".into(),
+                    Row::Group(Group::Agent(_)) => "agents".into(),
                     Row::App(_) => "apps".into(),
                     Row::Entry { project, .. } => match group {
                         Some(Group::Space(id)) => format!("space-{id}").into(),
+                        Some(Group::Agent(id)) => format!("agent-{id}").into(),
                         _ => format!(
-                            "entries-{}-{}-{}",
+                            "entries-{}-{}",
                             project,
                             row.pinned(self.workspace, self.cx),
-                            row.archived(self.workspace, self.cx),
                         )
                         .into(),
                     },

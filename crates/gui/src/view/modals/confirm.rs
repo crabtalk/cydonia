@@ -37,6 +37,8 @@ pub(crate) enum Doomed {
     Many(Vec<Doomed>),
     /// A label, off every entry in every open project carrying it.
     Label(String),
+    /// An agent identity, by its id.
+    Identity(String),
 }
 
 /// A delete that has been asked for and not yet agreed to, as a modal.
@@ -168,6 +170,9 @@ impl Cydonia {
             Doomed::Card(board, card) => self.delete_card(board, card, cx),
             Doomed::Column(board, column) => self.drop_column(board, column, cx),
             Doomed::Turn(id, at) => self.rewind(*id, *at, window, cx),
+            Doomed::Identity(id) => self
+                .workspace
+                .update(cx, |workspace, cx| workspace.remove_identity(id, cx)),
             Doomed::Label(name) => {
                 self.workspace
                     .update(cx, |workspace, cx| workspace.delete_label(name, cx));
@@ -184,6 +189,30 @@ impl Cydonia {
                 }
             }
         }
+    }
+
+    /// The same for an agent identity, by its id and its name.
+    pub(crate) fn ask_delete_identity(
+        &mut self,
+        id: String,
+        name: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.ask(
+            Confirm {
+                label: format!("the agent \u{201c}{name}\u{201d}"),
+                doomed: Doomed::Identity(id),
+                goes: None,
+                note: "Its sessions stay in their projects, out of the sidebar. The library \
+                    still lists them. This cannot be undone."
+                    .to_owned(),
+                root: cx.entity().downgrade(),
+                focus: cx.focus_handle(),
+            },
+            window,
+            cx,
+        );
     }
 
     /// The same for a label, carried by `count` entries.
@@ -403,7 +432,7 @@ impl Cydonia {
                     "Its builds and its own tables go with it; a loaded crate's folder stays. {UNDONE}"
                 ),
             ),
-            Row::Group(Group::Project(_)) | Row::Archive(_) | Row::Heading(_) => {
+            Row::Group(Group::Project(_) | Group::Agent(_)) | Row::Heading(_) => {
                 (None, UNDONE.to_owned())
             }
         }

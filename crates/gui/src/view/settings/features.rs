@@ -7,8 +7,11 @@
 
 use crate::{
     model::settings::Feature,
-    view::component::file::external,
-    view::settings::{SettingsWindow, Switch, group},
+    view::{
+        component::file::external,
+        settings::{SettingsWindow, Switch, group},
+        window::menubar,
+    },
 };
 use bezel::{
     gpui::{AnyElement, Context, div, prelude::*, px},
@@ -161,6 +164,7 @@ impl SettingsWindow {
             move |this, cx| {
                 this.workspace
                     .update(cx, |workspace, cx| workspace.set_feature(feature, !on, cx));
+                menubar::refresh(cx);
             },
         )
     }

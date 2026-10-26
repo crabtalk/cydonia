@@ -38,6 +38,10 @@ pub struct Record {
     /// there in `settings.toml` under its new name and nothing matched it.
     #[serde(default)]
     pub agent_id: Option<String>,
+    /// The id of the agent identity it runs as. None is a session no identity
+    /// owns; an id no identity on this machine holds is an orphaned one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<String>,
     /// The agent's own id for the session, which is what `session/load`
     /// resumes. Absent when the session never reached an agent.
     #[serde(default)]
@@ -114,6 +118,7 @@ impl Record {
             number: None,
             agent: self.agent.clone(),
             agent_id: self.agent_id.clone(),
+            identity: self.identity.clone(),
             session: None,
             title: format!(
                 "Fork of {}",

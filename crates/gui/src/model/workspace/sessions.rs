@@ -64,13 +64,27 @@ impl Workspace {
         front: bool,
         cx: &mut Context<Self>,
     ) -> Option<u64> {
+        self.start_session(ix, front, cx, |id, cwd, cx| {
+            ChatSession::connect(id, entry, cwd, seed, cx)
+        })
+    }
+
+    /// Put the session `make` opens, given its id and its project's directory,
+    /// in the project at `ix`. `front` puts it in front of its project.
+    pub(super) fn start_session(
+        &mut self,
+        ix: usize,
+        front: bool,
+        cx: &mut Context<Self>,
+        make: impl FnOnce(u64, PathBuf, &mut Context<ChatSession>) -> ChatSession,
+    ) -> Option<u64> {
         if !self.settings.features.sessions || ix >= self.projects.len() {
             return None;
         }
         let id = self.next_id;
         self.next_id += 1;
         let cwd = self.projects[ix].path.clone();
-        let chat = cx.new(|cx| ChatSession::connect(id, entry, cwd, seed, cx));
+        let chat = cx.new(|cx| make(id, cwd, cx));
         let project = &mut self.projects[ix];
         project.sessions.push(HeldSession { id, chat });
         if front {
@@ -216,7 +230,8 @@ impl Workspace {
         });
     }
 
-    pub(super) fn project_of(&self, id: u64) -> Option<usize> {
+    /// Where the open project holding session `id` is listed.
+    pub fn project_of(&self, id: u64) -> Option<usize> {
         self.projects
             .iter()
             .position(|project| project.session_entity(id).is_some())
@@ -263,7 +278,11 @@ impl Workspace {
             args: Vec::new(),
             env: Default::default(),
         });
+        let identity = stored.identity.clone();
         let mut chat = ChatSession::restore(id, path.clone(), entry, stored);
+        if let Some(identity) = identity.as_deref().and_then(|id| self.identity(id)) {
+            chat.adopt(identity);
+        }
         chat.unload_history();
         let chat = HeldSession::new(chat, cx);
         self.projects[ix].sessions.push(chat);
@@ -686,18 +705,19 @@ impl Workspace {
 
     /// Switch a session's mode — what the composer's mode picker reports.
     /// See [`ChatSession::set_mode`]. A pick in an article's session becomes
-    /// the article default; one in any other session, the project's default
-    /// for its agent.
+    /// the article default; one in a session an identity owns, the identity's;
+    /// one in any other session, the project's default for its agent.
     pub fn set_session_mode(&mut self, id: u64, mode_id: String, cx: &mut Context<Self>) {
         let Some(chat) = self.session_entity(id).cloned() else {
             return;
         };
-        let (taken, article, cwd, entry) = chat.update(cx, |chat, cx| {
+        let (taken, article, identity, cwd, entry) = chat.update(cx, |chat, cx| {
             let taken = chat.set_mode(&mode_id, cx);
             cx.notify();
             (
                 taken,
                 chat.article.is_some(),
+                chat.identity.clone(),
                 chat.cwd.clone(),
                 chat.entry.clone(),
             )
@@ -707,6 +727,12 @@ impl Workspace {
         }
         if article {
             self.remember_article(&cwd, &entry, ArticleChange::Mode(mode_id), cx);
+        } else if let Some(identity) = identity.filter(|id| self.identity(id).is_some()) {
+            self.edit_identity(
+                &identity,
+                |identity| identity.choices.mode = Some(mode_id),
+                cx,
+            );
         } else if let Err(error) = session_preferences::remember_mode(&cwd, &entry, &mode_id) {
             chat.update(cx, |chat, cx| {
                 chat.default_unsaved(error);
@@ -728,12 +754,13 @@ impl Workspace {
         let Some(chat) = self.session_entity(id).cloned() else {
             return;
         };
-        let (taken, article, cwd, entry) = chat.update(cx, |chat, cx| {
+        let (taken, article, identity, cwd, entry) = chat.update(cx, |chat, cx| {
             let taken = chat.set_config(&config_id, value.clone(), cx);
             cx.notify();
             (
                 taken,
                 chat.article.is_some(),
+                chat.identity.clone(),
                 chat.cwd.clone(),
                 chat.entry.clone(),
             )
@@ -741,7 +768,15 @@ impl Workspace {
         if !taken {
             return;
         }
-        if article {
+        if !article && let Some(identity) = identity.filter(|id| self.identity(id).is_some()) {
+            self.edit_identity(
+                &identity,
+                |identity| {
+                    identity.choices.config.insert(config_id, value);
+                },
+                cx,
+            );
+        } else if article {
             if let SessionConfigOptionValue::ValueId { value } = value {
                 let change = ArticleChange::Config {
                     id: config_id,

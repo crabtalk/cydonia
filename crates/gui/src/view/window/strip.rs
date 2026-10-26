@@ -133,6 +133,7 @@ impl Strip {
                         .update(cx, |strip, cx| strip.rename_space(id, window, cx));
                 },
             )],
+            Slot::Library {} => Vec::new(),
         }
     }
 
@@ -207,6 +208,12 @@ impl Strip {
                     status::Mark::of_most_pressing(workspace.space_sessions(space, cx)),
                 )
             }
+            Slot::Library {} => (
+                SharedString::from("library"),
+                tabs::Label::new("Library").with_icon(icons::text::LibraryBig),
+                false,
+                None,
+            ),
         };
         let preview = slot.entry().is_some() && slot.entry() == workspace.preview_tab();
         let label = match mark {

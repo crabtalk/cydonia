@@ -99,14 +99,6 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Show what the project has archived under its divider, or fold it away.
-    pub fn toggle_archive(&mut self, ix: usize, cx: &mut Context<Self>) {
-        if let Some(open) = self.projects.get_mut(ix) {
-            open.archive_open = !open.archive_open;
-            cx.notify();
-        }
-    }
-
     /// Carry a project to another place in the list. `active` follows the
     /// project it points at rather than the index it sits on: which one is in
     /// front has nothing to do with what order they are listed in.

@@ -20,15 +20,17 @@ use crate::{
             rename::Renaming,
             stamp, status, text,
         },
+        library::Shelf,
         modals::palette::{Filter, ToggleSearch},
         search::Search,
         window::{
             reach::InWindow as _,
-            root::{self, Cydonia, NewSession, OpenProject},
+            root::{self, Cydonia, EditAgent, OpenProject},
         },
     },
 };
 use bezel::{
+    agent::{Face, avatar::Motion, mascot},
     gpui::{
         self, AnyElement, App, Context, Div, ElementId, Empty, FontWeight, MouseButton,
         SharedString, Stateful, Window, div, prelude::*, px,
@@ -72,17 +74,13 @@ impl Sidebar {
     ) -> Stateful<Div> {
         let inner = match row {
             Row::Group(group) => self.group_head(group.clone(), false, lifted, window, cx),
-            Row::Archive(path) => match self.workspace.read(cx).project_ix(*path) {
-                Some(ix) => self.archive_divider(ix, cx),
-                None => Empty.into_any_element(),
-            },
             Row::Entry { .. } => self.entry_row(row, lifted, window, cx),
             Row::App(id) => self.app_row(row, id, lifted, cx),
             Row::Heading(heading) => self.heading_row(*heading, cx),
         };
         let entry = !matches!(
             row,
-            Row::Group(Group::Project(_)) | Row::Archive(_) | Row::Heading(_)
+            Row::Group(Group::Project(_) | Group::Agent(_)) | Row::Heading(_)
         );
         let pinned = row.pinned(self.workspace.read(cx), cx);
         let pitch = self.shape(row, cx).pitch();
@@ -148,6 +146,18 @@ impl Sidebar {
         let workspace = self.workspace.read(cx);
         let (name, folded, marks, space_id): (String, bool, (Icon, Icon), Option<String>) =
             match &group {
+                Group::Agent(id) => match workspace.identity(id) {
+                    Some(identity) => (
+                        identity.name.clone(),
+                        workspace.agent_folded(id),
+                        (
+                            icons::development::Bot.into(),
+                            icons::development::Bot.into(),
+                        ),
+                        None,
+                    ),
+                    None => return Empty.into_any_element(),
+                },
                 Group::Project(path) => match workspace
                     .project_ix(*path)
                     .and_then(|ix| workspace.projects.get(ix))
@@ -180,7 +190,19 @@ impl Sidebar {
             Group::Space(id) => {
                 status::Mark::of_most_pressing(self.workspace.read(cx).space_sessions(id, cx))
             }
+            Group::Agent(id) => {
+                status::Mark::of_most_pressing(self.workspace.read(cx).identity_sessions(id, cx))
+            }
             Group::Project(_) => None,
+        };
+        // An identity wears its blob where a group's mark goes.
+        let avatar = match &group {
+            Group::Agent(id) => self
+                .workspace
+                .read(cx)
+                .identity(id)
+                .map(|identity| identity.avatar),
+            Group::Project(_) | Group::Space(_) => None,
         };
         let key = key_of(&Row::Group(group.clone()));
         let (menu, add) = match &group {
@@ -189,6 +211,7 @@ impl Sidebar {
                 Some(SidebarMenu::Add(*project)),
             ),
             Group::Space(_) => (SidebarMenu::Entry(Row::Group(group.clone())), None),
+            Group::Agent(id) => (SidebarMenu::Agent(id.clone()), None),
         };
         // The buttons stay on show while either one's menu is open. They are
         // revealed by the row's hover, and the pointer leaves the row the
@@ -196,9 +219,12 @@ impl Sidebar {
         // menu standing open beside it.
         let held = self.menu_open(&menu) || add.as_ref().is_some_and(|add| self.menu_open(add));
         let reveal = (!held).then_some("group-head");
-        let renaming = space_id
-            .as_ref()
-            .is_some_and(|id| matches!(&self.rename.what, Some(Renaming::Space(at)) if at == id));
+        let renaming = match &group {
+            Group::Agent(id) => matches!(&self.rename.what, Some(Renaming::Agent(at)) if at == id),
+            _ => space_id.as_ref().is_some_and(
+                |id| matches!(&self.rename.what, Some(Renaming::Space(at)) if at == id),
+            ),
+        };
         let label = match renaming {
             true => self.rename.field.clone().into_any_element(),
             false => div()
@@ -219,6 +245,10 @@ impl Sidebar {
             Group::Space(_) => {
                 let row = Row::Group(group.clone());
                 Rc::new(move |this, cx| this.entry_rows(&row, cx))
+            }
+            Group::Agent(id) => {
+                let id = id.clone();
+                Rc::new(move |this, cx| this.agent_menu_rows(&id, cx))
             }
         };
         let head = div()
@@ -271,15 +301,26 @@ impl Sidebar {
                     .ghost(SharedString::from(format!("group-fold-{key}")))
                     .flex_none()
                     .p(px(2.))
-                    .child(match status {
-                        Some(status) => div()
+                    .child(match (status, avatar) {
+                        (Some(status), _) => div()
                             .size(px(14.))
                             .flex()
                             .items_center()
                             .justify_center()
                             .child(status.draw(cx))
                             .into_any_element(),
-                        None => icons::icon(match folded {
+                        // Asleep while its sessions are folded away.
+                        (None, Some(avatar)) => div()
+                            .size(px(14.))
+                            .child(mascot(
+                                &Face::from(avatar.0).motion(match folded {
+                                    true => Motion::ASLEEP,
+                                    false => Motion::default(),
+                                }),
+                                0.,
+                            ))
+                            .into_any_element(),
+                        (None, None) => icons::icon(match folded {
                             false => marks.0,
                             true => marks.1,
                         })
@@ -299,7 +340,7 @@ impl Sidebar {
             .child(label)
             .children(match &group {
                 Group::Project(project) => self.label_filter_chip(*project, cx),
-                Group::Space(_) => None,
+                Group::Space(_) | Group::Agent(_) => None,
             })
             // Ahead of the `+`, which is the one that gets pressed: sorting
             // and the rest are settled once and left alone.
@@ -320,6 +361,12 @@ impl Sidebar {
                 // [`Self::sidebar_row`].
                 .children(match &group {
                     Group::Project(project) => self.project_menu(*project, window, cx),
+                    Group::Agent(id) => self.menu_here(
+                        &SidebarMenu::Agent(id.clone()),
+                        SharedString::from(format!("agent-menu-{id}")),
+                        window,
+                        cx,
+                    ),
                     Group::Space(_) => None,
                 }),
             )
@@ -338,6 +385,30 @@ impl Sidebar {
                         cx,
                     )
                     .children(self.add_menu(*project, window, cx)),
+                ),
+                // Nothing to choose between: a session as the identity.
+                Group::Agent(id) => Some(
+                    menu::button(
+                        SharedString::from(format!("group-add-{key}")),
+                        icons::math::Plus,
+                        match reveal {
+                            Some(group) => menu::Reveal::Group(group),
+                            None => menu::Reveal::Always,
+                        },
+                        false,
+                        cx,
+                    )
+                    .tooltip(|window, cx| Tooltip::text("New session", window, cx))
+                    .on_click(cx.listener({
+                        let id = id.clone();
+                        move |this, _, window, cx| {
+                            cx.stop_propagation();
+                            let id = id.clone();
+                            this.defer_window(window, cx, move |root, window, cx| {
+                                root.new_session_as(&id, window, cx)
+                            });
+                        }
+                    })),
                 ),
                 Group::Space(_) => None,
             })
@@ -367,6 +438,24 @@ impl Sidebar {
                                 SidebarMenu::Project(project),
                                 MenuPlace::At(press.position),
                                 move |this, _, cx| Self::through(this.project_rows(project, cx)),
+                                window,
+                                cx,
+                            );
+                        }
+                    }),
+                ),
+            Group::Agent(id) => self
+                .menu_trigger(head, SidebarMenu::Agent(id.clone()), cx)
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener({
+                        let id = id.clone();
+                        move |this, press: &gpui::MouseDownEvent, window, cx| {
+                            let id = id.clone();
+                            this.toggle_menu(
+                                SidebarMenu::Agent(id.clone()),
+                                MenuPlace::At(press.position),
+                                move |this, _, cx| Self::through(this.agent_menu_rows(&id, cx)),
                                 window,
                                 cx,
                             );
@@ -728,38 +817,6 @@ impl Sidebar {
         self.menu_here(at, "sidebar-entry-menu", window, cx)
     }
 
-    /// The line the archive folds under: what is put away is still listed, a
-    /// step below everything still in hand.
-    fn archive_divider(&self, project: usize, cx: &mut Context<Self>) -> AnyElement {
-        let theme = Theme::of(cx).clone();
-        let trail = self.trail(cx);
-        let Some(held) = self.workspace.read(cx).projects.get(project) else {
-            return Empty.into_any_element();
-        };
-        let open = held.archive_open;
-        let indent = self.list(cx).indent_of(&Row::Archive(held.id));
-        row(
-            ("archive", project),
-            "archive-row",
-            Selection::None,
-            false,
-            indent,
-            trail,
-            &theme,
-        )
-        .child(theme.disclosure(open).text_color(theme.text_faint))
-        .child(
-            div()
-                .flex_none()
-                .text_style(TextStyle::Callout)
-                .text_color(theme.text_faint)
-                .child("Archived"),
-        )
-        .child(div().flex_1().h(px(1.)).bg(theme.border))
-        .on_click(cx.listener(move |this, _, window, cx| this.toggle_archive(project, window, cx)))
-        .into_any_element()
-    }
-
     /// A section's heading: a press folds the section, and the chevron beside
     /// the label, shown while the pointer is on the heading, says which way it
     /// stands. The projects' also holds the way to open another, shown while
@@ -772,30 +829,58 @@ impl Sidebar {
             self.search.read(cx).query().is_none() && workspace.section_folded(heading.key());
         let group: &'static str = match heading {
             Heading::Projects => "projects-heading",
+            Heading::Agents => "agents-heading",
             Heading::Spaces => "spaces-heading",
             Heading::Apps => "apps-heading",
         };
-        let open = matches!(heading, Heading::Projects).then(|| {
-            let chord = keymap::label(Command::OpenProject, &workspace.settings.shortcuts);
-            // The square every `···` and `+` in this column is, in the
-            // heading's ink.
+        // The square every `···` and `+` in this column is, in the heading's
+        // ink.
+        let plus = |id: &'static str| {
             theme
                 .tinted_icon_button(icons::math::Plus, theme.text_faint)
-                .id("open-project")
+                .id(id)
                 .flex_none()
                 .invisible()
                 .group_hover(group, |el| el.visible())
-                .tooltip(move |window, cx| match chord.clone() {
-                    Some(chord) => Tooltip::with_keystroke("Open project", chord, window, cx),
-                    None => Tooltip::text("Open project", window, cx),
-                })
-                .on_click(cx.listener(|this, _, window, cx| {
-                    cx.stop_propagation();
-                    this.defer_window(window, cx, |root, window, cx| {
-                        root.open_project_action(&OpenProject, window, cx)
-                    });
-                }))
-        });
+        };
+        let open = match heading {
+            Heading::Projects => {
+                let chord = keymap::label(Command::OpenProject, &workspace.settings.shortcuts);
+                Some(
+                    plus("open-project")
+                        .tooltip(move |window, cx| match chord.clone() {
+                            Some(chord) => {
+                                Tooltip::with_keystroke("Open project", chord, window, cx)
+                            }
+                            None => Tooltip::text("Open project", window, cx),
+                        })
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            cx.stop_propagation();
+                            this.defer_window(window, cx, |root, window, cx| {
+                                root.open_project_action(&OpenProject, window, cx)
+                            });
+                        })),
+                )
+            }
+            Heading::Agents => Some(
+                plus("new-agent")
+                    .tooltip(|window, cx| Tooltip::text("New agent", window, cx))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        cx.stop_propagation();
+                        this.defer_window(window, cx, |root, window, cx| {
+                            root.edit_agent_action(
+                                &EditAgent {
+                                    id: None,
+                                    from: None,
+                                },
+                                window,
+                                cx,
+                            )
+                        });
+                    })),
+            ),
+            Heading::Spaces | Heading::Apps => None,
+        };
         // A row's frame without its washes, the label ahead of its chevron.
         row_frame(group, group, 0, trail)
             .text_color(theme.text_faint)
@@ -825,25 +910,19 @@ impl Sidebar {
             .into_any_element()
     }
 
-    /// What the `+` starts here. Session first: it is what the sidebar is for.
-    ///
-    /// With more than one agent installed the session row asks which, since
-    /// the one `⌘N` would pick is whoever the project last talked to — which
-    /// leaves every other agent with no way in.
+    /// What the `+` makes here. No session.
     fn add_rows(&self, project: ProjectId, cx: &App) -> Vec<(Item, Act)> {
         let workspace = self.workspace.read(cx);
         let Some(ix) = workspace.project_ix(project) else {
             return Vec::new();
         };
-        new::rows(new::offered(workspace), |kind| {
+        let offered = new::Offered {
+            sessions: false,
+            ..new::offered(workspace)
+        };
+        new::rows(offered, |kind| {
             Box::new(move |this: &mut Cydonia, window, cx| match kind {
-                New::Session(at) => {
-                    this.select_project(ix, cx);
-                    match at {
-                        Some(at) => this.pick_agent(at, window, cx),
-                        None => this.new_session_action(&NewSession, window, cx),
-                    }
-                }
+                New::Session(_) => {}
                 New::Board => this.ask_new_board(ix, window, cx),
                 New::Article => this.new_article(ix, window, cx),
                 New::Table => this.new_table(ix, window, cx),
@@ -947,12 +1026,55 @@ impl Sidebar {
             ],
         )];
         rows.extend(self.label_filter_menu(ix, cx));
+        rows.push(menu::row::<Cydonia>(
+            Item::action("Show archived").with_icon(icons::files::Archive),
+            move |this, window, cx| this.open_library(Shelf::archived_in(project), window, cx),
+        ));
         rows.extend(on_disk(workspace.path_of(project).to_path_buf()));
         rows.push(menu::row::<Cydonia>(
             Item::action("Remove project").with_icon(icons::files::FolderMinus),
             move |this, _, cx| this.close_project(ix, cx),
         ));
         rows
+    }
+
+    /// What an identity's `···` holds.
+    fn agent_menu_rows(&self, id: &str, cx: &App) -> Vec<(Item, Act)> {
+        let Some(name) = self
+            .workspace
+            .read(cx)
+            .identity(id)
+            .map(|identity| identity.name.clone())
+        else {
+            return Vec::new();
+        };
+        let (edit, rename, remove) = (id.to_owned(), id.to_owned(), id.to_owned());
+        vec![
+            menu::row::<Cydonia>(
+                Item::action("Edit agent…").with_icon(icons::development::Bot),
+                move |root, window, cx| {
+                    let edit = EditAgent {
+                        id: Some(edit.clone()),
+                        from: None,
+                    };
+                    root.edit_agent_action(&edit, window, cx)
+                },
+            ),
+            menu::row::<Cydonia>(
+                Item::action("Rename").with_icon(icons::text::SquarePen),
+                move |root, window, cx| {
+                    let what = Renaming::Agent(rename.clone());
+                    root.sidebar
+                        .update(cx, |sidebar, cx| sidebar.start_rename(what, window, cx));
+                },
+            ),
+            menu::row::<Cydonia>(
+                Item::action("Remove").with_icon(icons::files::Trash),
+                move |root, window, cx| {
+                    root.ask_delete_identity(remove.clone(), name.clone(), window, cx)
+                },
+            ),
+        ]
     }
 
     /// The heading's menu, while it is up: at the pointer from a right press,

@@ -2,6 +2,7 @@
 //! [`ModalLayer`](crate::view::window::modal::ModalLayer), raised from more
 //! than one screen.
 
+pub mod agent;
 pub mod confirm;
 pub mod desktop;
 pub mod install_app;

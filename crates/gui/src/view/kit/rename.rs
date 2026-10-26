@@ -53,6 +53,8 @@ pub(crate) enum Renaming {
     /// A space, by its id — auto-named `space-1` until someone gives it a
     /// name of their own.
     Space(String),
+    /// An agent identity's display name, by its id. Its handle stays.
+    Agent(String),
 }
 
 impl Renaming {
@@ -68,13 +70,13 @@ impl Renaming {
                 ..
             } => Some(Self::Table(key.clone())),
             Row::Group(Group::Space(id)) => Some(Self::Space(id.clone())),
+            Row::Group(Group::Agent(id)) => Some(Self::Agent(id.clone())),
             Row::Entry {
                 showing: Showing::Article(_) | Showing::Board(_),
                 ..
             }
             | Row::App(_)
             | Row::Group(Group::Project(_))
-            | Row::Archive(_)
             | Row::Heading(_) => None,
         }
     }
@@ -97,6 +99,10 @@ impl Renaming {
                 .space_by_id(id)
                 .map(|space| space.name.clone())
                 .unwrap_or_default(),
+            Self::Agent(id) => workspace
+                .identity(id)
+                .map(|identity| identity.name.clone())
+                .unwrap_or_default(),
         }
     }
 
@@ -111,6 +117,7 @@ impl Renaming {
             Self::Session(id) => workspace.rename_session(id, name, cx),
             Self::Table(key) => workspace.rename_table(&key, name, cx),
             Self::Space(id) => workspace.rename_space(&id, name, cx),
+            Self::Agent(id) => workspace.rename_identity(&id, name, cx),
         }
     }
 }

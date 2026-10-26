@@ -10,7 +10,7 @@ use crate::{
     model::{
         project::ProjectId,
         settings::Features,
-        workspace::{Opening, Showing, Workspace},
+        workspace::{Opening, Showing, Slot, Workspace},
     },
     view::{
         kit::{
@@ -227,6 +227,21 @@ pub(crate) struct Shelf {
     query: String,
 }
 
+impl Shelf {
+    /// What `project` has archived, articles first.
+    pub(crate) fn archived_in(project: ProjectId) -> Self {
+        Self {
+            tab: Tab::Articles,
+            status: Archived::Only,
+            project: Some(project),
+            agent: None,
+            labels: Vec::new(),
+            order: Order::EDITED,
+            query: String::new(),
+        }
+    }
+}
+
 /// Which of the library's menus is up.
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) enum LibraryMenu {
@@ -272,7 +287,7 @@ pub(crate) struct Library {
     /// Every app's program, whose build names its listing.
     apps: Watch,
     pub(crate) focus: FocusHandle,
-    _focus_watch: FocusWatch,
+    pub(crate) focus_watch: FocusWatch,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -359,7 +374,7 @@ impl Library {
             strip: Rc::new(Cell::new(px(0.))),
             apps: Watch::default(),
             focus,
-            _focus_watch: focus_watch,
+            focus_watch,
             _subscriptions: subscriptions,
         }
     }
@@ -386,19 +401,55 @@ struct Listing {
 }
 
 impl Cydonia {
-    /// Put the library up, or take it down.
+    /// Whether the library's tab is in front, so the library is what the
+    /// window shows.
+    pub(crate) fn library_shown(&self, cx: &App) -> bool {
+        self.workspace.read(cx).library_in_front()
+    }
+
+    /// Put the library up, or close its tab where it is in front.
     pub(crate) fn toggle_library(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        match self.library.is_some() {
-            true => {
-                self.commit(cx);
-                self.library = None;
-                cx.notify();
-            }
-            false => {
+        match self.library_shown(cx) {
+            true => self.close_library(window, cx),
+            false => self.show_library(window, cx),
+        }
+    }
+
+    /// Bring the library's tab to the front, as it was left where it is open.
+    pub(crate) fn show_library(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let library = match self.library.clone() {
+            Some(library) => library,
+            None => {
                 let (workspace, root) = (self.workspace.clone(), cx.entity().downgrade());
-                let library = cx.new(|cx| Library::new(workspace, root, window, cx));
-                self.put_up_library(library, window, cx)
+                cx.new(|cx| Library::new(workspace, root, window, cx))
             }
+        };
+        self.put_up_library(library, window, cx)
+    }
+
+    /// Close the library's tab, and bring up the tab it hands the front to.
+    pub(crate) fn close_library(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.commit(cx);
+        self.library = None;
+        self.workspace
+            .update(cx, |workspace, cx| workspace.close_library_tab(cx));
+        if let Some(front) = self.workspace.read(cx).front_slot().cloned() {
+            self.show_slot(&front, window, cx);
+        }
+        cx.notify();
+    }
+
+    /// The view held for the library's tab: made where the strip holds the tab
+    /// and nothing is held for it, as at launch, and dropped with the tab.
+    pub(crate) fn sync_library(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let held = self.workspace.read(cx).strip().contains(&Slot::Library {});
+        match (held, self.library.is_some()) {
+            (true, false) => {
+                let (workspace, root) = (self.workspace.clone(), cx.entity().downgrade());
+                self.library = Some(cx.new(|cx| Library::new(workspace, root, window, cx)));
+            }
+            (false, true) => self.library = None,
+            _ => {}
         }
     }
 
@@ -426,6 +477,8 @@ impl Cydonia {
         // none of the window's commands.
         let focus = library.read(cx).focus.clone();
         self.library = Some(library);
+        self.workspace
+            .update(cx, |workspace, cx| workspace.open_library_tab(cx));
         window.focus(&focus, cx);
         cx.notify();
     }
@@ -1406,7 +1459,7 @@ impl Library {
             &theme,
             columns,
             ix == 0,
-            Selection::new(checked, self.focus.contains_focused(window, cx)),
+            Selection::new(checked, self.focus_watch.within()),
             cells,
         )
         .h(px(ROW))

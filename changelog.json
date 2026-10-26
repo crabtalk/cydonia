@@ -1,8 +1,32 @@
 [
   {
+    "version": "0.2.7",
+    "date": "2026-10-26",
+    "summary": "Agents: name an agent program with its project and settings, give it a face, and start its sessions from the sidebar, the palette or a drag onto a pane. The library opens as a tab, and archived entries live there.",
+    "new": [
+      "Make an agent — a name, a project, an agent program and its mode and model — from File › New Agent…, the Agents heading in the sidebar, or Settings › Agents, and edit, rename or remove it later",
+      "Give each agent a pixel blob drawn from its id, and click the blob in the agent editor to draw another",
+      "List your agents in the sidebar under Agents, each with its sessions under it, and fold one away to see it asleep",
+      "Start a session as an agent from its + in the sidebar, from File › New Session As, or from the palette",
+      "Drag an agent onto a pane to start a session as it there: an edge opens it beside, the middle stacks it in front",
+      "Make an agent from an existing session with Make agent from this… in its menu",
+      "Open the library from a project's menu on just what that project has archived, with Show archived"
+    ],
+    "changed": [
+      "Open the library as a tab of the window's strip, beside the entries' and the spaces' tabs, and close it with ⌘W",
+      "Start a new session in the focused pane while a space is in front, rather than in a tab of its own",
+      "Move the focus into the tab ⌘1–9 and ⌃⇥ bring forward",
+      "List archived entries in the library alone, rather than under each project in the sidebar",
+      "Keep a project's + to boards, articles and tables; sessions start from an agent or ⌘N"
+    ],
+    "fixed": [
+      "Keep the bottom terminal panel and the library raised while the focus moves inside them",
+      "Stop the library, the panes, the sidebar and the right panel flickering when a menu opens in them"
+    ]
+  },
+  {
     "version": "0.2.6",
     "date": "2026-10-23",
-    "nightly": true,
     "summary": "See what each session is doing from its tab, its sidebar row and its space, and which pane has the focus, with Esc to leave a pane.",
     "new": [
       "Show what a session is doing in place of its icon, on its sidebar row, its tab and the space holding it: an orb while a turn runs, a breathing ring while the agent asks for permission, a dot when a turn finished while the session was not on screen, and a circle with ! when the last turn failed",

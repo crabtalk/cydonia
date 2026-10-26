@@ -124,7 +124,7 @@ pub(crate) struct Tab {
     pub(crate) info_pressed: bool,
     /// The sessions it draws — see [`Self::watch_sessions`].
     sessions_watch: Watch,
-    _focus_watch: FocusWatch,
+    pub(crate) focus_watch: FocusWatch,
 }
 
 impl Tab {
@@ -180,7 +180,7 @@ impl Tab {
             info: None,
             info_pressed: false,
             sessions_watch: Watch::default(),
-            _focus_watch: focus_watch,
+            focus_watch,
         }
     }
 }
@@ -366,7 +366,7 @@ impl Render for Tab {
         // while it is part of the window's top row, and the card's own first
         // row anywhere else.
         let on_chrome = floating && self.edge.top;
-        let card = match (floating, self.focus.contains_focused(window, cx)) {
+        let card = match (floating, self.focus_watch.within()) {
             (true, true) => bezel::ui::window::content(true, cx),
             (true, false) => bezel::ui::window::resting(cx),
             (false, _) => div(),

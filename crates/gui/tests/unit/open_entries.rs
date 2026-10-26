@@ -7,10 +7,16 @@
 //! the way a frame would.
 
 use super::*;
-use crate::model::workspace::Opening;
-use crate::model::{settings::Settings, state};
-use artifact::kind::Kind;
-use artifact::space::Side;
+use crate::{
+    model::{
+        identity::Identity,
+        settings::Settings,
+        state,
+        workspace::{Opening, Slot},
+    },
+    view::sidebar::{Group, Row},
+};
+use artifact::{kind::Kind, space::Side};
 use bezel::gpui;
 
 /// A scratch project, and a config directory beside it that the test's writes
@@ -139,12 +145,10 @@ fn making_an_entry_inside_a_space_lands_on_it(cx: &mut gpui::TestAppContext) {
         .unwrap();
 }
 
-/// A new session leaves the space too — the case a member cannot cover, since
-/// a session has no file until its first turn and so is in no arrangement by
-/// name. Without this the window stays arranged and the session just started
-/// is nowhere on screen.
+/// A new session started inside a space stays in it, in front of the focused
+/// pane's stack, though it has no file yet to be named in the arrangement by.
 #[gpui::test]
-fn starting_a_session_inside_a_space_lands_on_it(cx: &mut gpui::TestAppContext) {
+fn starting_a_session_inside_a_space_lands_in_the_focused_pane(cx: &mut gpui::TestAppContext) {
     let scratch = Scratch::new("session");
     cx.update(|cx| Theme::install(bezel::theme::Appearance::Light, cx));
     let window = cx.add_window(|window, cx| {
@@ -179,15 +183,15 @@ fn starting_a_session_inside_a_space_lands_on_it(cx: &mut gpui::TestAppContext) 
             root.pick_agent(0, window, cx);
 
             assert!(
-                root.workspace.read(cx).active_space().is_none(),
-                "the space is left"
+                root.workspace.read(cx).active_space().is_some(),
+                "the space stays"
             );
             root.sync_leaves(window, cx);
             assert_eq!(root.showing(cx), Some(Kind::Session));
-            assert!(
-                root.workspace.read(cx).active_id().is_some(),
-                "on a session"
-            );
+            let session = root.focused_entry(cx).expect("a focused pane");
+            let stack = root.workspace.read(cx).stack_of(&session);
+            assert!(stack.contains(&b), "stacked over the focused pane");
+            assert!(!stack.contains(&a), "not over the other one");
         })
         .unwrap();
 }
@@ -338,6 +342,111 @@ fn syncing_the_composers_leaves_the_focus_where_it_was(cx: &mut gpui::TestAppCon
                 Some(&board),
                 "and still on the board after the sync"
             );
+        })
+        .unwrap();
+}
+
+/// An agent's heading carried onto a pane lands as a new session started as
+/// that agent, in its workspace, made only once it lands.
+#[gpui::test]
+fn an_agent_lands_as_a_session_started_as_it(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("agent");
+    cx.update(|cx| Theme::install(bezel::theme::Appearance::Light, cx));
+    let window = cx.add_window(|window, cx| {
+        Cydonia::new(Settings::default(), state::State::default(), window, cx)
+    });
+
+    window
+        .update(cx, |root, _, cx| {
+            let project = scratch.project("one");
+            let id = root.workspace.update(cx, |workspace, cx| {
+                workspace.settings.features.sessions = true;
+                workspace.settings.agents = vec![crate::model::settings::Agent {
+                    name: "test".into(),
+                    id: Some("test-acp".into()),
+                    command: String::new(),
+                    args: vec![],
+                    env: Default::default(),
+                }];
+                let identity =
+                    Identity::new("Alice", project.clone(), "test-acp", Default::default());
+                workspace.create_identity(identity, cx).expect("kept")
+            });
+            let sessions = |cx: &App| root.workspace.read(cx).identity_sessions(&id, cx).len();
+            assert_eq!(sessions(cx), 0, "nothing before the drop");
+
+            let landed = Row::Group(Group::Agent(id.clone())).landed(&root.workspace, cx);
+
+            assert!(landed.is_some(), "lands as a member");
+            assert_eq!(sessions(cx), 1, "one session, started as the agent");
+            let workspace = root.workspace.read(cx);
+            assert_eq!(workspace.projects[0].path, project, "in its workspace");
+        })
+        .unwrap();
+}
+
+/// An archived entry leaves the sidebar's list; the library is what lists it.
+#[gpui::test]
+fn an_archived_entry_leaves_the_sidebar(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("archived");
+    cx.update(|cx| Theme::install(bezel::theme::Appearance::Light, cx));
+    let window = cx.add_window(|window, cx| {
+        Cydonia::new(Settings::default(), state::State::default(), window, cx)
+    });
+
+    window
+        .update(cx, |root, _, cx| {
+            let (kept, put_away) = root.workspace.update(cx, |workspace, cx| {
+                workspace.open_project(scratch.project("one"), cx);
+                workspace.new_board(0, "Kept".into(), "ONE", cx).ok();
+                workspace.new_board(0, "Put away".into(), "TWO", cx).ok();
+                let id = workspace.projects[0].boards[1].id.clone();
+                let row = |at| Row::of_member(&workspace.board_member(0, at)?, workspace, cx);
+                let rows = (row(0), row(1));
+                workspace.archive_board(&id, true, cx);
+                rows
+            });
+            let rows = root.list(cx).rows();
+            assert!(rows.contains(&kept.expect("a row")), "in use stays");
+            assert!(!rows.contains(&put_away.expect("a row")), "archived leaves");
+        })
+        .unwrap();
+}
+
+/// The library opens as a tab of the strip: an entry opened over it leaves the
+/// tab where it is, bringing it back shows the library again, and closing it
+/// takes the tab off.
+#[gpui::test]
+fn the_library_is_a_tab_of_the_strip(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("library");
+    cx.update(|cx| Theme::install(bezel::theme::Appearance::Light, cx));
+    let window = cx.add_window(|window, cx| {
+        Cydonia::new(Settings::default(), state::State::default(), window, cx)
+    });
+
+    window
+        .update(cx, |root, window, cx| {
+            root.workspace.update(cx, |workspace, cx| {
+                workspace.open_project(scratch.project("one"), cx);
+                workspace.new_board(0, "First".into(), "ONE", cx).ok();
+            });
+            let library = Slot::Library {};
+            let held =
+                |root: &Cydonia, cx: &App| root.workspace.read(cx).strip().contains(&library);
+
+            root.toggle_library(window, cx);
+            assert!(held(root, cx) && root.library_shown(cx), "opened in front");
+
+            root.open_board(0, 0, Opening::Kept, window, cx);
+            assert!(held(root, cx), "the tab stays");
+            assert!(!root.library_shown(cx), "the board is in front");
+
+            root.show_slot(&library, window, cx);
+            assert!(root.library_shown(cx), "brought back");
+
+            root.close_library(window, cx);
+            assert!(!held(root, cx), "closed");
+            assert!(root.library.is_none(), "nothing held for it");
         })
         .unwrap();
 }

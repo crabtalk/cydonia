@@ -109,6 +109,9 @@ pub struct State {
     /// Spaces whose members the sidebar hides, by id.
     #[serde(default)]
     pub folded_spaces: Vec<String>,
+    /// Agent identities whose sessions the sidebar hides, by id.
+    #[serde(default)]
+    pub folded_agents: Vec<String>,
     /// The order the sidebar lists each space's members in, by space id. The
     /// sidebar's alone: the space's panes and tabs keep their own. A member
     /// this does not name is listed above the ones it does, in the space's

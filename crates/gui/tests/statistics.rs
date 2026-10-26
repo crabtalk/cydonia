@@ -24,6 +24,7 @@ fn activity_comes_from_the_project_files() {
             id,
             agent: "Claude Agent".into(),
             agent_id: Some("claude-acp".into()),
+            identity: None,
             session: None,
             title: "t".into(),
             name: None,

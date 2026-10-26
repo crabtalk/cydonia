@@ -21,7 +21,7 @@ delete = false
 `write = false` is a server an agent can read a board through and not change it.
 The changing tools are left out of the list rather than refused on the call: a tool an agent can see is one it will spend a turn trying.
 
-`delete` is the narrower of the two and is read after it: `article_remove` and `board_remove` take an entry off the disk with nothing to read back, so they are offered only where both switches are on. Archiving needs `write` alone — an archived entry is listed under the divider rather than gone.
+`delete` is the narrower of the two and is read after it: `article_remove` and `board_remove` take an entry off the disk with nothing to read back, so they are offered only where both switches are on. Archiving needs `write` alone — an archived entry is listed in the library rather than gone.
 
 ### Connecting a client
 

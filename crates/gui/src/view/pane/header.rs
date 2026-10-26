@@ -107,7 +107,7 @@ impl Cydonia {
             right: true,
             tabs: self.workspace.read(cx).settings.appearance.global_tabs(),
         };
-        let title = self.library.is_some().then(|| {
+        let title = self.library_shown(cx).then(|| {
             div()
                 .min_w_0()
                 .truncate()

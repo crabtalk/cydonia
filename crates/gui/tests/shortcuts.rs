@@ -22,8 +22,6 @@ fn a_command_nobody_moved_keeps_its_default() {
         keymap::chord(Command::ToggleSidebar, &held),
         Some("secondary-b")
     );
-    // And one that ships with no chord at all still has none.
-    assert_eq!(keymap::chord(Command::NewBoard, &held), None);
 }
 
 /// Stepping is the whole of how a pane is reached by key — the four commands

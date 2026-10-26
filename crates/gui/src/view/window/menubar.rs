@@ -25,14 +25,15 @@
 #[cfg(feature = "desktop")]
 use crate::model::update;
 use crate::{
-    model::settings,
+    model::{identity, settings},
     view::{
         article::{ToggleOutline, TogglePlainText},
         keymap,
         window::root::{
-            CloseProject, Cydonia, InstallApp, LoadApp, NewArticle, NewBoard, NewSession,
-            NewSessionNext, NewSessionWith, NewTable, NextEntry, OpenProject, OpenSettings,
-            PrevEntry, ToggleChanges, ToggleSidebar, ToggleTerminal, WhatsNew,
+            CloseProject, Cydonia, EditAgent, InstallApp, LoadApp, NewArticle, NewBoard,
+            NewSession, NewSessionAs, NewSessionNext, NewSessionWith, NewTable, NextEntry,
+            OpenProject, OpenSettings, PrevEntry, ToggleChanges, ToggleSidebar, ToggleTerminal,
+            WhatsNew,
         },
     },
 };
@@ -119,6 +120,12 @@ pub fn init(cx: &mut App) {
             this.whats_new_action(&WhatsNew, window, cx)
         })
     });
+    cx.on_action(|edit: &EditAgent, cx: &mut App| {
+        let edit = edit.clone();
+        workspace(cx, move |this, window, cx| {
+            this.edit_agent_action(&edit, window, cx)
+        })
+    });
     cx.on_action(|_: &InstallApp, cx: &mut App| {
         workspace(cx, |this, window, cx| {
             this.install_app_action(&InstallApp, window, cx)
@@ -149,8 +156,8 @@ pub fn init(cx: &mut App) {
 /// Build the tree again and hand it over, so every item carries the chord the
 /// keymap holds *now*, and File names the agents installed *now*.
 ///
-/// Called at launch, after a rebind, and after an agent is installed or
-/// removed. The rebind is the one that has to be: AppKit keeps the key
+/// Called at launch, after a rebind, after a feature is switched, and after an
+/// agent is installed or removed. The rebind is the one that has to be: AppKit keeps the key
 /// equivalent it was given and claims the chord before gpui sees it, so a
 /// moved shortcut that left the menus alone would leave the old chord firing.
 pub fn refresh(cx: &mut App) {
@@ -258,8 +265,14 @@ fn menus(cx: &App) -> Vec<Menu> {
 /// off `settings.toml` rather than the workspace, which at launch has no window
 /// yet to be read from.
 fn file_menu() -> Vec<MenuItem> {
-    let (agents, developer) = settings::load()
-        .map(|settings| (settings.agents, settings.developer_mode))
+    let (agents, developer, sessions) = settings::load()
+        .map(|settings| {
+            (
+                settings.agents,
+                settings.developer_mode,
+                settings.features.sessions,
+            )
+        })
         .unwrap_or_default();
     let mut file = vec![MenuItem::action("New Session", NewSession)];
     if agents.len() > 1 {
@@ -271,6 +284,33 @@ fn file_menu() -> Vec<MenuItem> {
         file.push(MenuItem::action(
             "New Session on Next Agent",
             NewSessionNext,
+        ));
+    }
+    // One row an agent, by name: the File menu is where the palette finds them.
+    let mut identities = match sessions {
+        true => <identity::Shelf as identity::Store>::all(),
+        false => Vec::new(),
+    };
+    identities.sort_by_key(|identity| identity.name.to_lowercase());
+    if !identities.is_empty() {
+        file.push(MenuItem::submenu(Menu::new("New Session As").items(
+            identities.into_iter().map(|identity| {
+                MenuItem::action(
+                    identity.name,
+                    NewSessionAs {
+                        identity: identity.id,
+                    },
+                )
+            }),
+        )));
+    }
+    if sessions {
+        file.push(MenuItem::action(
+            "New Agent…",
+            EditAgent {
+                id: None,
+                from: None,
+            },
         ));
     }
     file.extend([
@@ -355,6 +395,10 @@ impl Cydonia {
             .on_action(cx.listener(Self::open_settings_action))
             .on_action(cx.listener(Self::install_app_action))
             .on_action(cx.listener(Self::whats_new_action))
+            .when(sessions, |root| {
+                root.on_action(cx.listener(Self::edit_agent_action))
+                    .on_action(cx.listener(Self::new_session_as_action))
+            })
             .when(developer, |root| {
                 root.on_action(cx.listener(Self::load_app_action))
             })

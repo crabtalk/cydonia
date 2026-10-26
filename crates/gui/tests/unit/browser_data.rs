@@ -49,7 +49,9 @@ fn clearing_browser_tabs_preserves_file_drafts_and_selection() {
 #[cfg(not(target_os = "linux"))]
 #[gpui::test]
 fn clearing_closes_live_and_pending_browser_tabs(cx: &mut gpui::TestAppContext) {
-    let panel = cx.new(|cx| Panel::new(std::env::temp_dir(), cx));
+    cx.update(|cx| Theme::install(bezel::theme::Appearance::Dark, cx));
+    let window = cx.add_window(|window, cx| Panel::new(std::env::temp_dir(), window, cx));
+    let panel = cx.update(|cx| window.root(cx)).unwrap();
     panel.update(cx, |panel, cx| {
         panel.review(cx);
         panel.browser(1, "about:blank".into(), String::new(), cx);
@@ -81,7 +83,11 @@ fn clearing_removes_browsers_from_background_projects_and_disk(cx: &mut gpui::Te
     let window = cx.add_window(|window, cx| {
         Cydonia::new(Settings::default(), state::State::default(), window, cx)
     });
-    let panel = cx.new(|cx| Panel::new(scratch.join("background"), cx));
+    let panel = window
+        .update(cx, |_, window, cx| {
+            cx.new(|cx| Panel::new(scratch.join("background"), window, cx))
+        })
+        .unwrap();
     panel.update(cx, |panel, cx| {
         panel.review(cx);
         panel.browser(100, "about:blank".into(), String::new(), cx);

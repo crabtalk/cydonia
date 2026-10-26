@@ -74,7 +74,7 @@ impl Tab {
         };
         let floating = self.workspace.read(cx).settings.appearance.floating;
         // Flat, the title stands on a tab's chip, the focused pane's lit.
-        let chip = (!floating).then(|| match self.focus.contains_focused(window, cx) {
+        let chip = (!floating).then(|| match self.focus_watch.within() {
             true => State::Focused,
             false => State::Front,
         });

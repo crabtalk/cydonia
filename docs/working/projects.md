@@ -18,6 +18,10 @@ project's entries with `project_entries` and read one with `project_read_entry`;
 the article and board tools accept `#12` wherever they take an entry. See
 [MCP](../agents/mcp.md).
 
+## The library
+
+**Library** at the top of the sidebar lists every open project's entries, with filters for kind, project, agent, labels and archived. It opens as a tab of the window's strip, beside the entries' and the spaces' tabs; ⌘W closes it. With **Spaces in sidebar** on, the window has no strip and the library stands under the window's band until an entry is opened.
+
 ## Labels
 
 Articles, boards and saved sessions carry labels, several each. A label is lowercase, with spaces written as `-`, so `Q3 Plan` and `q3-plan` are one label. Labels are shared by every open project, and a label exists while at least one entry carries it.
@@ -44,7 +48,7 @@ agent's writes do not reshuffle the sidebar under you.
 - Drag a row to arrange a project's entries by hand.
 - Pin an entry to the top of its project from the band's menu.
 - A new entry stays at the top until it is arranged, below anything pinned.
-- Archiving an entry unpins it and takes it out of its space.
+- Archiving an entry unpins it, takes it out of its space and out of the sidebar. The library lists what is archived; **Show archived** in a project's menu opens it on that project.
 - Right-click a project for its menu. The menus of projects and entries reveal the file or folder in the file manager and copy its path.
 
 ## Moving between projects
