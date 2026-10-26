@@ -155,8 +155,8 @@ pub fn init(cx: &mut App) {
 /// Build the tree again and hand it over, so every item carries the chord the
 /// keymap holds *now*, and File names the agents installed *now*.
 ///
-/// Called at launch, after a rebind, and after an agent is installed or
-/// removed. The rebind is the one that has to be: AppKit keeps the key
+/// Called at launch, after a rebind, after a feature is switched, and after an
+/// agent is installed or removed. The rebind is the one that has to be: AppKit keeps the key
 /// equivalent it was given and claims the chord before gpui sees it, so a
 /// moved shortcut that left the menus alone would leave the old chord firing.
 pub fn refresh(cx: &mut App) {
@@ -264,8 +264,14 @@ fn menus(cx: &App) -> Vec<Menu> {
 /// off `settings.toml` rather than the workspace, which at launch has no window
 /// yet to be read from.
 fn file_menu() -> Vec<MenuItem> {
-    let (agents, developer) = settings::load()
-        .map(|settings| (settings.agents, settings.developer_mode))
+    let (agents, developer, sessions) = settings::load()
+        .map(|settings| {
+            (
+                settings.agents,
+                settings.developer_mode,
+                settings.features.sessions,
+            )
+        })
         .unwrap_or_default();
     let mut file = vec![MenuItem::action("New Session", NewSession)];
     if agents.len() > 1 {
@@ -279,14 +285,16 @@ fn file_menu() -> Vec<MenuItem> {
             NewSessionNext,
         ));
     }
-    file.extend([
-        MenuItem::action(
+    if sessions {
+        file.push(MenuItem::action(
             "New Agent…",
             EditAgent {
                 id: None,
                 from: None,
             },
-        ),
+        ));
+    }
+    file.extend([
         MenuItem::action("New Tab", crate::view::modals::palette::NewTab),
         MenuItem::separator(),
         MenuItem::action("New Board", NewBoard),

@@ -117,7 +117,8 @@ columns. Markdown that only GitHub shows — pull request bodies, issues, commen
 - Every dependency is declared in the root `[workspace.dependencies]` and
   inherited with `xxx.workspace = true`. Never a version in a member's
   `Cargo.toml`.
-- Never a `[patch]` section pointing at a local checkout of bezel or zed.
+- A `[patch]` section pointing at a local checkout of bezel is never in a pull
+  request. Never one pointing at a local checkout of zed.
 
 ## Constants
 

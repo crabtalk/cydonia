@@ -78,8 +78,8 @@ recently used first. The `+` on an agent starts a session as it, and its `···
 edits, renames or removes it. A session started any other way stays under its
 project.
 
-- Each agent wears a pixel blob drawn from its id. **Reroll** draws another;
-  **Save** keeps the one shown.
+- Each agent wears a pixel blob drawn from its id. Click the blob in the editor
+  to draw another; **Save** keeps the one shown.
 - The modes and models on offer are the ones the program reported the last time
   a session ran on it in that project. Before then there are none to pick.
 - A mode or model picked in the message field of a session started as an agent

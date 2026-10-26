@@ -27,12 +27,12 @@ use bezel::{
         self, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, KeyBinding,
         SharedString, Subscription, WeakEntity, Window, actions, div, prelude::*, px,
     },
-    icons,
     theme::Theme,
     ui::{
         combobox::{Combobox, ComboboxEvent},
         input::TextField,
         popover,
+        tooltip::Tooltip,
         widgets::{ButtonStyle, Buttons},
     },
 };
@@ -45,6 +45,8 @@ const AGENT_CONTEXT: &str = "CydoniaAgent";
 const LABEL_WIDTH: f32 = 72.;
 /// How wide the blob is drawn.
 const AVATAR_SIZE: f32 = 48.;
+/// The room above and below the blob.
+const AVATAR_PAD: f32 = 16.;
 
 actions!(cydonia_agent, [SaveAgent]);
 
@@ -86,6 +88,9 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.workspace.read(cx).settings.features.sessions {
+            return;
+        }
         self.commit(cx);
         self.close_menu(cx);
         let workspace = self.workspace.clone();
@@ -363,24 +368,15 @@ impl Render for AgentModal {
             true => format!("Edit {}", self.draft.name),
             false => "New agent".to_owned(),
         };
-        let avatar = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(12.))
-            .child(
-                div()
-                    .size(px(AVATAR_SIZE))
-                    .flex_none()
-                    .child(mascot(&Face::from(self.draft.avatar.0), 0.)),
-            )
-            .child(
-                theme
-                    .button("Reroll", ButtonStyle::Ghost, None)
-                    .id("agent-reroll")
-                    .child(icons::icon(icons::arrows::Shuffle).size(px(14.)))
-                    .on_click(cx.listener(|this, _, _, cx| this.reroll(cx))),
-            );
+        let avatar = div().flex().justify_center().py(px(AVATAR_PAD)).child(
+            div()
+                .id("agent-avatar")
+                .size(px(AVATAR_SIZE))
+                .cursor_pointer()
+                .tooltip(|window, cx| Tooltip::text("Reroll", window, cx))
+                .on_click(cx.listener(|this, _, _, cx| this.reroll(cx)))
+                .child(mascot(&Face::from(self.draft.avatar.0), 0.)),
+        );
         let fields = [
             form::labelled(&theme, LABEL_WIDTH, "Name", self.name.clone()),
             form::labelled(&theme, LABEL_WIDTH, "Workspace", self.workspace.clone()),

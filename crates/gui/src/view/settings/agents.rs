@@ -622,7 +622,14 @@ impl SettingsWindow {
                     .map(|err| theme.error_strip(err).flex_none()),
             )
             .children(self.failed_output(cx))
-            .child(self.identities(cx))
+            .children(
+                self.workspace
+                    .read(cx)
+                    .settings
+                    .features
+                    .sessions
+                    .then(|| self.identities(cx)),
+            )
             .child(self.catalogue(cx))
             .into_any_element()
     }

@@ -29,7 +29,7 @@ use crate::{
     },
 };
 use bezel::{
-    agent::{Face, mascot},
+    agent::{Face, avatar::Motion, mascot},
     gpui::{
         self, AnyElement, App, Context, Div, ElementId, Empty, FontWeight, MouseButton,
         SharedString, Stateful, Window, div, prelude::*, px,
@@ -312,9 +312,16 @@ impl Sidebar {
                             .justify_center()
                             .child(status.draw(cx))
                             .into_any_element(),
+                        // Asleep while its sessions are folded away.
                         (None, Some(avatar)) => div()
                             .size(px(14.))
-                            .child(mascot(&Face::from(avatar.0), 0.))
+                            .child(mascot(
+                                &Face::from(avatar.0).motion(match folded {
+                                    true => Motion::ASLEEP,
+                                    false => Motion::default(),
+                                }),
+                                0.,
+                            ))
                             .into_any_element(),
                         (None, None) => icons::icon(match folded {
                             false => marks.0,
