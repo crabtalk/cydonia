@@ -25,14 +25,15 @@
 #[cfg(feature = "desktop")]
 use crate::model::update;
 use crate::{
-    model::settings,
+    model::{identity, settings},
     view::{
         article::{ToggleOutline, TogglePlainText},
         keymap,
         window::root::{
             CloseProject, Cydonia, EditAgent, InstallApp, LoadApp, NewArticle, NewBoard,
-            NewSession, NewSessionNext, NewSessionWith, NewTable, NextEntry, OpenProject,
-            OpenSettings, PrevEntry, ToggleChanges, ToggleSidebar, ToggleTerminal, WhatsNew,
+            NewSession, NewSessionAs, NewSessionNext, NewSessionWith, NewTable, NextEntry,
+            OpenProject, OpenSettings, PrevEntry, ToggleChanges, ToggleSidebar, ToggleTerminal,
+            WhatsNew,
         },
     },
 };
@@ -285,6 +286,24 @@ fn file_menu() -> Vec<MenuItem> {
             NewSessionNext,
         ));
     }
+    // One row an agent, by name: the File menu is where the palette finds them.
+    let mut identities = match sessions {
+        true => <identity::Shelf as identity::Store>::all(),
+        false => Vec::new(),
+    };
+    identities.sort_by_key(|identity| identity.name.to_lowercase());
+    if !identities.is_empty() {
+        file.push(MenuItem::submenu(Menu::new("New Session As").items(
+            identities.into_iter().map(|identity| {
+                MenuItem::action(
+                    identity.name,
+                    NewSessionAs {
+                        identity: identity.id,
+                    },
+                )
+            }),
+        )));
+    }
     if sessions {
         file.push(MenuItem::action(
             "New Agent…",
@@ -378,6 +397,7 @@ impl Cydonia {
             .on_action(cx.listener(Self::whats_new_action))
             .when(sessions, |root| {
                 root.on_action(cx.listener(Self::edit_agent_action))
+                    .on_action(cx.listener(Self::new_session_as_action))
             })
             .when(developer, |root| {
                 root.on_action(cx.listener(Self::load_app_action))

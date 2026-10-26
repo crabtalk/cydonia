@@ -24,7 +24,7 @@ use crate::{
         window::{
             chrome,
             lights::{self, Lights},
-            menubar::CloseWindow,
+            menubar::{self, CloseWindow},
             modal::ModalLayer,
             section::Section,
         },
@@ -157,6 +157,14 @@ actions!(
 #[action(namespace = cydonia, no_json)]
 pub struct NewSessionWith {
     pub agent: String,
+}
+
+/// Start a session as the agent identity `identity` names, in the focused
+/// pane. Dispatched by the File menu, and so by the palette.
+#[derive(Clone, Debug, PartialEq, gpui::Action)]
+#[action(namespace = cydonia, no_json)]
+pub struct NewSessionAs {
+    pub identity: String,
 }
 
 /// Bring the tab at `index` of [`Workspace::numbered_tabs`] forward — `cmd-1`
@@ -564,6 +572,9 @@ pub struct Cydonia {
     /// The menu that is up, of every menu the window's screens open — see
     /// [`crate::view::kit::menu`].
     pub(crate) menu: ContextMenu<Cydonia, Menu>,
+    /// The agent identities the File menu was last built with, by id and
+    /// name.
+    menu_agents: Vec<(String, String)>,
     /// The sidebar's search across projects — see [`crate::view::search`].
     pub(crate) search: Entity<crate::view::search::Search>,
     meter: Entity<Stats>,
@@ -588,10 +599,22 @@ impl Cydonia {
         Some(self.leaf()?.read(cx).entry.clone())
     }
 
-    /// What the model saying something changed asks of the window: the applied
-    /// search read again, and the composers pointed at what they are on.
+    /// What the model saying something changed asks of the window: the File
+    /// menu built again where the agents moved, the applied search read again,
+    /// and the composers pointed at what they are on.
     fn model_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.watch_sessions(window, cx);
+        let agents: Vec<(String, String)> = self
+            .workspace
+            .read(cx)
+            .identities
+            .iter()
+            .map(|identity| (identity.id.clone(), identity.name.clone()))
+            .collect();
+        if agents != self.menu_agents {
+            self.menu_agents = agents;
+            menubar::refresh(cx);
+        }
         self.search.update(cx, crate::view::search::Search::refresh);
         let session = |this: &Self, cx: &App| {
             this.leaf()
@@ -1109,6 +1132,7 @@ impl Cydonia {
             modals: cx.new(|_| ModalLayer::default()),
             library: None,
             menu: ContextMenu::default(),
+            menu_agents: Vec::new(),
             search,
             focus: cx.focus_handle(),
         };
@@ -1155,15 +1179,15 @@ impl Cydonia {
         this
     }
 
-    /// Open a session on whichever agent the last one ran on, or on the first
-    /// one configured, as a tab of its own.
-    ///
-    /// With none configured there is nothing to open a session *on*. A fresh
-    /// install names no agent — see
-    /// [`crate::model::settings::Settings::default`] — so this is where most
-    /// people meet the feature: the notice it raises offers the section that
-    /// installs one, the same place the composer's own `Install an agent…`
-    /// goes.
+    pub(crate) fn new_session_as_action(
+        &mut self,
+        action: &NewSessionAs,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.new_session_as(&action.identity, window, cx);
+    }
+
     /// Start a session as the identity with this id, and show it.
     pub(crate) fn new_session_as(
         &mut self,
@@ -1179,6 +1203,15 @@ impl Cydonia {
         }
     }
 
+    /// Open a session on whichever agent the last one ran on, or on the first
+    /// one configured, where the focus is — see [`Cydonia::land_session`].
+    ///
+    /// With none configured there is nothing to open a session *on*. A fresh
+    /// install names no agent — see
+    /// [`crate::model::settings::Settings::default`] — so this is where most
+    /// people meet the feature: the notice it raises offers the section that
+    /// installs one, the same place the composer's own `Install an agent…`
+    /// goes.
     pub(crate) fn new_session_action(
         &mut self,
         _: &NewSession,
