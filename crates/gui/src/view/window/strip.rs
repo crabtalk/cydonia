@@ -28,8 +28,7 @@ use crate::{
 use artifact::reference::Reference;
 use bezel::{
     gpui::{
-        self, App, Context, Entity, MouseButton, SharedString, WeakEntity, Window, div, prelude::*,
-        px,
+        self, Context, Entity, MouseButton, SharedString, WeakEntity, Window, div, prelude::*, px,
     },
     theme::Theme,
     ui::{
@@ -87,14 +86,6 @@ impl Strip {
             sessions: Watch::default(),
             statuses: HashMap::new(),
         }
-    }
-
-    /// Whether the strip shows its tabs: more than one, or one being renamed.
-    /// None while the sidebar lists the spaces: it says what is open.
-    pub(crate) fn tracked(&self, cx: &App) -> bool {
-        let workspace = self.workspace.read(cx);
-        workspace.settings.appearance.global_tabs()
-            && (workspace.strip().len() > 1 || self.rename.what.is_some())
     }
 
     /// Whether the sidebar stands at the window's top left beside the strip.
@@ -310,8 +301,8 @@ impl Render for Strip {
         let strip: Vec<Slot> = workspace.strip().to_vec();
         let front = workspace.front_slot().cloned();
         let floating = workspace.settings.appearance.floating;
-        let tracked = self.tracked(cx);
         let global = workspace.settings.appearance.global_tabs();
+        let tracked = global && !strip.is_empty();
         // The window's top left is the sidebar's while it is open.
         let corners = chrome::Corners {
             left: !self.sidebar_open,
@@ -357,7 +348,6 @@ impl Render for Strip {
             .child(div().absolute().inset_0().flex().child(grip))
             // The tabs on a track of their own, which scrolls sideways once
             // they no longer fit: the controls keep their places while it does.
-            // One tab has no track, back while its name is typed.
             .when(tracked, |el| {
                 el.child(
                     self.reorder
