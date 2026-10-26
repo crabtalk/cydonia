@@ -45,6 +45,7 @@ toml_edit.workspace = true
 unicode-segmentation.workspace = true
 ureq = { workspace = true, optional = true }
 url.workspace = true
+uuid.workspace = true
 web-time.workspace = true
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]

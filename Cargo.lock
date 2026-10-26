@@ -2392,6 +2392,7 @@ dependencies = [
  "unicode-segmentation",
  "ureq",
  "url",
+ "uuid",
  "web-time",
 ]
 

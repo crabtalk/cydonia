@@ -17,6 +17,7 @@ use crate::agent::acp::{self, Event, Launch, Reply, Session};
 use crate::model::notify;
 #[cfg(feature = "desktop")]
 use crate::model::{
+    identity::Identity,
     session_preferences::{self, Choices, OfferCache, Offers},
     settings,
     store::{self, Store},
@@ -202,6 +203,9 @@ pub struct ChatSession {
     /// `SessionConfigOptionCategory::Model`.
     pub config: Vec<SessionConfigOption>,
     preferences: Choices,
+    /// The agent identity it runs as, by id — see [`Record::identity`]. While
+    /// it is set, no choices are kept for the session alone.
+    pub identity: Option<String>,
     /// Context spent, when the agent says.
     pub usage: Option<Usage>,
     /// What the turn in flight is counted from — see [`Self::elapsed`] and
@@ -317,6 +321,27 @@ impl ChatSession {
         Self::open(id, entry, cwd, seed, preferences, cx)
     }
 
+    /// [`Self::connect`] as `identity`, in its workspace, with its choices.
+    /// `entry` is the program the identity names.
+    pub fn connect_as(
+        id: u64,
+        entry: settings::Agent,
+        identity: &Identity,
+        seed: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let cwd = identity.workspace.clone();
+        let mut chat = Self::open(id, entry, cwd, seed, identity.choices.clone(), cx);
+        chat.identity = Some(identity.id.clone());
+        chat
+    }
+
+    /// Take `identity`'s choices, for a session read back as it.
+    pub fn adopt(&mut self, identity: &Identity) {
+        self.identity = Some(identity.id.clone());
+        self.preferences = identity.choices.clone();
+    }
+
     /// [`Self::connect`] with the choices the launch starts from given.
     fn open(
         id: u64,
@@ -364,6 +389,7 @@ impl ChatSession {
             modes: None,
             config: Vec::new(),
             preferences,
+            identity: None,
             usage: None,
             flight: None,
             title: String::new(),
@@ -428,6 +454,7 @@ impl ChatSession {
             modes: None,
             config: Vec::new(),
             preferences,
+            identity: record.identity,
             usage: None,
             flight: None,
             title: record.title,
@@ -542,6 +569,7 @@ impl ChatSession {
             id: self.record.clone().unwrap_or_default(),
             agent: self.entry.name.clone(),
             agent_id: self.entry.id.clone(),
+            identity: self.identity.clone(),
             session: self.agent_session.clone(),
             title: self.title.clone(),
             name: self.name.clone(),
@@ -937,7 +965,8 @@ impl ChatSession {
     }
 
     fn save_preferences(&mut self) {
-        if let Some(record) = &self.record
+        if self.identity.is_none()
+            && let Some(record) = &self.record
             && let Err(error) = session_preferences::remember_session(
                 &self.cwd,
                 &self.entry,

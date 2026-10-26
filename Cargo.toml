@@ -54,6 +54,7 @@ toml_edit = "0.22"
 unicode-segmentation = "1"
 ureq = "3"
 url = { version = "2", features = ["serde"] }
+uuid = { version = "1", features = ["v7"] }
 web-time = "1"
 which = "8"
 

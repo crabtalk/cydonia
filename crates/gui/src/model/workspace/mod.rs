@@ -15,6 +15,7 @@ use crate::{
     model::{
         article::{self, Article},
         fonts,
+        identity::{self, Identity},
         project::{Project, ProjectId, ProjectIds},
         session::ChatSession,
         settings::{self, Feature, Settings},
@@ -52,6 +53,7 @@ const ICON_RETRIES: u32 = 6;
 mod apps;
 mod articles;
 mod boards;
+mod identities;
 mod labels;
 mod spaces;
 mod tabs;
@@ -153,6 +155,9 @@ pub struct Workspace {
     /// project's: a space can hold panes from several — see [`spaces`]. Which
     /// one is shown is the strip's `front`.
     pub spaces: Vec<Space>,
+    /// Every agent identity on this machine, read at launch — see
+    /// [`crate::model::identity`].
+    pub identities: Vec<Identity>,
     /// The window's tabs, and which is in front — see [`tabs`].
     strip: Vec<Slot>,
     front: Option<Slot>,
@@ -257,6 +262,7 @@ impl Workspace {
             sort,
             window: state.window,
             spaces,
+            identities: <identity::Shelf as identity::Store>::all(),
             strip: Vec::new(),
             front: None,
             preview: None,
