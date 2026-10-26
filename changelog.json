@@ -2,7 +2,6 @@
   {
     "version": "0.2.6",
     "date": "2026-10-23",
-    "nightly": true,
     "summary": "See what each session is doing from its tab, its sidebar row and its space, and which pane has the focus, with Esc to leave a pane.",
     "new": [
       "Show what a session is doing in place of its icon, on its sidebar row, its tab and the space holding it: an orb while a turn runs, a breathing ring while the agent asks for permission, a dot when a turn finished while the session was not on screen, and a circle with ! when the last turn failed",
