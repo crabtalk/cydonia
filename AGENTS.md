@@ -145,12 +145,14 @@ Three layers, from general to specific:
   wears), `pager` (the dots under a run of pages or images), `rename` (the
   inline name field, and what it renames), `stamp` and `text` (formatters, and
   `CardTitle`), `status` (the mark a session's status stands in an icon slot
-  as), `watch` (the entities and focus handles a view draws from,
+  as), `switch` (what an agent can be switched between: its mode and config
+  options), `watch` (the entities and focus handles a view draws from,
   observed).
 - **`crates/gui/src/view/modals/`**: what goes over the window on its
-  `ModalLayer`, raised from more than one screen: `confirm` (the delete
-  question), `new_board`, `install_app` (the reference an app is installed
-  from), `palette` (search and commands), `desktop` (the desktop-only notice),
+  `ModalLayer`, raised from more than one screen: `agent` (an agent identity,
+  new or kept), `confirm` (the delete question), `new_board`, `install_app`
+  (the reference an app is installed from), `palette` (search and commands),
+  `desktop` (the desktop-only notice),
   `no_agent` (a session asked for with no agent installed), `settings` (the
   settings sheet, without the `desktop` feature), `whats_new` (the latest
   release's notes, raised once per notes version; `release.rs` holds them and

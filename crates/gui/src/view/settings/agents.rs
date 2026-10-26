@@ -5,12 +5,13 @@ use crate::{
     agent::{self, Listing},
     model::settings,
     view::{
-        kit::dialog::answers,
+        kit::{add, dialog::answers},
         settings::{SettingsWindow, note},
-        window::menubar,
+        window::{menubar, root::EditAgent},
     },
 };
 use bezel::{
+    agent::{Face, mascot},
     gpui::{AnyElement, Context, Focusable as _, SharedString, Window, div, prelude::*, px},
     motion::{Fade, Painter},
     theme::{TextStyle, Theme, Typeset},
@@ -621,7 +622,55 @@ impl SettingsWindow {
                     .map(|err| theme.error_strip(err).flex_none()),
             )
             .children(self.failed_output(cx))
+            .child(self.identities(cx))
             .child(self.catalogue(cx))
+            .into_any_element()
+    }
+
+    /// The agent identities on this machine, each opening the agent modal,
+    /// and the row that makes another.
+    fn identities(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let identities = self.workspace.read(cx).identities.clone();
+        let rows = identities.into_iter().enumerate().map(|(ix, identity)| {
+            let workspace = identity
+                .workspace
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let id = identity.id.clone();
+            theme
+                .card_row(ix == 0)
+                .w_full()
+                .child(super::lead().child(mascot(&Face::from(identity.avatar.0), 0.)))
+                .child(super::labelled(&theme, identity.name, workspace, true))
+                .child(
+                    theme
+                        .button("Edit", ButtonStyle::Ghost, None)
+                        .id(("identity-edit", ix))
+                        .on_click(move |_, window, cx| {
+                            window.dispatch_action(
+                                Box::new(EditAgent {
+                                    id: Some(id.clone()),
+                                }),
+                                cx,
+                            )
+                        }),
+                )
+                .into_any_element()
+        });
+        super::group(&theme, "Your agents")
+            .flex_none()
+            .child(
+                theme.group_box().children(rows).child(
+                    add::row("identity-new", "New agent", theme.text_muted, &theme)
+                        .px(px(10.))
+                        .py(px(8.))
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(Box::new(EditAgent { id: None }), cx)
+                        }),
+                ),
+            )
             .into_any_element()
     }
 

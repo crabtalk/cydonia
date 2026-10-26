@@ -1,4 +1,5 @@
-//! Labelled text fields, as the board dialogs ask for a name and a key.
+//! Labelled fields, as the board dialogs ask for a name and a key and the
+//! agent modal for an identity's.
 
 use bezel::{
     gpui::{AnyElement, App, AppContext as _, Div, Entity, SharedString, div, prelude::*, px},
@@ -27,6 +28,16 @@ pub(crate) fn field(
 
 /// `field` with `label` before it.
 pub(crate) fn row(theme: &Theme, label: &str, field: Entity<TextField>) -> AnyElement {
+    labelled(theme, LABEL_WIDTH, label, field)
+}
+
+/// `field` with `label` before it in a column `width` across.
+pub(crate) fn labelled(
+    theme: &Theme,
+    width: f32,
+    label: &str,
+    field: impl IntoElement,
+) -> AnyElement {
     div()
         .flex()
         .flex_row()
@@ -35,7 +46,7 @@ pub(crate) fn row(theme: &Theme, label: &str, field: Entity<TextField>) -> AnyEl
         .child(
             div()
                 .flex_none()
-                .w(px(LABEL_WIDTH))
+                .w(px(width))
                 .text_style(TextStyle::Caption)
                 .text_color(theme.text_muted)
                 .child(label.to_owned()),

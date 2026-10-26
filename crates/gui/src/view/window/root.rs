@@ -168,6 +168,14 @@ pub struct SwitchTab {
     pub index: Option<usize>,
 }
 
+/// Raise the agent modal on the identity `id` names, or on a new one for
+/// `None`.
+#[derive(Clone, Debug, PartialEq, gpui::Action)]
+#[action(namespace = cydonia, no_json)]
+pub struct EditAgent {
+    pub id: Option<String>,
+}
+
 /// The pill at rest, and the agent mark beside it. Half of it is the stadium's
 /// radius.
 pub(crate) fn composer_height() -> f32 {

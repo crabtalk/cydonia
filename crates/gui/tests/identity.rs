@@ -36,7 +36,13 @@ fn a_handle_is_the_name_lowercased_with_runs_of_anything_else_one_dash() {
 
 #[test]
 fn a_new_identity_mints_a_v7_id_and_reads_back_whole() {
-    let made = Shelf::create("Alice", PathBuf::from("/repos/a"), "claude-acp", choices()).unwrap();
+    let made = Shelf::create(Identity::new(
+        "Alice",
+        PathBuf::from("/repos/a"),
+        "claude-acp",
+        choices(),
+    ))
+    .unwrap();
     assert_eq!(made.handle, "alice");
     let id = uuid::Uuid::parse_str(&made.id).unwrap();
     assert_eq!(id.get_version_num(), 7);
@@ -46,8 +52,20 @@ fn a_new_identity_mints_a_v7_id_and_reads_back_whole() {
 
 #[test]
 fn a_taken_handle_is_suffixed() {
-    let first = Shelf::create("Alice", PathBuf::from("/repos/a"), "claude-acp", choices()).unwrap();
-    let second = Shelf::create("alice", PathBuf::from("/repos/b"), "codex-acp", choices()).unwrap();
+    let first = Shelf::create(Identity::new(
+        "Alice",
+        PathBuf::from("/repos/a"),
+        "claude-acp",
+        choices(),
+    ))
+    .unwrap();
+    let second = Shelf::create(Identity::new(
+        "alice",
+        PathBuf::from("/repos/b"),
+        "codex-acp",
+        choices(),
+    ))
+    .unwrap();
     assert_eq!(first.handle, "alice");
     assert_eq!(second.handle, "alice-2");
     assert_ne!(first.id, second.id);
@@ -55,8 +73,20 @@ fn a_taken_handle_is_suffixed() {
 
 #[test]
 fn renaming_moves_the_identity_and_keeps_its_id() {
-    let alice = Shelf::create("Alice", PathBuf::from("/repos/a"), "claude-acp", choices()).unwrap();
-    Shelf::create("Bob", PathBuf::from("/repos/a"), "claude-acp", choices()).unwrap();
+    let alice = Shelf::create(Identity::new(
+        "Alice",
+        PathBuf::from("/repos/a"),
+        "claude-acp",
+        choices(),
+    ))
+    .unwrap();
+    Shelf::create(Identity::new(
+        "Bob",
+        PathBuf::from("/repos/a"),
+        "claude-acp",
+        choices(),
+    ))
+    .unwrap();
     assert!(!Shelf::rename("alice", "bob"));
     assert!(Shelf::rename("alice", "ally"));
     assert!(!Shelf::holds("alice"));
@@ -69,7 +99,13 @@ fn renaming_moves_the_identity_and_keeps_its_id() {
 
 #[test]
 fn removing_frees_the_handle() {
-    Shelf::create("Alice", PathBuf::from("/repos/a"), "claude-acp", choices()).unwrap();
+    Shelf::create(Identity::new(
+        "Alice",
+        PathBuf::from("/repos/a"),
+        "claude-acp",
+        choices(),
+    ))
+    .unwrap();
     Shelf::remove("alice");
     assert!(!Shelf::holds("alice"));
     assert!(Shelf::all().is_empty());

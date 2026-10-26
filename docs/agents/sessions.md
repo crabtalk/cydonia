@@ -64,6 +64,22 @@ your answer. A turn you watched finish is one you already know about, so
 nothing is posted while the app is in front. Turn it off with `notify_turns` in
 [Settings](./../reference/settings.md).
 
+## Agents
+
+An agent is a name for an agent program working in one project, with that
+program's mode and model settings. Make one with **File › New Agent…** or **New
+agent** in Settings › Agents, where every agent is listed with **Edit**.
+
+- Each agent wears a pixel blob drawn from its id. **Reroll** draws another;
+  **Save** keeps the one shown.
+- The modes and models on offer are the ones the program reported the last time
+  a session ran on it in that project. Before then there are none to pick.
+- A mode or model picked in the message field of a session started as an agent
+  is saved to that agent.
+- **Remove** deletes the agent. Its sessions stay in their project.
+
+Agents are kept in `~/.config/cydonia/agents/`, one folder per agent.
+
 ## What it leaves behind
 
 An agent's edits land in the window you were writing in. Saved sessions are

@@ -399,6 +399,8 @@ impl SettingsWindow {
         if let Some(updater) = update::of(cx) {
             cx.observe(&updater, |_, _, cx| cx.notify()).detach();
         }
+        // The agents section lists the identities the workspace holds.
+        cx.observe(&workspace, |_, _, cx| cx.notify()).detach();
         let fonts = workspace.read(cx).fonts.clone();
         let interface_font =
             typography::FamilyPicker::new(typography::Face::Interface, fonts.sans, cx);

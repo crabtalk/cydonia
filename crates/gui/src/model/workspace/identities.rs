@@ -30,6 +30,52 @@ impl Workspace {
         })
     }
 
+    /// Keep a new identity. Answers its id; nothing where it could not be
+    /// written.
+    pub fn create_identity(
+        &mut self,
+        identity: Identity,
+        cx: &mut Context<Self>,
+    ) -> Option<String> {
+        let identity = identity::Shelf::create(identity)?;
+        let id = identity.id.clone();
+        self.identities.push(identity);
+        cx.notify();
+        Some(id)
+    }
+
+    /// Write `identity` over the one with its id, under the handle that one
+    /// has.
+    pub fn update_identity(&mut self, identity: Identity, cx: &mut Context<Self>) {
+        let id = identity.id.clone();
+        self.edit_identity(
+            &id,
+            |held| {
+                *held = Identity {
+                    handle: std::mem::take(&mut held.handle),
+                    ..identity
+                }
+            },
+            cx,
+        );
+        cx.notify();
+    }
+
+    /// Remove the identity with this id, its directory with it. Its sessions
+    /// stay in their projects, orphaned.
+    pub fn remove_identity(&mut self, id: &str, cx: &mut Context<Self>) {
+        let Some(at) = self
+            .identities
+            .iter()
+            .position(|identity| identity.id == id)
+        else {
+            return;
+        };
+        let identity = self.identities.remove(at);
+        identity::Shelf::remove(&identity.handle);
+        cx.notify();
+    }
+
     /// Change the identity with this id and write it back. Every session held
     /// as it takes its choices from then on.
     pub(super) fn edit_identity(

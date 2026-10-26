@@ -79,6 +79,21 @@ impl TryFrom<String> for Avatar {
 }
 
 impl Identity {
+    /// One not yet kept: its id minted and its avatar seeded from it, its
+    /// handle empty until [`Store::create`] keeps it.
+    pub fn new(name: &str, workspace: PathBuf, acp: &str, choices: Choices) -> Self {
+        let id = uuid::Uuid::now_v7();
+        Self {
+            id: id.to_string(),
+            handle: String::new(),
+            name: name.to_owned(),
+            workspace,
+            acp: acp.to_owned(),
+            avatar: Avatar::from(id),
+            choices,
+        }
+    }
+
     /// The handle `name` makes: lowercased, every run of anything but a
     /// letter or a digit one `-`, none at either end.
     pub fn handle_for(name: &str) -> String {
@@ -119,23 +134,14 @@ pub trait Store {
     /// Ready to take a new identity; `false` where nothing can be written.
     fn prepare() -> bool;
 
-    /// Mint one, its handle made from `name` and suffixed clear of those
-    /// already here, its avatar seeded from its id.
-    fn create(name: &str, workspace: PathBuf, acp: &str, choices: Choices) -> Option<Identity> {
+    /// Keep `identity`, under a handle made from its name and suffixed clear
+    /// of those already here.
+    fn create(mut identity: Identity) -> Option<Identity> {
         if !Self::prepare() {
             return None;
         }
-        let handle = artifact::id::suffixed(&Identity::handle_for(name), Self::holds);
-        let id = uuid::Uuid::now_v7();
-        let identity = Identity {
-            id: id.to_string(),
-            handle,
-            name: name.to_owned(),
-            workspace,
-            acp: acp.to_owned(),
-            avatar: Avatar::from(id),
-            choices,
-        };
+        identity.handle =
+            artifact::id::suffixed(&Identity::handle_for(&identity.name), Self::holds);
         Self::save(&identity);
         Some(identity)
     }

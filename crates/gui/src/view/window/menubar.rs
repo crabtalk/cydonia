@@ -30,9 +30,9 @@ use crate::{
         article::{ToggleOutline, TogglePlainText},
         keymap,
         window::root::{
-            CloseProject, Cydonia, InstallApp, LoadApp, NewArticle, NewBoard, NewSession,
-            NewSessionNext, NewSessionWith, NewTable, NextEntry, OpenProject, OpenSettings,
-            PrevEntry, ToggleChanges, ToggleSidebar, ToggleTerminal, WhatsNew,
+            CloseProject, Cydonia, EditAgent, InstallApp, LoadApp, NewArticle, NewBoard,
+            NewSession, NewSessionNext, NewSessionWith, NewTable, NextEntry, OpenProject,
+            OpenSettings, PrevEntry, ToggleChanges, ToggleSidebar, ToggleTerminal, WhatsNew,
         },
     },
 };
@@ -117,6 +117,12 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &WhatsNew, cx: &mut App| {
         workspace(cx, |this, window, cx| {
             this.whats_new_action(&WhatsNew, window, cx)
+        })
+    });
+    cx.on_action(|edit: &EditAgent, cx: &mut App| {
+        let edit = edit.clone();
+        workspace(cx, move |this, window, cx| {
+            this.edit_agent_action(&edit, window, cx)
         })
     });
     cx.on_action(|_: &InstallApp, cx: &mut App| {
@@ -274,6 +280,7 @@ fn file_menu() -> Vec<MenuItem> {
         ));
     }
     file.extend([
+        MenuItem::action("New Agent…", EditAgent { id: None }),
         MenuItem::action("New Tab", crate::view::modals::palette::NewTab),
         MenuItem::separator(),
         MenuItem::action("New Board", NewBoard),
@@ -355,6 +362,9 @@ impl Cydonia {
             .on_action(cx.listener(Self::open_settings_action))
             .on_action(cx.listener(Self::install_app_action))
             .on_action(cx.listener(Self::whats_new_action))
+            .when(sessions, |root| {
+                root.on_action(cx.listener(Self::edit_agent_action))
+            })
             .when(developer, |root| {
                 root.on_action(cx.listener(Self::load_app_action))
             })
