@@ -4,7 +4,7 @@ use crate::{
     model::{
         session::{ChatSession, Choice, Command, Usage},
         session_preferences::Offers,
-        workspace::{ArticleChange, Member, Opening, Showing, Workspace},
+        workspace::{ArticleChange, Member, Showing, Workspace},
     },
     view::{
         component::{composer, transcript},
@@ -357,7 +357,7 @@ impl Cydonia {
             .workspace
             .update(cx, |workspace, cx| workspace.new_session(entry, None, cx));
         if let Some(id) = id {
-            self.select_session(id, Opening::Kept, window, cx);
+            self.land_session(id, window, cx);
         }
     }
 

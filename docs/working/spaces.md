@@ -11,6 +11,8 @@ The window splits into panes, and entries drag between them. Each pane draws fro
 
 An entry dropped on the middle of a pane joins its stack, in front. A pane holding a stack draws a deck at the head of its title row; a click on the deck lists the stack, to bring another entry to the front or move the one in front to a tab of its own — with **Spaces in sidebar** on, to a pane of its own beside this one. While the focus is in a pane holding a stack, ⌃⇥ and ⇧⌃⇥ step through the stack instead of the window's tabs, Esc gives the focus back to the window, and ⌘1–9 still pick the window's tabs, or with **Spaces in sidebar** on the spaces, in the order the sidebar lists them.
 
+A new session started while a space is in front — ⌘N, **File › New Session**, an agent's `+` — joins the focused pane's stack, in front. Outside a space it opens as a tab of its own.
+
 ⌘W closes a tab in a space. Archiving or deleting the entry a tab shows closes its pane and moves the focus to the top-left pane.
 
 ## Spaces

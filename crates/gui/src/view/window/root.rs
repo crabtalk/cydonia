@@ -1175,7 +1175,7 @@ impl Cydonia {
             workspace.new_session_as(identity, None, cx)
         });
         if let Some(id) = id {
-            self.select_session(id, Opening::Kept, window, cx);
+            self.land_session(id, window, cx);
         }
     }
 
@@ -1194,7 +1194,7 @@ impl Cydonia {
             .workspace
             .update(cx, |workspace, cx| workspace.new_session(agent, None, cx));
         if let Some(id) = id {
-            self.select_session(id, Opening::Kept, window, cx);
+            self.land_session(id, window, cx);
         }
     }
 
@@ -1341,6 +1341,16 @@ impl Cydonia {
         self.enter_member(member, opening, window, cx);
         self.sync_composer(cx);
         self.reveal_applied_match(cx);
+        self.focus_composer_of(id, window, cx);
+    }
+
+    /// Put the caret in the composer of session `id`, where it can be sent to.
+    pub(crate) fn focus_composer_of(
+        &mut self,
+        id: u64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self
             .workspace
             .read(cx)

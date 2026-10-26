@@ -7,10 +7,8 @@
 //! the way a frame would.
 
 use super::*;
-use crate::model::workspace::Opening;
-use crate::model::{settings::Settings, state};
-use artifact::kind::Kind;
-use artifact::space::Side;
+use crate::model::{settings::Settings, state, workspace::Opening};
+use artifact::{kind::Kind, space::Side};
 use bezel::gpui;
 
 /// A scratch project, and a config directory beside it that the test's writes
@@ -139,12 +137,10 @@ fn making_an_entry_inside_a_space_lands_on_it(cx: &mut gpui::TestAppContext) {
         .unwrap();
 }
 
-/// A new session leaves the space too — the case a member cannot cover, since
-/// a session has no file until its first turn and so is in no arrangement by
-/// name. Without this the window stays arranged and the session just started
-/// is nowhere on screen.
+/// A new session started inside a space stays in it, in front of the focused
+/// pane's stack, though it has no file yet to be named in the arrangement by.
 #[gpui::test]
-fn starting_a_session_inside_a_space_lands_on_it(cx: &mut gpui::TestAppContext) {
+fn starting_a_session_inside_a_space_lands_in_the_focused_pane(cx: &mut gpui::TestAppContext) {
     let scratch = Scratch::new("session");
     cx.update(|cx| Theme::install(bezel::theme::Appearance::Light, cx));
     let window = cx.add_window(|window, cx| {
@@ -179,15 +175,15 @@ fn starting_a_session_inside_a_space_lands_on_it(cx: &mut gpui::TestAppContext) 
             root.pick_agent(0, window, cx);
 
             assert!(
-                root.workspace.read(cx).active_space().is_none(),
-                "the space is left"
+                root.workspace.read(cx).active_space().is_some(),
+                "the space stays"
             );
             root.sync_leaves(window, cx);
             assert_eq!(root.showing(cx), Some(Kind::Session));
-            assert!(
-                root.workspace.read(cx).active_id().is_some(),
-                "on a session"
-            );
+            let session = root.focused_entry(cx).expect("a focused pane");
+            let stack = root.workspace.read(cx).stack_of(&session);
+            assert!(stack.contains(&b), "stacked over the focused pane");
+            assert!(!stack.contains(&a), "not over the other one");
         })
         .unwrap();
 }
