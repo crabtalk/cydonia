@@ -2245,7 +2245,7 @@ checksum = "f27ae1dd37df86211c42e150270f82743308803d90a6f6e6651cd730d5e1732f"
 
 [[package]]
 name = "cydonia"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "anyhow",
  "bezel",
@@ -2256,7 +2256,7 @@ dependencies = [
 
 [[package]]
 name = "cydonia-acp"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "cydonia-acp-agents",
  "cydonia-acp-proto",
@@ -2267,7 +2267,7 @@ dependencies = [
 
 [[package]]
 name = "cydonia-acp-agents"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "anyhow",
  "serde",
@@ -2279,7 +2279,7 @@ dependencies = [
 
 [[package]]
 name = "cydonia-acp-events"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "cydonia-acp",
  "cydonia-acp-proto",
@@ -2289,7 +2289,7 @@ dependencies = [
 
 [[package]]
 name = "cydonia-acp-interop"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "agent-client-protocol",
  "cydonia-acp",
@@ -2301,7 +2301,7 @@ dependencies = [
 
 [[package]]
 name = "cydonia-acp-proto"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "serde",
  "serde_json",
@@ -2309,7 +2309,7 @@ dependencies = [
 
 [[package]]
 name = "cydonia-artifact"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "anyhow",
  "cydonia-acp",
@@ -2333,7 +2333,7 @@ dependencies = [
 
 [[package]]
 name = "cydonia-guest"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "base64 0.22.1",
  "cydonia-guest-macros",
@@ -2344,7 +2344,7 @@ dependencies = [
 
 [[package]]
 name = "cydonia-guest-macros"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "cydonia-manifest",
  "serde_json",
@@ -2352,7 +2352,7 @@ dependencies = [
 
 [[package]]
 name = "cydonia-gui"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2398,7 +2398,7 @@ dependencies = [
 
 [[package]]
 name = "cydonia-manifest"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "cydonia-manifest",
  "serde",
@@ -2408,7 +2408,7 @@ dependencies = [
 
 [[package]]
 name = "cydonia-mcp"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "anyhow",
  "axum",
@@ -2423,7 +2423,7 @@ dependencies = [
 
 [[package]]
 name = "cydonia-prompts"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "serde",
  "serde_yaml_ng",
