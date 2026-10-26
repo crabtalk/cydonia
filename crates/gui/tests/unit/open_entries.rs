@@ -7,7 +7,10 @@
 //! the way a frame would.
 
 use super::*;
-use crate::model::{settings::Settings, state, workspace::Opening};
+use crate::{
+    model::{identity::Identity, settings::Settings, state, workspace::Opening},
+    view::sidebar::{Group, Row},
+};
 use artifact::{kind::Kind, space::Side};
 use bezel::gpui;
 
@@ -334,6 +337,45 @@ fn syncing_the_composers_leaves_the_focus_where_it_was(cx: &mut gpui::TestAppCon
                 Some(&board),
                 "and still on the board after the sync"
             );
+        })
+        .unwrap();
+}
+
+/// An agent's heading carried onto a pane lands as a new session started as
+/// that agent, in its workspace, made only once it lands.
+#[gpui::test]
+fn an_agent_lands_as_a_session_started_as_it(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("agent");
+    cx.update(|cx| Theme::install(bezel::theme::Appearance::Light, cx));
+    let window = cx.add_window(|window, cx| {
+        Cydonia::new(Settings::default(), state::State::default(), window, cx)
+    });
+
+    window
+        .update(cx, |root, _, cx| {
+            let project = scratch.project("one");
+            let id = root.workspace.update(cx, |workspace, cx| {
+                workspace.settings.features.sessions = true;
+                workspace.settings.agents = vec![crate::model::settings::Agent {
+                    name: "test".into(),
+                    id: Some("test-acp".into()),
+                    command: String::new(),
+                    args: vec![],
+                    env: Default::default(),
+                }];
+                let identity =
+                    Identity::new("Alice", project.clone(), "test-acp", Default::default());
+                workspace.create_identity(identity, cx).expect("kept")
+            });
+            let sessions = |cx: &App| root.workspace.read(cx).identity_sessions(&id, cx).len();
+            assert_eq!(sessions(cx), 0, "nothing before the drop");
+
+            let landed = Row::Group(Group::Agent(id.clone())).landed(&root.workspace, cx);
+
+            assert!(landed.is_some(), "lands as a member");
+            assert_eq!(sessions(cx), 1, "one session, started as the agent");
+            let workspace = root.workspace.read(cx);
+            assert_eq!(workspace.projects[0].path, project, "in its workspace");
         })
         .unwrap();
 }

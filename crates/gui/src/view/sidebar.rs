@@ -241,22 +241,25 @@ impl Row {
     /// no file yet is given one here: a space names its members by file, so
     /// there is nothing to put in one until this runs. Minting it at the drop
     /// rather than at the drag keeps a gesture that went nowhere from leaving
-    /// a session behind on disk.
+    /// a session behind on disk. An agent's heading lands as a new session
+    /// started as it, made at the drop for the same reason.
     pub(crate) fn landed(&self, workspace: &Entity<Workspace>, cx: &mut App) -> Option<Member> {
         if let Some(member) = self.member(workspace.read(cx), cx) {
             return Some(member);
         }
-        let Row::Entry {
-            project,
-            showing: Showing::Session(id),
-        } = self
-        else {
-            return None;
+        let id = match self {
+            Row::Entry {
+                showing: Showing::Session(id),
+                ..
+            } => *id,
+            Row::Group(Group::Agent(identity)) => workspace.update(cx, |workspace, cx| {
+                workspace.new_session_as(identity, None, cx)
+            })?,
+            _ => return None,
         };
-        let id = *id;
         workspace.update(cx, |workspace, cx| {
             workspace.retain_session(id, cx)?;
-            workspace.member_of(workspace.project_ix(*project)?, Showing::Session(id), cx)
+            workspace.member_of(workspace.project_of(id)?, Showing::Session(id), cx)
         })
     }
 

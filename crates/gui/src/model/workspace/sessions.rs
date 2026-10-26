@@ -230,7 +230,8 @@ impl Workspace {
         });
     }
 
-    pub(super) fn project_of(&self, id: u64) -> Option<usize> {
+    /// Where the open project holding session `id` is listed.
+    pub fn project_of(&self, id: u64) -> Option<usize> {
         self.projects
             .iter()
             .position(|project| project.session_entity(id).is_some())

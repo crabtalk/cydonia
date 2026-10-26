@@ -75,7 +75,8 @@ session becomes the agent's.
 
 The sidebar lists each agent under Agents with its sessions under it, most
 recently used first. The `+` on an agent starts a session as it, and its `···`
-edits, renames or removes it. A session started any other way stays under its
+edits, renames or removes it. Drag an agent onto a pane to start a session as it
+there: an edge of the pane opens it beside, the middle stacks it in front. A session started any other way stays under its
 project.
 
 - Each agent wears a pixel blob drawn from its id. Click the blob in the editor
