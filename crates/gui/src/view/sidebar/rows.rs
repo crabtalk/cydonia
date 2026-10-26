@@ -24,7 +24,7 @@ use crate::{
         search::Search,
         window::{
             reach::InWindow as _,
-            root::{self, Cydonia, EditAgent, NewSession, OpenProject},
+            root::{self, Cydonia, EditAgent, OpenProject},
         },
     },
 };
@@ -945,25 +945,19 @@ impl Sidebar {
             .into_any_element()
     }
 
-    /// What the `+` starts here. Session first: it is what the sidebar is for.
-    ///
-    /// With more than one agent installed the session row asks which, since
-    /// the one `⌘N` would pick is whoever the project last talked to — which
-    /// leaves every other agent with no way in.
+    /// What the `+` makes here. No session.
     fn add_rows(&self, project: ProjectId, cx: &App) -> Vec<(Item, Act)> {
         let workspace = self.workspace.read(cx);
         let Some(ix) = workspace.project_ix(project) else {
             return Vec::new();
         };
-        new::rows(new::offered(workspace), |kind| {
+        let offered = new::Offered {
+            sessions: false,
+            ..new::offered(workspace)
+        };
+        new::rows(offered, |kind| {
             Box::new(move |this: &mut Cydonia, window, cx| match kind {
-                New::Session(at) => {
-                    this.select_project(ix, cx);
-                    match at {
-                        Some(at) => this.pick_agent(at, window, cx),
-                        None => this.new_session_action(&NewSession, window, cx),
-                    }
-                }
+                New::Session(_) => {}
                 New::Board => this.ask_new_board(ix, window, cx),
                 New::Article => this.new_article(ix, window, cx),
                 New::Table => this.new_table(ix, window, cx),
