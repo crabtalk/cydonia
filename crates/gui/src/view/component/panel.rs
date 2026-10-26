@@ -1249,7 +1249,7 @@ impl Cydonia {
         });
         self.changes = here
             .filter(|_| self.changes_open)
-            .map(|cwd| match self.library.is_some() {
+            .map(|cwd| match self.library_shown(cx) {
                 true => self.library_panel(cwd, window, cx),
                 false => self.right_panel(cwd, window, cx),
             });

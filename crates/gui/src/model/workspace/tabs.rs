@@ -1,4 +1,5 @@
-//! The window's strip: its tabs, each on one entry or on a space.
+//! The window's strip: its tabs, each on one entry, on a space or on the
+//! library.
 //!
 //! A continuation of [`Workspace`]'s one `impl`, the way [`super::spaces`] is.
 //!
@@ -27,6 +28,9 @@ pub enum Slot<P = ProjectId> {
     Entry(space::Member<P>),
     /// A space, by its id.
     Space { space: String },
+    /// The library. One at most. Written as an empty table, and last: the
+    /// other two are read first.
+    Library {},
 }
 
 impl<P> Slot<P> {
@@ -35,22 +39,23 @@ impl<P> Slot<P> {
         match self {
             Self::Entry(member) => Slot::Entry(member.map(name)),
             Self::Space { space } => Slot::Space { space },
+            Self::Library {} => Slot::Library {},
         }
     }
 
-    /// The entry it is on. Nothing for a space.
+    /// The entry it is on. Nothing for a space or the library.
     pub fn entry(&self) -> Option<&space::Member<P>> {
         match self {
             Self::Entry(member) => Some(member),
-            Self::Space { .. } => None,
+            Self::Space { .. } | Self::Library {} => None,
         }
     }
 
-    /// The space it is on, by id. Nothing for an entry.
+    /// The space it is on, by id. Nothing for an entry or the library.
     pub fn space(&self) -> Option<&str> {
         match self {
             Self::Space { space } => Some(space),
-            Self::Entry(_) => None,
+            Self::Entry(_) | Self::Library {} => None,
         }
     }
 }
@@ -71,12 +76,36 @@ impl Workspace {
     }
 
     /// What the window lays out under its strip: the space in front, or the
-    /// entry in front as a layout of one. Nothing where no tab is open.
+    /// entry in front as a layout of one. Nothing where no tab is open or the
+    /// library's is in front.
     pub fn arranged(&self) -> Option<Cow<'_, Space>> {
         match self.front_slot()? {
             Slot::Space { .. } => self.active_space().map(Cow::Borrowed),
             Slot::Entry(member) => Some(Cow::Owned(Space::new(String::new(), "", member.clone()))),
+            Slot::Library {} => None,
         }
+    }
+
+    /// Whether the library's tab is in front.
+    pub fn library_in_front(&self) -> bool {
+        self.front_slot() == Some(&Slot::Library {})
+    }
+
+    /// Put the library's tab in front, adding it after the tab in front where
+    /// the strip does not hold it yet.
+    pub fn open_library_tab(&mut self, cx: &mut Context<Self>) {
+        let slot = Slot::Library {};
+        if !self.strip.contains(&slot) {
+            self.insert_slot(slot.clone());
+        }
+        self.front = Some(slot);
+        self.save();
+        cx.notify();
+    }
+
+    /// Take the library's tab off the strip.
+    pub fn close_library_tab(&mut self, cx: &mut Context<Self>) {
+        self.take_slot(&Slot::Library {}, cx);
     }
 
     /// The spaces by id, in the order the strip holds their tabs. The sidebar
@@ -288,6 +317,7 @@ impl Workspace {
             .filter(|slot| match slot {
                 Slot::Space { space } => self.space_ix(space).is_some(),
                 Slot::Entry(member) => self.lists(member, cx),
+                Slot::Library {} => true,
             })
             .collect();
         // Every space keeps a tab on the strip.
@@ -312,7 +342,7 @@ impl Workspace {
                 }
             }
             Some(Slot::Space { .. }) => self.bring_up_space(cx),
-            None => {}
+            Some(Slot::Library {}) | None => {}
         }
     }
 }

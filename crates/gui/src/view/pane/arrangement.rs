@@ -381,7 +381,7 @@ impl Cydonia {
     /// row: while the sidebar lists the spaces, so the strip has no tabs to
     /// draw, and a pane is in front.
     pub(crate) fn panes_on_top(&self, cx: &App) -> bool {
-        self.library.is_none()
+        !self.library_shown(cx)
             && self
                 .workspace
                 .read(cx)
@@ -439,7 +439,7 @@ impl Cydonia {
             return false;
         };
         // The library stands over every pane.
-        if self.library.is_some() {
+        if self.library_shown(cx) {
             return false;
         }
         let workspace = self.workspace.read(cx);
@@ -494,6 +494,7 @@ impl Cydonia {
                 .space_by_id(space)
                 .map(|space| space.label().to_owned())
                 .unwrap_or_default(),
+            Dragged::Tab(Slot::Library {}) => "Library".to_owned(),
         }
     }
 
@@ -514,7 +515,6 @@ impl Cydonia {
         let Some(member) = member else {
             return;
         };
-        self.library = None;
         self.workspace.update(cx, |workspace, cx| {
             workspace.stack_pane(&target, &member, cx)
         });
@@ -845,7 +845,6 @@ impl Cydonia {
     /// Open a space: the window is arranged by it until an entry no space
     /// holds is opened.
     pub(crate) fn open_space(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
-        self.library = None;
         self.workspace.update(cx, |workspace, cx| {
             workspace.open_space(ix, cx);
         });
@@ -870,7 +869,6 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.library = None;
         self.workspace
             .update(cx, |workspace, cx| workspace.join_strip(&arriving, cx));
         self.show_pane(&arriving, window, cx);

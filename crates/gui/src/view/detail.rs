@@ -556,18 +556,21 @@ impl Cydonia {
         // The library stands in for every pane, framed as the launch view is:
         // one card under the window's band, the drawer a card opens in, and no
         // composer.
-        let library = self.library.clone();
+        let library = self.library.clone().filter(|_| self.library_shown(cx));
         let panes = match library {
             Some(_) => None,
             None => self.panes(window, cx),
         };
         // The window's top row, over every column the panel's included: the
-        // strip over a tab, the band over the library or the launch view.
+        // strip over a tab, the library's included, and the band over the
+        // launch view, or over the library with Spaces in sidebar on.
         // Floating, it is on the chrome over the cards. Edge to edge either
         // way: its ends are the window's, as the lights are. None where the
         // panes' title rows are it — see [`Cydonia::sync_edges`].
         let on_top = self.panes_on_top(cx);
-        let height = chrome::top_height(self.workspace.read(cx).settings.appearance.global_tabs());
+        let global = self.workspace.read(cx).settings.appearance.global_tabs();
+        let height = chrome::top_height(global);
+        let strip = panes.is_some() || (library.is_some() && global);
         let top = (!on_top).then(|| {
             div()
                 .flex_none()
@@ -576,7 +579,7 @@ impl Cydonia {
                 .when(!floating, |top| {
                     top.bg(bezel::ui::window::content_fill(false, &theme))
                 })
-                .child(match panes.is_some() {
+                .child(match strip {
                     true => self
                         .strip
                         .clone()

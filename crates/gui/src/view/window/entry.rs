@@ -34,7 +34,7 @@ impl Cydonia {
     /// What the window is showing, as the sidebar's rows light against it.
     pub(crate) fn lit(&self, cx: &App) -> Lit {
         Lit {
-            library: self.library.is_some(),
+            library: self.library_shown(cx),
             focused: self.focused_entry(cx),
             open: self
                 .leaves

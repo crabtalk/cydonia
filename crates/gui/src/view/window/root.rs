@@ -604,6 +604,7 @@ impl Cydonia {
     /// and the composers pointed at what they are on.
     fn model_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.watch_sessions(window, cx);
+        self.sync_library(window, cx);
         let agents: Vec<(String, String)> = self
             .workspace
             .read(cx)
@@ -866,7 +867,6 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.library = None;
         match self.workspace.read(cx).space_holding(&member) {
             Some(at) => {
                 if self.workspace.read(cx).space() != Some(at) {
@@ -884,7 +884,6 @@ impl Cydonia {
 
     /// Bring a tab of the strip forward, and the focus with it.
     pub(crate) fn show_slot(&mut self, slot: &Slot, window: &mut Window, cx: &mut Context<Self>) {
-        self.library = None;
         match slot {
             Slot::Space { space } => {
                 if let Some(ix) = self.workspace.read(cx).space_ix(space) {
@@ -896,6 +895,7 @@ impl Cydonia {
                     .update(cx, |workspace, cx| workspace.front_tab(slot, cx));
                 self.refocus(member, window, cx);
             }
+            Slot::Library {} => self.show_library(window, cx),
         }
         cx.notify();
     }
@@ -1154,6 +1154,7 @@ impl Cydonia {
         .detach();
         // The window comes back on the tabs it was left on.
         this.sync_leaves(window, cx);
+        this.sync_library(window, cx);
         if let Some(front) = this.arrangement(cx).and_then(|space| space.focused_front())
             && let Some(at) = this
                 .leaves
@@ -1340,7 +1341,6 @@ impl Cydonia {
     /// the spot it points at belongs to the board being navigated away from.
     pub(crate) fn select_project(&mut self, ix: usize, cx: &mut Context<Self>) {
         self.commit(cx);
-        self.library = None;
         self.workspace
             .update(cx, |workspace, cx| workspace.select_project(ix, cx));
     }
@@ -1590,12 +1590,13 @@ impl Render for Cydonia {
             // worth closing a tab from. An element handler runs before the
             // global one that removes the window, so this is where the two
             // meanings part.
-            .on_action(cx.listener(
-                |this, _: &CloseWindow, window, cx| match this.leaf().is_some() {
-                    true => this.close_focused_pane(window, cx),
-                    false => window.remove_window(),
-                },
-            ))
+            .on_action(cx.listener(|this, _: &CloseWindow, window, cx| {
+                match (this.library_shown(cx), this.leaf().is_some()) {
+                    (true, _) => this.close_library(window, cx),
+                    (false, true) => this.close_focused_pane(window, cx),
+                    (false, false) => window.remove_window(),
+                }
+            }))
             .on_action(cx.listener(|this, _: &ZoomPane, _, cx| this.zoom_focused_pane(cx)))
             .on_action(cx.listener(Self::toggle_changes))
             .on_action(cx.listener(Self::copy_selection))

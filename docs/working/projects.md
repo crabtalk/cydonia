@@ -18,6 +18,10 @@ project's entries with `project_entries` and read one with `project_read_entry`;
 the article and board tools accept `#12` wherever they take an entry. See
 [MCP](../agents/mcp.md).
 
+## The library
+
+**Library** at the top of the sidebar lists every open project's entries, with filters for kind, project, agent, labels and archived. It opens as a tab of the window's strip, beside the entries' and the spaces' tabs; ⌘W closes it. With **Spaces in sidebar** on, the window has no strip and the library stands under the window's band until an entry is opened.
+
 ## Labels
 
 Articles, boards and saved sessions carry labels, several each. A label is lowercase, with spaces written as `-`, so `Q3 Plan` and `q3-plan` are one label. Labels are shared by every open project, and a label exists while at least one entry carries it.

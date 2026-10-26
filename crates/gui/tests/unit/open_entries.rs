@@ -8,7 +8,12 @@
 
 use super::*;
 use crate::{
-    model::{identity::Identity, settings::Settings, state, workspace::Opening},
+    model::{
+        identity::Identity,
+        settings::Settings,
+        state,
+        workspace::{Opening, Slot},
+    },
     view::sidebar::{Group, Row},
 };
 use artifact::{kind::Kind, space::Side};
@@ -404,6 +409,44 @@ fn an_archived_entry_leaves_the_sidebar(cx: &mut gpui::TestAppContext) {
             let rows = root.list(cx).rows();
             assert!(rows.contains(&kept.expect("a row")), "in use stays");
             assert!(!rows.contains(&put_away.expect("a row")), "archived leaves");
+        })
+        .unwrap();
+}
+
+/// The library opens as a tab of the strip: an entry opened over it leaves the
+/// tab where it is, bringing it back shows the library again, and closing it
+/// takes the tab off.
+#[gpui::test]
+fn the_library_is_a_tab_of_the_strip(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("library");
+    cx.update(|cx| Theme::install(bezel::theme::Appearance::Light, cx));
+    let window = cx.add_window(|window, cx| {
+        Cydonia::new(Settings::default(), state::State::default(), window, cx)
+    });
+
+    window
+        .update(cx, |root, window, cx| {
+            root.workspace.update(cx, |workspace, cx| {
+                workspace.open_project(scratch.project("one"), cx);
+                workspace.new_board(0, "First".into(), "ONE", cx).ok();
+            });
+            let library = Slot::Library {};
+            let held =
+                |root: &Cydonia, cx: &App| root.workspace.read(cx).strip().contains(&library);
+
+            root.toggle_library(window, cx);
+            assert!(held(root, cx) && root.library_shown(cx), "opened in front");
+
+            root.open_board(0, 0, Opening::Kept, window, cx);
+            assert!(held(root, cx), "the tab stays");
+            assert!(!root.library_shown(cx), "the board is in front");
+
+            root.show_slot(&library, window, cx);
+            assert!(root.library_shown(cx), "brought back");
+
+            root.close_library(window, cx);
+            assert!(!held(root, cx), "closed");
+            assert!(root.library.is_none(), "nothing held for it");
         })
         .unwrap();
 }
