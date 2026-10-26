@@ -10,6 +10,7 @@ use super::{changes::Changes, file::FileView, files::Files};
 use crate::{
     model::{settings::PanelTabs, workspace::Workspace},
     view::{
+        kit::watch::FocusWatch,
         modals::desktop::DesktopOnly,
         window::{
             chrome,
@@ -120,6 +121,7 @@ pub struct Panel {
     files_width: f32,
     files_subscription: Option<Subscription>,
     focus: gpui::FocusHandle,
+    focus_watch: FocusWatch,
     /// The row: which tabs are open, in what order, and which is in front.
     strip: tabs::Strip<usize>,
     reorder: tabs::Reorder<usize>,
@@ -146,7 +148,9 @@ pub struct Panel {
 }
 
 impl Panel {
-    pub fn new(cwd: PathBuf, cx: &mut Context<Self>) -> Self {
+    pub fn new(cwd: PathBuf, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let focus = cx.focus_handle();
+        let focus_watch = FocusWatch::new(&focus, window, cx);
         Self {
             project_root: cwd.clone(),
             files: None,
@@ -154,7 +158,8 @@ impl Panel {
             files_width: 220.,
             files_subscription: None,
             cwd,
-            focus: cx.focus_handle(),
+            focus,
+            focus_watch,
             strip: tabs::Strip::new(),
             reorder: tabs::Reorder::new(),
             contents: HashMap::new(),
@@ -642,7 +647,7 @@ impl Render for Panel {
         // window's top row, the row is on the chrome over the card, lined up
         // with it, and the card holds the rest.
         let on_chrome = floating && self.on_top;
-        let surface = || match self.focus.contains_focused(window, cx) {
+        let surface = || match self.focus_watch.within() {
             true => bezel::ui::window::content(true, cx),
             false => bezel::ui::window::resting(cx),
         };
@@ -1333,7 +1338,7 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) -> Entity<Panel> {
         let panel = cx.new(|cx| {
-            let mut panel = Panel::new(cwd.clone(), cx);
+            let mut panel = Panel::new(cwd.clone(), window, cx);
             panel.restore_pending = restore;
             panel.project_root = cwd.canonicalize().unwrap_or(cwd.clone());
             panel.workspace = self.workspace.downgrade();

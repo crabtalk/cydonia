@@ -1421,7 +1421,7 @@ impl Library {
             &theme,
             columns,
             ix == 0,
-            Selection::new(checked, self.focus.contains_focused(window, cx)),
+            Selection::new(checked, self.focus_watch.within()),
             cells,
         )
         .h(px(ROW))

@@ -226,6 +226,9 @@ Rules:
   `Editor` per pane (`Editor::for_document`). Undo history and anchors are the
   document's; the selection and the typing run are the editor's.
 - Find reaches an item through `pane::find::Searchable`, pushed by the tab.
+- Whether the focus is inside a view, read while it draws, is its
+  `kit::watch::FocusWatch::within`. `FocusHandle::contains_focused` answers
+  from the frame before, and is for event handlers alone.
 - Updating an entity while it is already being updated panics. A view that acts
   on the window implements `window::reach::InWindow` and goes through
   `defer_window`, and through `InWindow::through` for the window's rows in its

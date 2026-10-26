@@ -702,7 +702,7 @@ pub(crate) struct Sidebar {
     /// Whether [`Self::focus`] holds the keyboard focus, as of the frame being
     /// drawn: its selected row is emphasized while it does.
     emphasized: bool,
-    _focus_watch: FocusWatch,
+    pub(crate) focus_watch: FocusWatch,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -755,7 +755,7 @@ impl Sidebar {
             sessions: Watch::default(),
             focus,
             emphasized: false,
-            _focus_watch: focus_watch,
+            focus_watch,
             _subscriptions: subscriptions,
         };
         this.relist(cx);
@@ -1346,7 +1346,7 @@ impl InWindow for Sidebar {
 impl Render for Sidebar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.watch_sessions(window, cx);
-        self.emphasized = self.focus.contains_focused(window, cx);
+        self.emphasized = self.focus_watch.within();
         let programs: Vec<_> = self.workspace.read(cx).programs().cloned().collect();
         let mut apps = std::mem::take(&mut self.apps);
         // A build names an app's row, and the apps are listed by name.
