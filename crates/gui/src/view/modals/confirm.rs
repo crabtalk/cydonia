@@ -170,9 +170,24 @@ impl Cydonia {
             Doomed::Card(board, card) => self.delete_card(board, card, cx),
             Doomed::Column(board, column) => self.drop_column(board, column, cx),
             Doomed::Turn(id, at) => self.rewind(*id, *at, window, cx),
-            Doomed::Identity(id) => self
-                .workspace
-                .update(cx, |workspace, cx| workspace.remove_identity(id, cx)),
+            Doomed::Identity(id) => {
+                let workspace = self.workspace.read(cx);
+                let sessions: Vec<Row> = workspace
+                    .identity_open_sessions(id, cx)
+                    .iter()
+                    .filter_map(|chat| {
+                        Some(Row::Entry {
+                            project: workspace.projects[workspace.project_of(chat.id)?].id,
+                            showing: Showing::Session(chat.id),
+                        })
+                    })
+                    .collect();
+                for session in &sessions {
+                    self.archive_entry(session, true, window, cx);
+                }
+                self.workspace
+                    .update(cx, |workspace, cx| workspace.remove_identity(id, cx));
+            }
             Doomed::Label(name) => {
                 self.workspace
                     .update(cx, |workspace, cx| workspace.delete_label(name, cx));
@@ -199,14 +214,27 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let open = self
+            .workspace
+            .read(cx)
+            .identity_open_sessions(&id, cx)
+            .len();
+        let note = match open {
+            0 => "The library still lists its sessions. This cannot be undone.".to_owned(),
+            1 => "Its open session is archived. The library still lists it. This cannot be \
+                undone."
+                .to_owned(),
+            n => format!(
+                "Its {} are archived. The library still lists them. This cannot be undone.",
+                text::count(n, "open session", "open sessions")
+            ),
+        };
         self.ask(
             Confirm {
                 label: format!("the agent \u{201c}{name}\u{201d}"),
                 doomed: Doomed::Identity(id),
                 goes: None,
-                note: "Its sessions stay in their projects, out of the sidebar. The library \
-                    still lists them. This cannot be undone."
-                    .to_owned(),
+                note,
                 root: cx.entity().downgrade(),
                 focus: cx.focus_handle(),
             },

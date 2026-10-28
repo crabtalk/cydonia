@@ -110,6 +110,14 @@ impl Workspace {
             .collect()
     }
 
+    /// The identity's sessions that are not archived.
+    pub fn identity_open_sessions<'a>(&self, id: &str, cx: &'a App) -> Vec<&'a ChatSession> {
+        self.identity_sessions(id, cx)
+            .into_iter()
+            .filter(|chat| !chat.closed)
+            .collect()
+    }
+
     /// Whether the sidebar hides the sessions of the identity with this id.
     pub fn agent_folded(&self, id: &str) -> bool {
         self.folded_agents.contains(id)
