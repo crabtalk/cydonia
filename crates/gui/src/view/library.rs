@@ -133,7 +133,7 @@ impl Tab {
             Self::Tables => &[Check, Name, Ref, Project, Created, Edited, Status, Actions],
             Self::Sessions => &[Check, Name, Ref, Project, Agent, Edited, Status, Actions],
             Self::Apps => &[Name, Actions],
-            Self::Skills => &[Name, Description, Project, Agent, Location],
+            Self::Skills => &[Name, Description, Project, Agent, Location, Enabled],
         }
     }
 
@@ -173,6 +173,8 @@ pub(crate) enum Field {
     Description,
     /// The root a skill is under.
     Location,
+    /// A skill's switch.
+    Enabled,
 }
 
 impl Field {
@@ -191,6 +193,7 @@ impl Field {
             Self::Actions => ("", table::Width::Fixed(px(44.))),
             Self::Description => ("Description", table::Width::Flex(280.)),
             Self::Location => ("Location", table::Width::Flex(180.)),
+            Self::Enabled => ("Enabled", table::Width::Fixed(px(88.))),
         };
         table::Column::new(title, width)
     }
@@ -886,6 +889,9 @@ impl Library {
         let selected = !library.selected.is_empty();
         let (listings, total) = self.library_listings(cx);
         let archived = library.status == Archived::Only;
+        let failed = (library.tab == Tab::Skills)
+            .then(|| self.workspace.read(cx).skills.read(cx).error.clone())
+            .flatten();
         let count = match listings.len() == total {
             true => library.tab.count(total, archived),
             false => format!(
@@ -958,6 +964,13 @@ impl Library {
                     .text_color(theme.text_muted)
                     .child(count),
             )
+            .children(failed.map(|error| {
+                div()
+                    .flex_none()
+                    .text_style(TextStyle::Caption)
+                    .text_color(theme.danger)
+                    .child(error)
+            }))
             .into_any_element()
     }
 
@@ -1575,6 +1588,11 @@ impl Library {
                         .as_ref()
                         .map(|skill| skill.root.shown().into()),
                 ),
+                Field::Enabled => listing
+                    .skill
+                    .clone()
+                    .map(|skill| self.skill_switch(skill, ix, cx).into_any_element())
+                    .unwrap_or_else(|| div().into_any_element()),
             })
             .collect();
         table::row(
@@ -1593,6 +1611,21 @@ impl Library {
             )
         })
         .into_any_element()
+    }
+
+    /// A skill's switch, which writes its agent's settings.
+    fn skill_switch(&self, skill: Skill, ix: usize, cx: &mut Context<Self>) -> Stateful<Div> {
+        let theme = Theme::of(cx).clone();
+        let on = skill.enabled;
+        let skills = self.workspace.read(cx).skills.clone();
+        div()
+            .id(("library-skill-switch", ix))
+            .cursor_pointer()
+            .child(theme.toggle(on))
+            .on_click(move |_, _, cx| {
+                cx.stop_propagation();
+                skills.update(cx, |skills, cx| skills.set_enabled(skill.clone(), !on, cx));
+            })
     }
 }
 

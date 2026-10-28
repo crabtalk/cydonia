@@ -2436,7 +2436,9 @@ dependencies = [
  "anyhow",
  "dirs 6.0.0",
  "serde",
+ "serde_json",
  "serde_yaml_ng",
+ "toml_edit 0.22.27",
 ]
 
 [[package]]

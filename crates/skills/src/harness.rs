@@ -1,4 +1,4 @@
-use crate::{Frontmatter, Scope, Skill};
+use crate::{Frontmatter, Scope, Skill, Switch};
 use std::{
     collections::HashSet,
     fs,
@@ -100,7 +100,8 @@ impl Harness {
         roots
     }
 
-    /// Blocking: every skill in [`Self::roots`], by name.
+    /// Blocking: every skill in [`Self::roots`], by name, and whether each is
+    /// switched on.
     pub fn scan(self, projects: &[PathBuf]) -> Vec<Skill> {
         let mut skills = Vec::new();
         for root in self.roots(projects) {
@@ -108,6 +109,7 @@ impl Harness {
             if dirs.is_empty() {
                 continue;
             }
+            let switch = Switch::load(self, &root.scope);
             for dir in dirs {
                 let path = dir.join(SKILL_FILE);
                 let Ok(source) = fs::read_to_string(&path) else {
@@ -125,6 +127,9 @@ impl Harness {
                 }) else {
                     continue;
                 };
+                let enabled = switch
+                    .as_ref()
+                    .is_none_or(|switch| !switch.off(&name, &path));
                 skills.push(Skill {
                     harness: self,
                     description: meta.summary(),
@@ -132,6 +137,7 @@ impl Harness {
                     path,
                     root: root.path.clone(),
                     scope: root.scope.clone(),
+                    enabled,
                 });
             }
         }
