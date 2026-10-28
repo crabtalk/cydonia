@@ -2370,6 +2370,7 @@ dependencies = [
  "cydonia-guest",
  "cydonia-mcp",
  "cydonia-prompts",
+ "cydonia-skills",
  "dirs 6.0.0",
  "futures",
  "global-hotkey",
@@ -2425,6 +2426,15 @@ dependencies = [
 name = "cydonia-prompts"
 version = "0.2.7"
 dependencies = [
+ "cydonia-skills",
+]
+
+[[package]]
+name = "cydonia-skills"
+version = "0.2.7"
+dependencies = [
+ "anyhow",
+ "dirs 6.0.0",
  "serde",
  "serde_yaml_ng",
 ]

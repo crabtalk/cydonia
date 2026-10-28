@@ -1,0 +1,16 @@
+[package]
+name = "cydonia-skills"
+description = "Agent skills on disk: the SKILL.md format, and where each agent reads skills from"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["agents", "skills"]
+
+[dependencies]
+anyhow.workspace = true
+dirs.workspace = true
+serde.workspace = true
+serde_yaml_ng.workspace = true

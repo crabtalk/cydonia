@@ -1,6 +1,7 @@
 //! The library: every open project's entries, one kind a tab with that kind's
 //! columns, with a search, a sort and filters on its headings, and a selection
-//! to act on together.
+//! to act on together. Beside them, the apps and the agents' skills, which
+//! belong to no entry.
 //!
 //! The window's rather than a pane's: it stands over the detail column in
 //! place of whatever the panes show, and is put away by going to any entry —
@@ -17,7 +18,8 @@ use crate::{
             icon::kind_icon,
             labels::{LabelHost, Labels},
             menu::{self, Act, MenuHost},
-            stamp, text,
+            stamp,
+            text::{self, ShownPath as _},
             watch::{FocusWatch, Watch},
         },
         modals::confirm::Doomed,
@@ -42,6 +44,7 @@ use bezel::{
         widgets::{ButtonStyle, Buttons, Content, Controls},
     },
 };
+use skills::{Scope, Skill};
 use std::{cell::Cell, collections::HashSet, ops::Range, rc::Rc};
 
 mod column;
@@ -66,15 +69,17 @@ pub(crate) enum Tab {
     Tables,
     Sessions,
     Apps,
+    Skills,
 }
 
 impl Tab {
-    const ALL: [Self; 5] = [
+    const ALL: [Self; 6] = [
         Self::Articles,
         Self::Boards,
         Self::Tables,
         Self::Sessions,
         Self::Apps,
+        Self::Skills,
     ];
 
     fn label(self) -> &'static str {
@@ -84,27 +89,33 @@ impl Tab {
             Self::Tables => "Tables",
             Self::Sessions => "Sessions",
             Self::Apps => "Apps",
+            Self::Skills => "Skills",
         }
     }
 
-    fn kind(self) -> Kind {
+    /// The kind of entry it lists. `None` for skills, which are not entries.
+    fn kind(self) -> Option<Kind> {
         match self {
-            Self::Articles => Kind::Article,
-            Self::Boards => Kind::Board,
-            Self::Tables => Kind::Table,
-            Self::Sessions => Kind::Session,
-            Self::Apps => Kind::App,
+            Self::Articles => Some(Kind::Article),
+            Self::Boards => Some(Kind::Board),
+            Self::Tables => Some(Kind::Table),
+            Self::Sessions => Some(Kind::Session),
+            Self::Apps => Some(Kind::App),
+            Self::Skills => None,
         }
     }
 
     fn icon(self) -> Icon {
-        kind_icon(self.kind())
+        match self.kind() {
+            Some(kind) => kind_icon(kind),
+            None => icons::development::Puzzle.into(),
+        }
     }
 
     /// Whether the kind this tab lists is switched on.
     fn shown(self, features: &Features) -> bool {
         match self {
-            Self::Articles | Self::Apps => true,
+            Self::Articles | Self::Apps | Self::Skills => true,
             Self::Boards => features.boards,
             Self::Tables => features.tables,
             Self::Sessions => features.sessions,
@@ -122,12 +133,13 @@ impl Tab {
             Self::Tables => &[Check, Name, Ref, Project, Created, Edited, Status, Actions],
             Self::Sessions => &[Check, Name, Ref, Project, Agent, Edited, Status, Actions],
             Self::Apps => &[Name, Actions],
+            Self::Skills => &[Name, Description, Project, Agent, Location],
         }
     }
 
     /// `n` of what this tab lists, as a count reads: `1 article`, `3 boards`.
     fn count(self, n: usize, archived: bool) -> String {
-        let key = self.kind().key();
+        let key = self.kind().map_or("skill", Kind::key);
         let noun = match archived {
             true => format!("archived {key}"),
             false => key.to_owned(),
@@ -157,6 +169,10 @@ pub(crate) enum Field {
     /// Whether it is archived.
     Status,
     Actions,
+    /// A skill's description.
+    Description,
+    /// The root a skill is under.
+    Location,
 }
 
 impl Field {
@@ -173,6 +189,8 @@ impl Field {
             Self::Agent => ("Agent", table::Width::Flex(140.)),
             Self::Status => ("Status", table::Width::Fixed(px(100.))),
             Self::Actions => ("", table::Width::Fixed(px(44.))),
+            Self::Description => ("Description", table::Width::Flex(280.)),
+            Self::Location => ("Location", table::Width::Flex(180.)),
         };
         table::Column::new(title, width)
     }
@@ -180,7 +198,13 @@ impl Field {
     fn sortable(self) -> bool {
         matches!(
             self,
-            Self::Name | Self::Ref | Self::Project | Self::Created | Self::Edited | Self::Agent
+            Self::Name
+                | Self::Ref
+                | Self::Project
+                | Self::Created
+                | Self::Edited
+                | Self::Agent
+                | Self::Location
         )
     }
 }
@@ -318,6 +342,9 @@ impl Library {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        if shelf.tab == Tab::Skills {
+            workspace.update(cx, |workspace, cx| workspace.scan_skills(cx));
+        }
         let library = Self::new(workspace, root, window, cx);
         library
             .query
@@ -355,6 +382,7 @@ impl Library {
                 }
             }),
             cx.observe(&workspace, |_, _, cx| cx.notify()),
+            cx.observe(&workspace.read(cx).skills.clone(), |_, _, cx| cx.notify()),
         ];
         Self {
             workspace,
@@ -382,7 +410,8 @@ impl Library {
 
 /// One listing as it is drawn, read off the workspace for the frame.
 struct Listing {
-    row: Row,
+    /// The entry or app it is. `None` for a skill.
+    row: Option<Row>,
     title: SharedString,
     reference: Option<SharedString>,
     /// What [`Listing::reference`] counts, where it is a number: what Ref
@@ -398,6 +427,7 @@ struct Listing {
     labels: Option<Vec<String>>,
     /// An app Cydonia builds from source on this machine.
     local: bool,
+    skill: Option<Skill>,
 }
 
 impl Cydonia {
@@ -497,7 +527,7 @@ impl Library {
                 .map(|held| {
                     let program = held.program.read(cx);
                     Listing {
-                        row: Row::App(held.id.clone()),
+                        row: Some(Row::App(held.id.clone())),
                         title: program.label().into(),
                         reference: None,
                         number: None,
@@ -508,10 +538,14 @@ impl Library {
                         archived: false,
                         labels: None,
                         local: program.local(),
+                        skill: None,
                     }
                 })
                 .collect();
         }
+        let Some(kind) = library.tab.kind() else {
+            return self.skill_listings(cx);
+        };
         let mut out = Vec::new();
         for open in &workspace.projects {
             if library
@@ -522,7 +556,6 @@ impl Library {
                 continue;
             }
             let project = SharedString::from(open.name());
-            let kind = library.tab.kind();
             for (ix, facts) in open.every(kind, cx).enumerate() {
                 let row = Row::Entry {
                     project: open.id,
@@ -546,7 +579,7 @@ impl Library {
                     ),
                 };
                 out.push(Listing {
-                    row,
+                    row: Some(row),
                     title: facts.label.into(),
                     reference,
                     number,
@@ -559,10 +592,57 @@ impl Library {
                     archived: facts.archived,
                     labels: library.tab.labelled().then_some(facts.labels),
                     local: false,
+                    skill: None,
                 });
             }
         }
         out
+    }
+
+    /// Every skill the last scan found: the personal ones, and those of every
+    /// open project or the one picked.
+    fn skill_listings(&self, cx: &App) -> Vec<Listing> {
+        let workspace = self.workspace.read(cx);
+        let picked = self
+            .project
+            .and_then(|id| workspace.project(id))
+            .map(|open| open.path.as_path());
+        workspace
+            .skills
+            .read(cx)
+            .list
+            .iter()
+            .filter_map(|skill| {
+                let project = match &skill.scope {
+                    Scope::Personal => SharedString::default(),
+                    Scope::Project(path) => {
+                        if picked.is_some_and(|picked| picked != path) {
+                            return None;
+                        }
+                        workspace
+                            .projects
+                            .iter()
+                            .find(|open| &open.path == path)
+                            .map(|open| open.name().into())
+                            .unwrap_or_default()
+                    }
+                };
+                Some(Listing {
+                    row: None,
+                    title: skill.name.clone().into(),
+                    reference: None,
+                    number: None,
+                    project,
+                    agent: workspace.harness_agent(skill.harness).map(Into::into),
+                    touched: 0,
+                    created: None,
+                    archived: false,
+                    labels: None,
+                    local: false,
+                    skill: Some(skill.clone()),
+                })
+            })
+            .collect()
     }
 
     /// What the open tab, the query and the sort leave, in order.
@@ -628,6 +708,11 @@ impl Library {
                 Field::Name => a.title.to_lowercase().cmp(&b.title.to_lowercase()),
                 Field::Project => a.project.cmp(&b.project),
                 Field::Agent => folded(&a.agent).cmp(&folded(&b.agent)),
+                Field::Location => a
+                    .skill
+                    .as_ref()
+                    .map(|skill| &skill.root)
+                    .cmp(&b.skill.as_ref().map(|skill| &skill.root)),
                 Field::Created => a.created.cmp(&b.created),
                 _ => a.touched.cmp(&b.touched),
             };
@@ -642,6 +727,10 @@ impl Library {
     // ── state ────────────────────────────────────────────────────
 
     fn library_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {
+        if tab == Tab::Skills {
+            self.workspace
+                .update(cx, |workspace, cx| workspace.scan_skills(cx));
+        }
         let library = &mut *self;
         library.tab = tab;
         library.selected.clear();
@@ -808,7 +897,12 @@ impl Library {
         // Unarchive where everything selected that is listed is put away.
         let mut picked = listings
             .iter()
-            .filter(|listing| library.selected.contains(&listing.row))
+            .filter(|listing| {
+                listing
+                    .row
+                    .as_ref()
+                    .is_some_and(|row| library.selected.contains(row))
+            })
             .peekable();
         let unarchive = picked.peek().is_some() && picked.all(|listing| listing.archived);
         let listings = Rc::new(listings);
@@ -1190,12 +1284,19 @@ impl Library {
     fn agent_rows(&self, cx: &App) -> Vec<(MenuItem, Act<Self>)> {
         let library = self;
         let picked = library.agent.clone();
-        let mut names: Vec<String> = self
-            .workspace
-            .read(cx)
-            .chats(cx)
-            .map(|chat| chat.entry.name.clone())
-            .collect();
+        let mut names: Vec<String> = match library.tab {
+            Tab::Skills => self
+                .listings(cx)
+                .into_iter()
+                .filter_map(|listing| listing.agent.map(String::from))
+                .collect(),
+            _ => self
+                .workspace
+                .read(cx)
+                .chats(cx)
+                .map(|chat| chat.entry.name.clone())
+                .collect(),
+        };
         names.sort();
         names.dedup();
         let mut rows = self.sorts(Field::Agent);
@@ -1314,12 +1415,9 @@ impl Library {
 
     /// The box that picks a listing out of the selection, or puts it back. On
     /// show while anything is selected; otherwise on the row's hover.
-    fn library_check(&self, listing: &Listing, ix: usize, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn library_check(&self, row: &Row, ix: usize, cx: &mut Context<Self>) -> Stateful<Div> {
         let theme = Theme::of(cx).clone();
-        let (checked, any) = (
-            self.selected.contains(&listing.row),
-            !self.selected.is_empty(),
-        );
+        let (checked, any) = (self.selected.contains(row), !self.selected.is_empty());
         theme
             .checkbox(checked)
             .id(("library-check", ix))
@@ -1328,7 +1426,7 @@ impl Library {
                 el.invisible().group_hover(ROW_GROUP, |el| el.visible())
             })
             .on_click(cx.listener({
-                let row = listing.row.clone();
+                let row = row.clone();
                 move |this, _, _, cx| {
                     cx.stop_propagation();
                     this.library_select(row.clone(), cx);
@@ -1339,14 +1437,15 @@ impl Library {
     /// A listing's `···`: the sidebar's menu for its entry.
     fn library_actions(
         &self,
-        listing: &Listing,
+        row: &Row,
+        archived: bool,
         ix: usize,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let id = SharedString::from(format!("library-menu-{ix}"));
-        let menu = LibraryMenu::Entry(listing.row.clone());
-        let (row, archived) = (listing.row.clone(), listing.archived);
+        let menu = LibraryMenu::Entry(row.clone());
+        let row = row.clone();
         let open = self.menu.key() == Some(&menu);
         let button = menu::button(
             id,
@@ -1396,7 +1495,10 @@ impl Library {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        let checked = self.is_selected(&listing.row);
+        let checked = listing
+            .row
+            .as_ref()
+            .is_some_and(|row| self.is_selected(row));
         let muted = |text: Option<SharedString>| {
             div()
                 .text_color(theme.text_muted)
@@ -1428,11 +1530,14 @@ impl Library {
                 .children(listing.local.then(|| theme.badge("Local")))
                 .into_any_element()
         };
+        let row = listing.row.as_ref();
         let cells = tab
             .fields()
             .iter()
             .map(|field| match field {
-                Field::Check => self.library_check(listing, ix, cx).into_any_element(),
+                Field::Check => row
+                    .map(|row| self.library_check(row, ix, cx).into_any_element())
+                    .unwrap_or_else(|| div().into_any_element()),
                 Field::Name => name(),
                 Field::Ref => div()
                     .text_style(TextStyle::Caption)
@@ -1440,7 +1545,9 @@ impl Library {
                     .child(listing.reference.clone().unwrap_or_default())
                     .into_any_element(),
                 Field::Project => muted(Some(listing.project.clone())),
-                Field::Labels => self.label_cell(&listing.row, listing.labels.as_deref(), ix, cx),
+                Field::Labels => row
+                    .map(|row| self.label_cell(row, listing.labels.as_deref(), ix, cx))
+                    .unwrap_or_else(|| div().into_any_element()),
                 Field::Created => muted(listing.created.map(|at| stamp::coarse(at).into())),
                 Field::Edited => muted(Some(stamp::coarse(listing.touched).into())),
                 Field::Agent => muted(listing.agent.clone()),
@@ -1452,7 +1559,22 @@ impl Library {
                     .label()
                     .into(),
                 )),
-                Field::Actions => self.library_actions(listing, ix, window, cx),
+                Field::Actions => row
+                    .map(|row| self.library_actions(row, listing.archived, ix, window, cx))
+                    .unwrap_or_else(|| div().into_any_element()),
+                Field::Description => muted(
+                    listing
+                        .skill
+                        .as_ref()
+                        .and_then(|skill| skill.description.clone())
+                        .map(Into::into),
+                ),
+                Field::Location => muted(
+                    listing
+                        .skill
+                        .as_ref()
+                        .map(|skill| skill.root.shown().into()),
+                ),
             })
             .collect();
         table::row(
@@ -1465,11 +1587,11 @@ impl Library {
         .h(px(ROW))
         .id(("library-row", ix))
         .group(ROW_GROUP)
-        .cursor_pointer()
-        .on_click(cx.listener({
-            let row = listing.row.clone();
-            move |this, _, window, cx| this.open_listing(&row, window, cx)
-        }))
+        .when_some(listing.row.clone(), |el, row| {
+            el.cursor_pointer().on_click(
+                cx.listener(move |this, _, window, cx| this.open_listing(&row, window, cx)),
+            )
+        })
         .into_any_element()
     }
 }

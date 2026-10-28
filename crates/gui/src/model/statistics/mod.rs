@@ -11,6 +11,7 @@ mod index;
 use anyhow::Result;
 use artifact::project::{Project as _, fs};
 use chrono::{Duration, NaiveDate};
+use skills::Harness;
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
@@ -83,17 +84,11 @@ pub struct Logs {
 }
 
 impl Logs {
-    /// `$CLAUDE_CONFIG_DIR` and `$CODEX_HOME`, else the agents' defaults
-    /// under the home directory.
+    /// Under each agent's [`Harness::home`].
     pub fn local() -> Self {
-        let under = |var: &str, default: &str| {
-            std::env::var_os(var)
-                .map(PathBuf::from)
-                .or_else(|| dirs::home_dir().map(|home| home.join(default)))
-        };
         Self {
-            claude: under("CLAUDE_CONFIG_DIR", ".claude").map(|dir| dir.join("projects")),
-            codex: under("CODEX_HOME", ".codex").map(|dir| dir.join("sessions")),
+            claude: Harness::Claude.home().map(|dir| dir.join("projects")),
+            codex: Harness::Codex.home().map(|dir| dir.join("sessions")),
         }
     }
 }

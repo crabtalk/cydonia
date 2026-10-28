@@ -35,6 +35,7 @@ rusqlite = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+skills.workspace = true
 syntax = { workspace = true, optional = true }
 prompts.workspace = true
 pulldown-cmark.workspace = true
