@@ -583,7 +583,7 @@ impl Cydonia {
     }
 
     /// Close the member's pane when the open space holds it — see
-    /// [`Cydonia::put_away_pane`]. Answers whether it did.
+    /// [`Cydonia::close_pane`]. Answers whether it did.
     fn put_away_arranged(
         &mut self,
         member: Option<&Member>,
@@ -596,7 +596,7 @@ impl Cydonia {
         }) else {
             return false;
         };
-        self.put_away_pane(&member.clone(), window, cx);
+        self.close_pane(member, window, cx);
         true
     }
 
