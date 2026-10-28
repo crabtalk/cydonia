@@ -157,3 +157,90 @@ fn codex_switches_through_skills_config() {
         "# mine\nmodel = \"o3\"\n"
     );
 }
+
+#[test]
+fn claude_lists_the_skills_of_plugins_that_load() {
+    let scratch = Scratch::new("claude-plugins");
+    let plugin = |root: &str, name: &str, manifest: &str| {
+        let dir = scratch.0.join(root).join(name);
+        fs::create_dir_all(dir.join(".claude-plugin")).unwrap();
+        fs::write(dir.join(".claude-plugin/plugin.json"), manifest).unwrap();
+    };
+    // Installed from a marketplace: on only where enabledPlugins says so, and
+    // read from the version not marked orphaned.
+    plugin(
+        "home/.claude/plugins/cache/market/tools",
+        "1.0.0",
+        "{\"name\": \"tools\"}",
+    );
+    fs::write(
+        scratch
+            .0
+            .join("home/.claude/plugins/cache/market/tools/1.0.0/.orphaned_at"),
+        "",
+    )
+    .unwrap();
+    plugin(
+        "home/.claude/plugins/cache/market/tools",
+        "2.0.0",
+        "{\"name\": \"tools\"}",
+    );
+    scratch.skill(
+        "home/.claude/plugins/cache/market/tools/1.0.0/skills",
+        "old",
+        "---\nname: old\n---\n",
+    );
+    scratch.skill(
+        "home/.claude/plugins/cache/market/tools/2.0.0/skills",
+        "lint",
+        "---\nname: lint\n---\n",
+    );
+    // Synced from claude.ai: on unless turned off.
+    plugin(
+        "home/.claude/plugins/synced/bucket",
+        "support",
+        "{\"name\": \"support\"}",
+    );
+    scratch.skill(
+        "home/.claude/plugins/synced/bucket/support/skills",
+        "triage",
+        "---\nname: triage\n---\n",
+    );
+    // In the project's skills: on unless its manifest or settings say otherwise.
+    plugin(
+        "project/.claude/skills",
+        "kit",
+        "{\"name\": \"kit\", \"defaultEnabled\": false}",
+    );
+    scratch.skill(
+        "project/.claude/skills/kit/skills",
+        "ship",
+        "---\nname: ship\n---\n",
+    );
+    fs::write(
+        scratch.0.join("project/.claude/settings.json"),
+        "{\"enabledPlugins\": {\"tools@market\": true, \"kit@skills-dir\": true}}",
+    )
+    .unwrap();
+
+    let project = [scratch.project()];
+    let skills = Harness::Claude.scan(&project);
+    let names: Vec<_> = skills.iter().map(|skill| skill.name.as_str()).collect();
+    assert_eq!(names, ["kit:ship", "support:triage", "tools:lint"]);
+    assert!(
+        skills
+            .iter()
+            .all(|skill| skill.plugin.is_some() && skill.enabled)
+    );
+    let lint = skills
+        .iter()
+        .find(|skill| skill.name == "tools:lint")
+        .unwrap();
+    assert_eq!(lint.scope, Scope::Project(scratch.project()));
+    let triage = skills
+        .iter()
+        .find(|skill| skill.name == "support:triage")
+        .unwrap();
+    assert_eq!(triage.scope, Scope::Personal);
+    assert!(lint.set_enabled(false).is_err());
+}

@@ -21,6 +21,9 @@ pub struct Skill {
     /// The root it is under.
     pub root: PathBuf,
     pub scope: Scope,
+    /// The name of the plugin it comes with. Such a skill loads while its
+    /// plugin does, and has no switch of its own.
+    pub plugin: Option<String>,
     pub enabled: bool,
 }
 
@@ -28,6 +31,9 @@ impl Skill {
     /// Blocking: switch it on or off in its agent's own settings. Its files
     /// are left as they are.
     pub fn set_enabled(&self, on: bool) -> anyhow::Result<()> {
+        if let Some(plugin) = &self.plugin {
+            anyhow::bail!("{} comes with the plugin {plugin}", self.name);
+        }
         let Some(mut switch) = Switch::load(self.harness, &self.scope) else {
             anyhow::bail!("no home directory for {:?}", self.harness);
         };

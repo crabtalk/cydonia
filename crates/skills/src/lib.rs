@@ -6,6 +6,7 @@ mod claude;
 mod codex;
 mod frontmatter;
 mod harness;
+mod plugin;
 mod skill;
 mod switch;
 

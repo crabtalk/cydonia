@@ -1,4 +1,4 @@
-use crate::{Frontmatter, Scope, Skill, Switch};
+use crate::{Frontmatter, Scope, Skill, Switch, plugin::Plugin};
 use std::{
     collections::HashSet,
     fs,
@@ -20,6 +20,8 @@ pub enum Harness {
 pub struct Root {
     pub path: PathBuf,
     pub scope: Scope,
+    /// The name of the plugin it is the `skills` of.
+    pub plugin: Option<String>,
 }
 
 impl Harness {
@@ -66,8 +68,8 @@ impl Harness {
     /// by two projects is listed once.
     ///
     /// Claude Code: `~/.claude/skills`, each account bucket under
-    /// `~/.claude/skills/synced`, and `.claude/skills`. Codex: `~/.agents/skills`
-    /// and `.agents/skills`. Plugin skills are not among them.
+    /// `~/.claude/skills/synced`, `.claude/skills`, and the `skills` of each
+    /// plugin that loads. Codex: `~/.agents/skills` and `.agents/skills`.
     pub fn roots(self, projects: &[PathBuf]) -> Vec<Root> {
         let mut roots = Vec::new();
         match self {
@@ -85,6 +87,7 @@ impl Harness {
             .map(|path| Root {
                 path,
                 scope: Scope::Personal,
+                plugin: None,
             })
             .collect();
         for project in projects {
@@ -92,7 +95,21 @@ impl Harness {
                 roots.push(Root {
                     path: dir.join(self.project_dir()),
                     scope: Scope::Project(project.clone()),
+                    plugin: None,
                 });
+            }
+        }
+        if let (Self::Claude, Some(home)) = (self, self.home()) {
+            let scopes = std::iter::once(Scope::Personal)
+                .chain(projects.iter().cloned().map(Scope::Project));
+            for scope in scopes {
+                for plugin in Plugin::loaded(&home, &scope) {
+                    roots.push(Root {
+                        path: plugin.root.join("skills"),
+                        scope: scope.clone(),
+                        plugin: Some(plugin.name),
+                    });
+                }
             }
         }
         let mut seen = HashSet::new();
@@ -127,9 +144,14 @@ impl Harness {
                 }) else {
                     continue;
                 };
-                let enabled = switch
-                    .as_ref()
-                    .is_none_or(|switch| !switch.off(&name, &path));
+                let name = match &root.plugin {
+                    Some(plugin) => format!("{plugin}:{name}"),
+                    None => name,
+                };
+                let enabled = root.plugin.is_some()
+                    || switch
+                        .as_ref()
+                        .is_none_or(|switch| !switch.off(&name, &path));
                 skills.push(Skill {
                     harness: self,
                     description: meta.summary(),
@@ -137,6 +159,7 @@ impl Harness {
                     path,
                     root: root.path.clone(),
                     scope: root.scope.clone(),
+                    plugin: root.plugin.clone(),
                     enabled,
                 });
             }
@@ -148,7 +171,7 @@ impl Harness {
 
 /// The directories under `dir`, symlinks followed, hidden ones left out.
 /// Empty where `dir` cannot be read.
-fn subdirectories(dir: &Path) -> Vec<PathBuf> {
+pub(crate) fn subdirectories(dir: &Path) -> Vec<PathBuf> {
     let Ok(entries) = fs::read_dir(dir) else {
         return Vec::new();
     };

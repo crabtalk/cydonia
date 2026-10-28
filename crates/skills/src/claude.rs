@@ -7,20 +7,22 @@ use std::{
 
 /// The settings key mapping a skill's name to how Claude Code shows it.
 const KEY: &str = "skillOverrides";
+/// The settings key mapping a plugin's id, `name@origin`, to whether it loads.
+const PLUGINS: &str = "enabledPlugins";
 /// The value that switches a skill off. `on`, `name-only` and
 /// `user-invocable-only` leave it on.
 const OFF: &str = "off";
 const ON: &str = "on";
 
-/// Claude Code's `skillOverrides`, from each settings file a scope reads,
-/// highest precedence first: for a project, its `.claude/settings.local.json`,
-/// its `.claude/settings.json`, then the user's `settings.json`; for a personal
-/// skill, the user's alone. The first file is the one written.
-pub(crate) struct Overrides {
+/// Claude Code's settings files a scope reads, highest precedence first: for a
+/// project, its `.claude/settings.local.json`, its `.claude/settings.json`,
+/// then the user's `settings.json`; for a personal skill, the user's alone.
+/// The first file is the one written.
+pub(crate) struct Settings {
     files: Vec<(PathBuf, Value)>,
 }
 
-impl Overrides {
+impl Settings {
     pub(crate) fn load(home: &Path, scope: &Scope) -> Self {
         let mut paths = Vec::new();
         if let Scope::Project(project) = scope {
@@ -46,6 +48,13 @@ impl Overrides {
         self.files[from..]
             .iter()
             .find_map(|(_, value)| value.get(KEY)?.get(name)?.as_str())
+    }
+
+    /// Whether the first file naming the plugin `id` turns it on.
+    pub(crate) fn plugin(&self, id: &str) -> Option<bool> {
+        self.files
+            .iter()
+            .find_map(|(_, value)| value.get(PLUGINS)?.get(id)?.as_bool())
     }
 
     pub(crate) fn off(&self, name: &str) -> bool {
