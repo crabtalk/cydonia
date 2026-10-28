@@ -9,6 +9,7 @@ use super::{
 use crate::{
     model::{
         project::ProjectId,
+        session::Status,
         state,
         workspace::{Opening, Showing},
     },
@@ -47,7 +48,12 @@ use bezel::{
         widgets::{ButtonStyle, Buttons, Content, Layout},
     },
 };
-use std::rc::Rc;
+use std::{rc::Rc, time::Duration};
+
+/// What a busy agent's blob is drawn on, claimed while its row is drawn — see
+/// [`crate::view::kit::orb`].
+const BLOB_FPS: f32 = 15.;
+const BLOB_LEASE: Duration = Duration::from_millis(300);
 
 /// A line of an extended row under its name: small, muted, cut to one line.
 fn detail(text: String, theme: &Theme) -> Div {
@@ -190,20 +196,44 @@ impl Sidebar {
             Group::Space(id) => {
                 status::Mark::of_most_pressing(self.workspace.read(cx).space_sessions(id, cx))
             }
-            Group::Agent(id) => {
-                status::Mark::of_most_pressing(self.workspace.read(cx).identity_sessions(id, cx))
-            }
-            Group::Project(_) => None,
+            Group::Agent(_) | Group::Project(_) => None,
         };
-        // An identity wears its blob where a group's mark goes.
-        let avatar = match &group {
-            Group::Agent(id) => self
-                .workspace
-                .read(cx)
-                .identity(id)
-                .map(|identity| identity.avatar),
+        // An identity wears its blob where a group's mark goes, busy while one
+        // of its sessions has a turn in flight or a prompt open, and asleep
+        // while folded with none waiting on you.
+        let blob = match &group {
+            Group::Agent(id) => {
+                let workspace = self.workspace.read(cx);
+                let sessions = workspace.identity_sessions(id, cx);
+                let busy = sessions
+                    .iter()
+                    .filter(|chat| matches!(chat.status(), Status::Working | Status::Asking))
+                    .map(|chat| chat.elapsed().unwrap_or_default())
+                    .max();
+                let waiting = sessions
+                    .iter()
+                    .any(|chat| matches!(chat.status(), Status::Failed | Status::Review));
+                workspace.identity(id).map(|identity| {
+                    let face = Face::from(identity.avatar.0).motion(match busy {
+                        Some(_) => Motion::BUSY,
+                        None if folded && !waiting => Motion::ASLEEP,
+                        None => Motion::ALIVE,
+                    });
+                    (face, busy)
+                })
+            }
             Group::Project(_) | Group::Space(_) => None,
         };
+        let blob = blob.map(|(face, busy)| {
+            let t = match busy {
+                Some(since) if !cx.reduce_motion() => {
+                    Painter::of(cx).lease(BLOB_FPS, BLOB_LEASE, cx);
+                    since.as_secs_f32()
+                }
+                _ => 0.,
+            };
+            mascot(&face, t)
+        });
         let key = key_of(&Row::Group(group.clone()));
         let (menu, add) = match &group {
             Group::Project(project) => (
@@ -301,7 +331,7 @@ impl Sidebar {
                     .ghost(SharedString::from(format!("group-fold-{key}")))
                     .flex_none()
                     .p(px(2.))
-                    .child(match (status, avatar) {
+                    .child(match (status, blob) {
                         (Some(status), _) => div()
                             .size(px(14.))
                             .flex()
@@ -309,17 +339,7 @@ impl Sidebar {
                             .justify_center()
                             .child(status.draw(cx))
                             .into_any_element(),
-                        // Asleep while its sessions are folded away.
-                        (None, Some(avatar)) => div()
-                            .size(px(14.))
-                            .child(mascot(
-                                &Face::from(avatar.0).motion(match folded {
-                                    true => Motion::ASLEEP,
-                                    false => Motion::default(),
-                                }),
-                                0.,
-                            ))
-                            .into_any_element(),
+                        (None, Some(blob)) => div().size(px(14.)).child(blob).into_any_element(),
                         (None, None) => icons::icon(match folded {
                             false => marks.0,
                             true => marks.1,
