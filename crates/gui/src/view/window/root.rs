@@ -559,9 +559,8 @@ pub struct Cydonia {
     /// Every board on screen: cards between lanes and boards, lanes and list
     /// groups along their own board.
     pub(crate) board_sort: drag::Domain<board::BoardRegion, board::BoardItem>,
-    /// The tabs that have been brought to the front, most recent last, across
-    /// every pane. Read when a pane's last tab closes with the focus on it —
-    /// see [`Cydonia::close_pane`]. Runtime only.
+    /// The panes the focus has entered, most recent last. Read when the
+    /// focused pane closes — see [`Cydonia::close_pane`]. Runtime only.
     pub(crate) tab_history: Vec<Member>,
     /// A zoom on its way — see [`Cydonia::toggle_zoom`].
     pub(crate) zoom_glide: Option<crate::view::pane::arrangement::ZoomGlide>,
@@ -943,6 +942,8 @@ impl Cydonia {
         // already focused, and the caret is settled every time regardless.
         let moved = self.focused != at;
         self.focused = at;
+        self.tab_history.retain(|seen| seen != entry);
+        self.tab_history.push(entry.clone());
         self.sync_focus(cx);
         self.workspace
             .update(cx, |workspace, _| workspace.set_focused(entry));

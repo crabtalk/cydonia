@@ -543,9 +543,9 @@ impl Cydonia {
         let Row::Entry { project, showing } = entry else {
             return;
         };
-        // Putting an entry away takes it out of the two places that hold it
-        // up: the pins at the top of the list, and whatever space arranges
-        // it. Both are about an entry in hand, and this one no longer is.
+        // Putting an entry away takes it out of the places that hold it up:
+        // the pins at the top of the list, whatever space arranges it, and its
+        // tab in the window's strip.
         if archived {
             let member = entry.member(self.workspace.read(cx), cx);
             self.put_away_arranged(member.as_ref(), window, cx);
@@ -555,6 +555,7 @@ impl Cydonia {
                 }
                 if let Some(member) = member {
                     workspace.drop_from_spaces(&member, cx);
+                    workspace.close_tab(&member, cx);
                 }
             });
         }
@@ -582,7 +583,7 @@ impl Cydonia {
     }
 
     /// Close the member's pane when the open space holds it — see
-    /// [`Cydonia::put_away_pane`]. Answers whether it did.
+    /// [`Cydonia::close_pane`]. Answers whether it did.
     fn put_away_arranged(
         &mut self,
         member: Option<&Member>,
@@ -595,7 +596,7 @@ impl Cydonia {
         }) else {
             return false;
         };
-        self.put_away_pane(&member.clone(), window, cx);
+        self.close_pane(member, window, cx);
         true
     }
 

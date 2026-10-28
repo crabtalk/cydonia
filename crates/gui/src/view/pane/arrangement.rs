@@ -453,13 +453,6 @@ impl Cydonia {
         })
     }
 
-    /// Note a pane as the one most recently entered, which is where a close
-    /// falls back to — see [`Cydonia::tab_history`].
-    fn remember_front(&mut self, tab: &Member) {
-        self.tab_history.retain(|seen| seen != tab);
-        self.tab_history.push(tab.clone());
-    }
-
     /// Put the focus on the pane on `entry`.
     pub(crate) fn show_pane(
         &mut self,
@@ -467,7 +460,6 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.remember_front(entry);
         self.refocus(entry, window, cx);
         self.reveal_applied_match(cx);
     }
@@ -814,24 +806,6 @@ impl Cydonia {
             return;
         };
         self.close_pane(&entry, window, cx);
-    }
-
-    /// Take an entry that is going away — archived or deleted — out of the
-    /// open space, and land on the top-left pane.
-    pub(crate) fn put_away_pane(
-        &mut self,
-        entry: &Member,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.close_pane(entry, window, cx);
-        let Some(pane) = self
-            .arrangement(cx)
-            .and_then(|space| space.tree.fronts().first().cloned())
-        else {
-            return;
-        };
-        self.refocus(&pane, window, cx);
     }
 
     /// Stand the pane in front over the others, or put it back.
