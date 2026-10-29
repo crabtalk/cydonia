@@ -684,11 +684,16 @@ impl Composer {
     fn reread(&mut self, cx: &mut Context<Self>) {
         let content = self.field.read(cx).content().clone();
         let caret = self.field.read(cx).cursor().min(content.len());
-        let command = content.starts_with('/')
-            && !self.filter.items().is_empty()
-            && !content[1..caret].contains(char::is_whitespace);
-        self.completing = if command {
-            self.filter.refilter(&content[1..caret]);
+        // What is typed after the `/`, while the caret is past it. A caret
+        // before the `/` — arrowed to the line's start — completes nothing.
+        let command = content
+            .strip_prefix('/')
+            .and_then(|_| content.get(1..caret))
+            .filter(|typed| {
+                !self.filter.items().is_empty() && !typed.contains(char::is_whitespace)
+            });
+        self.completing = if let Some(typed) = command {
+            self.filter.refilter(typed);
             Some(Completing::Command)
         } else {
             mention_at(&content, caret).map(|at| {
