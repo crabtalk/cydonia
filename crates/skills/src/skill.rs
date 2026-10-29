@@ -28,6 +28,12 @@ pub struct Skill {
 }
 
 impl Skill {
+    /// Whether the library can switch it off: its agent has a switch, and it
+    /// does not come with a plugin.
+    pub fn switchable(&self) -> bool {
+        self.harness.switches() && self.plugin.is_none()
+    }
+
     /// Blocking: switch it on or off in its agent's own settings. Its files
     /// are left as they are.
     pub fn set_enabled(&self, on: bool) -> anyhow::Result<()> {
@@ -35,7 +41,7 @@ impl Skill {
             anyhow::bail!("{} comes with the plugin {plugin}", self.name);
         }
         let Some(mut switch) = Switch::load(self.harness, &self.scope) else {
-            anyhow::bail!("no home directory for {:?}", self.harness);
+            anyhow::bail!("{:?} has no switch for {}", self.harness, self.name);
         };
         switch.set(&self.name, &self.path, on)
     }

@@ -1,9 +1,6 @@
-use crate::Scope;
+use crate::{Scope, json::JsonFile};
 use serde_json::{Map, Value};
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::path::Path;
 
 /// The settings key mapping a skill's name to how Claude Code shows it.
 const KEY: &str = "skillOverrides";
@@ -19,7 +16,7 @@ const ON: &str = "on";
 /// then the user's `settings.json`; for a personal skill, the user's alone.
 /// The first file is the one written.
 pub(crate) struct Settings {
-    files: Vec<(PathBuf, Value)>,
+    files: Vec<JsonFile>,
 }
 
 impl Settings {
@@ -30,31 +27,23 @@ impl Settings {
             paths.push(project.join(".claude/settings.json"));
         }
         paths.push(home.join("settings.json"));
-        let files = paths
-            .into_iter()
-            .map(|path| {
-                let value = fs::read_to_string(&path)
-                    .ok()
-                    .and_then(|text| serde_json::from_str(&text).ok())
-                    .unwrap_or_else(|| Value::Object(Map::new()));
-                (path, value)
-            })
-            .collect();
-        Self { files }
+        Self {
+            files: paths.into_iter().map(JsonFile::load).collect(),
+        }
     }
 
     /// What the first file setting `name` says of it, from `from` on.
     fn value(&self, from: usize, name: &str) -> Option<&str> {
         self.files[from..]
             .iter()
-            .find_map(|(_, value)| value.get(KEY)?.get(name)?.as_str())
+            .find_map(|file| file.get(&[KEY, name])?.as_str())
     }
 
     /// Whether the first file naming the plugin `id` turns it on.
     pub(crate) fn plugin(&self, id: &str) -> Option<bool> {
         self.files
             .iter()
-            .find_map(|(_, value)| value.get(PLUGINS)?.get(id)?.as_bool())
+            .find_map(|file| file.get(&[PLUGINS, id])?.as_bool())
     }
 
     pub(crate) fn off(&self, name: &str) -> bool {
@@ -65,36 +54,30 @@ impl Settings {
     /// file below it still says `off`.
     pub(crate) fn set(&mut self, name: &str, on: bool) -> anyhow::Result<()> {
         let below = self.value(1, name) == Some(OFF);
-        let (path, value) = &mut self.files[0];
-        let Value::Object(settings) = value else {
-            anyhow::bail!("{} is not a JSON object", path.display());
-        };
-        let overrides = settings
-            .entry(KEY)
-            .or_insert_with(|| Value::Object(Map::new()));
-        let Value::Object(overrides) = overrides else {
-            anyhow::bail!("{KEY} in {} is not an object", path.display());
-        };
-        match (on, below) {
-            (false, _) => {
-                overrides.insert(name.to_owned(), OFF.into());
+        let file = &mut self.files[0];
+        let path = file.path.display().to_string();
+        file.edit(|settings| {
+            let overrides = settings
+                .entry(KEY)
+                .or_insert_with(|| Value::Object(Map::new()));
+            let Value::Object(overrides) = overrides else {
+                anyhow::bail!("{KEY} in {path} is not an object");
+            };
+            match (on, below) {
+                (false, _) => {
+                    overrides.insert(name.to_owned(), OFF.into());
+                }
+                (true, true) => {
+                    overrides.insert(name.to_owned(), ON.into());
+                }
+                (true, false) => {
+                    overrides.shift_remove(name);
+                }
             }
-            (true, true) => {
-                overrides.insert(name.to_owned(), ON.into());
+            if overrides.is_empty() {
+                settings.shift_remove(KEY);
             }
-            (true, false) => {
-                overrides.remove(name);
-            }
-        }
-        if overrides.is_empty() {
-            settings.remove(KEY);
-        }
-        if let Some(dir) = path.parent() {
-            fs::create_dir_all(dir)?;
-        }
-        let mut text = serde_json::to_string_pretty(value)?;
-        text.push('\n');
-        fs::write(path, text)?;
-        Ok(())
+            Ok(())
+        })
     }
 }

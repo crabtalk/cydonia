@@ -5,7 +5,11 @@
 mod claude;
 mod codex;
 mod frontmatter;
+mod gemini;
 mod harness;
+mod json;
+mod opencode;
+mod pi;
 mod plugin;
 mod skill;
 mod switch;

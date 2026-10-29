@@ -1013,11 +1013,11 @@ impl Agent {
         Harness::ALL
             .into_iter()
             .find(|harness| match self.id.as_deref() {
-                Some(id) => id == harness.registry_id(),
+                Some(id) => harness.registry_ids().contains(&id),
                 None => self
                     .args
                     .iter()
-                    .any(|arg| cydonia_acp::agents::package_name(arg) == harness.package()),
+                    .any(|arg| Some(cydonia_acp::agents::package_name(arg)) == harness.package()),
             })
     }
 

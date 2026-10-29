@@ -1591,7 +1591,7 @@ impl Library {
                 Field::Enabled => listing
                     .skill
                     .clone()
-                    .filter(|skill| skill.plugin.is_none())
+                    .filter(Skill::switchable)
                     .map(|skill| self.skill_switch(skill, ix, cx).into_any_element())
                     .unwrap_or_else(|| div().into_any_element()),
             })

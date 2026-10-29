@@ -13,6 +13,6 @@ keywords = ["agents", "skills"]
 anyhow.workspace = true
 dirs.workspace = true
 serde.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["preserve_order"] }
 serde_yaml_ng.workspace = true
 toml_edit.workspace = true
