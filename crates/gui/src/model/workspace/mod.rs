@@ -19,13 +19,14 @@ use crate::{
         project::{Project, ProjectId, ProjectIds},
         session::ChatSession,
         settings::{self, Feature, Settings},
+        skills::Skills,
         state::{self, State},
         watch::{self, Watch},
     },
 };
 use artifact::board::Board;
 use bezel::{
-    gpui::{App, AppContext as _, Context, EntityId, EventEmitter},
+    gpui::{App, AppContext as _, Context, Entity, EntityId, EventEmitter},
     theme::{AppExt as _, Brand, Tint, Vibrancy, appearance::AppearanceMode},
     ui::{AppExt as _, icons::Icon},
 };
@@ -34,6 +35,7 @@ use editor::AppExt as _;
 use futures::{StreamExt as _, channel::mpsc};
 use markdown::AppExt as _;
 use mcp::rail::{self, Change};
+use skills::Harness;
 use std::{
     collections::{BTreeMap, HashMap},
     path::{Path, PathBuf},
@@ -180,6 +182,8 @@ pub struct Workspace {
     pub apps: Vec<crate::model::apps::HeldApp>,
     /// The watch on the apps' records and loaded folders.
     apps_watch: Option<crate::model::watch::Watch>,
+    /// What the configured agents' skills were last scanned as.
+    pub skills: Entity<Skills>,
 }
 
 impl Workspace {
@@ -276,6 +280,7 @@ impl Workspace {
             release: state.release,
             apps: Vec::new(),
             apps_watch: None,
+            skills: cx.new(|_| Skills::default()),
         };
         this.app_recorded(cx);
         for ix in restore {
@@ -521,6 +526,27 @@ impl Workspace {
     /// The registry's mark for whatever this session runs on.
     pub fn agent_icon(&self, name: &str) -> Option<Icon> {
         self.agent_icons.get(name).cloned()
+    }
+
+    /// Scan the skills of every configured agent that reads them, over every
+    /// open project.
+    pub fn scan_skills(&self, cx: &mut App) {
+        let harnesses = Harness::ALL
+            .into_iter()
+            .filter(|harness| self.harness_agent(*harness).is_some())
+            .collect();
+        let projects = self.projects.iter().map(|open| open.path.clone()).collect();
+        self.skills
+            .update(cx, |skills, cx| skills.scan(harnesses, projects, cx));
+    }
+
+    /// The name of the first configured agent running with `harness`'s skills.
+    pub fn harness_agent(&self, harness: Harness) -> Option<&str> {
+        self.settings
+            .agents
+            .iter()
+            .find(|agent| agent.harness() == Some(harness))
+            .map(|agent| agent.name.as_str())
     }
 
     /// Which agent an unasked-for session runs on: whoever the project is

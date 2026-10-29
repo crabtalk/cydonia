@@ -4,6 +4,7 @@
 use crate::{
     model::workspace::{Member, Showing},
     view::{
+        kit::menu,
         sidebar::Row,
         window::{
             chrome,
@@ -14,6 +15,7 @@ use crate::{
 use bezel::{
     gpui::{AnyElement, App, Context, FontWeight, Window, div, prelude::*, px},
     theme::{TextStyle, Theme, Typeset},
+    ui::{icons, tooltip::Tooltip},
 };
 /// What a tab puts in its strip and its title row.
 pub(crate) struct Toolbar {
@@ -97,8 +99,8 @@ impl Cydonia {
     }
 
     /// The window's band over what stands where the panes would be — the
-    /// library, or the launch view: the library's name, between the room the
-    /// window's corner controls stand in.
+    /// library, or the launch view: the library's name and its close button,
+    /// between the room the window's corner controls stand in.
     pub(crate) fn window_band(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         // The window's top left is the sidebar's while it is open.
@@ -107,7 +109,8 @@ impl Cydonia {
             right: true,
             tabs: self.workspace.read(cx).settings.appearance.global_tabs(),
         };
-        let title = self.library_shown(cx).then(|| {
+        let library = self.library_shown(cx);
+        let title = library.then(|| {
             div()
                 .min_w_0()
                 .truncate()
@@ -126,6 +129,20 @@ impl Cydonia {
             .pr(px(corners.trail(root::BUTTON_EDGE, window, cx)))
             .children(title)
             .child(chrome::grip("header-grip", &self.drag, window))
+            .children(library.then(|| {
+                menu::button(
+                    "library-close",
+                    icons::notifications::X,
+                    menu::Reveal::Always,
+                    false,
+                    cx,
+                )
+                .tooltip(|window, cx| Tooltip::text("Close", window, cx))
+                .on_click(cx.listener(|this, _, window, cx| {
+                    cx.stop_propagation();
+                    this.close_library(window, cx);
+                }))
+            }))
             .into_any_element()
     }
 }

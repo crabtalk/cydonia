@@ -9,9 +9,7 @@ repository.workspace = true
 homepage.workspace = true
 
 [build-dependencies]
-serde = { workspace = true, features = ["derive"] }
-serde_yaml_ng = "0.10"
+skills.workspace = true
 
 [dev-dependencies]
-serde = { workspace = true, features = ["derive"] }
-serde_yaml_ng = "0.10"
+skills.workspace = true

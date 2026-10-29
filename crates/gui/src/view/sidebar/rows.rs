@@ -50,6 +50,9 @@ use bezel::{
 };
 use std::{rc::Rc, time::Duration};
 
+/// How many of an extended row's labels it draws before a `+n` for the rest.
+const LABELS_SHOWN: usize = 2;
+
 /// What a busy agent's blob is drawn on, claimed while its row is drawn — see
 /// [`crate::view::kit::orb`].
 const BLOB_FPS: f32 = 15.;
@@ -596,14 +599,7 @@ impl Sidebar {
                 false => row_label(facts.label, tint),
             };
         let open = entry.clone();
-        let button = self.archive_button(
-            format!("archive-{}", key_of(entry)),
-            group,
-            entry,
-            archived,
-            window,
-            cx,
-        );
+        let button = self.archive_button(group, entry, archived, preview.is_some(), window, cx);
         let frame = row(
             id,
             group,
@@ -616,62 +612,107 @@ impl Sidebar {
         let pill = self.shape(entry, cx).pill();
         let frame = match preview {
             None => frame.child(mark).child(label).child(button),
-            // The lines under the name run the row's whole width, from under
-            // the mark: indented under the name they would be a column too
+            // The line under the name runs the row's whole width, from under
+            // the mark: indented under the name it would be a column too
             // narrow to say anything.
-            Some(preview) => frame
-                .h(px(pill))
-                .py(px(EXTENDED_PAD))
-                .flex_col()
-                .items_start()
-                .gap_0()
-                .child(
-                    div()
-                        .w_full()
-                        .h(px(TITLE_LINE))
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap(px(ROW_GAP))
-                        .child(mark)
-                        .child(label)
-                        .child(button),
-                )
-                .child(
-                    div()
-                        .w_full()
-                        .h(px(DETAIL_LINE))
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap(px(ROW_GAP))
-                        .child(
-                            detail(stamp::ago(facts.touched), &theme)
-                                .flex_none()
-                                .text_color(tint),
+            Some(preview) => {
+                // The time and the button share one slot at the name line's
+                // end, at least as wide as the button, so the name truncates at
+                // the same place whichever is showing.
+                let pinned = entry.pinned(self.workspace.read(cx), cx);
+                // The button stays up while its menu is, after the pointer has
+                // left for the card.
+                let held = matches!(self.menu.key(), Some(SidebarMenu::Entry(at)) if at == entry);
+                let resting = div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(4.))
+                    .when(pinned, |el| {
+                        el.child(
+                            icons::icon(icons::navigation::Pin)
+                                .size(px(12.))
+                                .text_color(theme.text_muted),
                         )
-                        .when(!preview.is_empty(), |line| {
-                            line.child(detail(preview, &theme).flex_1())
-                        }),
-                )
-                .when(!facts.labels.is_empty(), |el| {
-                    el.child(
+                    })
+                    .child(detail(stamp::ago(facts.touched), &theme).text_color(tint))
+                    .when(held, |el| el.invisible())
+                    .group_hover(group, |el| el.invisible());
+                let slot = div()
+                    .relative()
+                    .flex_none()
+                    .min_w(px(BUTTON_SIZE))
+                    .h_full()
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .child(resting)
+                    .child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .bottom_0()
+                            .right_0()
+                            .flex()
+                            .items_center()
+                            .child(button),
+                    );
+                let shown = facts.labels.len().min(LABELS_SHOWN);
+                let more = facts.labels.len() - shown;
+                let chip = |text: String, tone| {
+                    theme
+                        .chip(text, tone)
+                        .text_style(TextStyle::Caption)
+                        .line_height(px(DETAIL_LINE))
+                        .flex_none()
+                };
+                frame
+                    .h(px(pill))
+                    .py(px(EXTENDED_PAD))
+                    .flex_col()
+                    .items_start()
+                    .gap_0()
+                    .child(
+                        div()
+                            .w_full()
+                            .h(px(TITLE_LINE))
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(ROW_GAP))
+                            .child(mark)
+                            .child(label)
+                            .child(slot),
+                    )
+                    .child(
                         div()
                             .w_full()
                             .h(px(DETAIL_LINE))
                             .flex()
                             .flex_row()
                             .items_center()
-                            .gap(px(4.))
-                            .overflow_hidden()
-                            .children(facts.labels.iter().map(|label| {
-                                theme
-                                    .chip(label.clone(), multi_select::tint(&theme, label))
-                                    .text_style(TextStyle::Caption)
-                                    .line_height(px(DETAIL_LINE))
-                            })),
+                            .gap(px(ROW_GAP))
+                            .child(detail(preview, &theme).flex_1())
+                            .when(!facts.labels.is_empty(), |line| {
+                                line.child(
+                                    div()
+                                        .min_w_0()
+                                        .max_w(gpui::relative(0.5))
+                                        .flex()
+                                        .flex_row()
+                                        .items_center()
+                                        .gap(px(4.))
+                                        .overflow_hidden()
+                                        .children(facts.labels[..shown].iter().map(|label| {
+                                            chip(label.clone(), multi_select::tint(&theme, label))
+                                        }))
+                                        .when(more > 0, |el| {
+                                            el.child(chip(format!("+{more}"), theme.text_muted))
+                                        }),
+                                )
+                            }),
                     )
-                }),
+            }
         };
         frame
             .on_click(cx.listener(move |this, _, window, cx| {
@@ -731,22 +772,22 @@ impl Sidebar {
     /// in the menu rather than behind a press that has to mean one of them.
     fn archive_button(
         &self,
-        id: impl Into<SharedString>,
         group: &'static str,
         entry: &Row,
         archived: bool,
+        extended: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let theme = Theme::of(cx).clone();
-        let id = id.into();
+        let id = SharedString::from(format!("archive-{}", key_of(entry)));
         if entry.pinned(self.workspace.read(cx), cx) {
             let at = SidebarMenu::Entry(entry.clone());
             // The glyph alone turns over; the button is the same button either
             // way, so a press during the frame the hover is still travelling
             // opens the menu rather than falling through to the row.
             let open = self.menu_open(&at);
-            let mark = match open || self.hovered.as_ref() == Some(&at) {
+            let mark = match extended || open || self.hovered.as_ref() == Some(&at) {
                 true => icons::layout::Ellipsis,
                 false => icons::navigation::Pin,
             };
@@ -761,6 +802,11 @@ impl Sidebar {
                     Rc::new(move |this, cx| this.entry_rows(&row, cx)),
                     cx,
                 )
+                // An extended row draws its pin beside its time instead, and
+                // the button only under the pointer.
+                .when(extended && !open, |el| {
+                    el.invisible().group_hover(group, |el| el.visible())
+                })
                 // On the trigger, so the card hangs under the `···` rather
                 // than off the left edge of the row it is mounted on. A row
                 // with no button of its own draws it from the wrapper, where

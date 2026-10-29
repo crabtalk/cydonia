@@ -8,6 +8,7 @@ use bezel::{
     ui::color::SystemColor,
 };
 use serde::{Deserialize, Serialize};
+use skills::Harness;
 use std::{collections::BTreeMap, path::PathBuf};
 
 /// What the file is called inside [`dir`].
@@ -1006,6 +1007,20 @@ fn drawer_composer() -> bool {
 }
 
 impl Agent {
+    /// The agent whose skills it runs with: matched on its registry id, or for
+    /// a hand-written entry on the npm package its arguments name.
+    pub fn harness(&self) -> Option<Harness> {
+        Harness::ALL
+            .into_iter()
+            .find(|harness| match self.id.as_deref() {
+                Some(id) => harness.registry_ids().contains(&id),
+                None => self
+                    .args
+                    .iter()
+                    .any(|arg| Some(cydonia_acp::agents::package_name(arg)) == harness.package()),
+            })
+    }
+
     /// What an agent identity names it by: its registry id, or its name for a
     /// hand-written entry.
     pub fn reference(&self) -> &str {

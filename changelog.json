@@ -1,5 +1,26 @@
 [
   {
+    "version": "0.2.8",
+    "date": "2026-10-29",
+    "summary": "Skills: see every skill your agents read from disk in the library, and switch one off in its agent's own settings. Expanded sidebar rows fit on two lines.",
+    "new": [
+      "List the skills your agents read from disk in the library's Skills tab, with each one's description, agent, project and folder",
+      "Switch a skill off or back on from the Skills tab, for Claude Code, Codex, Gemini CLI, OpenCode and pi, written to that agent's own settings",
+      "List Cursor's skills, and the skills of the Claude Code plugins that are turned on, without a switch",
+      "Close the library with the × in its header"
+    ],
+    "changed": [
+      "Fit each expanded sidebar row on two lines: its time at the end of the name, giving way to its buttons under the pointer, and its labels after its description",
+      "Draw an agent's own busy blob on its sidebar row in place of its sessions' status mark",
+      "Show the window's strip of tabs while only one tab is open"
+    ],
+    "fixed": [
+      "Stop the app quitting when the arrow keys take the caret before a / in the composer",
+      "Archive an agent's open sessions when the agent is deleted, and close an entry's tab when it is archived",
+      "Give the focus back to the last pane visited when a pane is closed or archived"
+    ]
+  },
+  {
     "version": "0.2.7",
     "date": "2026-10-26",
     "summary": "Agents: name an agent program with its project and settings, give it a face, and start its sessions from the sidebar, the palette or a drag onto a pane. The library opens as a tab, and archived entries live there.",

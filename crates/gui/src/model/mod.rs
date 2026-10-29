@@ -21,6 +21,7 @@ pub mod project;
 pub mod session;
 pub mod session_preferences;
 pub mod settings;
+pub mod skills;
 pub mod spaces;
 pub mod state;
 #[cfg(feature = "desktop")]

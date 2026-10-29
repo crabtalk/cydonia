@@ -67,8 +67,7 @@ const DETAIL_LINE: f32 = 16.;
 /// What an extended entry keeps above its name and below its last line.
 const EXTENDED_PAD: f32 = 5.;
 
-/// The wash an extended entry with no labels paints: its name and its
-/// preview. One with labels adds a [`DETAIL_LINE`] for them.
+/// The wash an extended entry paints: its name line over its preview line.
 const EXTENDED_PILL: f32 = 2. * EXTENDED_PAD + TITLE_LINE + DETAIL_LINE;
 
 /// How far past the visible rows the list lays out.
@@ -155,9 +154,8 @@ pub(crate) enum Shape {
     /// One line: every heading, and every entry while the rows are not
     /// extended.
     Line,
-    /// An entry's name over its preview, and its labels under them where it
-    /// has any.
-    Extended { labelled: bool },
+    /// An entry's name over its preview and its labels.
+    Extended,
 }
 
 impl Shape {
@@ -170,8 +168,7 @@ impl Shape {
     pub(crate) fn pill(self) -> f32 {
         match self {
             Shape::Line => ROW_PILL,
-            Shape::Extended { labelled: false } => EXTENDED_PILL,
-            Shape::Extended { labelled: true } => EXTENDED_PILL + DETAIL_LINE,
+            Shape::Extended => EXTENDED_PILL,
         }
     }
 }
@@ -850,18 +847,10 @@ impl Sidebar {
 
     /// How `row` is drawn.
     fn shape(&self, row: &Row, cx: &App) -> Shape {
-        let Row::Entry { showing, .. } = row else {
-            return Shape::Line;
-        };
-        if !self.extended(cx) {
-            return Shape::Line;
+        match matches!(row, Row::Entry { .. }) && self.extended(cx) {
+            true => Shape::Extended,
+            false => Shape::Line,
         }
-        let workspace = self.workspace.read(cx);
-        let labelled = row
-            .located(workspace)
-            .and_then(|(project, _)| workspace.labels_of(project, showing, cx))
-            .is_some_and(|labels| !labels.is_empty());
-        Shape::Extended { labelled }
     }
 
     fn shapes(&self, rows: &[Row], cx: &App) -> Vec<Shape> {
