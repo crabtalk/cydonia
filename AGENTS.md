@@ -147,8 +147,9 @@ Three layers, from general to specific:
   inline name field, and what it renames), `stamp` and `text` (formatters, and
   `CardTitle`), `status` (the mark a session's status stands in an icon slot
   as), `switch` (what an agent can be switched between: its mode and config
-  options), `watch` (the entities and focus handles a view draws from,
-  observed).
+  options), `title` (the title row over a pane or the library: mark and name,
+  then the view's tools), `watch` (the entities and focus handles a view draws
+  from, observed).
 - **`crates/gui/src/view/modals/`**: what goes over the window on its
   `ModalLayer`, raised from more than one screen: `agent` (an agent identity,
   new or kept), `confirm` (the delete question), `new_board`, `install_app`
@@ -171,9 +172,10 @@ Three layers, from general to specific:
   carries (items, find, drawer, footer, its title row in `title`) and how panes
   are arranged. The window's strip (`model/workspace/tabs.rs`) holds a tab per
   entry and per space; under it, the entry in front as a layout of one pane, or
-  the space in front's panes. The library and the launch view stand under the
-  window's band (`pane/header.rs`) instead. A helper stays private to a screen
-  only while that screen is its one user. Pieces shared by one screen's sections
+  the space in front's panes. The library stands in the launch view's place,
+  under a title row as a pane does; the launch view under the window's band
+  (`pane/header.rs`). A helper stays private to a screen only while that screen
+  is its one user. Pieces shared by one screen's sections
   live in that screen's module root, as `view/settings/mod.rs` holds `Switch`,
   `labelled`, `group` and `lead`.
 

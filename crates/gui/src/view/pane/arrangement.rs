@@ -377,24 +377,23 @@ impl Cydonia {
         self.panes = kept;
     }
 
-    /// Whether the panes' title rows along the window's top edge are its top
-    /// row: while the sidebar lists the spaces, so the strip has no tabs to
-    /// draw, and a pane is in front.
-    pub(crate) fn panes_on_top(&self, cx: &App) -> bool {
-        !self.library_shown(cx)
-            && self
-                .workspace
-                .read(cx)
-                .settings
-                .appearance
-                .spaces_in_sidebar
-            && self.arrangement(cx).is_some()
+    /// Whether the title rows along the window's top edge are its top row:
+    /// while the sidebar lists the spaces, so the strip has no tabs to draw,
+    /// and the library or a pane is in front.
+    pub(crate) fn titles_on_top(&self, cx: &App) -> bool {
+        self.workspace
+            .read(cx)
+            .settings
+            .appearance
+            .spaces_in_sidebar
+            && (self.library_shown(cx) || self.arrangement(cx).is_some())
     }
 
     /// Tell each pane where it stands against the window's top edge — see
     /// [`Edge`].
     pub(crate) fn sync_edges(&mut self, cx: &mut Context<Self>) {
-        let top = match self.panes_on_top(cx) {
+        let on_top = self.titles_on_top(cx);
+        let top = match on_top && !self.library_shown(cx) {
             true => self
                 .arrangement(cx)
                 .map(|space| match space.zoomed() {
@@ -404,7 +403,6 @@ impl Cydonia {
                 .unwrap_or_default(),
             false => Vec::new(),
         };
-        let on_top = !top.is_empty();
         if let Some(panel) = self.changes.clone()
             && panel.read(cx).on_top != on_top
         {

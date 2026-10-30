@@ -13,7 +13,9 @@ use crate::{
             new::{self, New},
             switch::{Switch, SwitchId, SwitchOption},
             text::ShownPath as _,
+            title::Title,
         },
+        pane::Edge,
         window::{
             chrome,
             root::{self, Cydonia, NewArticle, NewBoard, NewSession, NewTable},
@@ -491,8 +493,8 @@ impl Cydonia {
         });
     }
 
-    /// The card the library or the launch view stands in, under the window's
-    /// top row — see [`Cydonia::window_band`].
+    /// The card the library or the launch view stands in, the library's title
+    /// row over it or in it as a pane's is — see [`Title::on_chrome`].
     fn lone_card(
         &mut self,
         library: Option<gpui::Entity<crate::view::library::Library>>,
@@ -521,7 +523,25 @@ impl Cydonia {
             Some(_) => self.drawer_layer(None, window, cx),
             None => Vec::new(),
         };
-        match floating && !raised {
+        let heading = library.is_some().then(|| {
+            let top = self.titles_on_top(cx);
+            Title {
+                edge: Edge {
+                    top,
+                    lights: top && !self.sidebar_open,
+                    toggle: top && self.changes.is_none(),
+                },
+                floating,
+                focused: raised,
+            }
+        });
+        let on_chrome = heading.is_some_and(Title::on_chrome);
+        let title = heading.map(|heading| self.library_title(heading, window, cx));
+        let (over, inside) = match on_chrome {
+            true => (title, None),
+            false => (None, title),
+        };
+        let card = match floating && !raised {
             true => bezel::ui::window::resting(cx),
             false => bezel::ui::window::content(floating, cx),
         }
@@ -532,6 +552,7 @@ impl Cydonia {
         .flex()
         .flex_col()
         .capture_any_mouse_down(cx.listener(|this, _, _, _| this.pressed_pane = None))
+        .children(inside)
         .child(
             div()
                 .flex_1()
@@ -543,7 +564,15 @@ impl Cydonia {
         )
         .when(!drawer.is_empty(), |card| {
             card.child(div().absolute().inset_0().children(drawer))
-        })
+        });
+        div()
+            .flex_1()
+            .min_h_0()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .children(over)
+            .child(card)
     }
 
     pub(crate) fn detail(
@@ -563,11 +592,10 @@ impl Cydonia {
         };
         // The window's top row, over every column the panel's included: the
         // strip over a tab, the library's included, and the band over the
-        // launch view, or over the library with Spaces in sidebar on.
-        // Floating, it is on the chrome over the cards. Edge to edge either
-        // way: its ends are the window's, as the lights are. None where the
-        // panes' title rows are it — see [`Cydonia::sync_edges`].
-        let on_top = self.panes_on_top(cx);
+        // launch view. Floating, it is on the chrome over the cards. Edge to
+        // edge either way: its ends are the window's, as the lights are. None
+        // where the title rows are it — see [`Cydonia::sync_edges`].
+        let on_top = self.titles_on_top(cx);
         let global = self.workspace.read(cx).settings.appearance.global_tabs();
         let height = chrome::top_height(global);
         let strip = panes.is_some() || (library.is_some() && global);
