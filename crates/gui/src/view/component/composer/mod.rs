@@ -2,6 +2,7 @@
 //! behind `/`, and the project's entries behind `@`.
 
 mod activity;
+mod commands;
 pub use activity::Activity;
 
 use super::image_preview::{self, disc};
@@ -37,6 +38,7 @@ use bezel::{
         widgets::Controls as _,
     },
 };
+use commands::Commands;
 use editor::Mention;
 use std::{collections::HashMap, sync::Arc};
 
@@ -265,10 +267,7 @@ pub struct Composer {
     /// text on every change rather than stored as a flag: a backspace over the
     /// `/` or `@` has to close the picker, and a flag would have to be told.
     completing: Option<Completing>,
-    filter: popover::Filter,
-    /// The commands as the agent described them, in the filter's own order —
-    /// a row's second line is `commands[item].description`.
-    commands: Vec<Command>,
+    commands: Commands,
     /// Where the picker's list sits, since the card clamps at
     /// [`PICKER_HEIGHT`]: arrowing past the last visible row has to bring
     /// the row it landed on back into view.
@@ -358,8 +357,7 @@ impl Composer {
             attachments: Vec::new(),
             preview: None,
             completing: None,
-            filter: popover::Filter::new(Vec::new()),
-            commands: Vec::new(),
+            commands: Commands::default(),
             scroll: ScrollHandle::new(),
             streaming: false,
             last_asked: None,
@@ -432,20 +430,12 @@ impl Composer {
             .update(cx, |field, cx| field.set_placeholder(placeholder, cx));
     }
 
-    /// The commands the active agent advertises — what `/` offers. The
-    /// descriptions are held beside the filter rather than in it: the filter
-    /// ranks names, and a picker row is the name with its sentence under it.
+    /// The commands the active agent advertises — what `/` offers.
     pub fn set_commands(&mut self, commands: &[Command], cx: &mut Context<Self>) {
-        if self.commands == commands {
+        if self.commands.advertised == commands {
             return;
         }
-        self.commands = commands.to_vec();
-        self.filter = popover::Filter::new(
-            commands
-                .iter()
-                .map(|command| SharedString::from(format!("/{}", command.name)))
-                .collect(),
-        );
+        self.commands = Commands::new(commands);
         self.completing = None;
         cx.notify();
     }
@@ -689,11 +679,9 @@ impl Composer {
         let command = content
             .strip_prefix('/')
             .and_then(|_| content.get(1..caret))
-            .filter(|typed| {
-                !self.filter.items().is_empty() && !typed.contains(char::is_whitespace)
-            });
+            .filter(|typed| !self.commands.is_empty() && !typed.contains(char::is_whitespace));
         self.completing = if let Some(typed) = command {
-            self.filter.refilter(typed);
+            self.commands.refilter(typed);
             Some(Completing::Command)
         } else {
             mention_at(&content, caret).map(|at| {
@@ -722,10 +710,13 @@ impl Composer {
     }
 
     /// Replace the typed `/query` with the picked command.
-    fn accept(&mut self, item: usize, cx: &mut Context<Self>) {
+    fn accept(&mut self, position: usize, cx: &mut Context<Self>) {
+        let Some(typed) = self.commands.typed(position) else {
+            return;
+        };
         let content = self.field.read(cx).content().clone();
         let caret = self.field.read(cx).cursor().min(content.len());
-        let picked = format!("{} ", self.filter.items()[item]);
+        let picked = format!("{typed} ");
         let rest = content[caret..].to_string();
         self.set_text(picked + &rest, cx);
         self.completing = None;
@@ -749,7 +740,7 @@ impl Composer {
     /// The highlighted row's position in the open picker.
     fn active(&self) -> Option<usize> {
         match self.completing.as_ref()? {
-            Completing::Command => self.filter.active(),
+            Completing::Command => self.commands.active(),
             Completing::Mention { active, .. } => *active,
         }
     }
@@ -757,11 +748,7 @@ impl Composer {
     /// Take the row at `position` in the open picker.
     fn choose(&mut self, position: usize, cx: &mut Context<Self>) {
         match &self.completing {
-            Some(Completing::Command) => {
-                if let Some(&item) = self.filter.filtered().get(position) {
-                    self.accept(item, cx);
-                }
-            }
+            Some(Completing::Command) => self.accept(position, cx),
             Some(Completing::Mention { at, rows, .. }) => {
                 if let Some(row) = rows.get(position).cloned() {
                     self.accept_mention(*at, &row, cx);
@@ -773,7 +760,7 @@ impl Composer {
 
     fn point(&mut self, position: usize) {
         match &mut self.completing {
-            Some(Completing::Command) => self.filter.set_active(position),
+            Some(Completing::Command) => self.commands.set_active(position),
             Some(Completing::Mention { rows, active, .. }) if position < rows.len() => {
                 *active = Some(position);
             }
@@ -786,7 +773,7 @@ impl Composer {
     /// brings back the last message sent.
     fn step(&mut self, delta: isize, cx: &mut Context<Self>) {
         match &mut self.completing {
-            Some(Completing::Command) => self.filter.step(delta),
+            Some(Completing::Command) => self.commands.step(delta),
             Some(Completing::Mention { rows, active, .. }) => {
                 *active = popover::menu_step(*active, rows.len(), delta);
             }
@@ -842,11 +829,18 @@ impl Composer {
     }
 
     /// Scroll the highlighted row back inside the clamped card. The card's
-    /// children are the picker's rows one for one, so the active position is
-    /// the child gpui indexes.
+    /// children are the picker's items one for one, headings included.
     fn reveal(&self) {
-        if let Some(active) = self.active() {
-            self.scroll.scroll_to_item(active);
+        if let Some(item) = self.active_item() {
+            self.scroll.scroll_to_item(item);
+        }
+    }
+
+    /// The highlighted row's item in the open picker's card.
+    fn active_item(&self) -> Option<usize> {
+        match self.completing.as_ref()? {
+            Completing::Command => self.commands.item_of(self.commands.active()?),
+            Completing::Mention { active, .. } => *active,
         }
     }
 
@@ -877,45 +871,36 @@ impl Composer {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        let items: Vec<Item> = match self.completing.as_ref()? {
-            Completing::Command => self
-                .filter
-                .filtered()
-                .iter()
-                .map(|&item| {
-                    let row = Item::action(self.filter.items()[item].clone());
-                    // An agent is free to send an empty one, and a blank second
-                    // line would read as a gap rather than as a description.
-                    match self.commands[item].description.trim() {
-                        "" => row,
-                        description => row.with_description(description.to_string()),
-                    }
-                })
-                .collect(),
+        // Each item beside the row of the picker it is, `None` for a
+        // heading.
+        let (items, positions): (Vec<Item>, Vec<Option<usize>>) = match self.completing.as_ref()? {
+            Completing::Command => self.commands.items(),
             Completing::Mention { rows, .. } => rows
                 .iter()
-                .map(|row| {
+                .enumerate()
+                .map(|(position, row)| {
                     let mut item = Item::action(row.label.clone());
                     if let Some(icon) = &row.icon {
                         item = item.with_icon(icon.clone());
                     }
-                    match &row.description {
+                    let item = match &row.description {
                         Some(description) => item.with_description(description.clone()),
                         None => item,
-                    }
+                    };
+                    (item, Some(position))
                 })
-                .collect(),
+                .unzip(),
         };
         if items.is_empty() {
             return None;
         }
-        // The filter or the open mention is what the highlight lives in — it
-        // survives a repaint and the card does not — so the cursor is made
+        // The commands or the open mention is what the highlight lives in —
+        // it survives a repaint and the card does not — so the cursor is made
         // from it each frame rather than kept beside it, where the two could
         // disagree.
         let mut cursor = Cursor::default();
-        if let Some(active) = self.active() {
-            cursor.point_at(&items, &[active]);
+        if let Some(item) = self.active_item() {
+            cursor.point_at(&items, &[item]);
         }
         Some(popover::anchored_menu_above(
             "composer-commands",
@@ -934,13 +919,17 @@ impl Composer {
                             // The pointer moves the same highlight the arrows do, so
                             // Enter always takes the row that is lit.
                             Hit::Point(path) => {
-                                if let [row] = path[..] {
+                                if let [item] = path[..]
+                                    && let Some(&Some(row)) = positions.get(item)
+                                {
                                     composer.point(row);
                                     cx.notify();
                                 }
                             }
                             Hit::Choose(path) => {
-                                if let [row] = path[..] {
+                                if let [item] = path[..]
+                                    && let Some(&Some(row)) = positions.get(item)
+                                {
                                     composer.choose(row, cx);
                                 }
                             }
@@ -1515,5 +1504,5 @@ impl Render for Composer {
 }
 
 #[cfg(test)]
-#[path = "../../../tests/unit/composer_drafts.rs"]
+#[path = "../../../../tests/unit/composer_drafts.rs"]
 mod draft_tests;
