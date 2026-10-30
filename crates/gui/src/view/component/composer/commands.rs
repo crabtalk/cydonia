@@ -182,6 +182,20 @@ impl Commands {
         }
     }
 
+    /// The lit row's description, where any row shown has one: empty for a
+    /// lit row with none. Nothing where no row shown has one.
+    pub fn active_description(&self) -> Option<&str> {
+        let row = |&(at, ix): &(usize, usize)| &self.groups[at].rows[ix];
+        self.shown
+            .iter()
+            .any(|shown| !row(shown).description.is_empty())
+            .then(|| {
+                self.active
+                    .and_then(|position| self.shown.get(position))
+                    .map_or("", |shown| row(shown).description.as_str())
+            })
+    }
+
     /// What picking the row at `position` types.
     pub fn typed(&self, position: usize) -> Option<SharedString> {
         let (at, ix) = self.shown.get(position)?;
@@ -206,7 +220,7 @@ impl Commands {
             let item = Item::action(row.label.clone());
             items.push(match row.description.as_str() {
                 "" => item,
-                description => item.with_description(description.to_owned()),
+                description => item.with_inline_description(description.to_owned()),
             });
             positions.push(Some(position));
         }

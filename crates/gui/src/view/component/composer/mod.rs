@@ -61,6 +61,12 @@ const WARN_AT: f32 = 0.8;
 /// of it.
 const PICKER_HEIGHT: f32 = 320.;
 
+/// The lines the `/` list's footer holds of the lit row's description.
+const FOOTER_LINES: usize = 3;
+
+/// Above and below the description in the `/` list's footer.
+const FOOTER_PADDING: f32 = 6.;
+
 /// The side of a picture waiting in the composer.
 const THUMB: f32 = 64.;
 
@@ -903,6 +909,27 @@ impl Composer {
         if let Some(item) = self.active_item() {
             cursor.point_at(&items, &[item]);
         }
+        // Its height is fixed, so the card holds still under the arrows.
+        let footer = match self.completing.as_ref()? {
+            Completing::Command => self.commands.active_description(),
+            Completing::Mention { .. } => None,
+        }
+        .map(|description| {
+            div()
+                .flex_none()
+                .border_t_1()
+                .border_color(theme.border_faint)
+                .px(px(popover::MENU_PAD + popover::MENU_ROW_INSET))
+                .py(px(FOOTER_PADDING))
+                .h(px(FOOTER_LINES as f32
+                    * TextStyle::Subheadline.painted_line_height()
+                    + 2. * FOOTER_PADDING
+                    + 1.))
+                .text_style(TextStyle::Subheadline)
+                .text_color(theme.text_muted)
+                .line_clamp(FOOTER_LINES)
+                .child(description.to_owned())
+        });
         Some(popover::anchored_menu_above(
             "composer-commands",
             div()
@@ -942,6 +969,7 @@ impl Composer {
                             Hit::Dismiss => {}
                         },
                     )
+                    .children(footer)
                     .id("composer-commands-list")
                     // The card sizes to its widest row, and a row is a sentence — so
                     // without this it opens as wide as the window lets it. See

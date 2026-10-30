@@ -121,3 +121,18 @@ fn the_commands_last_sent_lead_while_nothing_is_typed() {
     commands.refilter("rev");
     assert_eq!(labels(&commands), ["/review"]);
 }
+
+/// The footer follows the lit row, stays up over a row with no description,
+/// and goes where no row shown has one.
+#[test]
+fn the_footer_reads_the_lit_row() {
+    let mut commands = Commands::new(
+        &[command("review", "Review the diff"), command("compact", "")],
+        &[],
+    );
+    assert_eq!(commands.active_description(), Some("Review the diff"));
+    commands.step(1);
+    assert_eq!(commands.active_description(), Some(""));
+    commands.refilter("compact");
+    assert_eq!(commands.active_description(), None);
+}
