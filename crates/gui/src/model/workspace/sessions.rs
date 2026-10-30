@@ -317,12 +317,21 @@ impl Workspace {
             if chat.idle() && chat.resumable() {
                 chat.resume(cx);
             }
+            // A message opening with a command the agent offers sends it.
+            let command = content
+                .strip_prefix('/')
+                .and_then(|rest| rest.split_whitespace().next())
+                .filter(|name| chat.commands.iter().any(|command| command.name == *name))
+                .map(|name| (chat.entry.name.clone(), name.to_owned()));
             chat.send(content);
-            Some(chat.filed().map(str::to_owned))
+            Some((chat.filed().map(str::to_owned), command))
         });
-        let Some(record) = record else {
+        let Some((record, command)) = record else {
             return;
         };
+        if let Some((agent, command)) = command {
+            self.sent_command(agent, command);
+        }
         if let Some(minted) = self.session(id, cx).and_then(|chat| chat.record.clone()) {
             self.keep_edited(Kind::Session, &minted);
         }

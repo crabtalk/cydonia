@@ -21,13 +21,16 @@ fn labels(commands: &Commands) -> Vec<String> {
 }
 
 fn agent() -> Commands {
-    Commands::new(&[
-        command("support:draft", "(support) Draft a reply"),
-        command("review", "Review the diff"),
-        command("plugins:make", "(plugins) Make a plugin"),
-        command("support:triage", "(support) Triage a ticket"),
-        command("compact", ""),
-    ])
+    Commands::new(
+        &[
+            command("support:draft", "(support) Draft a reply"),
+            command("review", "Review the diff"),
+            command("plugins:make", "(plugins) Make a plugin"),
+            command("support:triage", "(support) Triage a ticket"),
+            command("compact", ""),
+        ],
+        &[],
+    )
 }
 
 /// Commands of no plugin lead, then each plugin's under its heading, in the
@@ -89,4 +92,32 @@ fn the_arrows_pass_over_headings() {
         "/support:draft"
     );
     assert_eq!(commands.item_of(commands.active().unwrap()), Some(3));
+}
+
+/// While nothing is typed, the commands last sent lead under their own
+/// heading, by their whole name; one the agent no longer offers is left out.
+#[test]
+fn the_commands_last_sent_lead_while_nothing_is_typed() {
+    let sent = ["support:triage", "gone", "review"].map(str::to_owned);
+    let mut commands = Commands::new(
+        &[
+            command("review", "Review the diff"),
+            command("support:triage", "(support) Triage a ticket"),
+        ],
+        &sent,
+    );
+    assert_eq!(
+        labels(&commands),
+        [
+            "# Recent",
+            "/support:triage",
+            "/review",
+            "/review",
+            "# support",
+            "triage"
+        ]
+    );
+    assert_eq!(commands.typed(0).unwrap(), "/support:triage");
+    commands.refilter("rev");
+    assert_eq!(labels(&commands), ["/review"]);
 }

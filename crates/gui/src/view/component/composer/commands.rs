@@ -1,6 +1,7 @@
-//! The agent's slash commands as `/` lists them: those of no plugin first,
-//! then one group per plugin under its name, each command matched against its
-//! whole `plugin:skill` name and against the skill alone.
+//! The agent's slash commands as `/` lists them: while nothing is typed, the
+//! ones last sent; then those of no plugin, then one group per plugin under its
+//! name, each command matched against its whole `plugin:skill` name and
+//! against the skill alone.
 
 use crate::model::session::Command;
 use bezel::{
@@ -11,7 +12,11 @@ use bezel::{
 /// Between a Claude Code plugin's name and its skill's: `plugin:skill`.
 const PLUGIN_SEPARATOR: char = ':';
 
+/// What the commands last sent are listed under.
+const RECENT: &str = "Recent";
+
 /// One command as a row of the list.
+#[derive(Clone)]
 struct Row {
     /// What picking it types: `/` and the whole name.
     typed: SharedString,
@@ -23,9 +28,13 @@ struct Row {
     description: String,
 }
 
-/// The rows of one plugin, or of none.
+/// The rows of one plugin, of none, or the ones last sent.
 struct Group {
-    plugin: Option<String>,
+    /// The plugin's name, or [`RECENT`]. Nothing for the commands of no
+    /// plugin.
+    heading: Option<SharedString>,
+    /// The commands last sent, listed while nothing is typed.
+    recent: bool,
     rows: Vec<Row>,
 }
 
@@ -34,8 +43,10 @@ struct Group {
 pub(crate) struct Commands {
     /// The commands as the agent sent them.
     pub advertised: Vec<Command>,
-    /// The group of no plugin first, then each plugin's in the order the
-    /// agent first names it.
+    /// The names of the commands last sent to the agent, most recent first.
+    pub sent: Vec<String>,
+    /// The ones last sent, then the group of no plugin, then each plugin's in
+    /// the order the agent first names it.
     groups: Vec<Group>,
     /// What the query keeps, in list order, as (group, row).
     shown: Vec<(usize, usize)>,
@@ -44,9 +55,10 @@ pub(crate) struct Commands {
 }
 
 impl Commands {
-    pub fn new(commands: &[Command]) -> Self {
+    pub fn new(commands: &[Command], sent: &[String]) -> Self {
         let mut groups = vec![Group {
-            plugin: None,
+            heading: None,
+            recent: false,
             rows: Vec::new(),
         }];
         for command in commands {
@@ -77,16 +89,44 @@ impl Commands {
                 short,
                 description,
             };
-            match groups.iter_mut().find(|group| group.plugin == plugin) {
+            let heading = plugin.map(SharedString::from);
+            match groups.iter_mut().find(|group| group.heading == heading) {
                 Some(group) => group.rows.push(row),
                 None => groups.push(Group {
-                    plugin,
+                    heading,
+                    recent: false,
                     rows: vec![row],
                 }),
             }
         }
+        // A command last sent that the agent no longer offers is left out.
+        let recent: Vec<Row> = sent
+            .iter()
+            .filter_map(|name| {
+                let typed = format!("/{name}");
+                let row = groups
+                    .iter()
+                    .flat_map(|group| &group.rows)
+                    .find(|row| row.typed == typed)?;
+                Some(Row {
+                    label: row.typed.clone(),
+                    ..row.clone()
+                })
+            })
+            .collect();
+        if !recent.is_empty() {
+            groups.insert(
+                0,
+                Group {
+                    heading: Some(RECENT.into()),
+                    recent: true,
+                    rows: recent,
+                },
+            );
+        }
         let mut commands = Self {
             advertised: commands.to_vec(),
+            sent: sent.to_vec(),
             groups,
             shown: Vec::new(),
             active: None,
@@ -100,12 +140,15 @@ impl Commands {
     }
 
     /// Keep what `query` matches, within each group prefix matches before
-    /// the rest, and light the first.
+    /// the rest, and light the first. The ones last sent only while nothing
+    /// is typed.
     pub fn refilter(&mut self, query: &str) {
+        let typed = !query.trim().is_empty();
         self.shown = self
             .groups
             .iter()
             .enumerate()
+            .filter(|(_, group)| !(typed && group.recent))
             .flat_map(|(at, group)| {
                 let mut rows: Vec<(usize, usize)> = group
                     .rows
@@ -154,8 +197,8 @@ impl Commands {
         for (position, &(at, ix)) in self.shown.iter().enumerate() {
             if group != Some(at) {
                 group = Some(at);
-                if let Some(plugin) = &self.groups[at].plugin {
-                    items.push(Item::Heading(plugin.clone().into()));
+                if let Some(heading) = &self.groups[at].heading {
+                    items.push(Item::Heading(heading.clone()));
                     positions.push(None);
                 }
             }

@@ -1010,7 +1010,12 @@ impl Cydonia {
         let composer = cx.new(Composer::new);
         let point = {
             let workspace = self.workspace.read(cx);
-            Pointing::of(workspace.session(id, cx), &composer_agents(workspace), cx)
+            Pointing::of(
+                workspace.session(id, cx),
+                workspace,
+                &composer_agents(workspace),
+                cx,
+            )
         };
         composer.update(cx, |composer, cx| {
             composer.set_tools(false, cx);
@@ -1042,7 +1047,7 @@ impl Cydonia {
             .map(|(id, composer)| {
                 (
                     composer.clone(),
-                    Pointing::of(workspace.session(*id, cx), &agents, cx),
+                    Pointing::of(workspace.session(*id, cx), workspace, &agents, cx),
                 )
             })
             .collect();

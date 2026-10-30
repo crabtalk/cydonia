@@ -430,12 +430,13 @@ impl Composer {
             .update(cx, |field, cx| field.set_placeholder(placeholder, cx));
     }
 
-    /// The commands the active agent advertises — what `/` offers.
-    pub fn set_commands(&mut self, commands: &[Command], cx: &mut Context<Self>) {
-        if self.commands.advertised == commands {
+    /// The commands the active agent advertises — what `/` offers — and the
+    /// ones last sent to it, most recent first.
+    pub fn set_commands(&mut self, commands: &[Command], sent: &[String], cx: &mut Context<Self>) {
+        if self.commands.advertised == commands && self.commands.sent == sent {
             return;
         }
-        self.commands = Commands::new(commands);
+        self.commands = Commands::new(commands, sent);
         self.completing = None;
         cx.notify();
     }

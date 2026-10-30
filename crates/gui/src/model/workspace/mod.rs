@@ -77,6 +77,9 @@ const COLUMN: &str = "Column";
 /// Commands the palette remembers running.
 const RECENT_COMMANDS: usize = 20;
 
+/// `/` commands remembered for each agent.
+const SENT_COMMANDS: usize = 5;
+
 /// A project was re-read off disk and something a pane was showing has been
 /// replaced — see [`crate::model::watch`].
 ///
@@ -176,6 +179,8 @@ pub struct Workspace {
     folded_sections: std::collections::HashSet<String>,
     /// The palette's commands last run, most recent first.
     recent_commands: Vec<String>,
+    /// The `/` commands last sent to each agent — [`State::sent_commands`].
+    sent_commands: std::collections::BTreeMap<String, Vec<String>>,
     /// The release whose What's New was last shown — [`State::release`].
     release: Option<crate::model::version::Version>,
     /// Every app on this machine, by id — see [`apps`].
@@ -277,6 +282,7 @@ impl Workspace {
             space_order,
             folded_sections: state.folded_sections.iter().cloned().collect(),
             recent_commands: state.commands,
+            sent_commands: state.sent_commands,
             release: state.release,
             apps: Vec::new(),
             apps_watch: None,
@@ -362,6 +368,7 @@ impl Workspace {
             },
             window: self.window,
             commands: self.recent_commands.clone(),
+            sent_commands: self.sent_commands.clone(),
             release: self.release.clone(),
             tabs: Some(
                 self.strip
@@ -400,6 +407,24 @@ impl Workspace {
         self.recent_commands.retain(|held| *held != key);
         self.recent_commands.insert(0, key);
         self.recent_commands.truncate(RECENT_COMMANDS);
+        self.save();
+    }
+
+    /// The `/` commands last sent to the agent named `agent`, most recent
+    /// first.
+    pub fn sent_commands(&self, agent: &str) -> &[String] {
+        self.sent_commands
+            .get(agent)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+    }
+
+    /// Put `command` at the head of the ones last sent to `agent`.
+    pub fn sent_command(&mut self, agent: String, command: String) {
+        let sent = self.sent_commands.entry(agent).or_default();
+        sent.retain(|held| *held != command);
+        sent.insert(0, command);
+        sent.truncate(SENT_COMMANDS);
         self.save();
     }
 
