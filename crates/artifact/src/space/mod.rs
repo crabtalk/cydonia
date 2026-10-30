@@ -822,6 +822,7 @@ impl<P> From<Entry<P>> for Member<P> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(from = "Stored<P>")]
 pub struct Space<P = PathBuf> {
     /// What names this space for as long as it exists, and what its file is
     /// called. Written into the file as well, the way a board's is: a backend
@@ -844,11 +845,46 @@ pub struct Space<P = PathBuf> {
     /// TOML reads a bare key after one as belonging to it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub zoomed: Option<Member<P>>,
-    /// The tab last focused. Read through [`Space::focused`]: the pane is
-    /// whichever holds it now.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub focused: Option<Member<P>>,
+    /// Members in the order they were focused, the last focused last. A
+    /// member never focused is older than every one listed. Read through
+    /// [`Space::focused`]: the pane is whichever holds the last one now.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub used: Vec<Member<P>>,
     pub tree: Node<Member<P>>,
+}
+
+/// A [`Space`] as a file holds it.
+#[derive(Deserialize)]
+struct Stored<P> {
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    zoomed: Option<Member<P>>,
+    #[serde(default)]
+    used: Vec<Member<P>>,
+    /// The tab last focused, in files written before `used`.
+    #[serde(default)]
+    focused: Option<Member<P>>,
+    tree: Node<Member<P>>,
+}
+
+impl<P> From<Stored<P>> for Space<P> {
+    fn from(stored: Stored<P>) -> Self {
+        let used = match stored.used.is_empty() {
+            true => stored.focused.into_iter().collect(),
+            false => stored.used,
+        };
+        Self {
+            id: stored.id,
+            touched: 0,
+            name: stored.name,
+            zoomed: stored.zoomed,
+            used,
+            tree: stored.tree,
+        }
+    }
 }
 
 impl<P: Clone + PartialEq> Space<P> {
@@ -860,7 +896,7 @@ impl<P: Clone + PartialEq> Space<P> {
             touched: stamp::now(),
             name: name.to_owned(),
             zoomed: None,
-            focused: None,
+            used: Vec::new(),
             tree: Node::leaf(entry),
         }
     }
@@ -873,7 +909,7 @@ impl<P: Clone + PartialEq> Space<P> {
             touched: self.touched,
             name: self.name,
             zoomed: self.zoomed.map(&mut member),
-            focused: self.focused.map(&mut member),
+            used: self.used.into_iter().map(&mut member).collect(),
             tree: self.tree.map(&mut member),
         }
     }
@@ -896,27 +932,52 @@ impl<P: Clone + PartialEq> Space<P> {
 
     /// Drop members that no longer resolve — see [`Node::prune`].
     pub fn prune(&mut self, gone: &[Member<P>]) -> bool {
-        self.leaving(gone);
-        self.tree.prune(gone)
+        self.used.retain(|held| !gone.contains(held));
+        self.take_out(gone, |tree| tree.prune(gone))
     }
 
-    /// Hand `zoomed` and `focused`, where `gone` holds the entry either names,
-    /// to a tab of the same pane that stays. Left as they are where none
-    /// stays.
-    fn leaving(&mut self, gone: &[Member<P>]) {
-        let handed = |held: &Option<Member<P>>| {
-            let held = held.as_ref().filter(|held| gone.contains(held))?;
+    /// Take `gone` out of the tree by `take`. A pane whose front goes shows
+    /// the tab of it focused last that stays; `zoomed` goes to a tab of the
+    /// same pane that stays, and is left as it is where none stays.
+    fn take_out(
+        &mut self,
+        gone: &[Member<P>],
+        take: impl FnOnce(&mut Node<Member<P>>) -> bool,
+    ) -> bool {
+        let staying = |held: &Member<P>| -> Vec<Member<P>> {
             self.stack_of(held)
                 .into_iter()
-                .find(|tab| !gone.contains(tab))
+                .filter(|tab| !gone.contains(tab))
+                .collect()
         };
-        let (zoomed, focused) = (handed(&self.zoomed), handed(&self.focused));
+        let zoomed = self
+            .zoomed
+            .as_ref()
+            .filter(|held| gone.contains(held))
+            .and_then(|held| staying(held).into_iter().next());
+        let fronts: Vec<Member<P>> = gone
+            .iter()
+            .filter(|held| self.front_of(held).as_ref() == Some(*held))
+            .filter_map(|held| self.latest(&staying(held)))
+            .collect();
         if zoomed.is_some() {
             self.zoomed = zoomed;
         }
-        if focused.is_some() {
-            self.focused = focused;
+        let changed = take(&mut self.tree);
+        for front in &fronts {
+            self.tree.set_front(front);
         }
+        changed
+    }
+
+    /// Of `among`, the one focused last, or else the first.
+    fn latest(&self, among: &[Member<P>]) -> Option<Member<P>> {
+        self.used
+            .iter()
+            .rev()
+            .find(|held| among.contains(held))
+            .or(among.first())
+            .cloned()
     }
 
     pub fn contains(&self, entry: &Member<P>) -> bool {
@@ -940,8 +1001,9 @@ impl<P: Clone + PartialEq> Space<P> {
         if !self.tree.relocatable(entry, target) {
             return false;
         }
-        self.leaving(std::slice::from_ref(entry));
-        self.tree.relocate(entry, target, side)
+        self.take_out(std::slice::from_ref(entry), |tree| {
+            tree.relocate(entry, target, side)
+        })
     }
 
     /// Put an entry into the pane holding `target`, at the end of its stack —
@@ -960,7 +1022,7 @@ impl<P: Clone + PartialEq> Space<P> {
         if self.contains(arriving) {
             // Taking it out can collapse the split it was holding, which is
             // why the target is found again afterwards rather than before.
-            self.remove(arriving);
+            self.take_out(std::slice::from_ref(arriving), |tree| tree.remove(arriving));
             if !self.contains(target) {
                 return false;
             }
@@ -999,8 +1061,8 @@ impl<P: Clone + PartialEq> Space<P> {
     /// A zoomed pane that is closed leaves the rest unzoomed rather than
     /// standing something else in its place.
     pub fn remove(&mut self, entry: &Member<P>) -> bool {
-        self.leaving(std::slice::from_ref(entry));
-        self.tree.remove(entry)
+        self.used.retain(|held| held != entry);
+        self.take_out(std::slice::from_ref(entry), |tree| tree.remove(entry))
     }
 
     /// Stand one pane over the others, or put it back. Answers what is zoomed
@@ -1022,17 +1084,18 @@ impl<P: Clone + PartialEq> Space<P> {
     /// Record `tab` as the one focused. Answers whether that changed what is
     /// recorded.
     pub fn focus(&mut self, tab: &Member<P>) -> bool {
-        if !self.contains(tab) || self.focused.as_ref() == Some(tab) {
+        if !self.contains(tab) || self.used.last() == Some(tab) {
             return false;
         }
-        self.focused = Some(tab.clone());
+        self.used.retain(|held| held != tab);
+        self.used.push(tab.clone());
         true
     }
 
     /// The entry in front of the pane holding the one last focused, if it is
     /// still here.
     pub fn focused(&self) -> Option<Member<P>> {
-        self.front_of(self.focused.as_ref()?)
+        self.front_of(self.used.last()?)
     }
 
     /// The entry in front of the pane last focused, or else of the first pane

@@ -810,7 +810,74 @@ fn a_space_keeps_the_pane_it_was_focused_on() {
 
     assert!(space.focus(&a));
     space.remove(&a);
-    assert_eq!(space.focused(), None);
+    assert_eq!(space.focused(), Some(c.clone()));
+}
+
+/// The front of a stack that closes hands the front to the tab of it focused
+/// before, and the focus with it.
+#[test]
+fn a_stack_goes_back_to_the_tab_focused_before() {
+    let (a, b, c) = (Member::app("a"), Member::app("b"), Member::app("c"));
+    let mut space: Space = Space::new("1".into(), "space-1", a.clone());
+    assert!(space.insert(&a, &Member::app("d"), Side::Right));
+    assert!(space.stack(&a, &b));
+    assert!(space.stack(&a, &c));
+    for tab in [&a, &b, &c] {
+        space.set_front(tab);
+        space.focus(tab);
+    }
+
+    space.remove(&c);
+    assert_eq!(space.front_of(&a), Some(b.clone()));
+    assert_eq!(space.focused(), Some(b.clone()));
+}
+
+/// The focused pane that closes hands the focus to the pane focused before
+/// it, wherever that is laid out.
+#[test]
+fn a_closed_pane_hands_the_focus_to_the_one_focused_before() {
+    let (a, b, c) = (Member::app("a"), Member::app("b"), Member::app("c"));
+    let mut space: Space = Space::new("1".into(), "space-1", a.clone());
+    assert!(space.insert(&a, &b, Side::Right));
+    assert!(space.insert(&b, &c, Side::Right));
+    for tab in [&a, &c, &b] {
+        space.focus(tab);
+    }
+
+    space.prune(std::slice::from_ref(&b));
+    assert_eq!(space.focused(), Some(c.clone()));
+    space.remove(&c);
+    assert_eq!(space.focused(), Some(a.clone()));
+}
+
+/// A space written before the order of use was kept reads its one focused
+/// tab as the last used.
+#[test]
+fn a_space_written_with_one_focused_tab_reads_it_as_the_last_used() {
+    let read: Space = toml::from_str(
+        r#"
+id = "1"
+name = "space-1"
+
+[focused]
+app = "b"
+
+[tree]
+kind = "split"
+axis = "horizontal"
+
+[[tree.children]]
+kind = "leaf"
+entry = { app = "a" }
+
+[[tree.children]]
+kind = "leaf"
+entry = { app = "b" }
+"#,
+    )
+    .unwrap();
+    assert_eq!(read.used, vec![Member::app("b")]);
+    assert_eq!(read.focused(), Some(Member::app("b")));
 }
 
 /// A zoomed pane stays zoomed when the tab it was zoomed from closes and

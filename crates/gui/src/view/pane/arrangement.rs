@@ -733,34 +733,16 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Where the focus lands: where it is, unless it was on the pane
-        // closing. Then on the pane entered before it, or else the space's
-        // last.
-        let entries = self
-            .arrangement(cx)
-            .map(|space| space.tree.fronts())
-            .unwrap_or_default();
-        let kept = self
-            .focused_entry(cx)
-            .filter(|focused| focused != entry)
-            .or_else(|| {
-                self.tab_history
-                    .iter()
-                    .rev()
-                    .find(|tab| *tab != entry && entries.contains(tab))
-                    .cloned()
-            })
-            .or_else(|| entries.iter().rev().find(|tab| *tab != entry).cloned());
-        self.tab_history.retain(|tab| tab != entry);
         // The entry left when this close took the space with it, which opened
         // in the window's strip — see [`Workspace::close_pane`].
         let alone = self
             .workspace
             .update(cx, |workspace, cx| workspace.close_pane(entry, cx));
         self.sync_leaves(window, cx);
+        // Where the space says the focus is now — see [`Space::focused`].
         let landing = alone
             .map(|(member, _)| member)
-            .or(kept)
+            .or_else(|| self.arrangement(cx).and_then(|space| space.focused_front()))
             .filter(|member| {
                 self.leaves
                     .iter()

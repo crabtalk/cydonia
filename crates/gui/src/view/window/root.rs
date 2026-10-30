@@ -559,9 +559,6 @@ pub struct Cydonia {
     /// Every board on screen: cards between lanes and boards, lanes and list
     /// groups along their own board.
     pub(crate) board_sort: drag::Domain<board::BoardRegion, board::BoardItem>,
-    /// The panes the focus has entered, most recent last. Read when the
-    /// focused pane closes — see [`Cydonia::close_pane`]. Runtime only.
-    pub(crate) tab_history: Vec<Member>,
     /// A zoom on its way — see [`Cydonia::toggle_zoom`].
     pub(crate) zoom_glide: Option<crate::view::pane::arrangement::ZoomGlide>,
     pub(crate) pane_places: Rc<RefCell<crate::view::pane::arrangement::Places>>,
@@ -838,8 +835,13 @@ impl Cydonia {
             }
         }
         self.leaves = kept;
-        self.focused = focused
-            .and_then(|on| {
+        // A focused pane that has gone hands the focus on as the space says —
+        // see [`crate::model::workspace::Space::focused_front`].
+        let fallback = self.arrangement(cx).and_then(|space| space.focused_front());
+        self.focused = [focused, fallback]
+            .into_iter()
+            .flatten()
+            .find_map(|on| {
                 self.leaves
                     .iter()
                     .position(|leaf| leaf.read(cx).entry == on)
@@ -942,8 +944,6 @@ impl Cydonia {
         // already focused, and the caret is settled every time regardless.
         let moved = self.focused != at;
         self.focused = at;
-        self.tab_history.retain(|seen| seen != entry);
-        self.tab_history.push(entry.clone());
         self.sync_focus(cx);
         self.workspace
             .update(cx, |workspace, _| workspace.set_focused(entry));
@@ -1127,7 +1127,6 @@ impl Cydonia {
                 let this = cx.entity().downgrade();
                 move |item, window, cx| board::ghost(&this, item, window, cx)
             }),
-            tab_history: Vec::new(),
             zoom_glide: None,
             pane_places: Rc::default(),
             modals: cx.new(|_| ModalLayer::default()),
