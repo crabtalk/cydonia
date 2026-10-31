@@ -198,16 +198,6 @@ pub(crate) fn composer_disc() -> f32 {
     TextStyle::Body.painted_line_height().max(24.)
 }
 
-/// What the composer itself is at its widest — the column, less its own air.
-///
-/// The `/` picker is capped at this. Its rows carry a sentence each and the
-/// card sizes to the longest of them, so on a wide window it opened as far as
-/// the window allowed: a menu reaching past the box it came out of stops
-/// reading as that box's menu.
-pub(crate) fn composer_width() -> f32 {
-    COMPOSER_COLUMN - 2. * COMPOSER_MARGIN
-}
-
 /// The chrome around a floating card: between two cards, between a card and
 /// the sidebar, and between a card and the window's sides and bottom. A seam
 /// stands in the middle of the gaps. Nothing where the content is flat.

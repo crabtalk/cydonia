@@ -23,8 +23,8 @@ use crate::{
 use bezel::{
     gpui::{
         self, AnyElement, App, ClipboardEntry, Context, Entity, EventEmitter, ExternalPaths,
-        FocusHandle, Focusable, KeyBinding, ObjectFit, Render, ScrollHandle, SharedString, Window,
-        actions, div, img, prelude::*, px,
+        FocusHandle, Focusable, KeyBinding, ObjectFit, Pixels, Render, ScrollHandle, SharedString,
+        Window, actions, div, img, prelude::*, px,
     },
     theme::{Glass, SurfaceStyle, TextStyle, Theme, Typeset},
     ui::{
@@ -60,12 +60,6 @@ const WARN_AT: f32 = 0.8;
 /// catalog would otherwise open a card taller than the window and off the top
 /// of it.
 const PICKER_HEIGHT: f32 = 320.;
-
-/// The lines the `/` list's footer holds of the lit row's description.
-const FOOTER_LINES: usize = 3;
-
-/// Above and below the description in the `/` list's footer.
-const FOOTER_PADDING: f32 = 6.;
 
 /// The side of a picture waiting in the composer.
 const THUMB: f32 = 64.;
@@ -273,6 +267,7 @@ pub struct Composer {
     /// text on every change rather than stored as a flag: a backspace over the
     /// `/` or `@` has to close the picker, and a flag would have to be told.
     completing: Option<Completing>,
+    picker_width: Pixels,
     commands: Commands,
     /// Where the picker's list sits, since the card clamps at
     /// [`PICKER_HEIGHT`]: arrowing past the last visible row has to bring
@@ -363,6 +358,7 @@ impl Composer {
             attachments: Vec::new(),
             preview: None,
             completing: None,
+            picker_width: px(0.),
             commands: Commands::default(),
             scroll: ScrollHandle::new(),
             streaming: false,
@@ -909,27 +905,6 @@ impl Composer {
         if let Some(item) = self.active_item() {
             cursor.point_at(&items, &[item]);
         }
-        // Its height is fixed, so the card holds still under the arrows.
-        let footer = match self.completing.as_ref()? {
-            Completing::Command => self.commands.active_description(),
-            Completing::Mention { .. } => None,
-        }
-        .map(|description| {
-            div()
-                .flex_none()
-                .border_t_1()
-                .border_color(theme.border_faint)
-                .px(px(popover::MENU_PAD + popover::MENU_ROW_INSET))
-                .py(px(FOOTER_PADDING))
-                .h(px(FOOTER_LINES as f32
-                    * TextStyle::Subheadline.painted_line_height()
-                    + 2. * FOOTER_PADDING
-                    + 1.))
-                .text_style(TextStyle::Subheadline)
-                .text_color(theme.text_muted)
-                .line_clamp(FOOTER_LINES)
-                .child(description.to_owned())
-        });
         Some(popover::anchored_menu_above(
             "composer-commands",
             div()
@@ -961,20 +936,16 @@ impl Composer {
                                     composer.choose(row, cx);
                                 }
                             }
-                            // Not dismissed on an out-click: `reread` reopens the
-                            // picker from the text on the very next thing the field
-                            // reports, cursor moves included, so a press into the
-                            // field would shut it and open it again in one frame.
-                            // Escape and editing the `/` away are what close it.
-                            Hit::Dismiss => {}
+                            Hit::Dismiss => {
+                                composer.completing = None;
+                                cx.notify();
+                            }
                         },
                     )
-                    .children(footer)
                     .id("composer-commands-list")
-                    // The card sizes to its widest row, and a row is a sentence — so
-                    // without this it opens as wide as the window lets it. See
-                    // [`root::composer_width`].
-                    .max_w(px(root::composer_width()))
+                    .w(self.picker_width)
+                    .min_w_0()
+                    .max_w(self.picker_width)
                     .max_h(px(PICKER_HEIGHT))
                     .map(|el| scrollbars::scrolls(el, scrollbars::Axes::Vertical))
                     .track_scroll(&self.scroll),
@@ -1425,6 +1396,23 @@ impl Composer {
                             .relative()
                             .flex_1()
                             .min_w_0()
+                            .on_children_prepainted({
+                                let composer = cx.entity().downgrade();
+                                move |bounds, _, cx| {
+                                    let Some(pill) = bounds.first() else {
+                                        return;
+                                    };
+                                    let width = pill.size.width;
+                                    composer
+                                        .update(cx, |composer, cx| {
+                                            if composer.picker_width != width {
+                                                composer.picker_width = width;
+                                                cx.notify();
+                                            }
+                                        })
+                                        .ok();
+                                }
+                            })
                             .child(
                                 div()
                                     .w_full()

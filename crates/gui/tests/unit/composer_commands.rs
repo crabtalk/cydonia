@@ -1,4 +1,5 @@
-use super::*;
+use crate::{model::session::Command, view::component::composer::commands::Commands};
+use bezel::ui::menu::Item;
 
 fn command(name: &str, description: &str) -> Command {
     Command {
@@ -69,16 +70,14 @@ fn a_plugin_skill_drops_its_plugin_from_its_row() {
     assert_eq!(commands.typed(row).unwrap(), "/support:draft");
 }
 
-/// Typing matches the whole name and the skill alone, and drops a heading
-/// with nothing left under it.
 #[test]
-fn a_query_keeps_headings_over_what_it_matches() {
+fn a_query_shows_sources_without_headings() {
     let mut commands = agent();
     commands.refilter("supp");
-    assert_eq!(labels(&commands), ["# support", "draft", "triage"]);
+    assert_eq!(labels(&commands), ["support: draft", "support: triage"]);
     commands.refilter("tri");
-    assert_eq!(labels(&commands), ["# support", "triage"]);
-    assert_eq!(commands.item_of(0), Some(1));
+    assert_eq!(labels(&commands), ["support: triage"]);
+    assert_eq!(commands.item_of(0), Some(0));
 }
 
 /// The arrows walk the rows and pass over the headings.
@@ -94,10 +93,8 @@ fn the_arrows_pass_over_headings() {
     assert_eq!(commands.item_of(commands.active().unwrap()), Some(3));
 }
 
-/// While nothing is typed, the commands last sent lead under their own
-/// heading, by their whole name; one the agent no longer offers is left out.
 #[test]
-fn the_commands_last_sent_lead_while_nothing_is_typed() {
+fn recent_commands_are_not_duplicated() {
     let sent = ["support:triage", "gone", "review"].map(str::to_owned);
     let mut commands = Commands::new(
         &[
@@ -106,33 +103,31 @@ fn the_commands_last_sent_lead_while_nothing_is_typed() {
         ],
         &sent,
     );
-    assert_eq!(
-        labels(&commands),
-        [
-            "# Recent",
-            "/support:triage",
-            "/review",
-            "/review",
-            "# support",
-            "triage"
-        ]
-    );
-    assert_eq!(commands.typed(0).unwrap(), "/support:triage");
+    assert_eq!(labels(&commands), ["/review", "# support", "triage"]);
+    assert_eq!(commands.typed(0).unwrap(), "/review");
     commands.refilter("rev");
     assert_eq!(labels(&commands), ["/review"]);
 }
 
-/// The footer follows the lit row, stays up over a row with no description,
-/// and goes where no row shown has one.
 #[test]
-fn the_footer_reads_the_lit_row() {
+fn search_ranks_across_sources() {
     let mut commands = Commands::new(
-        &[command("review", "Review the diff"), command("compact", "")],
+        &[
+            command("first:pre-review", ""),
+            command("second:review", ""),
+        ],
         &[],
     );
-    assert_eq!(commands.active_description(), Some("Review the diff"));
-    commands.step(1);
-    assert_eq!(commands.active_description(), Some(""));
-    commands.refilter("compact");
-    assert_eq!(commands.active_description(), None);
+    commands.refilter("review");
+    assert_eq!(labels(&commands), ["second: review", "first: pre-review"]);
+    assert_eq!(commands.typed(0).unwrap(), "/second:review");
+}
+
+#[test]
+fn codex_namespace_keeps_invocation_intact() {
+    let mut commands = Commands::new(&[command("$openai-templates:design", "")], &[]);
+    assert_eq!(labels(&commands), ["# openai-templates", "design"]);
+    commands.refilter("design");
+    assert_eq!(labels(&commands), ["openai-templates: design"]);
+    assert_eq!(commands.typed(0).unwrap(), "/$openai-templates:design");
 }
