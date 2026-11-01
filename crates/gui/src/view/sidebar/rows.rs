@@ -701,6 +701,7 @@ impl Sidebar {
                                         .flex()
                                         .flex_row()
                                         .items_center()
+                                        .justify_end()
                                         .gap(px(4.))
                                         .overflow_hidden()
                                         .children(facts.labels[..shown].iter().map(|label| {
