@@ -8,10 +8,12 @@
 //! listening is worth something, not because anybody has to type it.
 
 use mcp::{Server, http::Door, tools};
-use std::path::Path;
-use std::sync::{
-    Arc, Mutex, OnceLock,
-    atomic::{AtomicBool, Ordering},
+use std::{
+    path::Path,
+    sync::{
+        Arc, Mutex, OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 /// The door, while it is open. Dropping it closes the port, so shutting the
@@ -133,6 +135,7 @@ fn server() -> Server {
     Server::new()
         .mount(&tools::article::TOOLS)
         .mount(&tools::board::TOOLS)
+        .mount(&tools::table::TOOLS)
         .mount(&tools::project::TOOLS)
         .mount(&tools::session::TOOLS)
         .mount(&tools::workspace::TOOLS)

@@ -2,7 +2,10 @@
 //! by which arguments arrive — and because the shape is the thing the display
 //! reads back, so every path to it has to be the same path.
 
-use super::{self as data, ColType, Column, Data};
+use crate::table::{
+    self, ColType, Column,
+    store::sqlite::{self as data, Data},
+};
 use anyhow::{Result, bail};
 
 impl Data {
@@ -37,8 +40,8 @@ impl Data {
             }
             self.writer.execute_batch(&format!(
                 "ALTER TABLE {} ADD COLUMN {} {}",
-                data::quote(&key),
-                data::quote(column),
+                table::quote(&key),
+                table::quote(column),
                 kind.sql()
             ))?;
             return data::columns_of(&self.writer, &key);
@@ -57,9 +60,9 @@ impl Data {
             }
             self.writer.execute_batch(&format!(
                 "ALTER TABLE {} RENAME COLUMN {} TO {}",
-                data::quote(&key),
-                data::quote(&existing[at].name),
-                data::quote(new)
+                table::quote(&key),
+                table::quote(&existing[at].name),
+                table::quote(new)
             ))?;
         }
 
@@ -85,29 +88,29 @@ impl Data {
         let tmp = format!("{key}_rebuilding");
         let defs = columns
             .iter()
-            .map(|col| format!("{} {}", data::quote(&col.name), col.kind.sql()))
+            .map(|col| format!("{} {}", table::quote(&col.name), col.kind.sql()))
             .collect::<Vec<_>>()
             .join(", ");
         let names = columns
             .iter()
-            .map(|col| data::quote(&col.name))
+            .map(|col| table::quote(&col.name))
             .collect::<Vec<_>>()
             .join(", ");
 
         let tx = self.writer.transaction()?;
         for stmt in [
-            format!("DROP TABLE IF EXISTS {}", data::quote(&tmp)),
-            format!("CREATE TABLE {} ({defs})", data::quote(&tmp)),
+            format!("DROP TABLE IF EXISTS {}", table::quote(&tmp)),
+            format!("CREATE TABLE {} ({defs})", table::quote(&tmp)),
             format!(
-                "INSERT INTO {} ({names}) SELECT {names} FROM {}",
-                data::quote(&tmp),
-                data::quote(key)
+                "INSERT INTO {} (rowid, {names}) SELECT rowid, {names} FROM {}",
+                table::quote(&tmp),
+                table::quote(key)
             ),
-            format!("DROP TABLE {}", data::quote(key)),
+            format!("DROP TABLE {}", table::quote(key)),
             format!(
                 "ALTER TABLE {} RENAME TO {}",
-                data::quote(&tmp),
-                data::quote(key)
+                table::quote(&tmp),
+                table::quote(key)
             ),
         ] {
             tx.execute_batch(&stmt)?;

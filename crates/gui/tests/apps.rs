@@ -2,7 +2,7 @@
 //! `wasm32-unknown-unknown` and driven through `Runner`.
 
 use cydonia_gui::{
-    data::{Data, Home},
+    data::{Data, Home, TableCalls as _},
     model::apps::{Answer, Call, Command, Event, Node, Runner as _, Runtime},
 };
 use guest::wire;

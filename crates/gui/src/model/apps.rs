@@ -3,7 +3,7 @@
 //! holding one running instance of it through [`Runner`]. An app belongs to no
 //! project.
 
-use crate::data::{Data, Home};
+use crate::data::{Data, Home, TableCalls as _};
 use anyhow::{Context as _, Result};
 use artifact::app::{Home as _, Installed};
 use bezel::gpui::{App, AppContext as _, Context, Entity, Task};

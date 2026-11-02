@@ -502,16 +502,13 @@ impl Terminal {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let enable = |item: Item, on: bool| if on { item } else { item.disabled() };
         let items = vec![
-            enable(
-                Item::action("Copy").with_shortcut(&input::Copy, window),
-                self.emulator.selection_text().is_some(),
-            ),
-            enable(
-                Item::action("Paste").with_shortcut(&input::Paste, window),
-                cx.read_from_clipboard().is_some(),
-            ),
+            Item::action("Copy")
+                .with_shortcut(&input::Copy, window)
+                .disabled(self.emulator.selection_text().is_none()),
+            Item::action("Paste")
+                .with_shortcut(&input::Paste, window)
+                .disabled(cx.read_from_clipboard().is_none()),
         ];
         self.menu.open(
             (),

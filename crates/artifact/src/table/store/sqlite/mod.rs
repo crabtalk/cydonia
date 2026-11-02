@@ -1,21 +1,20 @@
 //! The database behind [`Data`], in SQLite.
 
-use super::{FILE, Home};
+use crate::{
+    entry,
+    kind::Kind,
+    project::fs,
+    reference, stamp,
+    table::{self, ColType, Column, Table, store::Home},
+};
 use anyhow::{Result, anyhow, bail};
-use artifact::kind::Kind;
-use artifact::project::fs;
 use rusqlite::{Connection, OpenFlags, Row as SqlRow, types::ValueRef};
 use serde_json::Value;
 use std::{collections::HashSet, path::PathBuf, time::Duration};
 
-#[path = "ddl.rs"]
 mod ddl;
-#[path = "rows.rs"]
 mod rows;
-#[path = "sql.rs"]
 mod sql;
-
-use super::{ColType, Column, Edit, Page, Row, Rows, Table};
 
 const BUSY: Duration = Duration::from_secs(5);
 
@@ -49,10 +48,10 @@ impl Data {
     /// made — so opening it first fails on a store nobody has written yet.
     pub fn open(home: &Home) -> Result<Self> {
         let path = match home {
-            Home::Project(project) => fs::Project::new(project).init()?.join(FILE),
+            Home::Project(project) => fs::Project::new(project).init()?.join(fs::DATA),
             Home::App(dir) => {
                 std::fs::create_dir_all(dir)?;
-                dir.join(FILE)
+                dir.join(fs::DATA)
             }
         };
 
@@ -62,7 +61,7 @@ impl Data {
         writer.execute_batch(DDL)?;
         // Table key changes and their numeric references commit together.
         if let Home::Project(project) = home {
-            artifact::entry::Registry::open(project)?;
+            entry::Registry::open(project)?;
             writer.execute(
                 "ATTACH DATABASE ?1 AS entry_registry",
                 [fs::Project::new(project)
@@ -100,8 +99,8 @@ impl Data {
     /// write a database into it — [`Data::open`] is what creates one.
     pub fn attach(home: &Home) -> Option<Self> {
         let path = match home {
-            Home::Project(project) => fs::Project::new(project).cydonia().join(FILE),
-            Home::App(dir) => dir.join(FILE),
+            Home::Project(project) => fs::Project::new(project).cydonia().join(fs::DATA),
+            Home::App(dir) => dir.join(fs::DATA),
         };
         match path.exists() {
             true => Self::open(home).ok(),
@@ -176,10 +175,10 @@ impl Data {
         Ok(Table {
             number: self
                 .project()
-                .and_then(|project| artifact::entry::number(project, Kind::Table, key).ok()),
+                .and_then(|project| entry::number(project, Kind::Table, key).ok()),
             columns: columns_of(&self.reader, key)?,
             rows: self.reader.query_row(
-                &format!("SELECT count(*) FROM {}", quote(key)),
+                &format!("SELECT count(*) FROM {}", table::quote(key)),
                 [],
                 |row| row.get(0),
             )?,
@@ -239,12 +238,12 @@ impl Data {
         let key = self.mint_key(key.filter(|k| !k.trim().is_empty()).unwrap_or(name))?;
         let defs = columns
             .iter()
-            .map(|col| format!("{} {}", quote(col.name.trim()), col.kind.sql()))
+            .map(|col| format!("{} {}", table::quote(col.name.trim()), col.kind.sql()))
             .collect::<Vec<_>>()
             .join(", ");
 
         let tx = self.writer.transaction()?;
-        tx.execute_batch(&format!("CREATE TABLE {} ({defs})", quote(&key)))?;
+        tx.execute_batch(&format!("CREATE TABLE {} ({defs})", table::quote(&key)))?;
         tx.execute(
             "INSERT INTO _tables (key, name, created_at, author) VALUES (?1, ?2, ?3, ?4)",
             rusqlite::params![&key, name, now(), author],
@@ -276,8 +275,8 @@ impl Data {
                 let tx = self.writer.transaction()?;
                 tx.execute_batch(&format!(
                     "ALTER TABLE {} RENAME TO {}",
-                    quote(&current),
-                    quote(&next)
+                    table::quote(&current),
+                    table::quote(&next)
                 ))?;
                 tx.execute(
                     "UPDATE _tables SET key = ?2 WHERE key = ?1",
@@ -313,7 +312,7 @@ impl Data {
         let key = self.resolve(table)?;
         let numbered = self.project().is_some();
         let tx = self.writer.transaction()?;
-        tx.execute_batch(&format!("DROP TABLE {}", quote(&key)))?;
+        tx.execute_batch(&format!("DROP TABLE {}", table::quote(&key)))?;
         tx.execute("DELETE FROM _tables WHERE key = ?1", [&key])?;
         if numbered {
             tx.execute(
@@ -328,20 +327,20 @@ impl Data {
     /// A table by its key or its display name, answering with the key. Both are
     /// accepted because the key is what a query carries and the name is what a
     /// person says.
-    fn resolve(&self, ident: &str) -> Result<String> {
+    pub fn resolve(&self, ident: &str) -> Result<String> {
         let ident = ident.trim();
         let resolved;
         let ident = if let Some(project) = self.project()
-            && let Some(artifact::reference::Reference {
+            && let Some(reference::Reference {
                 project: None,
                 target:
-                    artifact::reference::Target::Entry {
+                    reference::Target::Entry {
                         number,
                         within: None,
                     },
-            }) = artifact::reference::parse(ident)
+            }) = reference::parse(ident)
         {
-            resolved = artifact::entry::Registry::open(project)?
+            resolved = entry::Registry::open(project)?
                 .resolve(Kind::Table, number)?
                 .ok_or_else(|| anyhow!("no table {ident}"))?;
             resolved.as_str()
@@ -350,8 +349,8 @@ impl Data {
         };
         self.reader
             .query_row(
-                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?1 \
-                 UNION ALL SELECT key FROM _tables WHERE name = ?1 COLLATE NOCASE",
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?1 AND name NOT LIKE 'sqlite_%' AND name <> '_tables' \
+                 UNION ALL SELECT key FROM _tables WHERE name = ?1 COLLATE NOCASE AND key <> '_tables' AND key NOT LIKE 'sqlite_%'",
                 [ident],
                 |row| row.get(0),
             )
@@ -390,7 +389,7 @@ impl Data {
 /// The columns of one table, straight out of the catalog: name and declared
 /// type, in the order the table declares them.
 pub(crate) fn columns_of(conn: &Connection, key: &str) -> Result<Vec<Column>> {
-    let mut stmt = conn.prepare(&format!("PRAGMA table_info({})", quote(key)))?;
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({})", table::quote(key)))?;
     let columns = stmt
         .query_map([], |row| {
             Ok(Column {
@@ -433,10 +432,6 @@ pub(crate) fn bind(v: &Value) -> rusqlite::types::Value {
     }
 }
 
-/// An identifier as SQL will accept it whatever it contains, which is what lets
-/// a column keep the header the person typed.
-pub(crate) use artifact::table::quote;
-
 /// A SQL identifier from a display name. Lossy on purpose — it is a handle, not
 /// a translation, and a name that reduces to nothing (any name in a non-Latin
 /// script) still gets a usable one, because the display name is where the
@@ -460,5 +455,5 @@ fn slug(name: &str) -> String {
 
 /// Seconds since the epoch, as SQLite stores an integer.
 fn now() -> i64 {
-    artifact::stamp::seconds() as i64
+    stamp::seconds() as i64
 }
