@@ -4,7 +4,10 @@
 //! shape that was written; DML stays raw, because that is what makes a batch
 //! write one call instead of two hundred.
 
-use super::{self as data, Data, Rows};
+use crate::table::{
+    rows::Rows,
+    store::sqlite::{self as data, Data},
+};
 use anyhow::{Result, bail};
 
 /// What a write may begin with. Not a filter over what SQL can express — a

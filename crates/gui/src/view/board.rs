@@ -2317,7 +2317,7 @@ impl BoardView {
         let drop = match count {
             0 => drop,
             _ => drop
-                .disabled()
+                .disabled(true)
                 .with_tooltip("A column is only where work sits — move the cards out first."),
         };
         let dropped = id.to_owned();

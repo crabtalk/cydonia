@@ -61,6 +61,7 @@ impl Scratch {
         Server::new()
             .mount(&tools::article::TOOLS)
             .mount(&tools::board::TOOLS)
+            .mount(&tools::table::TOOLS)
             .mount(&tools::project::TOOLS)
             .mount(&tools::session::TOOLS)
             .mount(&tools::workspace::TOOLS)

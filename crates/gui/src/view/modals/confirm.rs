@@ -12,6 +12,7 @@ use crate::{
         window::root::Cydonia,
     },
 };
+use artifact::project::fs;
 use bezel::{
     gpui::{
         App, Context, DismissEvent, EventEmitter, FocusHandle, Focusable, WeakEntity, Window, div,
@@ -445,7 +446,7 @@ impl Cydonia {
                 let table = open.and_then(|open| open.tables.get(ix));
                 let rows = table.map_or(0, |table| table.rows);
                 (
-                    table.map(|table| format!("{} in .cydonia/{}", table.key, crate::data::FILE)),
+                    table.map(|table| format!("{} in .cydonia/{}", table.key, fs::DATA)),
                     format!(
                         "Its {rows} rows are dropped; other tables and the database stay. {UNDONE}"
                     ),

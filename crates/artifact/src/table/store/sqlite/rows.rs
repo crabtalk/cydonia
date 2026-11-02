@@ -5,9 +5,12 @@
 //! deletion, with no surrogate key column to hide from the person and no
 //! position index that means something different the moment the order changes.
 
-use super::{self as data, Data, Edit, Page, Row};
+use crate::table::{
+    self, Column,
+    rows::{Edit, Page, Row},
+    store::sqlite::{self as data, Data},
+};
 use anyhow::{Result, bail};
-use artifact::table::Column;
 use rusqlite::params_from_iter;
 use serde_json::{Map, Value};
 
@@ -36,7 +39,7 @@ impl Data {
 
         let selected = columns
             .iter()
-            .map(|col| data::quote(&col.name))
+            .map(|col| table::quote(&col.name))
             .collect::<Vec<_>>()
             .join(", ");
         let projection = match columns.is_empty() {
@@ -49,7 +52,7 @@ impl Data {
         let order = match sort.and_then(|s| columns.iter().find(|col| col.name == s)) {
             Some(col) => format!(
                 " ORDER BY ({0} IS NULL OR {0} = '') , {0} {1}",
-                data::quote(&col.name),
+                table::quote(&col.name),
                 if desc { "DESC" } else { "ASC" }
             ),
             None => String::new(),
@@ -58,7 +61,7 @@ impl Data {
         let count = columns.len();
         let mut stmt = self.reader.prepare(&format!(
             "SELECT {projection} FROM {}{order} LIMIT ?1 OFFSET ?2",
-            data::quote(&key)
+            table::quote(&key)
         ))?;
         let rows = stmt
             .query_map([limit, offset], |row| {
@@ -71,7 +74,7 @@ impl Data {
 
         Ok(Page {
             total: self.reader.query_row(
-                &format!("SELECT count(*) FROM {}", data::quote(&key)),
+                &format!("SELECT count(*) FROM {}", table::quote(&key)),
                 [],
                 |row| row.get(0),
             )?,
@@ -102,8 +105,8 @@ impl Data {
             tx.execute(
                 &format!(
                     "UPDATE {} SET {} = ?1 WHERE rowid = ?2",
-                    data::quote(&key),
-                    data::quote(&edit.column)
+                    table::quote(&key),
+                    table::quote(&edit.column)
                 ),
                 rusqlite::params![data::bind(&edit.value), edit.rowid],
             )?;
@@ -114,7 +117,7 @@ impl Data {
     /// Append empty rows, answering with their ids in the order they were made.
     pub fn add_rows(&mut self, table: &str, count: i64) -> Result<Vec<i64>> {
         let key = self.resolve(table)?;
-        let sql = format!("INSERT INTO {} DEFAULT VALUES", data::quote(&key));
+        let sql = format!("INSERT INTO {} DEFAULT VALUES", table::quote(&key));
         let tx = self.writer.transaction()?;
         let mut ids = Vec::new();
         for _ in 0..count.max(0) {
@@ -143,15 +146,15 @@ impl Data {
         for row in rows {
             match row.is_empty() {
                 true => tx.execute(
-                    &format!("INSERT INTO {} DEFAULT VALUES", data::quote(&key)),
+                    &format!("INSERT INTO {} DEFAULT VALUES", table::quote(&key)),
                     [],
                 )?,
                 false => tx.execute(
                     &format!(
                         "INSERT INTO {} ({}) VALUES ({})",
-                        data::quote(&key),
+                        table::quote(&key),
                         row.keys()
-                            .map(|name| data::quote(name))
+                            .map(|name| table::quote(name))
                             .collect::<Vec<_>>()
                             .join(", "),
                         vec!["?"; row.len()].join(", ")
@@ -175,8 +178,8 @@ impl Data {
         self.writer.execute(
             &format!(
                 "DELETE FROM {} WHERE {} IS ?1",
-                data::quote(&key),
-                data::quote(&col.name)
+                table::quote(&key),
+                table::quote(&col.name)
             ),
             [data::bind(value)],
         )?;
@@ -192,15 +195,13 @@ impl Data {
         self.writer.execute(
             &format!(
                 "DELETE FROM {} WHERE rowid IN ({places})",
-                data::quote(&key)
+                table::quote(&key)
             ),
             params_from_iter(rowids),
         )?;
         Ok(())
     }
 
-    /// Take a column away. Not reachable from a tool — the shape is the
-    /// person's, same line the table itself sits on.
     pub fn drop_column(&mut self, table: &str, column: &str) -> Result<Vec<Column>> {
         let key = self.resolve(table)?;
         let columns = data::columns_of(&self.writer, &key)?;
@@ -212,8 +213,8 @@ impl Data {
         }
         self.writer.execute_batch(&format!(
             "ALTER TABLE {} DROP COLUMN {}",
-            data::quote(&key),
-            data::quote(&col.name)
+            table::quote(&key),
+            table::quote(&col.name)
         ))?;
         data::columns_of(&self.writer, &key)
     }

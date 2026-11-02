@@ -4,9 +4,9 @@
 use super::{ArticleView, MENU_MAX_HEIGHT, MENU_MAX_WIDTH};
 use crate::{
     model::workspace::Workspace,
-    view::{
-        kit::menu::{self, MenuHost},
-        pane::title,
+    view::kit::{
+        menu::{self, MenuHost},
+        title,
     },
 };
 use bezel::{
@@ -186,7 +186,7 @@ impl CommentsButton {
         let trigger = menu::button(
             format!("comments-{}", path.display()),
             icons::social::MessageCircle,
-            menu::Reveal::Group(title::TITLE_GROUP),
+            menu::Reveal::Group(title::GROUP),
             self.menu.showing(&()),
             cx,
         )

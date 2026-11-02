@@ -130,6 +130,10 @@ pub struct State {
     /// path and name — see [`crate::view::window::menubar::Command::key`].
     #[serde(default)]
     pub commands: Vec<String>,
+    /// The `/` commands last sent to each agent, most recent first, by the
+    /// agent's name.
+    #[serde(default)]
+    pub sent_commands: BTreeMap<String, Vec<String>>,
     /// The window's tabs, in strip order — see
     /// [`crate::model::workspace::Workspace::strip`]. Nothing in a file
     /// written before tabs, which lands on the active project's `last`.

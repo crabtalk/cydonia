@@ -12,25 +12,16 @@ use crate::view::{
         icon,
         menu::{self, MenuHost as _},
         rename::Renaming,
+        title::Title,
     },
-    window::{chrome, entry::Host, reach::InWindow as _, root},
+    window::{chrome, entry::Host, reach::InWindow as _},
 };
 use artifact::reference::Reference;
 use bezel::{
     gpui::{AnyElement, Context, FontWeight, SharedString, Window, div, prelude::*, px},
     theme::{TextStyle, Theme, Typeset},
-    ui::{
-        context_menu::Place,
-        icons,
-        tabs::{self, State},
-        tooltip::Tooltip,
-        widgets::Content as _,
-    },
+    ui::{context_menu::Place, icons, tooltip::Tooltip, widgets::Content as _},
 };
-
-/// The hover group a title row is, which its tools show on — the ones other
-/// views hang in it included.
-pub(crate) const TITLE_GROUP: &str = "pane-title";
 
 impl Tab {
     /// The row: the entry's name, or the field renaming it, and what acts on
@@ -67,62 +58,21 @@ impl Tab {
             .article_shown(cx)
             .map(|view| view.read(cx).comments.clone());
         let edge = self.edge;
-        let corners = chrome::Corners {
-            left: edge.lights,
-            right: edge.toggle,
-            tabs: false,
+        let heading = Title {
+            edge,
+            floating: self.workspace.read(cx).settings.appearance.floating,
+            focused: self.focus_watch.within(),
         };
-        let floating = self.workspace.read(cx).settings.appearance.floating;
-        // Flat, the title stands on a tab's chip, the focused pane's lit.
-        let chip = (!floating).then(|| match self.focus_watch.within() {
-            true => State::Focused,
-            false => State::Front,
-        });
-        let reveal = match chip {
-            Some(State::Focused) => menu::Reveal::Always,
-            _ => menu::Reveal::Group(TITLE_GROUP),
-        };
-        // The pane stands in from the window's edges by the column's padding.
-        // A chip's inset and ring slot stand out into it, so its text lines up
-        // with the content under it.
-        let on_chrome = floating && edge.top;
-        let chip_inset = match chip {
-            Some(_) => tabs::TAB_PAD + 1.,
-            None => 0.,
-        };
-        let lead = match corners.left {
-            true => corners.lead(0., window, cx) - root::card_gap(floating),
-            false if on_chrome => root::CARD_EDGE,
-            false => root::HEADER_INSET,
-        } - chip_inset;
-        let trail = match corners.right {
-            true => corners.trail(0., window, cx) - root::card_gap(floating),
-            false => root::CARD_EDGE,
-        };
-        let row = div()
-            .group(TITLE_GROUP)
-            .flex_none()
-            .h(px(root::CARD_ROW_HEIGHT))
-            .pl(px(lead))
-            .pr(px(trail))
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(6.));
+        let reveal = heading.reveal();
+        let row = heading.row(window, cx);
         if self.rename.what.is_some() {
             return Some(
                 row.child(div().flex_1().min_w_0().child(self.rename.field.clone()))
                     .into_any_element(),
             );
         }
-        let title = div()
+        let title = Title::name(&theme)
             .id("tab-title")
-            .min_w_0()
-            .truncate()
-            .line_clamp(1)
-            .text_style(TextStyle::Subheadline)
-            .font_weight(FontWeight::MEDIUM)
-            .text_color(theme.text)
             .when_some(described, |title, line| {
                 title.tooltip(move |window, cx| Tooltip::text(line.clone(), window, cx))
             })
@@ -143,31 +93,20 @@ impl Tab {
                         this.toggle_info(&id, window, cx);
                     }))
             });
-        let label = match chip {
-            Some(state) => tabs::chip(&theme, state).gap_0(),
-            None => div().flex().flex_row().items_center(),
-        }
-        .min_w_0()
-        .child(self.deck(window, cx))
-        .child(title)
-        .children(toolbar.number.map(|number| {
-            div()
-                .flex_none()
-                .ml(px(6.))
-                .text_style(TextStyle::Caption)
-                .font_weight(FontWeight::NORMAL)
-                .text_color(theme.text_muted)
-                .child(Reference::entry(None, number, None).to_string())
-        }));
-        let name = div()
+        let label = heading
+            .label(self.deck(window, cx), title, &theme)
+            .children(toolbar.number.map(|number| {
+                div()
+                    .flex_none()
+                    .ml(px(6.))
+                    .text_style(TextStyle::Caption)
+                    .font_weight(FontWeight::NORMAL)
+                    .text_color(theme.text_muted)
+                    .child(Reference::entry(None, number, None).to_string())
+            }));
+        let name = heading
+            .slot()
             .relative()
-            .min_w_0()
-            .when(!edge.top, |name| name.flex_1())
-            // A row, so the name is only as wide as it reads — stretched, it
-            // would swallow presses on the empty half of the row.
-            .flex()
-            .flex_row()
-            .items_center()
             .child(label)
             .children(board.as_deref().and_then(|id| self.info_panel(id, cx)));
         let menu = toolbar.entry.map(|entry| {

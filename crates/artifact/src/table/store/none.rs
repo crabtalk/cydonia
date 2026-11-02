@@ -1,7 +1,11 @@
 //! No database. [`Data`] has no values: [`Data::attach`] finds none, so a
 //! project's `Option<Data>` is always empty and nothing here can be called.
 
-use super::{ColType, Column, Edit, Home, Page, Rows, Table};
+use crate::table::{
+    ColType, Column, Table,
+    rows::{Edit, Page, Rows},
+    store::Home,
+};
 use anyhow::{Result, bail};
 
 pub enum Data {}
@@ -15,6 +19,10 @@ impl Data {
     pub fn attach(home: &Home) -> Option<Self> {
         let _ = home;
         None
+    }
+
+    pub fn resolve(&self, _: &str) -> Result<String> {
+        match *self {}
     }
 
     pub fn list(&self) -> Result<Vec<Table>> {

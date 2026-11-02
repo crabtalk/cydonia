@@ -546,9 +546,10 @@ impl Cydonia {
         // Putting an entry away takes it out of the places that hold it up:
         // the pins at the top of the list, whatever space arranges it, and its
         // tab in the window's strip.
+        let mut arranged = false;
         if archived {
             let member = entry.member(self.workspace.read(cx), cx);
-            self.put_away_arranged(member.as_ref(), window, cx);
+            arranged = self.put_away_arranged(member.as_ref(), window, cx);
             self.workspace.update(cx, |workspace, cx| {
                 if let Some(project) = workspace.project_ix(*project) {
                     workspace.unpin_entry(project, showing.clone(), cx);
@@ -577,7 +578,8 @@ impl Cydonia {
             }
             Showing::Table(key) => workspace.archive_table(key, archived, cx),
         });
-        if let Some(project) = landing {
+        // A pane closed in a space has already handed the focus on.
+        if let Some(project) = landing.filter(|_| !arranged) {
             self.open_top_entry(project, window, cx);
         }
     }

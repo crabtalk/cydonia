@@ -198,16 +198,6 @@ pub(crate) fn composer_disc() -> f32 {
     TextStyle::Body.painted_line_height().max(24.)
 }
 
-/// What the composer itself is at its widest — the column, less its own air.
-///
-/// The `/` picker is capped at this. Its rows carry a sentence each and the
-/// card sizes to the longest of them, so on a wide window it opened as far as
-/// the window allowed: a menu reaching past the box it came out of stops
-/// reading as that box's menu.
-pub(crate) fn composer_width() -> f32 {
-    COMPOSER_COLUMN - 2. * COMPOSER_MARGIN
-}
-
 /// The chrome around a floating card: between two cards, between a card and
 /// the sidebar, and between a card and the window's sides and bottom. A seam
 /// stands in the middle of the gaps. Nothing where the content is flat.
@@ -559,9 +549,6 @@ pub struct Cydonia {
     /// Every board on screen: cards between lanes and boards, lanes and list
     /// groups along their own board.
     pub(crate) board_sort: drag::Domain<board::BoardRegion, board::BoardItem>,
-    /// The panes the focus has entered, most recent last. Read when the
-    /// focused pane closes — see [`Cydonia::close_pane`]. Runtime only.
-    pub(crate) tab_history: Vec<Member>,
     /// A zoom on its way — see [`Cydonia::toggle_zoom`].
     pub(crate) zoom_glide: Option<crate::view::pane::arrangement::ZoomGlide>,
     pub(crate) pane_places: Rc<RefCell<crate::view::pane::arrangement::Places>>,
@@ -838,8 +825,13 @@ impl Cydonia {
             }
         }
         self.leaves = kept;
-        self.focused = focused
-            .and_then(|on| {
+        // A focused pane that has gone hands the focus on as the space says —
+        // see [`crate::model::workspace::Space::focused_front`].
+        let fallback = self.arrangement(cx).and_then(|space| space.focused_front());
+        self.focused = [focused, fallback]
+            .into_iter()
+            .flatten()
+            .find_map(|on| {
                 self.leaves
                     .iter()
                     .position(|leaf| leaf.read(cx).entry == on)
@@ -942,8 +934,6 @@ impl Cydonia {
         // already focused, and the caret is settled every time regardless.
         let moved = self.focused != at;
         self.focused = at;
-        self.tab_history.retain(|seen| seen != entry);
-        self.tab_history.push(entry.clone());
         self.sync_focus(cx);
         self.workspace
             .update(cx, |workspace, _| workspace.set_focused(entry));
@@ -1127,7 +1117,6 @@ impl Cydonia {
                 let this = cx.entity().downgrade();
                 move |item, window, cx| board::ghost(&this, item, window, cx)
             }),
-            tab_history: Vec::new(),
             zoom_glide: None,
             pane_places: Rc::default(),
             modals: cx.new(|_| ModalLayer::default()),

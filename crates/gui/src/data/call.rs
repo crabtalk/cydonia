@@ -1,12 +1,15 @@
 //! An app's calls on the store, in the shapes `cydonia-guest` reads.
 
-use super::{ColType, Column, Data, Table};
+use crate::data::{ColType, Column, Data, Table};
 use anyhow::{Result, bail};
 use guest::wire::{self, Answer, Call};
 
-impl Data {
-    /// Do an app's call. A call that writes touches the table it wrote.
-    pub fn call(&mut self, call: Call) -> Result<Answer> {
+pub trait TableCalls {
+    fn call(&mut self, call: Call) -> Result<Answer>;
+}
+
+impl TableCalls for Data {
+    fn call(&mut self, call: Call) -> Result<Answer> {
         Ok(match call {
             Call::Tables => Answer::Tables(self.list()?.iter().map(Wire::wire).collect()),
             Call::Query { sql } => {

@@ -13,7 +13,9 @@ use crate::{
             new::{self, New},
             switch::{Switch, SwitchId, SwitchOption},
             text::ShownPath as _,
+            title::Title,
         },
+        pane::Edge,
         window::{
             chrome,
             root::{self, Cydonia, NewArticle, NewBoard, NewSession, NewTable},
@@ -389,7 +391,7 @@ impl Cydonia {
                 if let Some(path) = article {
                     let id = workspace.article_thread(path, cx);
                     let chat = id.and_then(|id| workspace.session(id, cx));
-                    let point = Pointing::of(chat, &agents, cx).under_article(first);
+                    let point = Pointing::of(chat, workspace, &agents, cx).under_article(first);
                     return match (chat, workspace.article_offer(path, cx)) {
                         (None, Some((_, offers))) => point.offering(&agents, first, &offers),
                         _ => point,
@@ -401,7 +403,12 @@ impl Cydonia {
                         Showing::Session(id) => Some(id),
                         _ => None,
                     });
-                Pointing::of(id.and_then(|id| workspace.session(id, cx)), &agents, cx)
+                Pointing::of(
+                    id.and_then(|id| workspace.session(id, cx)),
+                    workspace,
+                    &agents,
+                    cx,
+                )
             })
             .collect();
         // Read out before writing: the composers are updated through `cx`,
@@ -491,8 +498,8 @@ impl Cydonia {
         });
     }
 
-    /// The card the library or the launch view stands in, under the window's
-    /// top row — see [`Cydonia::window_band`].
+    /// The card the library or the launch view stands in, the library's title
+    /// row over it or in it as a pane's is — see [`Title::on_chrome`].
     fn lone_card(
         &mut self,
         library: Option<gpui::Entity<crate::view::library::Library>>,
@@ -521,7 +528,25 @@ impl Cydonia {
             Some(_) => self.drawer_layer(None, window, cx),
             None => Vec::new(),
         };
-        match floating && !raised {
+        let heading = library.is_some().then(|| {
+            let top = self.titles_on_top(cx);
+            Title {
+                edge: Edge {
+                    top,
+                    lights: top && !self.sidebar_open,
+                    toggle: top && self.changes.is_none(),
+                },
+                floating,
+                focused: raised,
+            }
+        });
+        let on_chrome = heading.is_some_and(Title::on_chrome);
+        let title = heading.map(|heading| self.library_title(heading, window, cx));
+        let (over, inside) = match on_chrome {
+            true => (title, None),
+            false => (None, title),
+        };
+        let card = match floating && !raised {
             true => bezel::ui::window::resting(cx),
             false => bezel::ui::window::content(floating, cx),
         }
@@ -532,6 +557,7 @@ impl Cydonia {
         .flex()
         .flex_col()
         .capture_any_mouse_down(cx.listener(|this, _, _, _| this.pressed_pane = None))
+        .children(inside)
         .child(
             div()
                 .flex_1()
@@ -543,7 +569,15 @@ impl Cydonia {
         )
         .when(!drawer.is_empty(), |card| {
             card.child(div().absolute().inset_0().children(drawer))
-        })
+        });
+        div()
+            .flex_1()
+            .min_h_0()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .children(over)
+            .child(card)
     }
 
     pub(crate) fn detail(
@@ -563,11 +597,10 @@ impl Cydonia {
         };
         // The window's top row, over every column the panel's included: the
         // strip over a tab, the library's included, and the band over the
-        // launch view, or over the library with Spaces in sidebar on.
-        // Floating, it is on the chrome over the cards. Edge to edge either
-        // way: its ends are the window's, as the lights are. None where the
-        // panes' title rows are it — see [`Cydonia::sync_edges`].
-        let on_top = self.panes_on_top(cx);
+        // launch view. Floating, it is on the chrome over the cards. Edge to
+        // edge either way: its ends are the window's, as the lights are. None
+        // where the title rows are it — see [`Cydonia::sync_edges`].
+        let on_top = self.titles_on_top(cx);
         let global = self.workspace.read(cx).settings.appearance.global_tabs();
         let height = chrome::top_height(global);
         let strip = panes.is_some() || (library.is_some() && global);
@@ -796,6 +829,8 @@ pub(crate) struct Pointing {
     draft: String,
     placeholder: String,
     commands: Vec<Command>,
+    /// The `/` commands last sent to the session's agent.
+    sent: Vec<String>,
     streaming: bool,
     last_asked: Option<String>,
     activity: Option<composer::Activity>,
@@ -806,7 +841,12 @@ pub(crate) struct Pointing {
 }
 
 impl Pointing {
-    pub(crate) fn of(chat: Option<&ChatSession>, agents: &[composer::Agent], cx: &App) -> Self {
+    pub(crate) fn of(
+        chat: Option<&ChatSession>,
+        workspace: &Workspace,
+        agents: &[composer::Agent],
+        cx: &App,
+    ) -> Self {
         // Usage belongs to the agent process rather than to the transcript, so
         // a session read back off disk shows none until it reconnects.
         let live = chat.filter(|chat| chat.live());
@@ -818,6 +858,9 @@ impl Pointing {
                 |chat| format!("message {}…", chat.entry.name),
             ),
             commands: chat.map(|chat| chat.commands.clone()).unwrap_or_default(),
+            sent: chat
+                .map(|chat| workspace.sent_commands(&chat.entry.name).to_vec())
+                .unwrap_or_default(),
             streaming: chat.is_some_and(|chat| chat.streaming),
             last_asked: chat.and_then(|chat| {
                 chat.items.iter().rev().find_map(|item| match item {
@@ -879,7 +922,7 @@ impl Pointing {
     ) {
         composer.set_session(self.session, &self.draft, cx);
         composer.set_placeholder(&self.placeholder, cx);
-        composer.set_commands(&self.commands, cx);
+        composer.set_commands(&self.commands, &self.sent, cx);
         composer.set_streaming(self.streaming, cx);
         composer.set_last_asked(self.last_asked);
         composer.set_activity(self.activity, cx);

@@ -1,5 +1,26 @@
 [
   {
+    "version": "0.2.9",
+    "date": "2026-11-02",
+    "summary": "Agents can create and edit project tables. Browse commands by source, search across sources, and keep sidebar labels visible in narrow rows.",
+    "new": [
+      "Let agents list, create, rename and delete tables; add, rename, retype and delete columns; insert rows, update cells and delete rows through MCP tools",
+      "Let agents read paged table rows and run read-only SQL queries, with table writes and deletions controlled by the existing permission switches"
+    ],
+    "changed": [
+      "Group the composer's slash commands by source while browsing, and rank search results across sources with the source shown on each result",
+      "Prioritize recently used commands within their source without duplicating them, and show descriptions beside command names without a repeated footer",
+      "Give the library the same title row as other panes",
+      "Use Bezel 0.2.24 from crates.io"
+    ],
+    "fixed": [
+      "Keep the slash command menu the width of the composer input and dismiss it when clicking outside",
+      "Keep trailing sidebar labels and the additional-label count visible by clipping overflow from the left",
+      "Return to the previously used tab and restore its focus when closing a tab in a space",
+      "Preserve table row identities when retyping a column"
+    ]
+  },
+  {
     "version": "0.2.8",
     "date": "2026-10-29",
     "summary": "Skills: see every skill your agents read from disk in the library, and switch one off in its agent's own settings. Expanded sidebar rows fit on two lines.",

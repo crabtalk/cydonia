@@ -18,15 +18,18 @@ pub mod board;
 pub mod browser;
 pub mod project;
 pub mod session;
+pub mod table;
 pub mod workspace;
 
 use crate::{
     rail,
     tool::{Arg, Args, Trouble},
 };
-use artifact::archive::Archived;
-use artifact::error::{Act, Error};
-use artifact::reference::{Reference, Target, Within};
+use artifact::{
+    archive::Archived,
+    error::{Act, Error},
+    reference::{Reference, Target, Within},
+};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 

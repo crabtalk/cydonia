@@ -1,17 +1,12 @@
 //! The project's tables: what a column may hold, and what a table is.
 //! [`rows`] holds what is in one.
 //!
-//! No SQL here and no connection — those are the backend's, and the backend is
-//! whichever store the app opened. What is here is the part a client reads: a
-//! table it was told about and a page of rows it was handed have the same
-//! shape whether they came out of SQLite or off a wire.
-//!
-//! A table's `key` is the SQL identifier and never moves; its `name` is free
-//! text, so renaming one cannot break a query an agent already wrote.
-
-pub mod rows;
+//! A table's `key` is its SQL identifier; its `name` is display text.
 
 use serde::{Deserialize, Serialize};
+
+pub mod rows;
+pub mod store;
 
 /// What a column holds. Four, closed, and every one a word SQLite keeps
 /// verbatim in its catalog — which is what lets a declaration be the registry.

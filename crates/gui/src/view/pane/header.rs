@@ -1,10 +1,10 @@
-//! What a tab names its entry by, and the window's band over the screens that
-//! stand where the panes would be.
+//! What a tab names its entry by, the library's title row, and the window's
+//! band over the launch view.
 
 use crate::{
     model::workspace::{Member, Showing},
     view::{
-        kit::menu,
+        kit::{menu, title::Title},
         sidebar::Row,
         window::{
             chrome,
@@ -13,10 +13,11 @@ use crate::{
     },
 };
 use bezel::{
-    gpui::{AnyElement, App, Context, FontWeight, Window, div, prelude::*, px},
-    theme::{TextStyle, Theme, Typeset},
-    ui::{icons, tooltip::Tooltip},
+    gpui::{AnyElement, App, Context, Window, prelude::*, px},
+    theme::Theme,
+    ui::{icons, tooltip::Tooltip, widgets::Content as _},
 };
+
 /// What a tab puts in its strip and its title row.
 pub(crate) struct Toolbar {
     /// What the tab is showing, by the name the sidebar would list it under.
@@ -98,27 +99,15 @@ impl Cydonia {
         })
     }
 
-    /// The window's band over what stands where the panes would be — the
-    /// library, or the launch view: the library's name and its close button,
-    /// between the room the window's corner controls stand in.
+    /// The window's band over the launch view: the room the window's corner
+    /// controls stand in, and the grip.
     pub(crate) fn window_band(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let theme = Theme::of(cx).clone();
         // The window's top left is the sidebar's while it is open.
         let corners = chrome::Corners {
             left: !self.sidebar_open,
             right: true,
             tabs: self.workspace.read(cx).settings.appearance.global_tabs(),
         };
-        let library = self.library_shown(cx);
-        let title = library.then(|| {
-            div()
-                .min_w_0()
-                .truncate()
-                .text_style(TextStyle::Subheadline)
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(theme.text)
-                .child("Library")
-        });
         chrome::top_band(corners.tabs)
             .absolute()
             .top_0()
@@ -127,22 +116,45 @@ impl Cydonia {
             .gap(px(8.))
             .pl(px(corners.lead(root::HEADER_INSET, window, cx)))
             .pr(px(corners.trail(root::BUTTON_EDGE, window, cx)))
-            .children(title)
             .child(chrome::grip("header-grip", &self.drag, window))
-            .children(library.then(|| {
-                menu::button(
-                    "library-close",
-                    icons::notifications::X,
-                    menu::Reveal::Always,
-                    false,
-                    cx,
-                )
-                .tooltip(|window, cx| Tooltip::text("Close", window, cx))
-                .on_click(cx.listener(|this, _, window, cx| {
-                    cx.stop_propagation();
-                    this.close_library(window, cx);
-                }))
-            }))
+            .into_any_element()
+    }
+
+    /// The library's title row: its mark and name, and the `×` that closes
+    /// it.
+    pub(crate) fn library_title(
+        &self,
+        heading: Title,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let mark = theme
+            .icon_deck(icons::text::LibraryBig, 0)
+            .mr(px(6.))
+            .into_any_element();
+        let label = heading.label(mark, Title::name(&theme).child("Library"), &theme);
+        let grip = heading
+            .edge
+            .top
+            .then(|| chrome::grip("library-grip", &self.drag, window));
+        let close = menu::button(
+            "library-close",
+            icons::notifications::X,
+            heading.reveal(),
+            false,
+            cx,
+        )
+        .tooltip(|window, cx| Tooltip::text("Close", window, cx))
+        .on_click(cx.listener(|this, _, window, cx| {
+            cx.stop_propagation();
+            this.close_library(window, cx);
+        }));
+        heading
+            .row(window, cx)
+            .child(heading.slot().child(label))
+            .children(grip)
+            .child(close)
             .into_any_element()
     }
 }
