@@ -365,7 +365,7 @@ impl Project {
             Kind::Board => Showing::Board(self.boards[ix].id.clone()),
             Kind::Article => Showing::Article(self.articles[ix].id.clone()),
             Kind::Table => Showing::Table(self.tables[ix].key.clone()),
-            Kind::App => return None,
+            Kind::App | Kind::Canvas => return None,
         })
     }
 
@@ -379,7 +379,7 @@ impl Project {
             Kind::Board => self.board_ix(id),
             Kind::Article => self.article_ix(id),
             Kind::Table => self.table_ix(id),
-            Kind::App => None,
+            Kind::App | Kind::Canvas => None,
         }
     }
 
@@ -395,7 +395,7 @@ impl Project {
             Kind::Board => self.boards.len(),
             Kind::Article => self.articles.len(),
             Kind::Table => self.tables.len(),
-            Kind::App => 0,
+            Kind::App | Kind::Canvas => 0,
         };
         (0..len).map(move |ix| self.facts_at(kind, ix, cx))
     }
@@ -455,7 +455,7 @@ impl Project {
                     agent: None,
                 }
             }
-            Kind::App => unreachable!("an app is no project's entry"),
+            Kind::App | Kind::Canvas => unreachable!("entry kind has no item view"),
         }
     }
 
@@ -478,7 +478,7 @@ impl Project {
             }
             Kind::Article => self.articles[ix].preview().to_owned(),
             Kind::Table => String::new(),
-            Kind::App => unreachable!("an app is no project's entry"),
+            Kind::App | Kind::Canvas => unreachable!("entry kind has no item view"),
         }
     }
 

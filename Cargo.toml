@@ -21,6 +21,7 @@ axum = "0.8"
 base64 = "0.22"
 bezel = "0.2.24"
 browser = { version = "0.2.24", package = "bezel-browser", features = ["inspector"] }
+canvas = { version = "0.2.24", package = "bezel-canvas", default-features = false }
 chrono = "0.4"
 dirs = "6"
 editor = { version = "0.2.24", package = "bezel-editor" }

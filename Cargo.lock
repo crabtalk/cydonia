@@ -733,6 +733,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "bezel-canvas"
+version = "0.2.24"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7fa48e1e5dd3e0a395e72a7b0098f982ca3f12f5b37e7c3dbab887450faf550b"
+dependencies = [
+ "bezel-editor",
+ "bezel-gpui",
+ "bezel-markdown",
+ "bezel-motion",
+ "bezel-theme",
+ "bezel-ui",
+ "serde",
+ "serde_json",
+ "web-time",
+]
+
+[[package]]
 name = "bezel-editor"
 version = "0.2.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2312,6 +2329,7 @@ name = "cydonia-artifact"
 version = "0.2.9"
 dependencies = [
  "anyhow",
+ "bezel-canvas",
  "cydonia-acp",
  "cydonia-manifest",
  "dirs 6.0.0",
@@ -2358,6 +2376,7 @@ dependencies = [
  "base64 0.22.1",
  "bezel",
  "bezel-browser",
+ "bezel-canvas",
  "bezel-editor",
  "bezel-gpui",
  "bezel-gpui-platform",

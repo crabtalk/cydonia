@@ -21,6 +21,7 @@ pictures = ["dep:image"]
 
 [dependencies]
 anyhow.workspace = true
+canvas.workspace = true
 notify.workspace = true
 pulldown-cmark.workspace = true
 regex.workspace = true

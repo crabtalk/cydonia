@@ -73,6 +73,7 @@ impl KindName for Kind {
         match self {
             Self::Session => "Session",
             Self::Article => "Article",
+            Self::Canvas => "Canvas",
             Self::Board => "Board",
             Self::Table => "Table",
             Self::App => "App",
@@ -83,6 +84,7 @@ impl KindName for Kind {
         match self {
             Self::Session => "Untitled session",
             Self::Article => "Untitled article",
+            Self::Canvas => "Untitled canvas",
             Self::Board => "Untitled board",
             Self::Table => "Untitled table",
             Self::App => "Untitled app",

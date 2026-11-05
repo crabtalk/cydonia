@@ -1,8 +1,8 @@
-//! The things Cydonia opens: the four a project holds, and apps.
+//! Project entry kinds and installed apps.
 
 use serde::{Deserialize, Serialize};
 
-/// A session, board, article or table of a project, or an app, which belongs
+/// A project entry, or an app, which belongs
 /// to no project and is never numbered. Serialized as its [`Kind::key`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -10,15 +10,17 @@ pub enum Kind {
     Session,
     Board,
     Article,
+    Canvas,
     Table,
     App,
 }
 
 impl Kind {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Session,
         Self::Board,
         Self::Article,
+        Self::Canvas,
         Self::Table,
         Self::App,
     ];
@@ -30,6 +32,7 @@ impl Kind {
             Self::Session => "session",
             Self::Board => "board",
             Self::Article => "article",
+            Self::Canvas => "canvas",
             Self::Table => "table",
             Self::App => "app",
         }

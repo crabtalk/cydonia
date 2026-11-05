@@ -16,6 +16,7 @@ pub(crate) fn kind_icon(kind: Kind) -> Icon {
         Kind::Session => icons::social::MessageCircle.into(),
         Kind::Board => icons::development::SquareKanban.into(),
         Kind::Article => icons::files::FileText.into(),
+        Kind::Canvas => icons::layout::PanelsTopLeft.into(),
         Kind::Table => icons::files::Table2.into(),
         Kind::App => icons::development::AppWindow.into(),
     }
@@ -47,6 +48,6 @@ pub(crate) fn card_icon(member: &Member, workspace: &Workspace, cx: &App) -> Ico
     match member.kind() {
         Kind::Board => icons::glyph::Kanban.into(),
         Kind::Article => icons::glyph::TextAlignStart.into(),
-        Kind::Session | Kind::Table | Kind::App => entry_icon(member, workspace, cx),
+        Kind::Session | Kind::Table | Kind::App | Kind::Canvas => entry_icon(member, workspace, cx),
     }
 }

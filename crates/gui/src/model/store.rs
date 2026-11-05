@@ -5,14 +5,15 @@
 //! the backend: the memory project [`seed`] put at a path, else the files
 //! there.
 
-use artifact::project::Result;
 use artifact::{
     article::{Article, comments::Comments, properties::Properties},
     board::Board,
+    canvas::Canvas,
     kind::Kind,
-    project::{Project, Watching, fs, memory},
+    project::{Project, Result, Watching, fs, memory},
     session::record::Record,
 };
+use canvas::model::Canvas as CanvasDocument;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -136,6 +137,22 @@ impl Project for Store {
 
     fn remove_session(&self, id: &str) -> Result<()> {
         each!(self, store => store.remove_session(id))
+    }
+
+    fn canvases(&self) -> Vec<Canvas> {
+        each!(self, store => store.canvases())
+    }
+    fn canvas(&self, id: &str) -> Option<Canvas> {
+        each!(self, store => store.canvas(id))
+    }
+    fn create_canvas(&self, title: &str, document: &CanvasDocument) -> Result<Canvas> {
+        each!(self, store => store.create_canvas(title, document))
+    }
+    fn save_canvas(&self, canvas: &mut Canvas) -> Result<()> {
+        each!(self, store => store.save_canvas(canvas))
+    }
+    fn remove_canvas(&self, id: &str) -> Result<()> {
+        each!(self, store => store.remove_canvas(id))
     }
 
     fn articles(&self) -> Vec<Article> {
