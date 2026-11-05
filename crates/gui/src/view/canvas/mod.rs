@@ -5,14 +5,17 @@ use crate::{
     },
     view::{
         kit::menu::{self, MenuHost},
-        window::root::{Cydonia, NewCanvas},
+        window::{
+            reach::InWindow,
+            root::{Cydonia, NewCanvas},
+        },
     },
 };
 use artifact::kind::Kind;
 use bezel::{
     gpui::{
-        App, AppContext as _, Context, Entity, FocusHandle, Focusable, Subscription, Window, div,
-        prelude::*, px,
+        App, AppContext as _, Context, Entity, FocusHandle, Focusable, Subscription, WeakEntity,
+        Window, div, prelude::*, px,
     },
     theme::{TextStyle, Theme, Typeset},
     ui::{
@@ -30,6 +33,8 @@ use canvas::{
     model::{self, End, Node},
 };
 use std::path::PathBuf;
+
+mod transfer;
 
 const CARD_WIDTH: i64 = 280;
 const CARD_HEIGHT: i64 = 160;
@@ -54,6 +59,8 @@ pub(crate) enum Menu {
 pub(crate) struct CanvasView {
     pub(crate) canvas: Entry,
     source: Entity<Canvas>,
+    root: WeakEntity<Cydonia>,
+    path: PathBuf,
     pub(crate) surface: Entity<Surface>,
     menu: ContextMenu<Self, Menu>,
     at: (i64, i64),
@@ -112,11 +119,12 @@ impl CanvasView {
     pub(crate) fn new(
         canvas: Entry,
         source: Entity<Canvas>,
+        root: WeakEntity<Cydonia>,
         path: PathBuf,
         cx: &mut Context<Self>,
     ) -> Self {
         let document = source.read(cx).document.clone();
-        let mut kinds = Kinds::new().with_root(path).with_fresh(|| Node {
+        let mut kinds = Kinds::new().with_root(path.clone()).with_fresh(|| Node {
             kind: model::TEXT.into(),
             width: CARD_WIDTH,
             height: CARD_HEIGHT,
@@ -143,6 +151,8 @@ impl CanvasView {
         Self {
             canvas,
             source,
+            root,
+            path,
             surface,
             menu: ContextMenu::default(),
             at: (0, 0),
@@ -187,6 +197,19 @@ impl CanvasView {
         let selected = !editor.selection().is_empty();
         let nodes = editor.selected_nodes().len();
         let mut rows = vec![
+            menu::row(
+                Item::action("Import canvas…"),
+                |this: &mut Self, window, cx| {
+                    let project = this.canvas.project;
+                    this.defer_window(window, cx, move |root, window, cx| {
+                        root.import_canvas(project, window, cx)
+                    });
+                },
+            ),
+            menu::row(
+                Item::action("Export JSON Canvas…"),
+                |this: &mut Self, window, cx| this.export(window, cx),
+            ),
             menu::row(
                 Item::action("Add text card")
                     .with_icon(icons::text::Type)
@@ -387,6 +410,12 @@ impl CanvasView {
         self.surface
             .update(cx, |surface, cx| surface.update_editor(cx, command));
         window.focus(&self.surface.read(cx).focus_handle(cx), cx);
+    }
+}
+
+impl InWindow for CanvasView {
+    fn root(&self) -> &WeakEntity<Cydonia> {
+        &self.root
     }
 }
 

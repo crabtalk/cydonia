@@ -30,10 +30,10 @@ use crate::{
         article::{ToggleOutline, TogglePlainText},
         keymap,
         window::root::{
-            CloseProject, Cydonia, EditAgent, InstallApp, LoadApp, NewArticle, NewBoard, NewCanvas,
-            NewSession, NewSessionAs, NewSessionNext, NewSessionWith, NewTable, NextEntry,
-            OpenProject, OpenSettings, PrevEntry, ToggleChanges, ToggleSidebar, ToggleTerminal,
-            WhatsNew,
+            CloseProject, Cydonia, EditAgent, ImportCanvas, InstallApp, LoadApp, NewArticle,
+            NewBoard, NewCanvas, NewSession, NewSessionAs, NewSessionNext, NewSessionWith,
+            NewTable, NextEntry, OpenProject, OpenSettings, PrevEntry, ToggleChanges,
+            ToggleSidebar, ToggleTerminal, WhatsNew,
         },
     },
 };
@@ -319,6 +319,7 @@ fn file_menu() -> Vec<MenuItem> {
         MenuItem::action("New Board", NewBoard),
         MenuItem::action("New Article", NewArticle),
         MenuItem::action("New Canvas", NewCanvas),
+        MenuItem::action("Import Canvas…", ImportCanvas),
         MenuItem::action("New Table", NewTable),
         MenuItem::action("Install App…", InstallApp),
     ]);
@@ -407,6 +408,7 @@ impl Cydonia {
                 root.on_action(cx.listener(Self::close_project_action))
                     .on_action(cx.listener(Self::new_article_action))
                     .on_action(cx.listener(Self::new_canvas_action))
+                    .on_action(cx.listener(Self::import_canvas_action))
                     .when(sessions, |root| {
                         root.on_action(cx.listener(Self::new_session_action))
                             .on_action(cx.listener(Self::new_session_with_action))

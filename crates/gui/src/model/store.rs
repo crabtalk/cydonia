@@ -56,6 +56,13 @@ pub fn open(path: &Path) -> Store {
 }
 
 impl Store {
+    pub fn import_canvas(&self, source: &Path) -> anyhow::Result<Canvas> {
+        match self {
+            Self::Fs(store) => store.import_canvas(source),
+            Self::Memory(_) => anyhow::bail!("canvas file import needs a filesystem project"),
+        }
+    }
+
     /// Where an entry is on disk — see [`fs::Project::place`]. `None` from a
     /// backend that is not the disk.
     /// See [`fs::Project::carry_card_files`]. Best effort; a backend with

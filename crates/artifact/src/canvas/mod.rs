@@ -7,6 +7,9 @@ use std::{
     ops::{Deref, DerefMut},
     str::FromStr,
 };
+
+pub mod bundle;
+
 pub const DIR: &str = "canvases";
 pub const FILE: &str = "content.canvas";
 pub const UNNAMED: &str = "Untitled";

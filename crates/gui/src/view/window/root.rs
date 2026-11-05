@@ -123,6 +123,7 @@ actions!(
         NewBoard,
         NewArticle,
         NewCanvas,
+        ImportCanvas,
         NewTable,
         InstallApp,
         LoadApp,

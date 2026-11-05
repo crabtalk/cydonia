@@ -1,0 +1,114 @@
+use crate::{
+    model::{
+        project::ProjectId,
+        workspace::{Member, Opening},
+    },
+    view::{
+        canvas::CanvasView,
+        window::{
+            reach::InWindow,
+            root::{Cydonia, ImportCanvas},
+        },
+    },
+};
+use artifact::{canvas::bundle::Bundle, kind::Kind};
+use bezel::gpui::{Context, PathPromptOptions, Window};
+
+impl Cydonia {
+    pub(crate) fn import_canvas_action(
+        &mut self,
+        _: &ImportCanvas,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(project) = self
+            .workspace
+            .read(cx)
+            .active_project()
+            .map(|project| project.id)
+        {
+            self.import_canvas(project, window, cx);
+        }
+    }
+
+    pub(crate) fn import_canvas(
+        &mut self,
+        project: ProjectId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(open) = self.workspace.read(cx).project(project) else {
+            return;
+        };
+        let store = open.store();
+        let picked = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Import canvas".into()),
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(paths))) = picked.await else {
+                return;
+            };
+            let Some(path) = paths.into_iter().next() else {
+                return;
+            };
+            let result = cx
+                .background_executor()
+                .spawn(async move { store.import_canvas(&path) })
+                .await;
+            let _ = this.update_in(cx, |this, window, cx| match result {
+                Ok(record) => {
+                    this.workspace
+                        .update(cx, |workspace, cx| workspace.reload_project(project, cx));
+                    this.enter_member(
+                        Member::new(project, Kind::Canvas, record.id),
+                        Opening::Kept,
+                        window,
+                        cx,
+                    );
+                }
+                Err(error) => {
+                    this.show_error("Cannot import canvas".into(), error.to_string(), window, cx)
+                }
+            });
+        })
+        .detach();
+    }
+}
+
+impl CanvasView {
+    pub(crate) fn export(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let source = self.source.read(cx);
+        let document = (**source.document.read(cx)).clone();
+        let name = format!(
+            "{}.canvas",
+            source.record.label().replace(['/', '\\', ':'], "-")
+        );
+        let root = self.path.clone();
+        let picked = cx.prompt_for_new_path(&root, Some(&name));
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(path))) = picked.await else {
+                return;
+            };
+            let result = cx
+                .background_executor()
+                .spawn(async move { Bundle::collect(document, &root)?.export(&path) })
+                .await;
+            if let Err(error) = result {
+                let _ = this.update_in(cx, |this, window, cx| {
+                    this.defer_window(window, cx, move |root, window, cx| {
+                        root.show_error(
+                            "Cannot export canvas".into(),
+                            error.to_string(),
+                            window,
+                            cx,
+                        );
+                    });
+                });
+            }
+        })
+        .detach();
+    }
+}

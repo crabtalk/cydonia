@@ -494,6 +494,27 @@ impl Project {
         path.exists().then_some(path)
     }
 
+    #[cfg(feature = "sqlite")]
+    pub fn import_canvas(&self, source: &Path) -> Result<Canvas> {
+        let mut bundle = canvas_artifact::bundle::Bundle::read(source)?;
+        let title = source.file_stem().unwrap_or_default().to_string_lossy();
+        let mut canvas = self.create_canvas(&title, &bundle.document)?;
+        let result = (|| {
+            let relative = Path::new(DIR)
+                .join(canvas_artifact::DIR)
+                .join(&canvas.id)
+                .join("assets");
+            bundle.write_assets(&self.root, &relative)?;
+            canvas.document = bundle.document;
+            self.save_canvas(&mut canvas)?;
+            Ok(canvas.clone())
+        })();
+        if result.is_err() {
+            let _ = self.remove_canvas(&canvas.id);
+        }
+        result
+    }
+
     pub fn canvas_file(&self, id: &str) -> Result<PathBuf> {
         Ok(self
             .cydonia()
