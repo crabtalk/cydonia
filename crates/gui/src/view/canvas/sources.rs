@@ -9,12 +9,14 @@ use crate::{
     },
 };
 use artifact::reference;
-use bezel::gpui::{Context, PathPromptOptions, Window};
+use bezel::gpui::{Context, PathPromptOptions, Window, div, prelude::*};
 use canvas::{
     Change, Kinds, kind,
     model::{self, Node},
 };
+use markdown::{AppExt as _, Block, BlockKind, Doc, Editing, Form};
 use std::path::PathBuf;
+use url::Url;
 
 pub(crate) fn kinds(kinds: Kinds, root: PathBuf) -> Kinds {
     let file_root = root.clone();
@@ -58,6 +60,30 @@ pub(crate) fn kinds(kinds: Kinds, root: PathBuf) -> Kinds {
             .is_some_and(|url| url.starts_with(reference::SCHEME))
         {
             embed::render(node, look, &root, window, cx)
+        } else if look.editor.is_none()
+            && node.url.as_deref().is_some_and(|url| {
+                Url::parse(url).is_ok_and(|url| matches!(url.scheme(), "http" | "https"))
+            })
+        {
+            let doc = Doc {
+                blocks: vec![Block::new(BlockKind::Bookmark {
+                    url: node.url.clone().unwrap_or_default(),
+                    form: Form::Embed(None),
+                })],
+            };
+            div()
+                .size_full()
+                .overflow_hidden()
+                .child(markdown::render_with(
+                    &doc,
+                    Editing {
+                        typography: Some(cx.typography().scaled(look.zoom)),
+                        ..Default::default()
+                    },
+                    window,
+                    cx,
+                ))
+                .into_any_element()
         } else {
             render(node, look, window, cx)
         }

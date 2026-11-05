@@ -177,6 +177,24 @@ impl CanvasView {
         });
     }
 
+    fn add_link(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.surface.update(cx, |surface, cx| {
+            surface.update_editor(cx, |editor| {
+                editor.add_node(
+                    Node {
+                        kind: model::LINK.into(),
+                        width: 360,
+                        height: 300,
+                        url: Some("https://".into()),
+                        ..Default::default()
+                    },
+                    self.at,
+                );
+            });
+            surface.edit_selected(window, cx);
+        });
+    }
+
     fn add_group(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let at = self.at;
         self.surface.update(cx, |surface, cx| {
@@ -206,6 +224,10 @@ impl CanvasView {
         let selected = !editor.selection().is_empty();
         let nodes = editor.selected_nodes().len();
         let mut rows = vec![
+            menu::row(
+                Item::action("Add link card").disabled(read_only),
+                |this: &mut Self, window, cx| this.add_link(window, cx),
+            ),
             menu::row(
                 Item::action("Add file cards…").disabled(read_only),
                 |this: &mut Self, _, cx| this.pick_files(None, cx),
