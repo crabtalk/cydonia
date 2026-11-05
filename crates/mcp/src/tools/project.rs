@@ -5,9 +5,9 @@ use crate::{
     tool::{Answer, Arg, Args, Outcome, Tool, Trouble},
     tools::{PROJECT, entry_of, fields, held, many, root},
 };
-use artifact::error::{Act, Error};
-use artifact::kind::Kind;
 use artifact::{
+    error::{Act, Error},
+    kind::Kind,
     project::{Project as _, fs},
     reference::Within,
 };
@@ -40,7 +40,7 @@ const LABELS: Arg = Arg {
 pub static TOOLS: [Tool; 5] = [
     Tool {
         name: "project_entries",
-        description: "List articles, boards, tables, and saved chats with stable project-wide numeric references and their labels, including archived entries.",
+        description: "List articles, boards, canvases, tables, and saved chats with stable project-wide numeric references and their labels, including archived entries.",
         schema: |bound| fields(bound, &[PROJECT]),
         writes: false,
         deletes: false,
@@ -56,7 +56,7 @@ pub static TOOLS: [Tool; 5] = [
     },
     Tool {
         name: "project_label_entry",
-        description: "Set the labels an article, board or saved chat carries. Names are lowercased, \
+        description: "Set the labels an article, board, canvas or saved chat carries. Names are lowercased, \
             with spaces as -, and shared across projects. Tables carry no labels.",
         schema: |bound| {
             let mut schema = fields(bound, &[PROJECT, ENTRY, LABELS]);
@@ -247,6 +247,11 @@ fn label_entry(args: Args<'_>) -> Outcome {
             board.labels = labels.clone();
             store.save_board(&mut board).map_err(refused)?;
         }
+        Kind::Canvas => {
+            let mut canvas = store.canvas(&entry.id).ok_or_else(gone)?;
+            canvas.labels = labels.clone();
+            store.save_canvas(&mut canvas).map_err(refused)?;
+        }
         // An open project's sessions are the app's to write: a file written
         // under it would be overwritten by the app's next save.
         Kind::Session if rail::is_open(&project) => rail::ask(Change::Label {
@@ -260,7 +265,7 @@ fn label_entry(args: Args<'_>) -> Outcome {
         }
         kind => {
             return Err(Trouble::Refused(format!(
-                "{named} is a {kind}, and only articles, boards and saved chats carry labels"
+                "{named} is a {kind}, and only articles, boards, canvases and saved chats carry labels"
             )));
         }
     }

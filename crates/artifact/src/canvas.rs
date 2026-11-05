@@ -94,3 +94,63 @@ impl fmt::Display for Canvas {
         f.write_str(&serde_json::to_string_pretty(self).map_err(|_| fmt::Error)?)
     }
 }
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Edit {
+    #[serde(default)]
+    pub nodes: Vec<canvas::model::Node>,
+    #[serde(default)]
+    pub edges: Vec<canvas::model::Edge>,
+    #[serde(default)]
+    pub remove_nodes: Vec<String>,
+    #[serde(default)]
+    pub remove_edges: Vec<String>,
+}
+
+impl Edit {
+    pub fn apply(self, canvas: &mut Canvas) -> Result<(), String> {
+        let mut next = canvas.document.clone();
+        next.nodes
+            .retain(|node| !self.remove_nodes.contains(&node.id));
+        next.edges.retain(|edge| {
+            !self.remove_edges.contains(&edge.id)
+                && !self.remove_nodes.contains(&edge.from_node)
+                && !self.remove_nodes.contains(&edge.to_node)
+        });
+        for node in self.nodes {
+            match next.nodes.iter().position(|held| held.id == node.id) {
+                Some(at) => next.nodes[at] = node,
+                None => next.nodes.push(node),
+            }
+        }
+        for edge in self.edges {
+            match next.edges.iter().position(|held| held.id == edge.id) {
+                Some(at) => next.edges[at] = edge,
+                None => next.edges.push(edge),
+            }
+        }
+        let mut ids = std::collections::HashSet::new();
+        for node in &next.nodes {
+            if node.id.is_empty() || !ids.insert(&node.id) {
+                return Err(format!("node id must be nonempty and unique: {}", node.id));
+            }
+            if node.width <= 0 || node.height <= 0 {
+                return Err(format!(
+                    "node {} must have positive width and height",
+                    node.id
+                ));
+            }
+        }
+        for edge in &next.edges {
+            if edge.id.is_empty() || !ids.insert(&edge.id) {
+                return Err(format!("edge id must be nonempty and unique: {}", edge.id));
+            }
+            if next.node(&edge.from_node).is_none() || next.node(&edge.to_node).is_none() {
+                return Err(format!("edge {} must connect existing nodes", edge.id));
+            }
+        }
+        canvas.document = next;
+        Ok(())
+    }
+}

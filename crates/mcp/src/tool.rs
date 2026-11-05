@@ -135,6 +135,15 @@ impl<'a> Args<'a> {
         self.at
     }
 
+    pub fn decode<T: serde::de::DeserializeOwned>(&self, arg: Arg) -> Result<T, Trouble> {
+        let value = self
+            .arguments
+            .get(arg.name)
+            .ok_or_else(|| Trouble::Invalid(format!("{} is required", arg.name)))?;
+        serde_json::from_value(value.clone())
+            .map_err(|error| Trouble::Invalid(format!("{}: {error}", arg.name)))
+    }
+
     pub fn text(&self, arg: Arg) -> Result<&'a str, Trouble> {
         match self.arguments.get(arg.name).and_then(Value::as_str) {
             Some(text) => Ok(text),
