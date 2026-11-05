@@ -40,6 +40,7 @@ pub(crate) fn kinds(kinds: Kinds, root: PathBuf) -> Kinds {
             }
         },
     ))
+    .exportable()
     .handles(canvas::handle::frame)
     .open(move |node, cx| {
         if let Some(file) = &node.file {

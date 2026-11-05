@@ -67,6 +67,7 @@ pub(crate) struct CanvasView {
     menu: ContextMenu<Self, Menu>,
     at: (i64, i64),
     _events: Option<Subscription>,
+    exporting_image: bool,
 }
 
 impl Cydonia {
@@ -164,6 +165,7 @@ impl CanvasView {
             menu: ContextMenu::default(),
             at: (0, 0),
             _events: None,
+            exporting_image: false,
         }
     }
 
@@ -397,6 +399,41 @@ impl CanvasView {
                 ));
             }
         }
+        rows.push(menu::submenu(
+            "Export image",
+            icons::glyph::Image,
+            [
+                ("Full canvas", canvas::export::Area::Canvas),
+                ("Current viewport", canvas::export::Area::Viewport),
+            ]
+            .into_iter()
+            .map(|(label, area)| {
+                let frame = area.frame(editor).ok();
+                let scales = [1., 2., 4.]
+                    .into_iter()
+                    .map(|scale| {
+                        let label = frame
+                            .as_ref()
+                            .map(|frame| {
+                                format!(
+                                    "{scale}× · {} × {}",
+                                    (frame.size.width * scale).ceil() as u32,
+                                    (frame.size.height * scale).ceil() as u32
+                                )
+                            })
+                            .unwrap_or_else(|| format!("{scale}×"));
+                        menu::row(
+                            Item::action(label).disabled(self.exporting_image || frame.is_none()),
+                            move |this: &mut Self, window, cx| {
+                                this.export_image(area, scale, window, cx)
+                            },
+                        )
+                    })
+                    .collect();
+                menu::submenu(label, icons::glyph::Image, scales)
+            })
+            .collect(),
+        ));
         let snap = editor.snap();
         rows.extend([
             menu::row(
@@ -612,6 +649,21 @@ impl Render for CanvasView {
                     .child(tools)
                     .child(zoom),
             )
+            .when(self.exporting_image, |element| {
+                element.child(
+                    theme
+                        .group_box()
+                        .absolute()
+                        .bottom(px(60.))
+                        .left(px(12.))
+                        .p(px(8.))
+                        .child(
+                            div()
+                                .text_style(TextStyle::Callout)
+                                .child("Exporting image…"),
+                        ),
+                )
+            })
             .when_some(error, |element, message| {
                 element.child(
                     theme

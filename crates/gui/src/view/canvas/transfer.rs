@@ -1,5 +1,6 @@
 use crate::{
     model::{
+        media::Png as _,
         project::ProjectId,
         workspace::{Member, Opening},
     },
@@ -13,6 +14,7 @@ use crate::{
 };
 use artifact::{canvas::bundle::Bundle, kind::Kind};
 use bezel::gpui::{Context, PathPromptOptions, Window};
+use image::DynamicImage;
 
 impl Cydonia {
     pub(crate) fn import_canvas_action(
@@ -108,6 +110,68 @@ impl CanvasView {
                     });
                 });
             }
+        })
+        .detach();
+    }
+}
+
+impl CanvasView {
+    pub(crate) fn export_image(
+        &mut self,
+        area: canvas::export::Area,
+        scale: f32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.exporting_image {
+            return;
+        }
+        let name = format!(
+            "{}.png",
+            self.source
+                .read(cx)
+                .record
+                .label()
+                .replace(['/', '\\', ':'], "-")
+        );
+        let picked = cx.prompt_for_new_path(&self.path, Some(&name));
+        self.exporting_image = true;
+        cx.notify();
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(path))) = picked.await else {
+                let _ = this.update(cx, |this, cx| {
+                    this.exporting_image = false;
+                    cx.notify();
+                });
+                return;
+            };
+            let rendered = this.update(cx, |this, cx| {
+                this.surface
+                    .update(cx, |surface, cx| surface.export_image(area, scale, cx))
+            });
+            let result = async {
+                let task = rendered
+                    .map_err(|error| anyhow::anyhow!(error.to_string()))?
+                    .map_err(anyhow::Error::msg)?;
+                let image = task.await?;
+                cx.background_executor()
+                    .spawn(async move {
+                        let bytes = DynamicImage::ImageRgba8(image).png()?;
+                        artifact::fs::save(&path, bytes)?;
+                        anyhow::Ok(())
+                    })
+                    .await
+            }
+            .await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.exporting_image = false;
+                cx.notify();
+                if let Err(error) = result {
+                    this.defer_window(window, cx, move |root, window, cx| {
+                        root.show_error("Cannot export image".into(), error.to_string(), window, cx)
+                    });
+                }
+            });
         })
         .detach();
     }

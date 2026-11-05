@@ -19,9 +19,8 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 #[cfg(feature = "desktop")]
 use bezel::gpui::WeakEntity;
 use bezel::gpui::{App, ClipboardEntry, ClipboardItem, Entity, Image, hash};
-use editor::AppExt as _;
-use editor::{Editor, ImageStore, Mode, PasteContent, PasteContext, Source};
-use image::{ImageFormat, imageops::FilterType};
+use editor::{AppExt as _, Editor, ImageStore, Mode, PasteContent, PasteContext, Source};
+use image::{DynamicImage, ImageFormat, ImageResult, imageops::FilterType};
 use markdown::BlockKind;
 use std::{
     io::Cursor,
@@ -40,6 +39,18 @@ pub const LONG_EDGE: u32 = 1568;
 /// The most a picture fetched off the web may weigh.
 #[cfg(feature = "desktop")]
 const FETCH_LIMIT: u64 = 25 * 1024 * 1024;
+
+pub(crate) trait Png {
+    fn png(&self) -> ImageResult<Vec<u8>>;
+}
+
+impl Png for DynamicImage {
+    fn png(&self) -> ImageResult<Vec<u8>> {
+        let mut out = Cursor::new(Vec::new());
+        self.write_to(&mut out, ImageFormat::Png)?;
+        Ok(out.into_inner())
+    }
+}
 
 /// A picture picked in the composer, held until the message is sent — the
 /// composer does not know which project the session it feeds is in.
@@ -280,9 +291,7 @@ pub fn encode(path: &Path) -> Option<(String, &'static str)> {
         true => picture,
         false => picture.resize(LONG_EDGE, LONG_EDGE, FilterType::Lanczos3),
     };
-    let mut out = Cursor::new(Vec::new());
-    picture.write_to(&mut out, ImageFormat::Png).ok()?;
-    Some((STANDARD.encode(out.into_inner()), "image/png"))
+    Some((STANDARD.encode(picture.png().ok()?), "image/png"))
 }
 
 fn extension(path: &Path) -> Option<String> {
