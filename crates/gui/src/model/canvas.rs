@@ -1,10 +1,13 @@
 use crate::model::store::Store;
 use artifact::{
+    article::Article,
     canvas::{Canvas as Record, Properties},
+    kind::Kind,
     project::Project as _,
+    reference::Reference,
 };
 use bezel::gpui::{AppContext as _, Context, Entity, Subscription};
-use canvas::{Document, DocumentChange, DocumentEvent};
+use canvas::{Change, Document, DocumentChange, DocumentEvent, model};
 
 pub struct Canvas {
     pub record: Record,
@@ -32,13 +35,59 @@ impl Canvas {
     }
 
     pub fn save(&mut self, cx: &mut Context<Self>) {
-        self.record.document = (**self.document.read(cx)).clone();
+        let current = (**self.document.read(cx)).clone();
+        if self.record.document == current && self.error.is_none() {
+            return;
+        }
+        self.record.document = current;
         self.error = self
             .store
             .save_canvas(&mut self.record)
             .err()
             .map(|error| error.to_string());
         cx.notify();
+    }
+
+    pub fn convert_to_article(
+        &mut self,
+        id: &str,
+        project: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<Article, String> {
+        let mut node = self
+            .document
+            .read(cx)
+            .node(id)
+            .cloned()
+            .ok_or("card no longer exists")?;
+        if node.kind != model::TEXT {
+            return Err("only a text card can become an article".into());
+        }
+        let article = self
+            .store
+            .create_article(node.text.as_deref().unwrap_or_default())
+            .map_err(|error| error.to_string())?;
+        let number = self
+            .store
+            .number(Kind::Article, &article.id)
+            .map_err(|error| error.to_string())?;
+        node.kind = model::LINK.into();
+        node.text = None;
+        node.url = Some(Reference::entry(Some(project), number, None).link());
+        let mut record = self.record.clone();
+        record.document = (**self.document.read(cx)).clone();
+        *record.document.node_mut(id).expect("node was found") = node.clone();
+        if let Err(error) = self.store.save_canvas(&mut record) {
+            let _ = self.store.remove_article(&article.id);
+            return Err(error.to_string());
+        }
+        self.record = record;
+        self.document.update(cx, |document, cx| {
+            document.edit(vec![Change::UpdateNode { node }], cx)
+        });
+        self.error = None;
+        cx.notify();
+        Ok(article)
     }
 
     pub fn rename(&mut self, title: String, cx: &mut Context<Self>) -> bool {

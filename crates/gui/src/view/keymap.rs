@@ -488,6 +488,7 @@ pub fn bind_all(shortcuts: &Shortcuts, cx: &mut App) {
     cx.bind_keys(super::component::browser::bindings());
     cx.bind_keys(super::pane::find::bindings());
     cx.bind_keys(super::modals::palette::bindings());
+    cx.bind_keys(super::modals::canvas_reference::bindings());
     cx.bind_keys(composer::bindings());
     cx.bind_keys(super::modals::new_board::bindings());
     cx.bind_keys(super::modals::install_app::bindings());

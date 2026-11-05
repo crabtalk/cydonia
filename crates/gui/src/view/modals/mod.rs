@@ -13,3 +13,5 @@ pub mod palette;
 #[cfg(not(feature = "desktop"))]
 pub mod settings;
 pub mod whats_new;
+
+pub(crate) mod canvas_reference;

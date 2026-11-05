@@ -34,6 +34,8 @@ use canvas::{
 };
 use std::path::PathBuf;
 
+mod embed;
+mod sources;
 mod transfer;
 
 const CARD_WIDTH: i64 = 280;
@@ -138,9 +140,14 @@ impl CanvasView {
             }
             kinds = kinds.with(name, declared);
         }
+        kinds = sources::kinds(kinds, path.clone());
         let surface = cx.new(|cx| {
             Surface::for_document(document, layout::FREE, cx)
                 .with_kinds(kinds)
+                .with_options(canvas::Options {
+                    external_drops: true,
+                    ..Default::default()
+                })
                 .with_snap(Snap {
                     grid: Some(20),
                     guides: true,
@@ -197,6 +204,14 @@ impl CanvasView {
         let selected = !editor.selection().is_empty();
         let nodes = editor.selected_nodes().len();
         let mut rows = vec![
+            menu::row(
+                Item::action("Add file cards…").disabled(read_only),
+                |this: &mut Self, _, cx| this.pick_files(None, cx),
+            ),
+            menu::row(
+                Item::action("Add entry card…").disabled(read_only),
+                |this: &mut Self, window, cx| this.pick_reference(None, window, cx),
+            ),
             menu::row(
                 Item::action("Import canvas…"),
                 |this: &mut Self, window, cx| {
@@ -351,6 +366,37 @@ impl CanvasView {
                 },
             ));
         }
+        if let Some(node) = editor
+            .selected_nodes()
+            .first()
+            .and_then(|id| editor.canvas().node(id))
+        {
+            if matches!(node.kind.as_str(), model::FILE | model::LINK) {
+                let file_id = node.id.clone();
+                rows.push(menu::row(
+                    Item::action("Replace with file…").disabled(read_only),
+                    move |this: &mut Self, _, cx| this.pick_files(Some(file_id.clone()), cx),
+                ));
+                let id = node.id.clone();
+                rows.push(menu::row(
+                    Item::action("Replace reference…").disabled(read_only),
+                    move |this: &mut Self, window, cx| {
+                        this.pick_reference(Some(id.clone()), window, cx)
+                    },
+                ));
+                let node = (*node).clone();
+                rows.push(menu::row(
+                    Item::action("Open source"),
+                    move |this: &mut Self, window, cx| this.open_source(&node, window, cx),
+                ));
+            } else if node.kind == model::TEXT && !read_only {
+                let id = node.id.clone();
+                rows.push(menu::row(
+                    Item::action("Convert to article"),
+                    move |this: &mut Self, window, cx| this.convert(&id, window, cx),
+                ));
+            }
+        }
         let snap = editor.snap();
         rows.extend([
             menu::row(
@@ -440,6 +486,10 @@ impl Render for CanvasView {
                 &self.surface,
                 window,
                 |this, _, event: &CanvasEvent, window, cx| {
+                    if let CanvasEvent::FilesDropped { at, paths } = event {
+                        this.at = (at.x.round() as i64, at.y.round() as i64);
+                        this.add_files(paths.clone(), None, cx);
+                    }
                     if let CanvasEvent::ContextMenu { position, at, .. } = event {
                         this.at = (at.x.round() as i64, at.y.round() as i64);
                         this.toggle_menu(
@@ -531,6 +581,18 @@ impl Render for CanvasView {
                     })),
             );
         div()
+            .on_drop(cx.listener(
+                |this,
+                 carried: &bezel::ui::drag::Carry<crate::view::sidebar::Dragged>,
+                 window,
+                 cx| {
+                    let at = this.surface.read(cx).canvas_point(window.mouse_position());
+                    this.at = (at.x.round() as i64, at.y.round() as i64);
+                    if this.drop_entry(carried.item(), cx) {
+                        cx.stop_propagation();
+                    }
+                },
+            ))
             .flex_1()
             .min_w_0()
             .size_full()
