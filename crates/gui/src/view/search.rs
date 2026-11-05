@@ -5,8 +5,10 @@
 //! A query is searched off disk on a background thread — see
 //! [`artifact::search::disk`] — so an entry's hits are as of its last write.
 
-use crate::model::workspace::Workspace;
-use crate::view::{modals::palette::Hit, sidebar::Row};
+use crate::{
+    model::workspace::Workspace,
+    view::{modals::palette::Hit, sidebar::Row},
+};
 use artifact::{
     kind::Kind,
     project::fs,
@@ -144,7 +146,7 @@ impl Search {
 /// Every entry in `roots` holding `query`, each once with its best match: the
 /// title where it matched there, else its earliest block.
 pub(crate) fn search_all(roots: &[PathBuf], query: &Query) -> Vec<Found> {
-    let kinds = [Kind::Article, Kind::Board, Kind::Session];
+    let kinds = [Kind::Article, Kind::Board, Kind::Session, Kind::Canvas];
     let mut found = Vec::new();
     for root in roots {
         let (tx, rx) = mpsc::channel();
@@ -180,7 +182,7 @@ fn rank(block: &Block) -> (u8, usize) {
     match block {
         Block::Title => (0, 0),
         Block::Line(ix) | Block::Chat(ix) => (1, *ix),
-        Block::Card(_) => (1, usize::MAX),
+        Block::Card(_) | Block::Node(_) => (1, usize::MAX),
     }
 }
 

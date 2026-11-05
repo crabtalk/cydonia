@@ -23,6 +23,9 @@ impl Workspace {
             Showing::Board(id) => open
                 .board_ix(id)
                 .map(|ix| open.boards[ix].board.read(cx).labels.as_slice()),
+            Showing::Canvas(id) => open
+                .canvas_ix(id)
+                .map(|ix| open.canvases[ix].canvas.read(cx).record.labels.as_slice()),
             Showing::Table(_) => None,
         }
     }
@@ -52,6 +55,14 @@ impl Workspace {
             }
             Showing::Board(id) => {
                 self.with_board(id, cx, |board| board.labels = labels.clone());
+            }
+            Showing::Canvas(id) => {
+                let open = &self.projects[project];
+                if let Some(ix) = open.canvas_ix(id) {
+                    open.canvases[ix].canvas.update(cx, |canvas, cx| {
+                        canvas.set_labels(labels, cx);
+                    });
+                }
             }
             Showing::Table(_) => return,
         }
@@ -83,6 +94,11 @@ impl Workspace {
                 open.articles
                     .iter()
                     .map(|article| (at, Showing::Article(article.id.clone()))),
+            );
+            out.extend(
+                open.canvases
+                    .iter()
+                    .map(|held| (at, Showing::Canvas(held.id.clone()))),
             );
             out.extend(
                 open.boards

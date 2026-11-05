@@ -2,7 +2,7 @@
 //! it, name it, and the rows of its menu — whichever view's menu asked.
 
 use crate::{
-    model::workspace::{Member, Opening, Showing},
+    model::workspace::{Entry, Member, Opening, Showing},
     view::{
         article::TogglePlainText,
         keymap::{self, Command},
@@ -11,7 +11,10 @@ use crate::{
         window::root::{Cydonia, EditAgent},
     },
 };
-use artifact::board::{Page, View};
+use artifact::{
+    board::{Page, View},
+    kind::Kind,
+};
 use bezel::{
     gpui::{App, Context, Window},
     ui::{icons, menu::Item},
@@ -78,6 +81,7 @@ impl Cydonia {
                     Showing::Board(_) => self.open_board(project, ix, opening, window, cx),
                     Showing::Article(_) => self.open_article(project, ix, opening, window, cx),
                     Showing::Table(_) => self.open_table(project, ix, opening, window, cx),
+                    Showing::Canvas(_) => self.open_canvas(project, ix, opening, window, cx),
                     Showing::Session(_) => {}
                 }
             }
@@ -433,6 +437,7 @@ impl Cydonia {
                     Showing::Board(_) => workspace.delete_board(project, ix, cx),
                     Showing::Article(_) => workspace.delete_article(project, ix, cx),
                     Showing::Table(_) => workspace.delete_table(project, ix, cx),
+                    Showing::Canvas(_) => workspace.delete_canvas(project, ix, cx),
                     Showing::Session(_) => {}
                 },
                 (Row::Group(Group::Space(id)), _) => workspace.delete_space_id(id, cx),
@@ -543,6 +548,19 @@ impl Cydonia {
         let Row::Entry { project, showing } = entry else {
             return;
         };
+        if let Showing::Canvas(id) = showing {
+            let entry = Entry {
+                project: *project,
+                kind: Kind::Canvas,
+                id: id.clone(),
+            };
+            let saved = self.workspace.update(cx, |workspace, cx| {
+                workspace.archive_canvas(&entry, archived, cx)
+            });
+            if !saved {
+                return;
+            }
+        }
         // Putting an entry away takes it out of the places that hold it up:
         // the pins at the top of the list, whatever space arranges it, and its
         // tab in the window's strip.
@@ -577,6 +595,7 @@ impl Cydonia {
                 }
             }
             Showing::Table(key) => workspace.archive_table(key, archived, cx),
+            Showing::Canvas(_) => {}
         });
         // A pane closed in a space has already handed the focus on.
         if let Some(project) = landing.filter(|_| !arranged) {

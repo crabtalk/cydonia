@@ -502,6 +502,21 @@ impl Project {
             .join(canvas_artifact::FILE))
     }
 
+    pub fn canvas_files(&self) -> Vec<(String, PathBuf)> {
+        let Ok(entries) = std::fs::read_dir(self.cydonia().join(canvas_artifact::DIR)) else {
+            return Vec::new();
+        };
+        entries
+            .flatten()
+            .filter_map(|entry| {
+                let content = entry.path().join(canvas_artifact::FILE);
+                content
+                    .is_file()
+                    .then(|| (entry.file_name().to_string_lossy().into_owned(), content))
+            })
+            .collect()
+    }
+
     fn canvas_lock(&self, id: &str) -> Result<std::fs::File> {
         let dir = self.cydonia().join(canvas_artifact::DIR);
         std::fs::create_dir_all(&dir)?;
@@ -691,13 +706,10 @@ impl super::Project for Project {
     }
 
     fn canvases(&self) -> Vec<Canvas> {
-        let Ok(entries) = std::fs::read_dir(self.cydonia().join(canvas_artifact::DIR)) else {
-            return Vec::new();
-        };
-        let mut canvases: Vec<_> = entries
-            .flatten()
-            .filter(|entry| entry.path().is_dir())
-            .filter_map(|entry| self.read_canvas(&entry.file_name().to_string_lossy()))
+        let mut canvases: Vec<_> = self
+            .canvas_files()
+            .into_iter()
+            .filter_map(|(id, _)| self.read_canvas(&id))
             .collect();
         canvases.sort_by_key(|canvas| Reverse(canvas.touched));
         canvases

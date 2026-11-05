@@ -16,7 +16,7 @@ name = "cydonia_gui"
 [dependencies]
 artifact = { workspace = true, features = ["pictures"] }
 anyhow.workspace = true
-canvas.workspace = true
+canvas = { workspace = true, default-features = true }
 base64.workspace = true
 bezel.workspace = true
 guest.workspace = true

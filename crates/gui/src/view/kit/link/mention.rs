@@ -140,6 +140,23 @@ pub(crate) fn read(workspace: &Workspace, cx: &App) -> Linkables {
                 )
             })
         }));
+        held.extend(project.canvases.iter().filter_map(|held| {
+            let canvas = &held.canvas.read(cx).record;
+            let number = canvas.number?;
+            Some(Linkable {
+                archived: canvas.archived,
+                kind: Kind::Canvas,
+                labels: canvas.labels.clone(),
+                ..linkable(
+                    kind_icon(Kind::Canvas),
+                    canvas.label().to_owned(),
+                    format!("Canvas · {}", shown(number)),
+                    number,
+                    canvas.touched,
+                    row(Showing::Canvas(canvas.id.clone())),
+                )
+            })
+        }));
         held.extend(project.boards.iter().filter_map(|held| {
             let board = held.board.read(cx);
             let number = board.number?;

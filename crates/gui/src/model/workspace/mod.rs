@@ -55,6 +55,7 @@ const ICON_RETRIES: u32 = 6;
 mod apps;
 mod articles;
 mod boards;
+mod canvases;
 mod identities;
 mod labels;
 mod spaces;

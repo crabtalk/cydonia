@@ -217,7 +217,8 @@ impl Workspace {
                 project.table = at;
                 project.reload_page();
             }
-            Kind::App | Kind::Canvas => {}
+            Kind::Canvas => project.canvas = at,
+            Kind::App => {}
         }
         // Landing back in a session is being in front of it — see
         // [`Self::wake_session`]. Landing in an article or a board is not, and
@@ -339,6 +340,7 @@ impl Workspace {
         let Some(ix) = self.project_ix(project) else {
             return;
         };
+        let before: Vec<_> = self.projects[ix].entries(cx).collect();
         if self.projects[ix].reload(cx) {
             cx.emit(Reloaded);
         }
@@ -346,7 +348,9 @@ impl Workspace {
         // An entry deleted from under a space leaves a member naming a
         // number nothing answers to.
         self.prune_spaces(cx);
-        cx.notify();
+        if before != self.projects[ix].entries(cx).collect::<Vec<_>>() {
+            cx.notify();
+        }
     }
 
     /// Re-read every open project: the backstop under the watch.
@@ -357,6 +361,11 @@ impl Workspace {
     /// event dropped while the queue overflowed — none of those reach the
     /// watch, and all of them are corrected here.
     pub fn reload_projects(&mut self, cx: &mut Context<Self>) {
+        let before: Vec<_> = self
+            .projects
+            .iter()
+            .flat_map(|project| project.entries(cx))
+            .collect();
         let mut moved = false;
         for ix in 0..self.projects.len() {
             moved |= self.projects[ix].reload(cx);
@@ -364,6 +373,14 @@ impl Workspace {
         if moved {
             cx.emit(Reloaded);
         }
-        cx.notify();
+        if before
+            != self
+                .projects
+                .iter()
+                .flat_map(|project| project.entries(cx))
+                .collect::<Vec<_>>()
+        {
+            cx.notify();
+        }
     }
 }

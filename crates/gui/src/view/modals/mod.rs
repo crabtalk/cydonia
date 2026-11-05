@@ -5,6 +5,7 @@
 pub mod agent;
 pub mod confirm;
 pub mod desktop;
+pub mod error;
 pub mod install_app;
 pub mod new_board;
 pub mod no_agent;

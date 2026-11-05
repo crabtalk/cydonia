@@ -479,6 +479,7 @@ pub fn bind_all(shortcuts: &Shortcuts, cx: &mut App) {
     if shortcuts.emacs {
         cx.bind_keys(emacs_bindings());
     }
+    cx.bind_keys(canvas::keys::bindings());
     // The app's own, every one of them scoped to a surface.
     cx.bind_keys(article::bindings());
     cx.bind_keys(board::bindings());

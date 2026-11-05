@@ -1,4 +1,4 @@
-//! Finding text across a project's articles, boards and sessions.
+//! Finding text across project entries.
 //!
 //! No index: a search walks the text it is handed. [`run`] searches what a
 //! caller already holds in memory; [`disk`] reads a project off its
@@ -10,6 +10,7 @@
 use crate::{
     article::Article,
     board::Board,
+    canvas::Canvas,
     kind::Kind,
     project::fs,
     session::{chat::ChatItem, record::Record},
@@ -95,6 +96,7 @@ pub enum Block {
     Line(usize),
     /// A card's text, by the card's id.
     Card(String),
+    Node(String),
     /// A transcript item, by its index in [`Record::items`].
     Chat(usize),
 }
@@ -153,6 +155,29 @@ impl Searchable for Board {
         each(Block::Title, &self.name);
         for card in self.columns.iter().flat_map(|column| &column.cards) {
             each(Block::Card(card.id.clone()), &card.text);
+        }
+    }
+}
+
+impl Searchable for Canvas {
+    fn item(&self) -> Item {
+        Item {
+            kind: Kind::Canvas,
+            id: self.id.clone(),
+        }
+    }
+    fn blocks(&self, each: &mut dyn FnMut(Block, &str)) {
+        each(Block::Title, self.label());
+        for node in &self.document.nodes {
+            if let Some(text) = node
+                .text
+                .as_deref()
+                .or(node.label.as_deref())
+                .or(node.url.as_deref())
+                .or(node.file.as_deref())
+            {
+                each(Block::Node(node.id.clone()), text);
+            }
         }
     }
 }
@@ -220,8 +245,7 @@ pub fn run(sources: &[&(dyn Searchable + Sync)], query: &Query, found: &Sender<M
     parallel(sources, |source| one(*source, query, found));
 }
 
-/// Search a project off its `.cydonia/`. An item's raw file is checked for
-/// the query before it is parsed, so a file holding no match costs one read.
+/// Search a project off its `.cydonia/`.
 ///
 /// Only items of the given kinds are read. Reads only: nothing a read of the
 /// project would write back is written.
@@ -247,6 +271,12 @@ pub fn disk(project: &fs::Project, kinds: &[Kind], query: &Query, found: &Sender
             .board_files()
             .into_iter()
             .map(|(id, path)| (Kind::Board, id, path)),
+    );
+    files.extend(
+        project
+            .canvas_files()
+            .into_iter()
+            .map(|(id, path)| (Kind::Canvas, id, path)),
     );
     files.retain(|(kind, ..)| kinds.contains(kind));
     parallel(&files, |(kind, id, path)| {
@@ -291,7 +321,17 @@ pub fn disk(project: &fs::Project, kinds: &[Kind], query: &Query, found: &Sender
                 )
             }
             // Boards are read whole above; tables and apps are not searched.
-            Kind::Board | Kind::Table | Kind::App | Kind::Canvas => true,
+            Kind::Canvas => {
+                let Ok(source) = std::str::from_utf8(&bytes) else {
+                    return true;
+                };
+                let Ok(mut canvas) = source.parse::<Canvas>() else {
+                    return true;
+                };
+                canvas.id = id.clone();
+                one(&canvas, query, found)
+            }
+            Kind::Board | Kind::Table | Kind::App => true,
         }
     });
 }

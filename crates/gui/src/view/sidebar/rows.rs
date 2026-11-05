@@ -585,6 +585,11 @@ impl Sidebar {
                 "article-row",
                 glyph(icons::files::FileText.into()),
             ),
+            Showing::Canvas(_) => (
+                SharedString::from(key_of(entry)).into(),
+                "canvas-row",
+                glyph(icons::layout::PanelsTopLeft.into()),
+            ),
             Showing::Table(_) => (
                 SharedString::from(key_of(entry)).into(),
                 "table-row",
@@ -992,6 +997,7 @@ impl Sidebar {
                 New::Session(_) => {}
                 New::Board => this.ask_new_board(ix, window, cx),
                 New::Article => this.new_article(ix, window, cx),
+                New::Canvas => this.new_canvas(ix, window, cx),
                 New::Table => this.new_table(ix, window, cx),
             })
         })

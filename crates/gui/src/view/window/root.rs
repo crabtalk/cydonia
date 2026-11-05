@@ -122,6 +122,7 @@ actions!(
         NewSessionNext,
         NewBoard,
         NewArticle,
+        NewCanvas,
         NewTable,
         InstallApp,
         LoadApp,
@@ -999,6 +1000,10 @@ impl Cydonia {
                 .find(|view| view.board.id == *id)
                 .filter(|view| view.editing.is_some())
                 .map(|view| view.card_field.read(cx).focus_handle(cx)),
+            Showing::Canvas(_) => leaf
+                .read(cx)
+                .canvas_shown(cx)
+                .map(|view| view.read(cx).focus_handle(cx)),
             Showing::Table(_) => self
                 .table_view_of(Some(&leaf.read(cx).entry), cx)
                 .map(|view| view.read(cx))

@@ -20,6 +20,7 @@ pub(crate) enum New {
     Session(Option<usize>),
     Board,
     Article,
+    Canvas,
     Table,
 }
 
@@ -29,6 +30,7 @@ impl New {
             Self::Session(_) => "New session",
             Self::Board => "New board",
             Self::Article => "New article",
+            Self::Canvas => "New canvas",
             Self::Table => "New table",
         }
     }
@@ -38,6 +40,7 @@ impl New {
             Self::Session(_) => icons::social::MessageCirclePlus.into(),
             Self::Board => icons::development::SquareKanban.into(),
             Self::Article => icons::files::FilePlus.into(),
+            Self::Canvas => icons::layout::PanelsTopLeft.into(),
             Self::Table => icons::files::Table2.into(),
         }
     }
@@ -68,6 +71,7 @@ pub(crate) fn offered(workspace: &Workspace) -> Offered {
     let kinds = [
         (features.boards, New::Board),
         (true, New::Article),
+        (true, New::Canvas),
         (features.tables, New::Table),
     ]
     .into_iter()

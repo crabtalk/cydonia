@@ -201,6 +201,13 @@ fn entry(project: &Project, number: u64, cx: &App) -> Option<(Showing, String)> 
                 .map(|board| (Showing::Board(board.id.clone()), board.name.clone()))
         })
         .or_else(|| {
+            project.canvases.iter().find_map(|held| {
+                let canvas = &held.canvas.read(cx).record;
+                (canvas.number == Some(number))
+                    .then(|| (Showing::Canvas(held.id.clone()), canvas.label().to_owned()))
+            })
+        })
+        .or_else(|| {
             project
                 .tables
                 .iter()

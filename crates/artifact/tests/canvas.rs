@@ -126,3 +126,21 @@ fn concurrent_canvas_creates_reserve_distinct_storage() {
     assert_eq!(ids.len(), 8);
     assert_eq!(store.canvases().len(), 8);
 }
+
+#[test]
+fn canvas_search_finds_titles_and_decoded_card_text() {
+    let scratch = common::Scratch::new("canvas-search");
+    let store = scratch.store();
+    let document = model::Canvas::parse(r#"{"nodes":[{"id":"note","type":"text","x":0,"y":0,"width":200,"height":100,"text":"Quoted \"words\" and Unicode \u4f60\u597d"}]}"#).unwrap();
+    let canvas = store.create_canvas("Research map", &document).unwrap();
+    for text in ["Research", "\"words\"", "你好"] {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let query = cydonia_artifact::search::Query::literal(text).unwrap();
+        cydonia_artifact::search::disk(&store, &[Kind::Canvas], &query, &tx);
+        drop(tx);
+        let found: Vec<_> = rx.into_iter().collect();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].item.id, canvas.id);
+        assert_eq!(found[0].item.kind, Kind::Canvas);
+    }
+}
