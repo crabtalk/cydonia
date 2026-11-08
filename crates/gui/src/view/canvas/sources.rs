@@ -3,18 +3,22 @@ use crate::{
     view::{
         canvas::{CanvasView, embed},
         component::file::external,
-        kit::link::mention,
+        kit::link::{self, mention},
         sidebar::Dragged,
         window::reach::InWindow,
     },
 };
 use artifact::reference;
-use bezel::gpui::{Context, PathPromptOptions, Window, div, prelude::*};
+use bezel::{
+    gpui::{Context, PathPromptOptions, Window, div, prelude::*},
+    ui::icons,
+};
 use canvas::{
     Change, Kinds, kind,
     model::{self, Node},
+    presentation::{self, Detail},
 };
-use markdown::{AppExt as _, Block, BlockKind, Doc, Editing, Form};
+use markdown::{Block, BlockKind, Doc, Editing, Form, Link, Links as _};
 use std::path::PathBuf;
 use url::Url;
 
@@ -65,6 +69,19 @@ pub(crate) fn kinds(kinds: Kinds, root: PathBuf) -> Kinds {
                 Url::parse(url).is_ok_and(|url| matches!(url.scheme(), "http" | "https"))
             })
         {
+            if look.detail != Detail::Full {
+                let url = node.url.as_deref().unwrap_or_default();
+                let preview = link::Links::preview(Link::new(url, None), cx).unwrap_or_default();
+                let title = preview.title.as_deref().unwrap_or(url);
+                return kind::summary(
+                    node,
+                    title,
+                    Some(icons::navigation::Globe.into()),
+                    look.detail,
+                    look.zoom,
+                    cx,
+                );
+            }
             let doc = Doc {
                 blocks: vec![Block::new(BlockKind::Bookmark {
                     url: node.url.clone().unwrap_or_default(),
@@ -77,7 +94,7 @@ pub(crate) fn kinds(kinds: Kinds, root: PathBuf) -> Kinds {
                 .child(markdown::render_with(
                     &doc,
                     Editing {
-                        typography: Some(cx.typography().scaled(look.zoom)),
+                        typography: Some(presentation::typography(cx, look.zoom)),
                         ..Default::default()
                     },
                     window,

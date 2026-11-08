@@ -38,8 +38,8 @@ mod embed;
 mod sources;
 mod transfer;
 
-const CARD_WIDTH: i64 = 280;
-const CARD_HEIGHT: i64 = 160;
+const CARD_WIDTH: i64 = 360;
+const CARD_HEIGHT: i64 = 220;
 const GROUP_WIDTH: i64 = 400;
 const GROUP_HEIGHT: i64 = 280;
 const GROUP_PADDING: i64 = 24;
@@ -184,7 +184,7 @@ impl CanvasView {
                     Node {
                         kind: model::LINK.into(),
                         width: 360,
-                        height: 300,
+                        height: 360,
                         url: Some("https://".into()),
                         ..Default::default()
                     },
@@ -224,6 +224,19 @@ impl CanvasView {
         let selected = !editor.selection().is_empty();
         let nodes = editor.selected_nodes().len();
         let mut rows = vec![
+            menu::row(
+                Item::action("Fit to content").disabled(!self.surface.read(cx).can_fit_content()),
+                |this: &mut Self, _, cx| {
+                    this.surface
+                        .update(cx, |surface, cx| surface.fit_to_content(cx))
+                },
+            ),
+            menu::row(
+                Item::action("Zoom to selection").disabled(!selected),
+                |this: &mut Self, window, cx| {
+                    this.navigate(CanvasEditor::zoom_to_selection, window, cx)
+                },
+            ),
             menu::row(
                 Item::action("Add link card").disabled(read_only),
                 |this: &mut Self, window, cx| this.add_link(window, cx),
