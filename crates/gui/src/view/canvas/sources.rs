@@ -3,22 +3,18 @@ use crate::{
     view::{
         canvas::{CanvasView, embed},
         component::file::external,
-        kit::link::{self, mention},
+        kit::link::mention,
         sidebar::Dragged,
         window::reach::InWindow,
     },
 };
 use artifact::reference;
-use bezel::{
-    gpui::{Context, PathPromptOptions, Window, div, prelude::*},
-    ui::icons,
-};
+use bezel::gpui::{Context, PathPromptOptions, Window};
 use canvas::{
     Change, Kinds, kind,
     model::{self, Node},
-    presentation::{self, Detail},
 };
-use markdown::{Block, BlockKind, Doc, Editing, Form, Link, Links as _};
+use markdown::{Form, Link, render::Bookmark};
 use std::path::PathBuf;
 use url::Url;
 
@@ -69,38 +65,13 @@ pub(crate) fn kinds(kinds: Kinds, root: PathBuf) -> Kinds {
                 Url::parse(url).is_ok_and(|url| matches!(url.scheme(), "http" | "https"))
             })
         {
-            if look.detail != Detail::Full {
-                let url = node.url.as_deref().unwrap_or_default();
-                let preview = link::Links::preview(Link::new(url, None), cx).unwrap_or_default();
-                let title = preview.title.as_deref().unwrap_or(url);
-                return kind::summary(
-                    node,
-                    title,
-                    Some(icons::navigation::Globe.into()),
-                    look.detail,
-                    look.zoom,
-                    cx,
-                );
+            Bookmark {
+                link: Link::new(node.url.as_deref().unwrap_or_default(), None),
+                form: Form::Embed(None),
+                typography: look.card.typography,
+                height: Some(look.card.size.height),
             }
-            let doc = Doc {
-                blocks: vec![Block::new(BlockKind::Bookmark {
-                    url: node.url.clone().unwrap_or_default(),
-                    form: Form::Embed(None),
-                })],
-            };
-            div()
-                .size_full()
-                .overflow_hidden()
-                .child(markdown::render_with(
-                    &doc,
-                    Editing {
-                        typography: Some(presentation::typography(cx, look.zoom)),
-                        ..Default::default()
-                    },
-                    window,
-                    cx,
-                ))
-                .into_any_element()
+            .render(cx)
         } else {
             render(node, look, window, cx)
         }

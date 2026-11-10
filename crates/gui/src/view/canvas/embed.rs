@@ -18,12 +18,11 @@ use bezel::{
         Task, Window, div, img, prelude::*, px,
     },
     theme::{TextStyle, Theme, Typeset as _},
-    ui::{icons, scroll},
+    ui::icons,
 };
 use canvas::{
-    kind::{self, Chrome, Look},
+    kind::{self, Card, Chrome, Content, Look},
     model::Node,
-    presentation::{self, Detail, Measure},
 };
 use markdown::{AppExt as _, Editing};
 use std::{
@@ -37,10 +36,7 @@ struct Embed {
     workspace: Entity<Workspace>,
     document: Option<Entity<editor::Document>>,
     pictures: Entity<Pictures>,
-    zoom: f32,
-    selected: bool,
-    detail: Detail,
-    measure: Option<Measure>,
+    card: Card,
     parsed: markdown::Doc,
     source: String,
     error: Option<String>,
@@ -56,9 +52,9 @@ pub(crate) fn render(
     cx: &mut App,
 ) -> gpui::AnyElement {
     if let Some(editor) = look.editor {
-        return kind::chrome(Chrome::Card, node, look.zoom, cx)
-            .child(editor)
-            .into_any_element();
+        return look
+            .card
+            .render(node, None, Content::Flow(editor), window, cx);
     }
     if let Some(file) = &node.file {
         let path = root.join(file);
@@ -68,42 +64,39 @@ pub(crate) fn render(
                 .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
         {
             let name = path.file_name().unwrap_or_default().to_string_lossy();
-            if look.detail == Detail::Full {
-                let text = presentation::typography(cx, look.zoom).body.size();
-                let extension = path
-                    .extension()
-                    .map(|ext| format!(".{} file", ext.to_string_lossy()))
-                    .unwrap_or_else(|| "File".to_owned());
-                return kind::chrome(Chrome::Card, node, look.zoom, cx)
-                    .justify_center()
-                    .gap(px(12. * look.zoom))
-                    .child(
-                        icons::icon(icons::files::File)
-                            .size(px(32. * look.zoom))
-                            .text_color(Theme::of(cx).text_muted),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(text))
-                            .line_height(px(text * 1.5))
-                            .child(name.into_owned()),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(text * 0.8125))
-                            .text_color(Theme::of(cx).text_muted)
-                            .child(extension),
-                    )
-                    .into_any_element();
-            }
-            return kind::summary(
-                node,
-                &name,
-                Some(icons::files::File.into()),
-                look.detail,
-                look.zoom,
-                cx,
-            );
+            let text = look.card.typography.body.size();
+            let extension = path
+                .extension()
+                .map(|ext| format!(".{} file", ext.to_string_lossy()))
+                .unwrap_or_else(|| "File".to_owned());
+            let body = div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .items_center()
+                .justify_center()
+                .gap(px(12. * look.card.zoom))
+                .child(
+                    icons::icon(icons::files::File)
+                        .size(px(32. * look.card.zoom))
+                        .text_color(Theme::of(cx).text_muted),
+                )
+                .child(
+                    div()
+                        .text_size(px(text))
+                        .line_height(px(text * 1.5))
+                        .child(name.into_owned()),
+                )
+                .child(
+                    div()
+                        .text_size(px(text * 0.8125))
+                        .text_color(Theme::of(cx).text_muted)
+                        .child(extension),
+                )
+                .into_any_element();
+            return look
+                .card
+                .render(node, None, Content::Fill(body), window, cx);
         }
     }
     let Some(workspace) = references::current(cx) else {
@@ -124,13 +117,11 @@ pub(crate) fn render(
     let node = node.clone();
     let seed = node.clone();
     let root = root.to_path_buf();
-    let view = window.use_keyed_state(key, cx, |_, cx| Embed::new(seed, root, workspace, cx));
+    let card = look.card.clone();
+    let view = window.use_keyed_state(key, cx, |_, cx| Embed::new(seed, root, workspace, card, cx));
     view.update(cx, |view, _| {
         view.node = node;
-        view.zoom = look.zoom;
-        view.selected = look.selected;
-        view.detail = look.detail;
-        view.measure = Some(look.measure);
+        view.card = look.card;
     });
     view.into_any_element()
 }
@@ -140,6 +131,7 @@ impl Embed {
         node: Node,
         root: PathBuf,
         workspace: Entity<Workspace>,
+        card: Card,
         cx: &mut Context<Self>,
     ) -> Self {
         let target = node.url.as_deref().unwrap_or_default();
@@ -254,10 +246,7 @@ impl Embed {
             workspace,
             document,
             pictures,
-            zoom: 1.,
-            selected: false,
-            detail: Detail::Full,
-            measure: None,
+            card,
             parsed: markdown::Doc::default(),
             source: String::new(),
             error: None,
@@ -305,10 +294,11 @@ impl Render for Embed {
             let name = path.file_name().unwrap_or_default().to_string_lossy();
             let overlay = Pictures::overlay(&self.pictures);
             let tools = self
+                .card
                 .selected
                 .then(|| overlay(0, &name, window, cx))
                 .flatten();
-            return kind::chrome(Chrome::Bare, &self.node, self.zoom, cx)
+            return kind::chrome(Chrome::Bare, &self.node, self.card.zoom, cx)
                 .relative()
                 .overflow_hidden()
                 .child(img(path.clone()).size_full().object_fit(ObjectFit::Contain))
@@ -381,9 +371,6 @@ impl Render for Embed {
                 .map(|(_, range)| source[range].to_owned())
                 .unwrap_or_else(|| format!("Heading not found: {subpath}"));
         }
-        if self.detail != Detail::Full {
-            return kind::summary(&self.node, &title, Some(mark), self.detail, self.zoom, cx);
-        }
         if source != self.source {
             self.parsed = markdown::parse_with(&source, &cx.marks());
             self.source = source;
@@ -393,7 +380,7 @@ impl Render for Embed {
                 &self.parsed,
                 Editing {
                     base: base.as_deref(),
-                    typography: Some(presentation::typography(cx, self.zoom)),
+                    typography: Some(self.card.typography),
                     image_overlay: Some(Pictures::overlay(&self.pictures)),
                     ..Default::default()
                 },
@@ -401,42 +388,20 @@ impl Render for Embed {
                 cx,
             )
         });
-        let metadata = presentation::typography(cx, self.zoom).body.size() * 13. / 16.;
-        let header = div()
-            .flex()
-            .items_center()
-            .gap(px(6. * self.zoom))
-            .text_size(px(metadata))
-            .line_height(px(metadata * 18. / 13.))
-            .text_color(Theme::of(cx).text_muted)
-            .child(icons::icon(mark).size(px(14. * self.zoom)))
-            .child(div().min_w_0().text_ellipsis().child(title));
-        let padding = kind::PAD * 2. + 8. + metadata / self.zoom * 18. / 13. + 2. / self.zoom;
-        let body = match &self.measure {
-            Some(measure) => measure.wrap(body, padding),
-            None => body,
-        };
-        kind::chrome(Chrome::Card, &self.node, self.zoom, cx)
-            .min_h_0()
-            .gap(px(8. * self.zoom))
-            .child(header)
-            .child(
-                scroll::claiming_pane(
-                    SharedString::from(format!("canvas-reference-scroll-{}", self.node.id)),
-                    scroll::Axes::Vertical,
-                    window,
-                    cx,
-                )
-                .flex_1()
-                .min_h_0()
-                .when(!self.selected, |pane| pane.overflow_hidden())
-                .child(body),
-            )
-            .children(
-                self.error
-                    .clone()
-                    .map(|error| div().text_style(TextStyle::Caption).child(error)),
-            )
-            .into_any_element()
+        let body = div()
+            .child(body)
+            .children(self.error.clone().map(|error| {
+                div()
+                    .text_style_at(TextStyle::Caption, self.card.zoom)
+                    .child(error)
+            }))
+            .into_any_element();
+        self.card.render(
+            &self.node,
+            Some((title, mark)),
+            Content::Flow(body),
+            window,
+            cx,
+        )
     }
 }
