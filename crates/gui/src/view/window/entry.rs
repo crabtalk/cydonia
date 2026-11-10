@@ -263,6 +263,7 @@ impl Cydonia {
                     (View::List, icons::layout::LayoutList.into(), "List"),
                 ],
                 view,
+                true,
                 move |this, view, _, cx| this.set_board_view(&id, view, cx),
             ));
         }

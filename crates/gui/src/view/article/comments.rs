@@ -91,6 +91,7 @@ impl CommentsButton {
                     ),
                 ],
                 shown,
+                true,
                 move |this, mode, _, cx| {
                     this.workspace.update(cx, |workspace, cx| {
                         workspace.set_comment_display(&path, Some(mode), cx)

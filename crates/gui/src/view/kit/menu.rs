@@ -92,13 +92,13 @@ pub(crate) fn set_to(name: &str, value: Option<SharedString>) -> SharedString {
     }
 }
 
-/// A switch between `options`: a submenu named for the one it is on, `current`,
-/// with a checked row per option. Picking one hands its value to `pick`.
+/// A submenu with a checked row per option. Picking one hands its value to `pick`.
 pub(crate) fn switch<V: 'static, T: Copy + PartialEq + 'static>(
     name: &str,
     icon: impl Into<Icon>,
     options: Vec<(T, Icon, &'static str)>,
     current: T,
+    value_in_label: bool,
     pick: impl Fn(&mut V, T, &mut Window, &mut Context<V>) + 'static,
 ) -> (Item, Act<V>) {
     let pick = std::rc::Rc::new(pick);
@@ -118,7 +118,12 @@ pub(crate) fn switch<V: 'static, T: Copy + PartialEq + 'static>(
             )
         })
         .collect();
-    submenu(set_to(name, on), icon, rows)
+    let label = if value_in_label {
+        set_to(name, on)
+    } else {
+        name.into()
+    };
+    submenu(label, icon, rows)
 }
 
 /// Groups of rows, one after another with a separator between each two. Empty
