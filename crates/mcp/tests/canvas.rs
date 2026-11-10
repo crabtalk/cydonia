@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 
 fn node(id: &str, x: i64) -> Value {
     json!({"id": id, "type": "text", "x": x, "y": 0, "width": 280, "height": 160,
-        "text": "A card", "plugin": {"kept": true}})
+        "text": "A card", "fontSize": 32, "textMode": "label", "plugin": {"kept": true}})
 }
 
 #[test]
@@ -19,12 +19,15 @@ fn canvas_tools_keep_stable_entries_and_refuse_stale_or_invalid_graphs() {
         json!({
             "canvas": named, "version": made["version"], "edit": {
                 "nodes": [node("a", 0), node("b", 400)],
-                "edges": [{"id": "ab", "fromNode": "a", "toNode": "b", "label": "follows"}]
+                "edges": [{"id": "ab", "fromNode": "a", "toNode": "b", "label": "follows", "fontSize": 24}]
             }
         }),
         Some(scratch.path()),
     ));
     assert_eq!(edited["document"]["nodes"][0]["plugin"]["kept"], true);
+    assert_eq!(edited["document"]["nodes"][0]["fontSize"], 32.);
+    assert_eq!(edited["document"]["nodes"][0]["textMode"], "label");
+    assert_eq!(edited["document"]["edges"][0]["fontSize"], 24.);
     assert_ne!(made["version"], edited["version"]);
     assert!(
         refused(server.call(

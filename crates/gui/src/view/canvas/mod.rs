@@ -30,7 +30,7 @@ use canvas::{
     Arrange, CanvasEditor, CanvasEvent, CanvasView as Surface, Kinds, Snap, handle,
     kind::Sizing,
     layout,
-    model::{self, End, Node},
+    model::{self, End, Node, TextMode},
 };
 use std::path::PathBuf;
 
@@ -43,6 +43,16 @@ const CARD_HEIGHT: i64 = 220;
 const GROUP_WIDTH: i64 = 400;
 const GROUP_HEIGHT: i64 = 280;
 const GROUP_PADDING: i64 = 24;
+const TEXT_SIZE: f32 = 24.;
+const TEXT_SIZES: [(f32, &str); 7] = [
+    (12., "12"),
+    (16., "16"),
+    (24., "24"),
+    (32., "32"),
+    (48., "48"),
+    (64., "64"),
+    (96., "96"),
+];
 const COLORS: [(&str, &str); 6] = [
     ("1", "Red"),
     ("2", "Orange"),
@@ -130,7 +140,9 @@ impl CanvasView {
         let mut kinds = Kinds::new().with_root(path.clone()).with_fresh(|| Node {
             kind: model::TEXT.into(),
             width: CARD_WIDTH,
-            height: CARD_HEIGHT,
+            height: 40,
+            text_mode: Some(TextMode::Label),
+            font_size: Some(TEXT_SIZE),
             text: Some(String::new()),
             ..Node::default()
         });
@@ -173,6 +185,25 @@ impl CanvasView {
         let at = self.at;
         self.surface.update(cx, |surface, cx| {
             surface.update_editor(cx, |editor| editor.add_root(at));
+            surface.edit_selected(window, cx);
+        });
+    }
+
+    fn add_text_card(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let at = self.at;
+        self.surface.update(cx, |surface, cx| {
+            surface.update_editor(cx, |editor| {
+                editor.add_node(
+                    Node {
+                        kind: model::TEXT.into(),
+                        width: CARD_WIDTH,
+                        height: CARD_HEIGHT,
+                        text: Some(String::new()),
+                        ..Node::default()
+                    },
+                    at,
+                );
+            });
             surface.edit_selected(window, cx);
         });
     }
@@ -263,10 +294,16 @@ impl CanvasView {
                 |this: &mut Self, window, cx| this.export(window, cx),
             ),
             menu::row(
-                Item::action("Add text card")
+                Item::action("Add text")
                     .with_icon(icons::text::Type)
                     .disabled(read_only),
                 |this: &mut Self, window, cx| this.add_text(window, cx),
+            ),
+            menu::row(
+                Item::action("Add text card")
+                    .with_icon(icons::text::Type)
+                    .disabled(read_only),
+                |this: &mut Self, window, cx| this.add_text_card(window, cx),
             ),
             menu::row(
                 Item::action(if nodes > 0 {
@@ -307,6 +344,57 @@ impl CanvasView {
             ),
         ];
         if selected && !read_only {
+            let has_text = editor.selected_nodes().iter().any(|id| {
+                editor
+                    .canvas()
+                    .node(id)
+                    .is_some_and(|node| node.kind == model::TEXT)
+            });
+            if has_text || editor.selected_edge().is_some() {
+                rows.push(menu::switch(
+                    "Text size",
+                    icons::text::Type,
+                    TEXT_SIZES
+                        .into_iter()
+                        .map(|(size, label)| (Some(size), icons::text::Type.into(), label))
+                        .collect(),
+                    editor.selection_text_size(),
+                    |this: &mut Self, size, _, cx| {
+                        this.surface.update(cx, |surface, cx| {
+                            surface.update_editor(cx, |editor| editor.set_selection_text_size(size))
+                        });
+                    },
+                ));
+            }
+            if has_text {
+                rows.push(menu::switch(
+                    "Text presentation",
+                    icons::text::Type,
+                    [
+                        (
+                            Some(TextMode::Label),
+                            icons::text::Type.into(),
+                            "Plain text",
+                        ),
+                        (
+                            Some(TextMode::Card),
+                            icons::text::Type.into(),
+                            "Document card",
+                        ),
+                    ]
+                    .into(),
+                    editor.selection_text_mode(),
+                    |this: &mut Self, mode, _, cx| {
+                        if let Some(mode) = mode {
+                            this.surface.update(cx, |surface, cx| {
+                                surface.update_editor(cx, |editor| {
+                                    editor.set_selection_text_mode(mode)
+                                })
+                            });
+                        }
+                    },
+                ));
+            }
             let mut colors = vec![menu::row(
                 Item::action("Default"),
                 |this: &mut Self, _, cx| {

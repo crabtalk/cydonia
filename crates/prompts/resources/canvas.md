@@ -26,6 +26,12 @@ contains Markdown), `file` (`file` is a path relative to the project), `link`
 Colors are `1` through `6` or a hex color. Keep unknown fields on existing
 nodes and edges.
 
+Text nodes accept `textMode`: `label` for unboxed annotations that grow in
+height as text wraps, or `card` (the default) for document cards. Text nodes and
+edges accept a positive `fontSize` in canvas units; the default is 16. Zoom
+scales the authored size. A label's side handles change its wrapping width;
+its corner handles scale its dimensions and text together.
+
 An edge has a unique nonempty `id`, `fromNode`, and `toNode`. Both nodes must
 exist after the edit. Optional `fromSide` and `toSide` are `top`, `right`,
 `bottom`, or `left`; `fromEnd` and `toEnd` are `none` or `arrow`. Edges can carry

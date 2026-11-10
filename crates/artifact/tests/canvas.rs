@@ -21,6 +21,8 @@ fn lifecycle(store: &impl Project) {
     canvas.archived = true;
     canvas.labels = vec!["Design work".into(), "design-work".into()];
     canvas.document.nodes[0].text = Some("updated".into());
+    canvas.document.nodes[0].font_size = Some(32.);
+    canvas.document.nodes[0].text_mode = Some(model::TextMode::Label);
     store.save_canvas(&mut canvas).unwrap();
     assert_eq!(canvas.labels, ["design-work"]);
     stale.title = "Old writer".into();
@@ -29,6 +31,8 @@ fn lifecycle(store: &impl Project) {
     assert_eq!(loaded.title, "Ideas");
     assert!(loaded.archived);
     assert_eq!(loaded.document.nodes[0].text.as_deref(), Some("updated"));
+    assert_eq!(loaded.document.nodes[0].text_size(), 32.);
+    assert!(loaded.document.nodes[0].is_label());
     assert_eq!(loaded.document.nodes[0].extra["custom"], true);
     assert_eq!(loaded.document.extra["extension"]["keep"], 1);
     assert_eq!(loaded.number, Some(number));
