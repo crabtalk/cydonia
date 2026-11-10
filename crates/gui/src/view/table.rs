@@ -510,6 +510,7 @@ impl TableView {
         div()
             .id(SharedString::from(format!("cell-{rowid}-{column}")))
             .w_full()
+            .min_h(px(LINE))
             .truncate()
             .cursor_pointer()
             .text_style(TextStyle::Body)
