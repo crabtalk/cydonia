@@ -254,7 +254,7 @@ impl CanvasView {
         let read_only = editor.options().read_only;
         let selected = !editor.selection().is_empty();
         let nodes = editor.selected_nodes().len();
-        let mut rows = vec![
+        let navigation = vec![
             menu::row(
                 Item::action("Fit to content").disabled(!self.surface.read(cx).can_fit_content()),
                 |this: &mut Self, _, cx| {
@@ -268,60 +268,57 @@ impl CanvasView {
                     this.navigate(CanvasEditor::zoom_to_selection, window, cx)
                 },
             ),
+        ];
+        let mut creation = vec![
             menu::row(
-                Item::action("Add link card").disabled(read_only),
+                Item::action("Link card").disabled(read_only),
                 |this: &mut Self, window, cx| this.add_link(window, cx),
             ),
             menu::row(
-                Item::action("Add file cards…").disabled(read_only),
+                Item::action("File cards…").disabled(read_only),
                 |this: &mut Self, _, cx| this.pick_files(None, cx),
             ),
             menu::row(
-                Item::action("Add entry card…").disabled(read_only),
+                Item::action("Entry card…").disabled(read_only),
                 |this: &mut Self, window, cx| this.pick_reference(None, window, cx),
             ),
             menu::row(
-                Item::action("Import canvas…"),
-                |this: &mut Self, window, cx| {
-                    let project = this.canvas.project;
-                    this.defer_window(window, cx, move |root, window, cx| {
-                        root.import_canvas(project, window, cx)
-                    });
-                },
-            ),
-            menu::row(
-                Item::action("Export JSON Canvas…"),
-                |this: &mut Self, window, cx| this.export(window, cx),
-            ),
-            menu::row(
-                Item::action("Add text")
+                Item::action("Text")
                     .with_icon(icons::text::Type)
                     .disabled(read_only),
                 |this: &mut Self, window, cx| this.add_text(window, cx),
             ),
             menu::row(
-                Item::action("Add text card")
+                Item::action("Text card")
                     .with_icon(icons::text::Type)
                     .disabled(read_only),
                 |this: &mut Self, window, cx| this.add_text_card(window, cx),
             ),
-            menu::row(
-                Item::action(if nodes > 0 {
-                    "Group selection"
-                } else {
-                    "Add group"
-                })
-                .with_icon(icons::layout::PanelsTopLeft)
-                .disabled(read_only),
+        ];
+        if nodes == 0 {
+            creation.push(menu::row(
+                Item::action("Group")
+                    .with_icon(icons::layout::PanelsTopLeft)
+                    .disabled(read_only),
                 |this: &mut Self, window, cx| this.add_group(window, cx),
-            ),
-            menu::row(
-                Item::action("Edit").disabled(read_only || !selected),
-                |this: &mut Self, window, cx| {
-                    this.surface
-                        .update(cx, |surface, cx| surface.edit_selected(window, cx))
-                },
-            ),
+            ));
+        }
+        let mut selection = vec![menu::row(
+            Item::action("Edit").disabled(read_only || !selected),
+            |this: &mut Self, window, cx| {
+                this.surface
+                    .update(cx, |surface, cx| surface.edit_selected(window, cx))
+            },
+        )];
+        if nodes > 0 {
+            selection.push(menu::row(
+                Item::action("Group selection")
+                    .with_icon(icons::layout::PanelsTopLeft)
+                    .disabled(read_only),
+                |this: &mut Self, window, cx| this.add_group(window, cx),
+            ));
+        }
+        let history = vec![
             menu::row(
                 Item::action("Undo").disabled(!editor.can_undo()),
                 |this: &mut Self, _, cx| {
@@ -343,6 +340,19 @@ impl CanvasView {
                 },
             ),
         ];
+        let mut transfer = vec![menu::row(
+            Item::action("Import canvas…"),
+            |this: &mut Self, window, cx| {
+                let project = this.canvas.project;
+                this.defer_window(window, cx, move |root, window, cx| {
+                    root.import_canvas(project, window, cx)
+                });
+            },
+        )];
+        let mut exports = vec![menu::row(
+            Item::action("JSON Canvas…"),
+            |this: &mut Self, window, cx| this.export(window, cx),
+        )];
         if selected && !read_only {
             let has_text = editor.selected_nodes().iter().any(|id| {
                 editor
@@ -351,7 +361,7 @@ impl CanvasView {
                     .is_some_and(|node| node.kind == model::TEXT)
             });
             if has_text || editor.selected_edge().is_some() {
-                rows.push(menu::switch(
+                selection.push(menu::switch(
                     "Text size",
                     icons::text::Type,
                     TEXT_SIZES
@@ -367,7 +377,7 @@ impl CanvasView {
                 ));
             }
             if has_text {
-                rows.push(menu::switch(
+                selection.push(menu::switch(
                     "Text presentation",
                     icons::text::Type,
                     [
@@ -412,7 +422,7 @@ impl CanvasView {
                     })
                 })
             }));
-            rows.push(menu::submenu("Color", icons::glyph::Palette, colors));
+            selection.push(menu::submenu("Color", icons::glyph::Palette, colors));
             if editor.selected_edge().is_some() {
                 let directions = [
                     ("Nondirectional", End::None, End::None),
@@ -428,7 +438,7 @@ impl CanvasView {
                     })
                 })
                 .collect();
-                rows.push(menu::submenu(
+                selection.push(menu::submenu(
                     "Line direction",
                     icons::arrows::ArrowLeftRight,
                     directions,
@@ -459,7 +469,7 @@ impl CanvasView {
                     ("Justify horizontally", Arrange::JustifyHorizontal),
                     ("Justify vertically", Arrange::JustifyVertical),
                 ];
-                rows.push(menu::submenu(
+                selection.push(menu::submenu(
                     "Align and arrange",
                     icons::glyph::TextAlignStart,
                     operations
@@ -474,7 +484,7 @@ impl CanvasView {
                         .collect(),
                 ));
             }
-            rows.push(menu::row(
+            selection.push(menu::row(
                 Item::action("Duplicate"),
                 |this: &mut Self, _, cx| {
                     this.surface.update(cx, |surface, cx| {
@@ -482,7 +492,7 @@ impl CanvasView {
                     })
                 },
             ));
-            rows.push(menu::row(
+            selection.push(menu::row(
                 Item::action("Remove").with_icon(icons::files::Trash),
                 |this: &mut Self, _, cx| {
                     this.surface.update(cx, |surface, cx| {
@@ -498,36 +508,39 @@ impl CanvasView {
         {
             if matches!(node.kind.as_str(), model::FILE | model::LINK) {
                 let file_id = node.id.clone();
-                rows.push(menu::row(
-                    Item::action("Replace with file…").disabled(read_only),
+                let file = menu::row(
+                    Item::action("File…").disabled(read_only),
                     move |this: &mut Self, _, cx| this.pick_files(Some(file_id.clone()), cx),
-                ));
+                );
                 let id = node.id.clone();
-                rows.push(menu::row(
-                    Item::action("Replace reference…").disabled(read_only),
+                let reference = menu::row(
+                    Item::action("Reference…").disabled(read_only),
                     move |this: &mut Self, window, cx| {
                         this.pick_reference(Some(id.clone()), window, cx)
                     },
+                );
+                selection.push(menu::submenu(
+                    "Replace",
+                    icons::files::File,
+                    vec![file, reference],
                 ));
                 let node = (*node).clone();
-                rows.push(menu::row(
+                selection.push(menu::row(
                     Item::action("Open source"),
                     move |this: &mut Self, window, cx| this.open_source(&node, window, cx),
                 ));
             } else if node.kind == model::TEXT && !read_only {
                 let id = node.id.clone();
-                rows.push(menu::row(
+                selection.push(menu::row(
                     Item::action("Convert to article"),
                     move |this: &mut Self, window, cx| this.convert(&id, window, cx),
                 ));
             }
         }
-        rows.push(menu::submenu(
-            "Export image",
-            icons::glyph::Image,
+        exports.extend(
             [
-                ("Full canvas", canvas::export::Area::Canvas),
-                ("Current viewport", canvas::export::Area::Viewport),
+                ("Full canvas image", canvas::export::Area::Canvas),
+                ("Current viewport image", canvas::export::Area::Viewport),
             ]
             .into_iter()
             .map(|(label, area)| {
@@ -554,11 +567,11 @@ impl CanvasView {
                     })
                     .collect();
                 menu::submenu(label, icons::glyph::Image, scales)
-            })
-            .collect(),
-        ));
+            }),
+        );
+        transfer.push(menu::submenu("Export", icons::glyph::Image, exports));
         let snap = editor.snap();
-        rows.extend([
+        let settings = vec![
             menu::row(
                 Item::action("Snap to grid").checked(snap.grid.is_some()),
                 |this: &mut Self, _, cx| {
@@ -595,16 +608,28 @@ impl CanvasView {
                     })
                 },
             ),
-        ]);
-        rows.into_iter()
-            .map(|(item, act)| {
-                let action: menu::Act<Self> = Box::new(move |this, path, window, cx| {
-                    window.focus(&this.surface.read(cx).focus_handle(cx), cx);
-                    act(this, path, window, cx);
-                });
-                (item, action)
-            })
-            .collect()
+        ];
+        menu::sections([
+            navigation,
+            vec![menu::submenu("Add", icons::math::Plus, creation)],
+            selection,
+            history,
+            transfer,
+            vec![menu::submenu(
+                "Canvas options",
+                icons::account::Settings,
+                settings,
+            )],
+        ])
+        .into_iter()
+        .map(|(item, act)| {
+            let action: menu::Act<Self> = Box::new(move |this, path, window, cx| {
+                window.focus(&this.surface.read(cx).focus_handle(cx), cx);
+                act(this, path, window, cx);
+            });
+            (item, action)
+        })
+        .collect()
     }
 
     fn navigate(
