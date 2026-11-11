@@ -377,7 +377,10 @@ impl Render for Tab {
             (true, true) => bezel::ui::window::content(true, cx),
             (true, false) => bezel::ui::window::resting(cx),
             (false, _) => div(),
-        };
+        }
+        .when(matches!(showing, Some((_, Showing::Canvas(_)))), |card| {
+            card.bg(theme.canvas_bg)
+        });
         let (over, inside) = match on_chrome {
             true => (title, None),
             false => (None, title),

@@ -407,7 +407,6 @@ impl Render for CanvasView {
             .size_full()
             .min_h_0()
             .relative()
-            .bg(theme.surface)
             .child(self.surface.clone())
             .children(self.reference_picker(cx))
             .child(
