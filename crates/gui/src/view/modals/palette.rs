@@ -17,26 +17,21 @@
 //! its pane's find bar — see [`crate::view::pane::find`].
 
 use crate::{
-    model::workspace::{Opening, Showing, Workspace, references::Part},
+    model::workspace::{Opening, Showing, Workspace},
     view::{
-        canvas::CanvasView,
         keymap,
-        kit::{
-            icon::kind_icon,
-            link::mention::{self, Linkables},
-            text::CardTitle,
-        },
-        search::{Found, SETTLE, search_all},
+        kit::{entry_search::Hit, link::mention},
+        search::{SETTLE, search_all},
         sidebar::Row,
         window::{menubar, root::Cydonia},
     },
 };
-use artifact::{kind::Kind, reference, search::Query};
+use artifact::{kind::Kind, search::Query};
 use bezel::{
     gpui::{
         self, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-        FontWeight, HighlightStyle, KeyBinding, ScrollHandle, SharedString, StyledText, Task,
-        WeakEntity, Window, actions, div, prelude::*, px,
+        FontWeight, KeyBinding, ScrollHandle, SharedString, Task, WeakEntity, Window, actions, div,
+        prelude::*, px,
     },
     theme::{TextStyle, Theme, Typeset as _},
     ui::{
@@ -45,7 +40,7 @@ use bezel::{
         popover,
     },
 };
-use std::{ops::Range, path::PathBuf, rc::Rc};
+use std::{path::PathBuf, rc::Rc};
 
 const CONTEXT: &str = "CydoniaSearch";
 
@@ -60,9 +55,6 @@ const COMMAND_PREFIX: char = '>';
 
 /// Rows a query lists, at most.
 pub(crate) const SHOWN: usize = 50;
-
-/// Characters of a snippet kept ahead of the match.
-const LEAD: usize = 32;
 
 const PLACEHOLDER: &str = "Search articles, boards, sessions and commands…";
 
@@ -114,34 +106,6 @@ pub(crate) struct Linked {
 /// What picking an entry does while the palette links rather than opens.
 pub(crate) type OnLink = Rc<dyn Fn(&mut Cydonia, Linked, &mut Window, &mut Context<Cydonia>)>;
 
-#[derive(Clone)]
-enum Linking {
-    Session(OnLink),
-    Canvas {
-        target: WeakEntity<CanvasView>,
-        replace: Option<String>,
-    },
-}
-
-/// One row of the palette.
-#[derive(Clone)]
-pub(crate) struct Hit {
-    pub(crate) row: Row,
-    reference: Option<String>,
-    /// Where the query was found, when it was found in the entry's body: the
-    /// line holding it, and where in the line.
-    snippet: Option<(String, Range<usize>)>,
-    /// A card on the board `row` names.
-    card: Option<HitCard>,
-}
-
-#[derive(Clone)]
-struct HitCard {
-    /// `DEV-12`.
-    handle: String,
-    title: String,
-}
-
 /// A row as the palette lists it: a command, then the entries.
 #[derive(Clone, Copy)]
 enum Pick<'a> {
@@ -177,8 +141,7 @@ pub(crate) struct Palette {
     limit: usize,
     /// Set while the palette links an entry: what picking one does in place
     /// of opening it. It lists no commands.
-    linking: Option<Linking>,
-    error: Option<String>,
+    linking: Option<OnLink>,
     /// Whether what is picked opens as a tab of its own rather than in the
     /// preview's place — see [`Cydonia::new_tab`].
     keep: bool,
@@ -198,40 +161,6 @@ impl Filter {
             .iter()
             .find(|(filter, _)| *filter == Some(self))
             .map_or("", |(_, label)| label)
-    }
-}
-
-impl Hit {
-    /// What a search found, as rows: title matches first, then the rest, each
-    /// most recently touched first.
-    pub(crate) fn ranked(found: Vec<Found>, workspace: &Workspace, cx: &App) -> Vec<Hit> {
-        let mut hits: Vec<(bool, u128, Hit)> = found
-            .into_iter()
-            .filter_map(|found| {
-                let open = workspace
-                    .projects
-                    .iter()
-                    .find(|open| open.path == found.root)?;
-                let showing = open.stored(found.kind, &found.id, cx)?;
-                let touched = open.facts(&showing, cx)?.touched;
-                let row = Row::Entry {
-                    project: open.id,
-                    showing,
-                };
-                Some((
-                    found.in_title,
-                    touched,
-                    Hit {
-                        row,
-                        reference: None,
-                        snippet: found.snippet,
-                        card: None,
-                    },
-                ))
-            })
-            .collect();
-        hits.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
-        hits.into_iter().map(|(.., hit)| hit).collect()
     }
 }
 
@@ -282,34 +211,11 @@ impl Cydonia {
         let root = cx.entity().downgrade();
         self.toggle_modal(window, cx, |window, cx| {
             let mut palette = Palette::new(workspace, root, recent, window, cx);
-            palette.linking = Some(Linking::Session(on));
+            palette.linking = Some(on);
             palette.filter = Some(Filter::Kind(Kind::Session));
             palette
                 .field
                 .update(cx, |field, cx| field.set_placeholder(LINK_PLACEHOLDER, cx));
-            palette.refresh(cx);
-            palette
-        });
-    }
-
-    pub(crate) fn pick_canvas_reference(
-        &mut self,
-        target: WeakEntity<CanvasView>,
-        initial: String,
-        replace: Option<String>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let recent = self.list(cx).recent_rows();
-        let workspace = self.workspace.clone();
-        let root = cx.entity().downgrade();
-        self.toggle_modal(window, cx, |window, cx| {
-            let mut palette = Palette::new(workspace, root, recent, window, cx);
-            palette.linking = Some(Linking::Canvas { target, replace });
-            palette.field.update(cx, |field, cx| {
-                field.set_placeholder("Search entries or enter #12#heading…", cx);
-                field.set_content(initial, cx);
-            });
             palette.refresh(cx);
             palette
         });
@@ -346,7 +252,6 @@ impl Palette {
             filter: None,
             limit: RECENT,
             linking: None,
-            error: None,
             keep: false,
             selected: 0,
             scroll: ScrollHandle::new(),
@@ -473,28 +378,22 @@ impl Palette {
     /// List again for what the field holds. A search still running is
     /// dropped with its task.
     fn refresh(&mut self, cx: &mut Context<Self>) {
-        self.error = None;
         self.match_commands(cx);
         let label = self.label(cx);
-        let direct = matches!(self.linking, Some(Linking::Canvas { .. }))
-            && reference::parse(self.field.read(cx).content().trim()).is_some();
-        let Some(query) = self.query(cx).filter(|_| !direct) else {
+        let Some(query) = self.query(cx) else {
             self.task = None;
             self.searching = false;
-            self.hits = if label.is_some() || direct {
-                self.named_hits(cx)
+            self.hits = if label.is_some() {
+                Hit::named(
+                    self.field.read(cx).content(),
+                    self.workspace.read(cx),
+                    None,
+                    cx,
+                )
             } else {
-                self.recent
-                    .iter()
-                    .map(|row| Hit {
-                        row: row.clone(),
-                        reference: None,
-                        snippet: None,
-                        card: None,
-                    })
-                    .collect()
+                Hit::recent(&self.recent)
             };
-            self.limit = if direct { SHOWN } else { RECENT };
+            self.limit = RECENT;
             self.selected = 0;
             cx.notify();
             return;
@@ -516,22 +415,13 @@ impl Palette {
                 .spawn(async move { search_all(&roots, &query) })
                 .await;
             let _ = this.update(cx, |this, cx| {
-                let mut hits = this.named_hits(cx);
-                let ranked: Vec<Hit> = Hit::ranked(found, this.workspace.read(cx), cx)
-                    .into_iter()
-                    .filter(|hit| {
-                        !hits
-                            .iter()
-                            .any(|held| held.card.is_none() && held.row == hit.row)
-                    })
-                    .filter(|hit| {
-                        label
-                            .as_ref()
-                            .is_none_or(|label| this.carries(&hit.row, label, cx))
-                    })
-                    .collect();
-                hits.extend(ranked);
-                this.hits = hits;
+                this.hits = Hit::matching(
+                    this.field.read(cx).content(),
+                    found,
+                    this.workspace.read(cx),
+                    None,
+                    cx,
+                );
                 this.limit = SHOWN;
                 this.searching = false;
                 this.selected = 0;
@@ -541,125 +431,20 @@ impl Palette {
         cx.notify();
     }
 
-    /// Whether the entry `row` names carries `label`.
-    fn carries(&self, row: &Row, label: &str, cx: &App) -> bool {
-        let Row::Entry { project, showing } = row else {
-            return false;
-        };
-        let workspace = self.workspace.read(cx);
-        workspace
-            .project_ix(*project)
-            .and_then(|at| workspace.labels_of(at, showing, cx))
-            .is_some_and(|labels| labels.iter().any(|held| held == label))
-    }
-
-    /// The entries and cards the field's query names — see
-    /// [`mention::Query::rank_named`].
-    fn named_hits(&self, cx: &App) -> Vec<Hit> {
-        let held = cx
-            .try_global::<Linkables>()
-            .map_or(&[][..], |Linkables(held)| held.as_slice());
-        let workspace = self.workspace.read(cx);
-        let cards = mention::carded(workspace, cx);
-        let (named, _) =
-            mention::Query::parse(self.field.read(cx).content()).rank_named(held, &cards);
-        let mut hits: Vec<Hit> = named
-            .into_iter()
-            .filter_map(|named| match named {
-                mention::Named::Entry(ix) => Some(Hit {
-                    row: held[ix].row.clone(),
-                    reference: None,
-                    snippet: None,
-                    card: None,
-                }),
-                mention::Named::Card(ix) => {
-                    let carded = &cards[ix];
-                    let project = workspace
-                        .projects
-                        .iter()
-                        .find(|open| reference::names(&open.path, &carded.project))?;
-                    Some(Hit {
-                        row: Row::Entry {
-                            project: project.id,
-                            showing: Showing::Board(carded.board.id.clone()),
-                        },
-                        reference: Some(carded.reference().link()),
-                        snippet: None,
-                        card: Some(HitCard {
-                            handle: carded.handle.clone(),
-                            title: carded.card.title(),
-                        }),
-                    })
-                }
-            })
-            .collect();
-        if matches!(self.linking, Some(Linking::Canvas { .. })) {
-            let text = self.field.read(cx).content().trim();
-            if let Some(mut reference) = reference::parse(text)
-                && let Ok(resolved) = workspace.resolve(text, cx)
-                && let Some(project) = workspace.project(resolved.project)
-                && let Some(name) = reference::project_name(&project.path)
-            {
-                reference.project = Some(&name);
-                let row = Row::Entry {
-                    project: resolved.project,
-                    showing: resolved.showing,
-                };
-                hits.retain(|hit| hit.row != row);
-                let card = match resolved.part {
-                    Some(Part::Card(card)) => Some(HitCard {
-                        handle: card.handle,
-                        title: markdown::parse(&card.text).title(),
-                    }),
-                    _ => None,
-                };
-                hits.insert(
-                    0,
-                    Hit {
-                        row,
-                        reference: Some(reference.link()),
-                        snippet: None,
-                        card,
-                    },
-                );
-            }
-        }
-        hits
-    }
-
     fn linked(&self, hit: &Hit, cx: &App) -> Option<Linked> {
-        let url = if let Some(reference) = &hit.reference {
-            reference.clone()
-        } else {
-            let Row::Entry { project, showing } = &hit.row else {
-                return None;
-            };
-            self.workspace.read(cx).link_of(*project, showing, cx)?
-        };
-        Some(Linked { url })
+        hit.link(self.workspace.read(cx), cx)
+            .map(|url| Linked { url })
     }
 
     fn pick_link(&mut self, url: String, window: &mut Window, cx: &mut Context<Self>) {
-        let result = match self.linking.clone() {
-            Some(Linking::Session(on)) => self
-                .root
-                .update(cx, |root, cx| {
-                    on(root, Linked { url }, window, cx);
-                    cx.notify();
-                })
-                .map_err(|_| "Window closed".to_owned()),
-            Some(Linking::Canvas { target, replace }) => target
-                .update(cx, |target, cx| target.reference(&url, replace, cx))
-                .unwrap_or_else(|_| Err("Canvas closed".into())),
-            None => return,
+        let Some(on) = self.linking.clone() else {
+            return;
         };
-        match result {
-            Ok(()) => cx.emit(DismissEvent),
-            Err(error) => {
-                self.error = Some(error);
-                cx.notify();
-            }
-        }
+        let _ = self.root.update(cx, |root, cx| {
+            on(root, Linked { url }, window, cx);
+            cx.notify();
+        });
+        cx.emit(DismissEvent);
     }
 
     fn select_next(&mut self, _: &SelectNext, _: &mut Window, cx: &mut Context<Self>) {
@@ -692,14 +477,6 @@ impl Palette {
     }
 
     fn open_selected(&mut self, _: &OpenHit, window: &mut Window, cx: &mut Context<Self>) {
-        if matches!(self.linking, Some(Linking::Canvas { .. }))
-            && self.shown(cx).get(self.selected).is_none()
-        {
-            let text = self.field.read(cx).content().trim();
-            if reference::parse(text).is_some() {
-                return self.pick_link(text.to_owned(), window, cx);
-            }
-        }
         self.open_hit(self.selected, window, cx);
     }
 
@@ -758,9 +535,7 @@ impl Palette {
 
     /// While linking, the last turns of the session the selection is on.
     fn link_preview(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if !matches!(self.linking, Some(Linking::Session(_))) {
-            return None;
-        }
+        self.linking.as_ref()?;
         let Some(Pick::Hit(Hit {
             row:
                 Row::Entry {
@@ -836,8 +611,7 @@ impl Palette {
         FILTERS
             .into_iter()
             .filter(|(kind, _)| match self.linking {
-                Some(Linking::Session(_)) => *kind == Some(Filter::Kind(Kind::Session)),
-                Some(Linking::Canvas { .. }) => *kind != Some(Filter::Commands),
+                Some(_) => *kind == Some(Filter::Kind(Kind::Session)),
                 None => true,
             })
             .collect()
@@ -886,11 +660,7 @@ impl Palette {
                     .child(hint(
                         "↵",
                         match self.linking {
-                            Some(Linking::Session(_)) => "Link",
-                            Some(Linking::Canvas {
-                                replace: Some(_), ..
-                            }) => "Replace card",
-                            Some(Linking::Canvas { .. }) => "Add card",
+                            Some(_) => "Link",
                             None => "Open",
                         },
                     )),
@@ -994,89 +764,7 @@ impl Palette {
     }
 
     fn hit_row(&self, ix: usize, hit: &Hit, cx: &mut Context<Self>) -> AnyElement {
-        let theme = Theme::of(cx).clone();
-        let project = hit
-            .row
-            .located(self.workspace.read(cx))
-            .and_then(|(project, _)| {
-                self.workspace
-                    .read(cx)
-                    .projects
-                    .get(project)
-                    .map(|open| open.name())
-            });
-        let icon = kind_icon(hit.row.kind().unwrap_or(Kind::Article));
-        let title = match &hit.card {
-            Some(card) => format!("{} · {}", card.handle, card.title),
-            None => hit.row.label(self.workspace.read(cx), cx),
-        };
-        let selected = ix == self.selected;
-        let snippet = hit.snippet.as_ref().map(|(line, at)| {
-            let (text, at) = clipped(line, at.clone());
-            StyledText::new(text).with_highlights([(
-                at,
-                HighlightStyle {
-                    color: Some(theme.text),
-                    background_color: Some(theme.accent.opacity(0.22)),
-                    ..Default::default()
-                },
-            )])
-        });
-        div()
-            .id(("search-hit", ix))
-            .flex()
-            .flex_row()
-            .items_start()
-            .gap(px(10.))
-            .px(px(8.))
-            .py(px(6.))
-            .rounded(px(Theme::control_radius()))
-            .cursor_pointer()
-            .when(selected, |el| el.bg(theme.element_active))
-            .when(!selected, |el| el.hover(|el| el.bg(theme.element_hover)))
-            .child(
-                div()
-                    .pt(px(2.))
-                    .child(icons::icon(icon).size(px(14.)).text_color(theme.text_muted)),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .gap(px(2.))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap(px(8.))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .truncate()
-                                    .text_style(TextStyle::Body)
-                                    .text_color(theme.text)
-                                    .child(title),
-                            )
-                            .children(project.map(|project| {
-                                div()
-                                    .flex_none()
-                                    .text_style(TextStyle::Subheadline)
-                                    .text_color(theme.text_faint)
-                                    .child(project)
-                            })),
-                    )
-                    .children(snippet.map(|snippet| {
-                        div()
-                            .truncate()
-                            .text_style(TextStyle::Subheadline)
-                            .text_color(theme.text_muted)
-                            .child(snippet)
-                    })),
-            )
+        hit.render(ix, ix == self.selected, self.workspace.read(cx), cx)
             .on_click(cx.listener(move |this, _, window, cx| {
                 cx.stop_propagation();
                 this.open_hit(ix, window, cx);
@@ -1218,14 +906,6 @@ impl Render for Palette {
                             .children(preview),
                     )
                     .child(self.palette_footer(cx))
-                    .children(self.error.as_ref().map(|error| {
-                        div()
-                            .px(px(14.))
-                            .py(px(8.))
-                            .text_style(TextStyle::Subheadline)
-                            .text_color(theme.danger_muted)
-                            .child(error.clone())
-                    }))
                     .when(self.linking.is_none(), |palette| {
                         palette.child(
                             div()
@@ -1250,24 +930,6 @@ impl Render for Palette {
                     }),
             )
     }
-}
-
-/// The line cut to start a little ahead of the match and trimmed, and the
-/// match's range in what is left.
-fn clipped(line: &str, at: Range<usize>) -> (SharedString, Range<usize>) {
-    let start = line[..at.start]
-        .char_indices()
-        .rev()
-        .nth(LEAD)
-        .map_or(0, |(ix, _)| ix);
-    let head = &line[start..];
-    let trimmed = head.trim_start();
-    let cut = start + (head.len() - trimmed.len());
-    let lead = if start > 0 { "…" } else { "" };
-    let text = format!("{lead}{}", trimmed.trim_end());
-    let from = (lead.len() + at.start.saturating_sub(cut)).min(text.len());
-    let to = (lead.len() + at.end.saturating_sub(cut)).min(text.len());
-    (text.into(), from..to)
 }
 
 #[cfg(test)]

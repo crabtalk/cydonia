@@ -1,22 +1,14 @@
-//! How the palette cuts a match's line, reads a chord and lists commands.
+//! Palette commands and applied workspace search.
 
-use super::*;
-
-#[test]
-fn a_short_line_is_kept_whole_with_the_match_where_it_was() {
-    let (text, at) = clipped("  the pump runs", 6..10);
-    assert_eq!(text.as_ref(), "the pump runs");
-    assert_eq!(&text[at], "pump");
-}
-
-#[test]
-fn a_long_line_is_cut_ahead_of_the_match_and_says_so() {
-    let line = format!("{}needle and after", "word ".repeat(40));
-    let start = line.find("needle").unwrap();
-    let (text, at) = clipped(&line, start..start + 6);
-    assert!(text.starts_with('…'), "{text}");
-    assert_eq!(&text[at], "needle");
-}
+use crate::view::{
+    modals::palette::{ApplySearch, Filter, Palette, Pick, ToggleSearch},
+    window::{menubar, root::Cydonia},
+};
+use artifact::kind::Kind;
+use bezel::{
+    gpui::{self, App, prelude::*},
+    theme::Theme,
+};
 
 #[test]
 fn a_query_reads_as_a_chord_however_it_is_written() {

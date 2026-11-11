@@ -93,10 +93,19 @@ impl Workspace {
     /// The entry a reference names, or why it names none. A reference with
     /// no project is read in the active one.
     pub fn resolve(&self, text: &str, cx: &App) -> Result<Resolved, String> {
+        self.resolve_from(text, None, cx)
+    }
+
+    pub fn resolve_from(
+        &self,
+        text: &str,
+        home: Option<ProjectId>,
+        cx: &App,
+    ) -> Result<Resolved, String> {
         let Some(reference) = reference::parse(text) else {
             return Err(format!("{text} is not a reference"));
         };
-        let Some(project) = self.named_project(reference.project, None) else {
+        let Some(project) = self.named_project(reference.project, home) else {
             return Err(Error::NoProjectNamed {
                 name: reference.project.unwrap_or_default().to_owned(),
                 open: self.projects.iter().map(|open| open.path.clone()).collect(),

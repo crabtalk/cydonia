@@ -54,7 +54,7 @@ fn copy(
         ),
         Feature::Canvases => (
             icons::layout::PanelsTopLeft,
-            "Canvases",
+            "Canvas",
             "Arrange text, images, links and entry cards on a canvas.",
             None,
         ),

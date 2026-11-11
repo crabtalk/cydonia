@@ -174,6 +174,16 @@ impl Shape {
 }
 
 impl Row {
+    /// The project an entry row, a project's heading or its archive line belongs
+    /// to.
+    pub(crate) fn project(&self) -> Option<ProjectId> {
+        match self {
+            Row::Group(Group::Project(project)) => Some(*project),
+            Row::Entry { project, .. } => Some(*project),
+            Row::Group(Group::Space(_) | Group::Agent(_)) | Row::Heading(_) | Row::App(_) => None,
+        }
+    }
+
     /// The kind of entry it is. Nothing for a row that is not an entry.
     pub(crate) fn kind(&self) -> Option<Kind> {
         match self {
@@ -451,16 +461,6 @@ pub(crate) fn on_disk(path: PathBuf) -> [(Item, Act); 2] {
             move |_, _, cx| cx.write_to_clipboard(gpui::ClipboardItem::new_string(copied.clone())),
         ),
     ]
-}
-
-/// The project an entry row, a project's heading or its archive line belongs
-/// to.
-fn project_of(row: &Row) -> Option<ProjectId> {
-    match row {
-        Row::Group(Group::Project(project)) => Some(*project),
-        Row::Entry { project, .. } => Some(*project),
-        Row::Group(Group::Space(_) | Group::Agent(_)) | Row::Heading(_) | Row::App(_) => None,
-    }
 }
 
 /// Whether the kind a row names is switched on. Articles and apps have no switch, and
@@ -1270,7 +1270,9 @@ impl Sidebar {
     fn reorder_entries(&mut self, carried: &Row, region: Vec<Row>, cx: &mut Context<Self>) {
         use crate::model::state;
         let workspace = self.workspace.read(cx);
-        let Some(project) = project_of(carried).and_then(|project| workspace.project_ix(project))
+        let Some(project) = carried
+            .project()
+            .and_then(|project| workspace.project_ix(project))
         else {
             return;
         };

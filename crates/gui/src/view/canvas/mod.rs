@@ -22,6 +22,7 @@ use bezel::{
     ui::{
         context_menu::{ContextMenu, Place},
         icons,
+        popover::Popup,
         tooltip::Tooltip,
         widgets::{Button, Scaffolding as _},
     },
@@ -36,6 +37,7 @@ use std::path::PathBuf;
 
 mod actions;
 mod embed;
+pub(crate) mod entry_picker;
 mod sources;
 mod transfer;
 
@@ -59,6 +61,7 @@ pub(crate) struct CanvasView {
     pub(crate) surface: Entity<Surface>,
     menu: ContextMenu<Self, Menu>,
     at: (i64, i64),
+    reference_picker: Popup<entry_picker::ReferencePicker>,
     _events: Option<Subscription>,
     exporting_image: bool,
 }
@@ -159,6 +162,7 @@ impl CanvasView {
             surface,
             menu: ContextMenu::default(),
             at: (0, 0),
+            reference_picker: Popup::default(),
             _events: None,
             exporting_image: false,
         }
@@ -405,6 +409,7 @@ impl Render for CanvasView {
             .relative()
             .bg(theme.surface)
             .child(self.surface.clone())
+            .children(self.reference_picker(cx))
             .child(
                 div()
                     .absolute()

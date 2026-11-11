@@ -4,6 +4,7 @@ pub mod add;
 pub mod bubble;
 pub mod dialog;
 pub mod document;
+pub mod entry_search;
 pub mod form;
 pub mod icon;
 pub mod labels;

@@ -7,7 +7,7 @@
 
 use crate::{
     model::workspace::Workspace,
-    view::{modals::palette::Hit, sidebar::Row},
+    view::{kit::entry_search::Hit, sidebar::Row},
 };
 use artifact::{
     kind::Kind,

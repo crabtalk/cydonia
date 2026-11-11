@@ -164,24 +164,6 @@ impl CanvasView {
         });
     }
 
-    pub(crate) fn pick_reference(
-        &self,
-        replace: Option<String>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let initial = replace
-            .as_ref()
-            .and_then(|id| self.surface.read(cx).editor().canvas().node(id))
-            .and_then(|node| node.url.as_ref().or(node.file.as_ref()))
-            .cloned()
-            .unwrap_or_default();
-        let target = cx.entity().downgrade();
-        self.defer_window(window, cx, move |root, window, cx| {
-            root.pick_canvas_reference(target, initial, replace, window, cx)
-        });
-    }
-
     pub(crate) fn reference(
         &mut self,
         text: &str,
