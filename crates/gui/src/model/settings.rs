@@ -830,8 +830,7 @@ impl Browsing {
 /// The surfaces a project can hold, minus articles — the one thing the app is
 /// for, and so not something to be able to switch off.
 ///
-/// Sessions and boards are on to begin with. Tables are off until they are
-/// asked for.
+/// Sessions, boards and canvases default to on. Tables default to off.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Features {
@@ -840,6 +839,7 @@ pub struct Features {
     /// which is where a package is named and consented to.
     pub sessions: bool,
     pub boards: bool,
+    pub canvases: bool,
     pub tables: bool,
     /// A session under each article, asked about its passages. Nothing of it
     /// shows while [`Features::sessions`] is off.
@@ -861,6 +861,7 @@ impl Default for Features {
         Self {
             sessions: true,
             boards: true,
+            canvases: true,
             tables: false,
             article_threads: true,
             panel: PanelTabs::default(),
@@ -894,6 +895,7 @@ impl Default for PanelTabs {
 pub enum Feature {
     Sessions,
     Boards,
+    Canvases,
     Tables,
     ArticleThreads,
     Review,
@@ -904,10 +906,11 @@ pub enum Feature {
 impl Feature {
     /// The order the Features section lists them in. Sessions first: it is the
     /// one that decides whether anything runs on this machine.
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 5] = [
         Self::Sessions,
         Self::ArticleThreads,
         Self::Boards,
+        Self::Canvases,
         Self::Tables,
     ];
 
@@ -920,6 +923,7 @@ impl Feature {
         match self {
             Self::Sessions => "sessions",
             Self::Boards => "boards",
+            Self::Canvases => "canvases",
             Self::Tables => "tables",
             Self::ArticleThreads => "article_threads",
             Self::Review => "review",
@@ -941,6 +945,7 @@ impl Feature {
         match self {
             Self::Sessions => features.sessions,
             Self::Boards => features.boards,
+            Self::Canvases => features.canvases,
             Self::Tables => features.tables,
             Self::ArticleThreads => features.article_threads,
             Self::Review => features.panel.review,
@@ -953,6 +958,7 @@ impl Feature {
         match self {
             Self::Sessions => features.sessions = on,
             Self::Boards => features.boards = on,
+            Self::Canvases => features.canvases = on,
             Self::Tables => features.tables = on,
             Self::ArticleThreads => features.article_threads = on,
             Self::Review => features.panel.review = on,

@@ -119,7 +119,8 @@ impl Tab {
     /// Whether the kind this tab lists is switched on.
     fn shown(self, features: &Features) -> bool {
         match self {
-            Self::Articles | Self::Canvases | Self::Apps | Self::Skills => true,
+            Self::Articles | Self::Apps | Self::Skills => true,
+            Self::Canvases => features.canvases,
             Self::Boards => features.boards,
             Self::Tables => features.tables,
             Self::Sessions => features.sessions,

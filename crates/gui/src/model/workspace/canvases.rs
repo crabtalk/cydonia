@@ -25,6 +25,9 @@ impl Workspace {
         project: usize,
         cx: &mut Context<Self>,
     ) -> Result<Member, String> {
+        if !self.settings.features.canvases {
+            return Err("Canvases are switched off.".to_owned());
+        }
         let open = self
             .projects
             .get_mut(project)

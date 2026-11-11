@@ -39,7 +39,11 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(open) = self.workspace.read(cx).project(project) else {
+        let workspace = self.workspace.read(cx);
+        if !workspace.settings.features.canvases {
+            return;
+        }
+        let Some(open) = workspace.project(project) else {
             return;
         };
         let store = open.store();

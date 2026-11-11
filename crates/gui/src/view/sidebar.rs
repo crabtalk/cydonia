@@ -471,7 +471,8 @@ pub(crate) fn shown(row: &Row, features: &Features) -> bool {
         Some(Showing::Session(_)) => features.sessions,
         Some(Showing::Board(_)) => features.boards,
         Some(Showing::Table(_)) => features.tables,
-        Some(Showing::Article(_) | Showing::Canvas(_)) | None => true,
+        Some(Showing::Canvas(_)) => features.canvases,
+        Some(Showing::Article(_)) | None => true,
     }
 }
 

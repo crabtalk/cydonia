@@ -71,7 +71,7 @@ pub(crate) fn offered(workspace: &Workspace) -> Offered {
     let kinds = [
         (features.boards, New::Board),
         (true, New::Article),
-        (true, New::Canvas),
+        (features.canvases, New::Canvas),
         (features.tables, New::Table),
     ]
     .into_iter()

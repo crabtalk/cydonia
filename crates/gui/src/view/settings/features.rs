@@ -52,6 +52,12 @@ fn copy(
             "Cards in columns, one board to a file.",
             None,
         ),
+        Feature::Canvases => (
+            icons::layout::PanelsTopLeft,
+            "Canvases",
+            "Arrange text, images, links and entry cards on a canvas.",
+            None,
+        ),
         Feature::Tables => (
             icons::files::Table2,
             "Tables",

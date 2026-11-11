@@ -382,6 +382,7 @@ impl Cydonia {
         let workspace = self.workspace.read(cx);
         let features = &workspace.settings.features;
         let (sessions, boards, tables) = (features.sessions, features.boards, features.tables);
+        let canvases = features.canvases;
         let developer = workspace.settings.developer_mode;
         let (review, files) = (features.panel.review, features.panel.files);
         let project = workspace.active.is_some();
@@ -407,8 +408,10 @@ impl Cydonia {
             .when(project, |root| {
                 root.on_action(cx.listener(Self::close_project_action))
                     .on_action(cx.listener(Self::new_article_action))
-                    .on_action(cx.listener(Self::new_canvas_action))
-                    .on_action(cx.listener(Self::import_canvas_action))
+                    .when(canvases, |root| {
+                        root.on_action(cx.listener(Self::new_canvas_action))
+                            .on_action(cx.listener(Self::import_canvas_action))
+                    })
                     .when(sessions, |root| {
                         root.on_action(cx.listener(Self::new_session_action))
                             .on_action(cx.listener(Self::new_session_with_action))
