@@ -165,75 +165,67 @@ impl CanvasView {
     }
 
     fn add_text(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let at = self.at;
-        self.surface.update(cx, |surface, cx| {
-            surface.update_editor(cx, |editor| editor.add_root(at));
-            surface.edit_selected(window, cx);
-        });
+        let node = self.surface.read(cx).editor().kinds().fresh(None);
+        let at = (self.at.0 - node.width / 2, self.at.1 - node.height / 2);
+        self.surface
+            .update(cx, |surface, cx| surface.create_node(node, at, window, cx));
     }
 
     fn add_text_card(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let at = self.at;
         self.surface.update(cx, |surface, cx| {
-            surface.update_editor(cx, |editor| {
-                editor.add_node(
-                    Node {
-                        kind: model::TEXT.into(),
-                        width: CARD_WIDTH,
-                        height: CARD_HEIGHT,
-                        text: Some(String::new()),
-                        ..Node::default()
-                    },
-                    at,
-                );
-            });
-            surface.edit_selected(window, cx);
+            surface.create_node(
+                Node {
+                    kind: model::TEXT.into(),
+                    width: CARD_WIDTH,
+                    height: CARD_HEIGHT,
+                    text: Some(String::new()),
+                    ..Node::default()
+                },
+                self.at,
+                window,
+                cx,
+            );
         });
     }
 
     fn add_link(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.surface.update(cx, |surface, cx| {
-            surface.update_editor(cx, |editor| {
-                editor.add_node(
-                    Node {
-                        kind: model::LINK.into(),
-                        width: 360,
-                        height: 360,
-                        url: Some("https://".into()),
-                        ..Default::default()
-                    },
-                    self.at,
-                );
-            });
-            surface.edit_selected(window, cx);
+            surface.create_node(
+                Node {
+                    kind: model::LINK.into(),
+                    width: CARD_WIDTH,
+                    height: 360,
+                    ..Node::default()
+                },
+                self.at,
+                window,
+                cx,
+            );
         });
     }
 
     fn add_group(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let at = self.at;
         self.surface.update(cx, |surface, cx| {
-            surface.update_editor(cx, |editor| {
-                editor.add_node(
-                    Node {
-                        kind: model::GROUP.into(),
-                        width: GROUP_WIDTH,
-                        height: GROUP_HEIGHT,
-                        label: Some("Group".into()),
-                        ..Node::default()
-                    },
-                    (at.0 - GROUP_WIDTH / 2, at.1 - GROUP_HEIGHT / 2),
-                );
-            });
-            surface.edit_selected(window, cx);
+            surface.create_node(
+                Node {
+                    kind: model::GROUP.into(),
+                    width: GROUP_WIDTH,
+                    height: GROUP_HEIGHT,
+                    label: Some("Group".into()),
+                    ..Node::default()
+                },
+                (self.at.0 - GROUP_WIDTH / 2, self.at.1 - GROUP_HEIGHT / 2),
+                window,
+                cx,
+            );
         });
     }
 
     fn group_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.surface.update(cx, |surface, cx| {
-            surface.update_editor(cx, |editor| {
-                editor.group_selected("Group", GROUP_PADDING);
-            });
-            surface.edit_selected(window, cx);
+            let added =
+                surface.update_editor(cx, |editor| editor.group_selected("Group", GROUP_PADDING));
+            surface.edit_added(added, window, cx);
         });
     }
 
@@ -276,6 +268,20 @@ impl Render for CanvasView {
                 &self.surface,
                 window,
                 |this, _, event: &CanvasEvent, window, cx| {
+                    if let CanvasEvent::OpenRequested { id } = event {
+                        let node = this.surface.read(cx).editor().canvas().node(id).cloned();
+                        if let Some(node) = node {
+                            this.open_source(&node, window, cx);
+                        }
+                    }
+                    if let CanvasEvent::EditRequested { id } = event {
+                        let node = this.surface.read(cx).editor().canvas().node(id);
+                        if node.is_some_and(|node| node.kind == model::FILE) {
+                            this.pick_files(Some(id.clone()), cx);
+                        } else {
+                            this.pick_reference(Some(id.clone()), window, cx);
+                        }
+                    }
                     if let CanvasEvent::FilesDropped { at, paths } = event {
                         this.at = (at.x.round() as i64, at.y.round() as i64);
                         this.add_files(paths.clone(), None, cx);

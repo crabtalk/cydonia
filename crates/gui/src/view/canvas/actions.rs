@@ -329,10 +329,18 @@ impl CanvasView {
                     icons::files::File,
                     vec![file, reference],
                 ));
-                let node = (*node).clone();
+                let id = node.id.clone();
                 selection.push(menu::row(
-                    Item::action("Open source"),
-                    move |this: &mut Self, window, cx| this.open_source(&node, window, cx),
+                    Item::action(if node.kind == model::LINK {
+                        "Open link"
+                    } else {
+                        "Open source"
+                    }),
+                    move |this: &mut Self, window, cx| {
+                        this.surface.update(cx, |surface, cx| {
+                            surface.open_node(&id, window, cx);
+                        });
+                    },
                 ));
             } else if node.kind == model::TEXT && !read_only {
                 let id = node.id.clone();

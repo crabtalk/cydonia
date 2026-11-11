@@ -77,6 +77,14 @@ struct Current(WeakEntity<Workspace>);
 impl Global for Current {}
 
 impl Workspace {
+    /// Nothing for an entry without a number yet.
+    pub fn link_of(&self, project: ProjectId, showing: &Showing, cx: &App) -> Option<String> {
+        let project = self.project(project)?;
+        let number = project.facts(showing, cx)?.number?;
+        let name = reference::project_name(&project.path)?;
+        Some(reference::Reference::entry(Some(&name), number, None).link())
+    }
+
     /// Make this workspace the one [`resolve_in`] reads.
     pub fn install(this: &Entity<Self>, cx: &mut App) {
         cx.set_global(Current(this.downgrade()));

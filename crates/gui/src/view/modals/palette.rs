@@ -17,8 +17,9 @@
 //! its pane's find bar — see [`crate::view::pane::find`].
 
 use crate::{
-    model::workspace::{Opening, Showing, Workspace},
+    model::workspace::{Opening, Showing, Workspace, references::Part},
     view::{
+        canvas::CanvasView,
         keymap,
         kit::{
             icon::kind_icon,
@@ -30,7 +31,7 @@ use crate::{
         window::{menubar, root::Cydonia},
     },
 };
-use artifact::{kind::Kind, search::Query};
+use artifact::{kind::Kind, reference, search::Query};
 use bezel::{
     gpui::{
         self, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
@@ -104,7 +105,7 @@ pub fn bindings() -> Vec<KeyBinding> {
     ]
 }
 
-/// A session the palette handed back while it was linking, as its link,
+/// An entry the palette handed back while it was linking, as its link,
 /// `cydonia://project#43`.
 pub(crate) struct Linked {
     pub url: String,
@@ -113,10 +114,20 @@ pub(crate) struct Linked {
 /// What picking an entry does while the palette links rather than opens.
 pub(crate) type OnLink = Rc<dyn Fn(&mut Cydonia, Linked, &mut Window, &mut Context<Cydonia>)>;
 
+#[derive(Clone)]
+enum Linking {
+    Session(OnLink),
+    Canvas {
+        target: WeakEntity<CanvasView>,
+        replace: Option<String>,
+    },
+}
+
 /// One row of the palette.
 #[derive(Clone)]
 pub(crate) struct Hit {
     pub(crate) row: Row,
+    reference: Option<String>,
     /// Where the query was found, when it was found in the entry's body: the
     /// line holding it, and where in the line.
     snippet: Option<(String, Range<usize>)>,
@@ -126,8 +137,6 @@ pub(crate) struct Hit {
 
 #[derive(Clone)]
 struct HitCard {
-    /// `project#DEV-12`.
-    reference: String,
     /// `DEV-12`.
     handle: String,
     title: String,
@@ -168,7 +177,8 @@ pub(crate) struct Palette {
     limit: usize,
     /// Set while the palette links an entry: what picking one does in place
     /// of opening it. It lists no commands.
-    linking: Option<OnLink>,
+    linking: Option<Linking>,
+    error: Option<String>,
     /// Whether what is picked opens as a tab of its own rather than in the
     /// preview's place — see [`Cydonia::new_tab`].
     keep: bool,
@@ -213,6 +223,7 @@ impl Hit {
                     touched,
                     Hit {
                         row,
+                        reference: None,
                         snippet: found.snippet,
                         card: None,
                     },
@@ -271,11 +282,34 @@ impl Cydonia {
         let root = cx.entity().downgrade();
         self.toggle_modal(window, cx, |window, cx| {
             let mut palette = Palette::new(workspace, root, recent, window, cx);
-            palette.linking = Some(on);
+            palette.linking = Some(Linking::Session(on));
             palette.filter = Some(Filter::Kind(Kind::Session));
             palette
                 .field
                 .update(cx, |field, cx| field.set_placeholder(LINK_PLACEHOLDER, cx));
+            palette.refresh(cx);
+            palette
+        });
+    }
+
+    pub(crate) fn pick_canvas_reference(
+        &mut self,
+        target: WeakEntity<CanvasView>,
+        initial: String,
+        replace: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let recent = self.list(cx).recent_rows();
+        let workspace = self.workspace.clone();
+        let root = cx.entity().downgrade();
+        self.toggle_modal(window, cx, |window, cx| {
+            let mut palette = Palette::new(workspace, root, recent, window, cx);
+            palette.linking = Some(Linking::Canvas { target, replace });
+            palette.field.update(cx, |field, cx| {
+                field.set_placeholder("Search entries or enter #12#heading…", cx);
+                field.set_content(initial, cx);
+            });
             palette.refresh(cx);
             palette
         });
@@ -312,6 +346,7 @@ impl Palette {
             filter: None,
             limit: RECENT,
             linking: None,
+            error: None,
             keep: false,
             selected: 0,
             scroll: ScrollHandle::new(),
@@ -336,6 +371,7 @@ impl Palette {
             .iter()
             .filter(|_| !only_commands)
             .filter(|hit| kind.is_none_or(|kind| hit.row.kind() == Some(kind)))
+            .filter(|hit| self.linking.is_none() || self.linked(hit, cx).is_some())
             .take(self.limit)
             .map(Pick::Hit);
         commands.chain(hits).collect()
@@ -344,13 +380,14 @@ impl Palette {
     /// Whether the palette lists commands and nothing else: the Commands
     /// filter, or a query starting with [`COMMAND_PREFIX`].
     fn only_commands(&self, cx: &App) -> bool {
-        self.filter == Some(Filter::Commands)
-            || self
-                .field
-                .read(cx)
-                .content()
-                .trim_start()
-                .starts_with(COMMAND_PREFIX)
+        self.linking.is_none()
+            && (self.filter == Some(Filter::Commands)
+                || self
+                    .field
+                    .read(cx)
+                    .content()
+                    .trim_start()
+                    .starts_with(COMMAND_PREFIX))
     }
 
     /// Match the commands against what the field holds, less the prefix. An
@@ -397,7 +434,7 @@ impl Palette {
     /// a query of commands.
     fn query(&self, cx: &App) -> Option<Query> {
         let content = self.field.read(cx).content();
-        match content.trim_start().starts_with(COMMAND_PREFIX) {
+        match self.linking.is_none() && content.trim_start().starts_with(COMMAND_PREFIX) {
             true => None,
             false => Query::literal(mention::Query::parse(content).rest),
         }
@@ -436,24 +473,28 @@ impl Palette {
     /// List again for what the field holds. A search still running is
     /// dropped with its task.
     fn refresh(&mut self, cx: &mut Context<Self>) {
+        self.error = None;
         self.match_commands(cx);
         let label = self.label(cx);
-        let Some(query) = self.query(cx) else {
+        let direct = matches!(self.linking, Some(Linking::Canvas { .. }))
+            && reference::parse(self.field.read(cx).content().trim()).is_some();
+        let Some(query) = self.query(cx).filter(|_| !direct) else {
             self.task = None;
             self.searching = false;
-            self.hits = match label {
-                Some(_) => self.named_hits(cx),
-                None => self
-                    .recent
+            self.hits = if label.is_some() || direct {
+                self.named_hits(cx)
+            } else {
+                self.recent
                     .iter()
                     .map(|row| Hit {
                         row: row.clone(),
+                        reference: None,
                         snippet: None,
                         card: None,
                     })
-                    .collect(),
+                    .collect()
             };
-            self.limit = RECENT;
+            self.limit = if direct { SHOWN } else { RECENT };
             self.selected = 0;
             cx.notify();
             return;
@@ -522,11 +563,12 @@ impl Palette {
         let cards = mention::carded(workspace, cx);
         let (named, _) =
             mention::Query::parse(self.field.read(cx).content()).rank_named(held, &cards);
-        named
+        let mut hits: Vec<Hit> = named
             .into_iter()
             .filter_map(|named| match named {
                 mention::Named::Entry(ix) => Some(Hit {
                     row: held[ix].row.clone(),
+                    reference: None,
                     snippet: None,
                     card: None,
                 }),
@@ -535,37 +577,89 @@ impl Palette {
                     let project = workspace
                         .projects
                         .iter()
-                        .find(|open| artifact::reference::names(&open.path, &carded.project))?;
+                        .find(|open| reference::names(&open.path, &carded.project))?;
                     Some(Hit {
                         row: Row::Entry {
                             project: project.id,
                             showing: Showing::Board(carded.board.id.clone()),
                         },
+                        reference: Some(carded.reference().link()),
                         snippet: None,
                         card: Some(HitCard {
-                            reference: carded.reference().to_string(),
                             handle: carded.handle.clone(),
                             title: carded.card.title(),
                         }),
                     })
                 }
             })
-            .collect()
+            .collect();
+        if matches!(self.linking, Some(Linking::Canvas { .. })) {
+            let text = self.field.read(cx).content().trim();
+            if let Some(mut reference) = reference::parse(text)
+                && let Ok(resolved) = workspace.resolve(text, cx)
+                && let Some(project) = workspace.project(resolved.project)
+                && let Some(name) = reference::project_name(&project.path)
+            {
+                reference.project = Some(&name);
+                let row = Row::Entry {
+                    project: resolved.project,
+                    showing: resolved.showing,
+                };
+                hits.retain(|hit| hit.row != row);
+                let card = match resolved.part {
+                    Some(Part::Card(card)) => Some(HitCard {
+                        handle: card.handle,
+                        title: markdown::parse(&card.text).title(),
+                    }),
+                    _ => None,
+                };
+                hits.insert(
+                    0,
+                    Hit {
+                        row,
+                        reference: Some(reference.link()),
+                        snippet: None,
+                        card,
+                    },
+                );
+            }
+        }
+        hits
     }
 
-    /// How a session row is written as a reference. Nothing for any other
-    /// row, or a session without a number yet.
-    fn linked(&self, row: &Row, cx: &App) -> Option<Linked> {
-        let Row::Entry {
-            showing: Showing::Session(id),
-            ..
-        } = row
-        else {
-            return None;
+    fn linked(&self, hit: &Hit, cx: &App) -> Option<Linked> {
+        let url = if let Some(reference) = &hit.reference {
+            reference.clone()
+        } else {
+            let Row::Entry { project, showing } = &hit.row else {
+                return None;
+            };
+            self.workspace.read(cx).link_of(*project, showing, cx)?
         };
-        Some(Linked {
-            url: self.workspace.read(cx).link_of_session(*id, cx)?,
-        })
+        Some(Linked { url })
+    }
+
+    fn pick_link(&mut self, url: String, window: &mut Window, cx: &mut Context<Self>) {
+        let result = match self.linking.clone() {
+            Some(Linking::Session(on)) => self
+                .root
+                .update(cx, |root, cx| {
+                    on(root, Linked { url }, window, cx);
+                    cx.notify();
+                })
+                .map_err(|_| "Window closed".to_owned()),
+            Some(Linking::Canvas { target, replace }) => target
+                .update(cx, |target, cx| target.reference(&url, replace, cx))
+                .unwrap_or_else(|_| Err("Canvas closed".into())),
+            None => return,
+        };
+        match result {
+            Ok(()) => cx.emit(DismissEvent),
+            Err(error) => {
+                self.error = Some(error);
+                cx.notify();
+            }
+        }
     }
 
     fn select_next(&mut self, _: &SelectNext, _: &mut Window, cx: &mut Context<Self>) {
@@ -598,6 +692,14 @@ impl Palette {
     }
 
     fn open_selected(&mut self, _: &OpenHit, window: &mut Window, cx: &mut Context<Self>) {
+        if matches!(self.linking, Some(Linking::Canvas { .. }))
+            && self.shown(cx).get(self.selected).is_none()
+        {
+            let text = self.field.read(cx).content().trim();
+            if reference::parse(text).is_some() {
+                return self.pick_link(text.to_owned(), window, cx);
+            }
+        }
         self.open_hit(self.selected, window, cx);
     }
 
@@ -620,22 +722,18 @@ impl Palette {
             }
             None => return,
         };
-        cx.emit(DismissEvent);
-        if let Some(on) = self.linking.clone() {
-            let Some(linked) = self.linked(&hit.row, cx) else {
-                return;
-            };
-            let _ = self.root.update(cx, |root, cx| {
-                on(root, linked, window, cx);
-                cx.notify();
-            });
+        if self.linking.is_some() {
+            if let Some(linked) = self.linked(&hit, cx) {
+                self.pick_link(linked.url, window, cx);
+            }
             return;
         }
+        cx.emit(DismissEvent);
         let query = self.field.read(cx).content().clone();
         let keep = self.keep;
         let _ = self.root.update(cx, |root, cx| {
-            if let Some(card) = &hit.card {
-                root.open_reference(&card.reference, window, cx);
+            if let Some(reference) = &hit.reference {
+                root.open_reference(reference, window, cx);
                 cx.notify();
                 return;
             }
@@ -660,7 +758,9 @@ impl Palette {
 
     /// While linking, the last turns of the session the selection is on.
     fn link_preview(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
-        self.linking.as_ref()?;
+        if !matches!(self.linking, Some(Linking::Session(_))) {
+            return None;
+        }
         let Some(Pick::Hit(Hit {
             row:
                 Row::Entry {
@@ -735,8 +835,10 @@ impl Palette {
     fn filters(&self) -> Vec<(Option<Filter>, &'static str)> {
         FILTERS
             .into_iter()
-            .filter(|(kind, _)| {
-                self.linking.is_none() || *kind == Some(Filter::Kind(Kind::Session))
+            .filter(|(kind, _)| match self.linking {
+                Some(Linking::Session(_)) => *kind == Some(Filter::Kind(Kind::Session)),
+                Some(Linking::Canvas { .. }) => *kind != Some(Filter::Commands),
+                None => true,
             })
             .collect()
     }
@@ -784,7 +886,11 @@ impl Palette {
                     .child(hint(
                         "↵",
                         match self.linking {
-                            Some(_) => "Link",
+                            Some(Linking::Session(_)) => "Link",
+                            Some(Linking::Canvas {
+                                replace: Some(_), ..
+                            }) => "Replace card",
+                            Some(Linking::Canvas { .. }) => "Add card",
                             None => "Open",
                         },
                     )),
@@ -1112,6 +1218,14 @@ impl Render for Palette {
                             .children(preview),
                     )
                     .child(self.palette_footer(cx))
+                    .children(self.error.as_ref().map(|error| {
+                        div()
+                            .px(px(14.))
+                            .py(px(8.))
+                            .text_style(TextStyle::Subheadline)
+                            .text_color(theme.danger_muted)
+                            .child(error.clone())
+                    }))
                     .when(self.linking.is_none(), |palette| {
                         palette.child(
                             div()

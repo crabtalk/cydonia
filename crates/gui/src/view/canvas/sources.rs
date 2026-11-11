@@ -23,36 +23,48 @@ pub(crate) fn kinds(kinds: Kinds, root: PathBuf) -> Kinds {
     let file = kind::Kind::new(move |node, look, window, cx| {
         embed::render(node, look, &file_root, window, cx)
     })
-    .edit(kind::Field::new(
-        |node| {
-            format!(
-                "{}{}",
-                node.file.as_deref().unwrap_or_default(),
-                node.subpath.as_deref().unwrap_or_default()
-            )
-        },
-        |node, text| match text.split_once('#') {
-            Some((file, subpath)) => {
-                node.file = Some(file.into());
-                node.subpath = Some(format!("#{subpath}"));
-            }
-            None => {
-                node.file = Some(text);
-                node.subpath = None;
-            }
-        },
-    ))
+    .edit(
+        kind::Field::new(
+            |node| {
+                format!(
+                    "{}{}",
+                    node.file.as_deref().unwrap_or_default(),
+                    node.subpath.as_deref().unwrap_or_default()
+                )
+            },
+            |node, text| match text.split_once('#') {
+                Some((file, subpath)) => {
+                    node.file = Some(file.into());
+                    node.subpath = Some(format!("#{subpath}"));
+                }
+                None => {
+                    node.file = Some(text);
+                    node.subpath = None;
+                }
+            },
+        )
+        .with_control(|_| kind::Control::External),
+    )
     .exportable()
     .handles(canvas::handle::frame)
-    .open(move |node, cx| {
-        if let Some(file) = &node.file {
-            external::launch(root.join(file), cx);
-        }
-    });
-    let original = kinds.get(model::LINK).clone();
-    let root = PathBuf::new();
-    let render = original.render.clone();
+    .open_in_host();
+    let original = kinds.get(model::LINK).clone().open_in_host();
     let mut links = original;
+    if let Some(field) = &mut links.rules.edit {
+        field.control = |node| {
+            if node
+                .url
+                .as_deref()
+                .is_some_and(|url| url.starts_with(reference::SCHEME))
+            {
+                kind::Control::External
+            } else {
+                kind::Control::Url
+            }
+        };
+    }
+    let root = PathBuf::new();
+    let render = links.render.clone();
     links.render = std::rc::Rc::new(move |node, look, window, cx| {
         if node
             .url
@@ -81,6 +93,9 @@ pub(crate) fn kinds(kinds: Kinds, root: PathBuf) -> Kinds {
 
 impl CanvasView {
     pub(crate) fn pick_files(&mut self, replace: Option<String>, cx: &mut Context<Self>) {
+        if self.surface.read(cx).editor().options().read_only {
+            return;
+        }
         let picked = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
@@ -102,6 +117,9 @@ impl CanvasView {
         replace: Option<String>,
         cx: &mut Context<Self>,
     ) {
+        if self.surface.read(cx).editor().options().read_only {
+            return;
+        }
         let at = self.at;
         let root = self.path.clone();
         self.surface.update(cx, |surface, cx| {

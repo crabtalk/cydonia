@@ -1,20 +1,25 @@
 //! Part of an article a reference names, as the blocks its editor numbers,
 //! the card a handle names, and the entry a number names.
 
-use super::{Part, card, entry, passage};
 use crate::{
     data::{ColType, Column, Data},
     model::{
         article::Disk,
         project::{Project, ProjectIds},
-        workspace::Showing,
+        settings::Settings,
+        state::State,
+        workspace::{
+            Showing, Workspace,
+            references::{Part, card, entry, passage},
+        },
     },
 };
 use artifact::{
+    kind::Kind,
     project::{Project as _, fs},
     reference::{Span, Within},
 };
-use bezel::gpui;
+use bezel::gpui::{self, AppContext as _};
 use std::rc::Rc;
 
 const TEXT: &str = "# Guide\n\nIntro.\n\n## Set up\n\nStep one.\n\n- a\n- b\n\n## Use\n\nGo.\n";
@@ -108,5 +113,40 @@ fn a_number_names_a_table(cx: &mut gpui::TestAppContext) {
         assert_eq!(title, "Prices");
         assert!(entry(&project, number + 1, cx).is_none());
         let _ = std::fs::remove_dir_all(&dir);
+    });
+}
+
+#[gpui::test]
+fn entry_links_round_trip_for_articles_boards_and_canvases(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| {
+        let dir = std::env::temp_dir().join(format!("cydonia-entry-links-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = fs::Project::new(&dir);
+        store.create_article("# Guide").unwrap();
+        store
+            .create_board("Work", "DEV", artifact::board::View::Lanes)
+            .unwrap();
+        store
+            .create_canvas("Map", &canvas::Canvas::default())
+            .unwrap();
+        let workspace = cx.new(|cx| Workspace::new(Settings::default(), State::default(), cx));
+        workspace.update(cx, |workspace, cx| {
+            let project = Project::new(workspace.intern(&dir), dir.clone(), cx);
+            let id = project.id;
+            let entries = [Kind::Article, Kind::Board, Kind::Canvas]
+                .into_iter()
+                .flat_map(|kind| project.every(kind, cx))
+                .map(|facts| facts.showing)
+                .collect::<Vec<_>>();
+            assert_eq!(entries.len(), 3);
+            workspace.projects.push(project);
+            for showing in entries {
+                let url = workspace.link_of(id, &showing, cx).unwrap();
+                let resolved = workspace.resolve(&url, cx).unwrap();
+                assert_eq!(resolved.project, id);
+                assert_eq!(resolved.showing, showing);
+            }
+        });
+        std::fs::remove_dir_all(dir).unwrap();
     });
 }
