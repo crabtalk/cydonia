@@ -6,6 +6,7 @@ use crate::{
     view::{
         app, article,
         board::{self, info::BoardInfo},
+        canvas::CanvasView,
         component::{composer::Composer, ribbon::Ribbon, transcript},
         kit::{
             menu::MenuHost,
@@ -91,6 +92,7 @@ pub(crate) struct Tab {
     pub(crate) sessions: Vec<Entity<transcript::SessionView>>,
     /// The same for each table.
     pub(crate) tables: Vec<Entity<table::TableView>>,
+    pub(crate) canvases: Vec<Entity<CanvasView>>,
     /// The same for each app.
     pub(crate) apps: Vec<Entity<app::AppView>>,
     /// The board's find field, and whether its bar is up.
@@ -168,6 +170,7 @@ impl Tab {
             articles: Vec::new(),
             sessions: Vec::new(),
             tables: Vec::new(),
+            canvases: Vec::new(),
             apps: Vec::new(),
             find_field,
             finding: false,
@@ -259,6 +262,10 @@ impl Tab {
                     .children(self.ribbon_bar(focused, window, cx))
                     .into_any_element()
             }
+            Showing::Canvas(_) => match self.canvas_shown(cx) {
+                Some(view) => view.into_any_element(),
+                None => div().flex_1().into_any_element(),
+            },
             Showing::Table(_) => match self.table_shown(cx) {
                 Some(view) => view.into_any_element(),
                 None => div().flex_1().into_any_element(),
@@ -370,7 +377,10 @@ impl Render for Tab {
             (true, true) => bezel::ui::window::content(true, cx),
             (true, false) => bezel::ui::window::resting(cx),
             (false, _) => div(),
-        };
+        }
+        .when(matches!(showing, Some((_, Showing::Canvas(_)))), |card| {
+            card.bg(theme.canvas_bg)
+        });
         let (over, inside) = match on_chrome {
             true => (title, None),
             false => (None, title),

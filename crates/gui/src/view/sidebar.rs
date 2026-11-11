@@ -174,6 +174,16 @@ impl Shape {
 }
 
 impl Row {
+    /// The project an entry row, a project's heading or its archive line belongs
+    /// to.
+    pub(crate) fn project(&self) -> Option<ProjectId> {
+        match self {
+            Row::Group(Group::Project(project)) => Some(*project),
+            Row::Entry { project, .. } => Some(*project),
+            Row::Group(Group::Space(_) | Group::Agent(_)) | Row::Heading(_) | Row::App(_) => None,
+        }
+    }
+
     /// The kind of entry it is. Nothing for a row that is not an entry.
     pub(crate) fn kind(&self) -> Option<Kind> {
         match self {
@@ -322,6 +332,7 @@ impl Row {
         let (kind, id) = match self.showing()? {
             Showing::Article(id) => (Kind::Article, id.clone()),
             Showing::Board(id) => (Kind::Board, id.clone()),
+            Showing::Canvas(id) => (Kind::Canvas, id.clone()),
             Showing::Session(id) => (Kind::Session, open.session(*id, cx)?.filed()?.to_owned()),
             Showing::Table(_) => return None,
         };
@@ -452,16 +463,6 @@ pub(crate) fn on_disk(path: PathBuf) -> [(Item, Act); 2] {
     ]
 }
 
-/// The project an entry row, a project's heading or its archive line belongs
-/// to.
-fn project_of(row: &Row) -> Option<ProjectId> {
-    match row {
-        Row::Group(Group::Project(project)) => Some(*project),
-        Row::Entry { project, .. } => Some(*project),
-        Row::Group(Group::Space(_) | Group::Agent(_)) | Row::Heading(_) | Row::App(_) => None,
-    }
-}
-
 /// Whether the kind a row names is switched on. Articles and apps have no switch, and
 /// neither do the two rows that are not entries — a project heading and the
 /// line its archive folds under stand whatever is listed beneath them.
@@ -470,6 +471,7 @@ pub(crate) fn shown(row: &Row, features: &Features) -> bool {
         Some(Showing::Session(_)) => features.sessions,
         Some(Showing::Board(_)) => features.boards,
         Some(Showing::Table(_)) => features.tables,
+        Some(Showing::Canvas(_)) => features.canvases,
         Some(Showing::Article(_)) | None => true,
     }
 }
@@ -575,6 +577,7 @@ pub(crate) fn key_of(entry: &Row) -> String {
             Showing::Board(id) => format!("board-{project}-{id}"),
             Showing::Article(id) => format!("article-{project}-{id}"),
             Showing::Table(key) => format!("table-{project}-{key}"),
+            Showing::Canvas(id) => format!("canvas-{project}-{id}"),
         },
         Row::App(id) => format!("app-{id}"),
     }
@@ -692,6 +695,7 @@ pub(crate) struct Sidebar {
     boards: Watch,
     /// Every app's program, whose build names its row.
     apps: Watch,
+    canvases: Watch,
     /// What each session's row showed when it was last drawn.
     listed: HashMap<u64, Listed>,
     sessions: Watch,
@@ -748,6 +752,7 @@ impl Sidebar {
             tick: None,
             boards: Watch::default(),
             apps: Watch::default(),
+            canvases: Watch::default(),
             listed: HashMap::new(),
             sessions: Watch::default(),
             focus,
@@ -1265,7 +1270,9 @@ impl Sidebar {
     fn reorder_entries(&mut self, carried: &Row, region: Vec<Row>, cx: &mut Context<Self>) {
         use crate::model::state;
         let workspace = self.workspace.read(cx);
-        let Some(project) = project_of(carried).and_then(|project| workspace.project_ix(project))
+        let Some(project) = carried
+            .project()
+            .and_then(|project| workspace.project_ix(project))
         else {
             return;
         };
@@ -1336,6 +1343,10 @@ impl Render for Sidebar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.watch_sessions(window, cx);
         self.emphasized = self.focus_watch.within();
+        let sources = self.workspace.read(cx).canvas_entities();
+        let mut canvases = std::mem::take(&mut self.canvases);
+        canvases.set_in(&sources, window, cx, |this, _, _, cx| this.relisted(cx));
+        self.canvases = canvases;
         let programs: Vec<_> = self.workspace.read(cx).programs().cloned().collect();
         let mut apps = std::mem::take(&mut self.apps);
         // A build names an app's row, and the apps are listed by name.

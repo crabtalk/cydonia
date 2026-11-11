@@ -437,6 +437,10 @@ impl Cydonia {
                 .and_then(|article| article.path.parent())
                 .and_then(|dir| dir.file_name())
                 .map(|dir| format!(".cydonia/articles/{}/", dir.to_string_lossy()))),
+            Row::Entry {
+                showing: Showing::Canvas(id),
+                ..
+            } => at(Some(format!(".cydonia/canvases/{id}/"))),
             // Dropped out of the database rather than unlinked: the file is
             // where to look, not what goes.
             Row::Entry {

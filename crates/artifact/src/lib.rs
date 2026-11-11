@@ -1,7 +1,7 @@
-//! The artifacts cydonia keeps: the articles, boards, spaces, sessions and
-//! tables a project holds, as shapes rather than as files.
+//! The artifacts cydonia keeps: the articles, boards, spaces, sessions,
+//! tables and canvases a project holds, as shapes rather than as files.
 //!
-//! One module per kind, which is the same five the app lets a project show.
+//! One module per kind.
 //! [`project`] is the odd one out and is meant to be: it is what holds the
 //! others and hands them over, not one more beside them.
 //!
@@ -22,6 +22,7 @@ pub mod archive;
 pub mod article;
 pub mod backup;
 pub mod board;
+pub mod canvas;
 pub mod document;
 pub mod entry;
 pub mod error;

@@ -20,12 +20,8 @@ use crate::{
     model::workspace::{Opening, Showing, Workspace},
     view::{
         keymap,
-        kit::{
-            icon::kind_icon,
-            link::mention::{self, Linkables},
-            text::CardTitle,
-        },
-        search::{Found, SETTLE, search_all},
+        kit::{entry_search::Hit, link::mention},
+        search::{SETTLE, search_all},
         sidebar::Row,
         window::{menubar, root::Cydonia},
     },
@@ -34,8 +30,8 @@ use artifact::{kind::Kind, search::Query};
 use bezel::{
     gpui::{
         self, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-        FontWeight, HighlightStyle, KeyBinding, ScrollHandle, SharedString, StyledText, Task,
-        WeakEntity, Window, actions, div, prelude::*, px,
+        FontWeight, KeyBinding, ScrollHandle, SharedString, Task, WeakEntity, Window, actions, div,
+        prelude::*, px,
     },
     theme::{TextStyle, Theme, Typeset as _},
     ui::{
@@ -44,7 +40,7 @@ use bezel::{
         popover,
     },
 };
-use std::{ops::Range, path::PathBuf, rc::Rc};
+use std::{path::PathBuf, rc::Rc};
 
 const CONTEXT: &str = "CydoniaSearch";
 
@@ -59,9 +55,6 @@ const COMMAND_PREFIX: char = '>';
 
 /// Rows a query lists, at most.
 pub(crate) const SHOWN: usize = 50;
-
-/// Characters of a snippet kept ahead of the match.
-const LEAD: usize = 32;
 
 const PLACEHOLDER: &str = "Search articles, boards, sessions and commands…";
 
@@ -104,7 +97,7 @@ pub fn bindings() -> Vec<KeyBinding> {
     ]
 }
 
-/// A session the palette handed back while it was linking, as its link,
+/// An entry the palette handed back while it was linking, as its link,
 /// `cydonia://project#43`.
 pub(crate) struct Linked {
     pub url: String,
@@ -112,26 +105,6 @@ pub(crate) struct Linked {
 
 /// What picking an entry does while the palette links rather than opens.
 pub(crate) type OnLink = Rc<dyn Fn(&mut Cydonia, Linked, &mut Window, &mut Context<Cydonia>)>;
-
-/// One row of the palette.
-#[derive(Clone)]
-pub(crate) struct Hit {
-    pub(crate) row: Row,
-    /// Where the query was found, when it was found in the entry's body: the
-    /// line holding it, and where in the line.
-    snippet: Option<(String, Range<usize>)>,
-    /// A card on the board `row` names.
-    card: Option<HitCard>,
-}
-
-#[derive(Clone)]
-struct HitCard {
-    /// `project#DEV-12`.
-    reference: String,
-    /// `DEV-12`.
-    handle: String,
-    title: String,
-}
 
 /// A row as the palette lists it: a command, then the entries.
 #[derive(Clone, Copy)]
@@ -188,39 +161,6 @@ impl Filter {
             .iter()
             .find(|(filter, _)| *filter == Some(self))
             .map_or("", |(_, label)| label)
-    }
-}
-
-impl Hit {
-    /// What a search found, as rows: title matches first, then the rest, each
-    /// most recently touched first.
-    pub(crate) fn ranked(found: Vec<Found>, workspace: &Workspace, cx: &App) -> Vec<Hit> {
-        let mut hits: Vec<(bool, u128, Hit)> = found
-            .into_iter()
-            .filter_map(|found| {
-                let open = workspace
-                    .projects
-                    .iter()
-                    .find(|open| open.path == found.root)?;
-                let showing = open.stored(found.kind, &found.id, cx)?;
-                let touched = open.facts(&showing, cx)?.touched;
-                let row = Row::Entry {
-                    project: open.id,
-                    showing,
-                };
-                Some((
-                    found.in_title,
-                    touched,
-                    Hit {
-                        row,
-                        snippet: found.snippet,
-                        card: None,
-                    },
-                ))
-            })
-            .collect();
-        hits.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
-        hits.into_iter().map(|(.., hit)| hit).collect()
     }
 }
 
@@ -336,6 +276,7 @@ impl Palette {
             .iter()
             .filter(|_| !only_commands)
             .filter(|hit| kind.is_none_or(|kind| hit.row.kind() == Some(kind)))
+            .filter(|hit| self.linking.is_none() || self.linked(hit, cx).is_some())
             .take(self.limit)
             .map(Pick::Hit);
         commands.chain(hits).collect()
@@ -344,13 +285,14 @@ impl Palette {
     /// Whether the palette lists commands and nothing else: the Commands
     /// filter, or a query starting with [`COMMAND_PREFIX`].
     fn only_commands(&self, cx: &App) -> bool {
-        self.filter == Some(Filter::Commands)
-            || self
-                .field
-                .read(cx)
-                .content()
-                .trim_start()
-                .starts_with(COMMAND_PREFIX)
+        self.linking.is_none()
+            && (self.filter == Some(Filter::Commands)
+                || self
+                    .field
+                    .read(cx)
+                    .content()
+                    .trim_start()
+                    .starts_with(COMMAND_PREFIX))
     }
 
     /// Match the commands against what the field holds, less the prefix. An
@@ -397,7 +339,7 @@ impl Palette {
     /// a query of commands.
     fn query(&self, cx: &App) -> Option<Query> {
         let content = self.field.read(cx).content();
-        match content.trim_start().starts_with(COMMAND_PREFIX) {
+        match self.linking.is_none() && content.trim_start().starts_with(COMMAND_PREFIX) {
             true => None,
             false => Query::literal(mention::Query::parse(content).rest),
         }
@@ -441,17 +383,15 @@ impl Palette {
         let Some(query) = self.query(cx) else {
             self.task = None;
             self.searching = false;
-            self.hits = match label {
-                Some(_) => self.named_hits(cx),
-                None => self
-                    .recent
-                    .iter()
-                    .map(|row| Hit {
-                        row: row.clone(),
-                        snippet: None,
-                        card: None,
-                    })
-                    .collect(),
+            self.hits = if label.is_some() {
+                Hit::named(
+                    self.field.read(cx).content(),
+                    self.workspace.read(cx),
+                    None,
+                    cx,
+                )
+            } else {
+                Hit::recent(&self.recent)
             };
             self.limit = RECENT;
             self.selected = 0;
@@ -475,22 +415,13 @@ impl Palette {
                 .spawn(async move { search_all(&roots, &query) })
                 .await;
             let _ = this.update(cx, |this, cx| {
-                let mut hits = this.named_hits(cx);
-                let ranked: Vec<Hit> = Hit::ranked(found, this.workspace.read(cx), cx)
-                    .into_iter()
-                    .filter(|hit| {
-                        !hits
-                            .iter()
-                            .any(|held| held.card.is_none() && held.row == hit.row)
-                    })
-                    .filter(|hit| {
-                        label
-                            .as_ref()
-                            .is_none_or(|label| this.carries(&hit.row, label, cx))
-                    })
-                    .collect();
-                hits.extend(ranked);
-                this.hits = hits;
+                this.hits = Hit::matching(
+                    this.field.read(cx).content(),
+                    found,
+                    this.workspace.read(cx),
+                    None,
+                    cx,
+                );
                 this.limit = SHOWN;
                 this.searching = false;
                 this.selected = 0;
@@ -500,72 +431,20 @@ impl Palette {
         cx.notify();
     }
 
-    /// Whether the entry `row` names carries `label`.
-    fn carries(&self, row: &Row, label: &str, cx: &App) -> bool {
-        let Row::Entry { project, showing } = row else {
-            return false;
-        };
-        let workspace = self.workspace.read(cx);
-        workspace
-            .project_ix(*project)
-            .and_then(|at| workspace.labels_of(at, showing, cx))
-            .is_some_and(|labels| labels.iter().any(|held| held == label))
+    fn linked(&self, hit: &Hit, cx: &App) -> Option<Linked> {
+        hit.link(self.workspace.read(cx), cx)
+            .map(|url| Linked { url })
     }
 
-    /// The entries and cards the field's query names — see
-    /// [`mention::Query::rank_named`].
-    fn named_hits(&self, cx: &App) -> Vec<Hit> {
-        let held = cx
-            .try_global::<Linkables>()
-            .map_or(&[][..], |Linkables(held)| held.as_slice());
-        let workspace = self.workspace.read(cx);
-        let cards = mention::carded(workspace, cx);
-        let (named, _) =
-            mention::Query::parse(self.field.read(cx).content()).rank_named(held, &cards);
-        named
-            .into_iter()
-            .filter_map(|named| match named {
-                mention::Named::Entry(ix) => Some(Hit {
-                    row: held[ix].row.clone(),
-                    snippet: None,
-                    card: None,
-                }),
-                mention::Named::Card(ix) => {
-                    let carded = &cards[ix];
-                    let project = workspace
-                        .projects
-                        .iter()
-                        .find(|open| artifact::reference::names(&open.path, &carded.project))?;
-                    Some(Hit {
-                        row: Row::Entry {
-                            project: project.id,
-                            showing: Showing::Board(carded.board.id.clone()),
-                        },
-                        snippet: None,
-                        card: Some(HitCard {
-                            reference: carded.reference().to_string(),
-                            handle: carded.handle.clone(),
-                            title: carded.card.title(),
-                        }),
-                    })
-                }
-            })
-            .collect()
-    }
-
-    /// How a session row is written as a reference. Nothing for any other
-    /// row, or a session without a number yet.
-    fn linked(&self, row: &Row, cx: &App) -> Option<Linked> {
-        let Row::Entry {
-            showing: Showing::Session(id),
-            ..
-        } = row
-        else {
-            return None;
+    fn pick_link(&mut self, url: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(on) = self.linking.clone() else {
+            return;
         };
-        Some(Linked {
-            url: self.workspace.read(cx).link_of_session(*id, cx)?,
-        })
+        let _ = self.root.update(cx, |root, cx| {
+            on(root, Linked { url }, window, cx);
+            cx.notify();
+        });
+        cx.emit(DismissEvent);
     }
 
     fn select_next(&mut self, _: &SelectNext, _: &mut Window, cx: &mut Context<Self>) {
@@ -620,22 +499,18 @@ impl Palette {
             }
             None => return,
         };
-        cx.emit(DismissEvent);
-        if let Some(on) = self.linking.clone() {
-            let Some(linked) = self.linked(&hit.row, cx) else {
-                return;
-            };
-            let _ = self.root.update(cx, |root, cx| {
-                on(root, linked, window, cx);
-                cx.notify();
-            });
+        if self.linking.is_some() {
+            if let Some(linked) = self.linked(&hit, cx) {
+                self.pick_link(linked.url, window, cx);
+            }
             return;
         }
+        cx.emit(DismissEvent);
         let query = self.field.read(cx).content().clone();
         let keep = self.keep;
         let _ = self.root.update(cx, |root, cx| {
-            if let Some(card) = &hit.card {
-                root.open_reference(&card.reference, window, cx);
+            if let Some(reference) = &hit.reference {
+                root.open_reference(reference, window, cx);
                 cx.notify();
                 return;
             }
@@ -735,8 +610,9 @@ impl Palette {
     fn filters(&self) -> Vec<(Option<Filter>, &'static str)> {
         FILTERS
             .into_iter()
-            .filter(|(kind, _)| {
-                self.linking.is_none() || *kind == Some(Filter::Kind(Kind::Session))
+            .filter(|(kind, _)| match self.linking {
+                Some(_) => *kind == Some(Filter::Kind(Kind::Session)),
+                None => true,
             })
             .collect()
     }
@@ -888,89 +764,7 @@ impl Palette {
     }
 
     fn hit_row(&self, ix: usize, hit: &Hit, cx: &mut Context<Self>) -> AnyElement {
-        let theme = Theme::of(cx).clone();
-        let project = hit
-            .row
-            .located(self.workspace.read(cx))
-            .and_then(|(project, _)| {
-                self.workspace
-                    .read(cx)
-                    .projects
-                    .get(project)
-                    .map(|open| open.name())
-            });
-        let icon = kind_icon(hit.row.kind().unwrap_or(Kind::Article));
-        let title = match &hit.card {
-            Some(card) => format!("{} · {}", card.handle, card.title),
-            None => hit.row.label(self.workspace.read(cx), cx),
-        };
-        let selected = ix == self.selected;
-        let snippet = hit.snippet.as_ref().map(|(line, at)| {
-            let (text, at) = clipped(line, at.clone());
-            StyledText::new(text).with_highlights([(
-                at,
-                HighlightStyle {
-                    color: Some(theme.text),
-                    background_color: Some(theme.accent.opacity(0.22)),
-                    ..Default::default()
-                },
-            )])
-        });
-        div()
-            .id(("search-hit", ix))
-            .flex()
-            .flex_row()
-            .items_start()
-            .gap(px(10.))
-            .px(px(8.))
-            .py(px(6.))
-            .rounded(px(Theme::control_radius()))
-            .cursor_pointer()
-            .when(selected, |el| el.bg(theme.element_active))
-            .when(!selected, |el| el.hover(|el| el.bg(theme.element_hover)))
-            .child(
-                div()
-                    .pt(px(2.))
-                    .child(icons::icon(icon).size(px(14.)).text_color(theme.text_muted)),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .gap(px(2.))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap(px(8.))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .truncate()
-                                    .text_style(TextStyle::Body)
-                                    .text_color(theme.text)
-                                    .child(title),
-                            )
-                            .children(project.map(|project| {
-                                div()
-                                    .flex_none()
-                                    .text_style(TextStyle::Subheadline)
-                                    .text_color(theme.text_faint)
-                                    .child(project)
-                            })),
-                    )
-                    .children(snippet.map(|snippet| {
-                        div()
-                            .truncate()
-                            .text_style(TextStyle::Subheadline)
-                            .text_color(theme.text_muted)
-                            .child(snippet)
-                    })),
-            )
+        hit.render(ix, ix == self.selected, self.workspace.read(cx), cx)
             .on_click(cx.listener(move |this, _, window, cx| {
                 cx.stop_propagation();
                 this.open_hit(ix, window, cx);
@@ -1136,24 +930,6 @@ impl Render for Palette {
                     }),
             )
     }
-}
-
-/// The line cut to start a little ahead of the match and trimmed, and the
-/// match's range in what is left.
-fn clipped(line: &str, at: Range<usize>) -> (SharedString, Range<usize>) {
-    let start = line[..at.start]
-        .char_indices()
-        .rev()
-        .nth(LEAD)
-        .map_or(0, |(ix, _)| ix);
-    let head = &line[start..];
-    let trimmed = head.trim_start();
-    let cut = start + (head.len() - trimmed.len());
-    let lead = if start > 0 { "…" } else { "" };
-    let text = format!("{lead}{}", trimmed.trim_end());
-    let from = (lead.len() + at.start.saturating_sub(cut)).min(text.len());
-    let to = (lead.len() + at.end.saturating_sub(cut)).min(text.len());
-    (text.into(), from..to)
 }
 
 #[cfg(test)]

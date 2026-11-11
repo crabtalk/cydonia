@@ -16,6 +16,7 @@ name = "cydonia_gui"
 [dependencies]
 artifact = { workspace = true, features = ["pictures"] }
 anyhow.workspace = true
+canvas = { workspace = true, default-features = true }
 base64.workspace = true
 bezel.workspace = true
 guest.workspace = true
@@ -79,14 +80,14 @@ developer = []
 
 [dev-dependencies]
 syntax = { workspace = true }
-gpui = { version = "0.3.19", package = "bezel-gpui", features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 # Headless UI tests do not require the Metal compiler toolchain.
-gpui_platform = { version = "0.3.19", package = "bezel-gpui-platform", features = ["runtime_shaders"] }
+gpui_platform = { workspace = true, features = ["runtime_shaders"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
-gpui_platform = { version = "0.3.19", package = "bezel-gpui-platform", features = ["wayland", "x11"], optional = true }
+gpui_platform = { workspace = true, features = ["wayland", "x11"], optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 libc = "0.2"

@@ -68,6 +68,7 @@ fix, so hand-edited sizes are clamped before layout sees them.
 [features]
 sessions = false
 boards = true
+canvases = true
 tables = false
 
 [features.panel]

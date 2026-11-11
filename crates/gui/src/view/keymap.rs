@@ -24,6 +24,7 @@ use crate::{
         article::{self, ToggleOutline, TogglePlainText},
         board,
         board::info,
+        canvas::entry_picker,
         component::{composer, ribbon},
         pane::find::{FindCard, FindNext, FindPrev},
         table,
@@ -479,6 +480,7 @@ pub fn bind_all(shortcuts: &Shortcuts, cx: &mut App) {
     if shortcuts.emacs {
         cx.bind_keys(emacs_bindings());
     }
+    cx.bind_keys(canvas::keys::bindings());
     // The app's own, every one of them scoped to a surface.
     cx.bind_keys(article::bindings());
     cx.bind_keys(board::bindings());
@@ -487,6 +489,7 @@ pub fn bind_all(shortcuts: &Shortcuts, cx: &mut App) {
     cx.bind_keys(super::component::browser::bindings());
     cx.bind_keys(super::pane::find::bindings());
     cx.bind_keys(super::modals::palette::bindings());
+    cx.bind_keys(entry_picker::bindings());
     cx.bind_keys(composer::bindings());
     cx.bind_keys(super::modals::new_board::bindings());
     cx.bind_keys(super::modals::install_app::bindings());

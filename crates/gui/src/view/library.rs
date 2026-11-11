@@ -65,6 +65,7 @@ const ROW_GROUP: &str = "library-row";
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Tab {
     Articles,
+    Canvases,
     Boards,
     Tables,
     Sessions,
@@ -73,8 +74,9 @@ pub(crate) enum Tab {
 }
 
 impl Tab {
-    const ALL: [Self; 6] = [
+    const ALL: [Self; 7] = [
         Self::Articles,
+        Self::Canvases,
         Self::Boards,
         Self::Tables,
         Self::Sessions,
@@ -85,6 +87,7 @@ impl Tab {
     fn label(self) -> &'static str {
         match self {
             Self::Articles => "Articles",
+            Self::Canvases => "Canvases",
             Self::Boards => "Boards",
             Self::Tables => "Tables",
             Self::Sessions => "Sessions",
@@ -97,6 +100,7 @@ impl Tab {
     fn kind(self) -> Option<Kind> {
         match self {
             Self::Articles => Some(Kind::Article),
+            Self::Canvases => Some(Kind::Canvas),
             Self::Boards => Some(Kind::Board),
             Self::Tables => Some(Kind::Table),
             Self::Sessions => Some(Kind::Session),
@@ -116,6 +120,7 @@ impl Tab {
     fn shown(self, features: &Features) -> bool {
         match self {
             Self::Articles | Self::Apps | Self::Skills => true,
+            Self::Canvases => features.canvases,
             Self::Boards => features.boards,
             Self::Tables => features.tables,
             Self::Sessions => features.sessions,
@@ -126,7 +131,7 @@ impl Tab {
     fn fields(self) -> &'static [Field] {
         use Field::*;
         match self {
-            Self::Articles => &[
+            Self::Articles | Self::Canvases => &[
                 Check, Name, Ref, Project, Labels, Created, Edited, Status, Actions,
             ],
             Self::Boards => &[Check, Name, Ref, Project, Edited, Status, Actions],
@@ -313,6 +318,7 @@ pub(crate) struct Library {
     strip: Rc<Cell<Pixels>>,
     /// Every app's program, whose build names its listing.
     apps: Watch,
+    canvases: Watch,
     pub(crate) focus: FocusHandle,
     pub(crate) focus_watch: FocusWatch,
     _subscriptions: Vec<Subscription>,
@@ -404,6 +410,7 @@ impl Library {
             bar: Rc::new(Cell::new(px(0.))),
             strip: Rc::new(Cell::new(px(0.))),
             apps: Watch::default(),
+            canvases: Watch::default(),
             focus,
             focus_watch,
             _subscriptions: subscriptions,
@@ -1676,6 +1683,10 @@ impl LabelHost for Library {
 
 impl Render for Library {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let sources = self.workspace.read(cx).canvas_entities();
+        let mut canvases = std::mem::take(&mut self.canvases);
+        canvases.set(&sources, cx);
+        self.canvases = canvases;
         let programs: Vec<_> = self.workspace.read(cx).programs().cloned().collect();
         let mut apps = std::mem::take(&mut self.apps);
         apps.set(&programs, cx);

@@ -9,6 +9,7 @@ use crate::{
         app::AppView,
         article::ArticleView,
         board::BoardView,
+        canvas::CanvasView,
         component::transcript::{Drawn, SessionView},
         table::TableView,
     },
@@ -46,6 +47,9 @@ impl Tab {
         if let Some(article) = self.shown_of(Kind::Article) {
             let view = self.article_view(article, cx);
             view.update(cx, |view, cx| view.ensure_editor(cx));
+        }
+        if let Some(canvas) = self.shown_of(Kind::Canvas) {
+            self.canvas_view(canvas, cx);
         }
         if let Some(table) = self.shown_of(Kind::Table) {
             self.table_view(table, cx);
@@ -114,6 +118,34 @@ impl Tab {
         self.articles
             .iter()
             .find(|view| view.read(cx).article == article)
+            .cloned()
+    }
+
+    pub(crate) fn canvas_view(
+        &mut self,
+        canvas: Entry,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<CanvasView>> {
+        if let Some(view) = self
+            .canvases
+            .iter()
+            .find(|view| view.read(cx).canvas == canvas)
+        {
+            return Some(view.clone());
+        }
+        let workspace = self.workspace.read(cx);
+        let source = workspace.canvas_entity(&canvas)?.clone();
+        let path = workspace.project(canvas.project)?.path.clone();
+        let view = cx.new(|cx| CanvasView::new(canvas, source, self.root.clone(), path, cx));
+        self.canvases.push(view.clone());
+        Some(view)
+    }
+
+    pub(crate) fn canvas_shown(&self, cx: &App) -> Option<Entity<CanvasView>> {
+        let entry = self.shown_of(Kind::Canvas)?;
+        self.canvases
+            .iter()
+            .find(|view| view.read(cx).canvas == entry)
             .cloned()
     }
 

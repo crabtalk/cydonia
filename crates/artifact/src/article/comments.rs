@@ -7,7 +7,7 @@
 //! file whose hash does not match the document is re-found by each comment's
 //! quote and the text around it.
 
-use crate::project::fs::version;
+use crate::project;
 use serde::{Deserialize, Serialize};
 use similar::{Algorithm, DiffOp, capture_diff_slices};
 use std::{
@@ -153,12 +153,12 @@ impl Comments {
 
     /// Hold the ranges against `text`.
     pub fn stamp(&mut self, text: &str) {
-        self.content = version(text.as_bytes());
+        self.content = project::version(text.as_bytes());
     }
 
     /// Whether the ranges index into `text`.
     pub fn fits(&self, text: &str) -> bool {
-        self.content == version(text.as_bytes())
+        self.content == project::version(text.as_bytes())
     }
 
     /// Ranges into `new`, from wherever they were held: through a diff where

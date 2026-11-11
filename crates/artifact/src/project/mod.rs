@@ -9,16 +9,19 @@
 //! Everything is named by id. A path is a detail of [`fs`] and never crosses
 //! this trait.
 
-pub mod fs;
-pub mod layout;
-pub mod memory;
-
-use crate::kind::Kind;
 use crate::{
     article::{Article, comments::Comments, properties::Properties},
     board::Board,
+    canvas::Canvas,
+    kind::Kind,
     session::record::Record,
 };
+use canvas::model::Canvas as CanvasDocument;
+use sha2::{Digest as _, Sha256};
+
+pub mod fs;
+pub mod layout;
+pub mod memory;
 
 /// What a [`Project`] answers a write or a lookup with.
 pub type Result<T> = std::result::Result<T, crate::error::Error>;
@@ -80,6 +83,12 @@ pub trait Project {
 
     /// Take a session out, and retire its number.
     fn remove_session(&self, id: &str) -> Result<()>;
+
+    fn canvases(&self) -> Vec<Canvas>;
+    fn canvas(&self, id: &str) -> Option<Canvas>;
+    fn create_canvas(&self, title: &str, document: &CanvasDocument) -> Result<Canvas>;
+    fn save_canvas(&self, canvas: &mut Canvas) -> Result<()>;
+    fn remove_canvas(&self, id: &str) -> Result<()>;
 
     // ── articles ─────────────────────────────────────────────────────
 
@@ -147,4 +156,13 @@ pub trait Project {
 
     /// Retire an entry's number. It is never issued again.
     fn retire(&self, kind: Kind, id: &str) -> Result<()>;
+}
+
+/// What a file held, as the version a save is checked against: a hash of the
+/// bytes, so every build of cydonia reading one file agrees on it.
+pub(crate) fn version(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }

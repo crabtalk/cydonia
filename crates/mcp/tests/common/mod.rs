@@ -60,6 +60,7 @@ impl Scratch {
         Rail::also(self.path());
         Server::new()
             .mount(&tools::article::TOOLS)
+            .mount(&tools::canvas::TOOLS)
             .mount(&tools::board::TOOLS)
             .mount(&tools::table::TOOLS)
             .mount(&tools::project::TOOLS)

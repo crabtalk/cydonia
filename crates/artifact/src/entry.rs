@@ -1,9 +1,8 @@
 //! Stable, project-wide numbers alongside each entry's storage identity.
 
-use crate::kind::Kind;
-use crate::project::Project;
 #[cfg(feature = "sqlite")]
 use crate::project::fs;
+use crate::{kind::Kind, project::Project};
 use anyhow::Result;
 #[cfg(feature = "sqlite")]
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
@@ -140,6 +139,17 @@ pub fn catalog(store: &impl Project) -> Result<Vec<Entry>> {
             article: None,
         });
     }
+    for canvas in store.canvases() {
+        entries.push(Entry {
+            number: store.number(Kind::Canvas, &canvas.id)?,
+            title: canvas.label().to_owned(),
+            kind: Kind::Canvas,
+            id: canvas.id.clone(),
+            archived: canvas.archived,
+            labels: canvas.labels.clone(),
+            article: None,
+        });
+    }
     for session in store.sessions() {
         let article = match &session.article {
             Some(article) => Some(store.number(Kind::Article, article)?),
@@ -162,6 +172,11 @@ pub fn catalog(store: &impl Project) -> Result<Vec<Entry>> {
 /// backend does not hold.
 pub fn open(store: &impl Project, entry: &Entry) -> Result<Option<serde_json::Value>> {
     Ok(Some(match entry.kind {
+        Kind::Canvas => serde_json::to_value(
+            store
+                .canvas(&entry.id)
+                .ok_or_else(|| anyhow::anyhow!("canvas no longer exists"))?,
+        )?,
         Kind::Article => serde_json::json!({"markdown": store.read_article(&entry.id)?}),
         Kind::Board => serde_json::to_value(
             store

@@ -6,8 +6,6 @@
 //! Tables (`data.db`) are not part of it. Article covers are not carried: an
 //! [`Article`] from here has no cover.
 
-use crate::error::Error;
-use crate::kind::Kind;
 use crate::{
     article::{
         Article,
@@ -15,12 +13,16 @@ use crate::{
         properties::{self, Properties},
     },
     board::{Board, key},
+    canvas::{self as canvas_artifact, Canvas},
+    error::Error,
     id,
-    project::layout,
+    kind::Kind,
+    project::{self, layout},
     session::record::Record,
     stamp,
 };
 use anyhow::anyhow;
+use canvas::model::Canvas as CanvasDocument;
 use std::{
     cmp::Reverse,
     collections::{BTreeMap, HashMap, HashSet},
@@ -37,6 +39,7 @@ pub struct Project(Mutex<State>);
 #[derive(Default)]
 struct State {
     boards: BTreeMap<String, Board>,
+    canvases: BTreeMap<String, Canvas>,
     /// How many times each board has been written, which is its version.
     writes: HashMap<String, u64>,
     sessions: BTreeMap<String, Record>,
@@ -78,6 +81,13 @@ impl Project {
                 let parts: Vec<&str> = path.split('/').collect();
                 let text = || String::from_utf8_lossy(bytes).into_owned();
                 match parts.as_slice() {
+                    [canvas_artifact::DIR, id, canvas_artifact::FILE] => {
+                        if let Ok(mut canvas) = text().parse::<Canvas>() {
+                            canvas.id = (*id).to_owned();
+                            canvas.created = stamp::named(id);
+                            state.canvases.insert(canvas.id.clone(), canvas);
+                        }
+                    }
                     ["boards", file] => {
                         let Some(stem) = file.strip_suffix(".toml") else {
                             continue;
@@ -361,6 +371,59 @@ impl super::Project for Project {
             .remove(id)
             .ok_or_else(|| not_found("session", id))?;
         state.retire(Kind::Session, id);
+        Ok(())
+    }
+
+    fn canvases(&self) -> Vec<Canvas> {
+        let mut state = self.state();
+        let mut found: Vec<_> = state.canvases.values().cloned().collect();
+        for canvas in &mut found {
+            canvas.number = Some(state.number(Kind::Canvas, &canvas.id));
+        }
+        found.sort_by_key(|canvas| Reverse(canvas.touched));
+        found
+    }
+
+    fn canvas(&self, id: &str) -> Option<Canvas> {
+        let mut state = self.state();
+        let mut canvas = state.canvases.get(id)?.clone();
+        canvas.number = Some(state.number(Kind::Canvas, id));
+        Some(canvas)
+    }
+
+    fn create_canvas(&self, title: &str, document: &CanvasDocument) -> super::Result<Canvas> {
+        let mut state = self.state();
+        let id = stamp::free(stamp::now(), |id| state.canvases.contains_key(id));
+        let mut canvas = Canvas::new(id, title, document.clone());
+        canvas.number = Some(state.number(Kind::Canvas, &canvas.id));
+        canvas.version = Some(project::version(canvas.to_string().as_bytes()));
+        state.canvases.insert(canvas.id.clone(), canvas.clone());
+        Ok(canvas)
+    }
+
+    fn save_canvas(&self, canvas: &mut Canvas) -> super::Result<()> {
+        let mut state = self.state();
+        let held = state
+            .canvases
+            .get(&canvas.id)
+            .ok_or(crate::error::Error::Stale)?;
+        if canvas.version != held.version {
+            return Err(crate::error::Error::Stale);
+        }
+        canvas.labels = crate::label::normalize_all(&canvas.labels);
+        canvas.touched = stamp::now();
+        canvas.version = Some(project::version(canvas.to_string().as_bytes()));
+        state.canvases.insert(canvas.id.clone(), canvas.clone());
+        Ok(())
+    }
+
+    fn remove_canvas(&self, id: &str) -> super::Result<()> {
+        let mut state = self.state();
+        state
+            .canvases
+            .remove(id)
+            .ok_or_else(|| not_found("canvas", id))?;
+        state.retire(Kind::Canvas, id);
         Ok(())
     }
 

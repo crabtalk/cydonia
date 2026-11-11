@@ -4,6 +4,7 @@
 
 pub mod apps;
 pub mod article;
+pub mod canvas;
 pub mod cover;
 pub mod disk;
 pub mod file_url;

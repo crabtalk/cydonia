@@ -3,14 +3,15 @@ title: Features
 description: The switches that decide what a project can hold, and what may run in it.
 ---
 
-Cydonia ships with most of itself switched off. A fresh install shows articles
-and boards and runs nothing; the rest appears once you ask for it, in
+Cydonia ships with most of itself switched off. A fresh install shows articles,
+boards and canvases and runs nothing; the rest appears once you ask for it, in
 **Settings › Features** or in `~/.config/cydonia/settings.toml`:
 
 ```toml
 [features]
 sessions = false   # agent conversations
 boards = true      # cards in columns
+canvases = true    # spatial layouts
 tables = false     # structured records
 ```
 
@@ -18,6 +19,7 @@ tables = false     # structured records
 | --- | --- | --- |
 | `sessions` | off | Agent conversations, and every agent this machine would run |
 | `boards` | on | Cards in columns or as a list |
+| `canvases` | on | Canvases in the sidebar and library, and canvas creation and import |
 | `tables` | off | Structured records |
 
 **`sessions` is the one that matters.** A session is the only thing that starts

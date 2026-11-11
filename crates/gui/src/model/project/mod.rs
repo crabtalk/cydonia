@@ -9,13 +9,16 @@ use crate::{
     data::{Data, Home, Page, Table},
     model::{
         article::{self, Article},
+        canvas::Canvas,
         session::ChatSession,
         store::{self, Store},
         watch::Watch,
         workspace::{Showing, Workspace},
     },
 };
-use artifact::{board::Board, kind::Kind, project::Project as _};
+use artifact::{
+    board::Board, canvas::Canvas as CanvasRecord, kind::Kind, project::Project as _, text,
+};
 use bezel::gpui::{App, AppContext as _, Context, Entity};
 use std::{
     collections::HashMap,
@@ -30,6 +33,7 @@ pub use id::{ProjectId, ProjectIds};
 const PAGE: i64 = 200;
 
 /// What every entry has, whatever its kind. `touched` is in milliseconds.
+#[derive(PartialEq)]
 pub struct Facts {
     pub showing: Showing,
     pub label: String,
@@ -77,6 +81,21 @@ impl HeldSession {
     }
 }
 
+#[derive(Clone)]
+pub struct HeldCanvas {
+    pub id: String,
+    pub canvas: Entity<Canvas>,
+}
+
+impl HeldCanvas {
+    pub fn new(record: CanvasRecord, store: Store, cx: &mut App) -> Self {
+        Self {
+            id: record.id.clone(),
+            canvas: cx.new(|cx| Canvas::new(record, store, cx)),
+        }
+    }
+}
+
 pub struct Project {
     pub id: ProjectId,
     pub path: PathBuf,
@@ -86,6 +105,8 @@ pub struct Project {
     /// Which board the board pane shows.
     pub board: Option<usize>,
     pub articles: Vec<Article>,
+    pub canvases: Vec<HeldCanvas>,
+    pub canvas: Option<usize>,
     /// Which article the article pane shows.
     pub article: Option<usize>,
     /// The project's database, once there is one. Opening a project must not
@@ -116,14 +137,21 @@ pub struct Project {
 
 impl Project {
     pub fn new(id: ProjectId, path: PathBuf, cx: &mut App) -> Self {
+        let store = store::open(&path);
         let mut this = Self {
             id,
-            boards: store::open(&path)
+            boards: store
                 .boards()
                 .into_iter()
                 .map(|board| HeldBoard::new(board, cx))
                 .collect(),
             articles: article::list(&path),
+            canvases: store
+                .canvases()
+                .into_iter()
+                .map(|record| HeldCanvas::new(record, store.clone(), cx))
+                .collect(),
+            canvas: None,
             data: Data::attach(&Home::Project(path.clone())),
             path,
             sessions: Vec::new(),
@@ -171,6 +199,7 @@ impl Project {
             self.data = Data::attach(&Home::Project(self.path.clone()));
         }
         self.reload_articles(cx);
+        self.reload_canvases(cx);
         let boards = self.reload_boards(cx);
         let before = self.shape();
         self.reload_tables();
@@ -253,6 +282,32 @@ impl Project {
             .collect();
         self.board = open.and_then(|id| self.boards.iter().position(|at| at.id == id));
         moved
+    }
+
+    fn reload_canvases(&mut self, cx: &mut App) {
+        let open = self
+            .canvas
+            .and_then(|ix| self.canvases.get(ix))
+            .map(|held| held.id.clone());
+        let mut held: HashMap<String, HeldCanvas> = self
+            .canvases
+            .drain(..)
+            .map(|held| (held.id.clone(), held))
+            .collect();
+        let store = self.store();
+        self.canvases = store
+            .canvases()
+            .into_iter()
+            .map(|record| match held.remove(&record.id) {
+                Some(kept) => {
+                    kept.canvas
+                        .update(cx, |canvas, cx| canvas.adopt(record, cx));
+                    kept
+                }
+                None => HeldCanvas::new(record, store.clone(), cx),
+            })
+            .collect();
+        self.canvas = open.and_then(|id| self.canvas_ix(&id));
     }
 
     /// Re-read what tables exist. The store is the list — nothing here keeps a
@@ -365,6 +420,7 @@ impl Project {
             Kind::Board => Showing::Board(self.boards[ix].id.clone()),
             Kind::Article => Showing::Article(self.articles[ix].id.clone()),
             Kind::Table => Showing::Table(self.tables[ix].key.clone()),
+            Kind::Canvas => Showing::Canvas(self.canvases[ix].id.clone()),
             Kind::App => return None,
         })
     }
@@ -379,6 +435,7 @@ impl Project {
             Kind::Board => self.board_ix(id),
             Kind::Article => self.article_ix(id),
             Kind::Table => self.table_ix(id),
+            Kind::Canvas => self.canvas_ix(id),
             Kind::App => None,
         }
     }
@@ -395,6 +452,7 @@ impl Project {
             Kind::Board => self.boards.len(),
             Kind::Article => self.articles.len(),
             Kind::Table => self.tables.len(),
+            Kind::Canvas => self.canvases.len(),
             Kind::App => 0,
         };
         (0..len).map(move |ix| self.facts_at(kind, ix, cx))
@@ -455,6 +513,19 @@ impl Project {
                     agent: None,
                 }
             }
+            Kind::Canvas => {
+                let canvas = &self.canvases[ix].canvas.read(cx).record;
+                Facts {
+                    showing: Showing::Canvas(canvas.id.clone()),
+                    label: canvas.label().to_owned(),
+                    number: canvas.number,
+                    touched: canvas.touched,
+                    created: canvas.created,
+                    archived: canvas.archived,
+                    labels: canvas.labels.clone(),
+                    agent: None,
+                }
+            }
             Kind::App => unreachable!("an app is no project's entry"),
         }
     }
@@ -469,15 +540,26 @@ impl Project {
             Kind::Board => {
                 let board = self.boards[ix].board.read(cx);
                 match board.description.is_empty() {
-                    false => artifact::text::preview(&board.description),
+                    false => text::preview(&board.description),
                     true => board
                         .newest_card()
-                        .map(|card| artifact::text::preview(&card.text))
+                        .map(|card| text::preview(&card.text))
                         .unwrap_or_default(),
                 }
             }
             Kind::Article => self.articles[ix].preview().to_owned(),
             Kind::Table => String::new(),
+            Kind::Canvas => self.canvases[ix]
+                .canvas
+                .read(cx)
+                .record
+                .document
+                .nodes
+                .iter()
+                .filter_map(|node| node.text.as_deref())
+                .map(text::preview)
+                .collect::<Vec<_>>()
+                .join(" "),
             Kind::App => unreachable!("an app is no project's entry"),
         }
     }
@@ -489,6 +571,7 @@ impl Project {
             Showing::Board(id) => self.board_ix(id),
             Showing::Article(id) => self.article_ix(id),
             Showing::Table(key) => self.table_ix(key),
+            Showing::Canvas(id) => self.canvas_ix(id),
         }
     }
 
@@ -500,6 +583,16 @@ impl Project {
     /// Where the article with `id` is listed.
     pub fn article_ix(&self, id: &str) -> Option<usize> {
         self.articles.iter().position(|article| article.id == id)
+    }
+
+    pub fn canvas_ix(&self, id: &str) -> Option<usize> {
+        self.canvases.iter().position(|held| held.id == id)
+    }
+
+    pub fn entries<'a>(&'a self, cx: &'a App) -> impl Iterator<Item = Facts> + 'a {
+        Kind::ALL
+            .into_iter()
+            .flat_map(move |kind| self.every(kind, cx))
     }
 
     /// Where the table with `key` is listed.

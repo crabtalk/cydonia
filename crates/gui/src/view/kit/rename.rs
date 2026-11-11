@@ -5,10 +5,11 @@
 use crate::{
     model::{
         session::ChatSession,
-        workspace::{Showing, Workspace},
+        workspace::{Entry, Showing, Workspace},
     },
     view::sidebar::{Group, Row},
 };
+use artifact::kind::Kind;
 use bezel::{
     gpui::{
         self, App, Context, Entity, EventEmitter, FocusHandle, Focusable, KeyBinding, MouseButton,
@@ -49,6 +50,7 @@ pub(crate) enum NameEvent {
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) enum Renaming {
     Session(u64),
+    Canvas(Entry),
     Table(String),
     /// A space, by its id — auto-named `space-1` until someone gives it a
     /// name of their own.
@@ -69,6 +71,14 @@ impl Renaming {
                 showing: Showing::Table(key),
                 ..
             } => Some(Self::Table(key.clone())),
+            Row::Entry {
+                project,
+                showing: Showing::Canvas(id),
+            } => Some(Self::Canvas(Entry {
+                project: *project,
+                kind: Kind::Canvas,
+                id: id.clone(),
+            })),
             Row::Group(Group::Space(id)) => Some(Self::Space(id.clone())),
             Row::Group(Group::Agent(id)) => Some(Self::Agent(id.clone())),
             Row::Entry {
@@ -87,6 +97,10 @@ impl Renaming {
             Self::Session(id) => workspace
                 .session(*id, cx)
                 .map(ChatSession::label)
+                .unwrap_or_default(),
+            Self::Canvas(entry) => workspace
+                .canvas_entity(entry)
+                .map(|canvas| canvas.read(cx).record.label().to_owned())
                 .unwrap_or_default(),
             Self::Table(key) => workspace
                 .projects
@@ -115,6 +129,7 @@ impl Renaming {
     ) {
         match self {
             Self::Session(id) => workspace.rename_session(id, name, cx),
+            Self::Canvas(entry) => workspace.rename_canvas(&entry, name, cx),
             Self::Table(key) => workspace.rename_table(&key, name, cx),
             Self::Space(id) => workspace.rename_space(&id, name, cx),
             Self::Agent(id) => workspace.rename_identity(&id, name, cx),

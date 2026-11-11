@@ -142,7 +142,7 @@ impl Cydonia {
                         down: scroll.down.offset(),
                     }
                 }
-                Showing::Table(_) => return None,
+                Showing::Table(_) | Showing::Canvas(_) => return None,
             })
         });
         Stop {

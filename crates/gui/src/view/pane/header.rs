@@ -86,7 +86,7 @@ impl Cydonia {
             Showing::Session(_) => Naming::Inline,
             Showing::Board(id) => Naming::Panel(id),
             Showing::Article(_) => Naming::Page,
-            Showing::Table(_) => Naming::Inline,
+            Showing::Table(_) | Showing::Canvas(_) => Naming::Inline,
         };
         Some(Toolbar {
             title: facts.label,

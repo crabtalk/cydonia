@@ -9,18 +9,19 @@
 //! the whole lookup, and a board handed back can be written again from its id
 //! alone.
 
-use super::layout;
-#[cfg(feature = "sqlite")]
-use crate::entry;
 use crate::{
     article::{self, Article, comments::Comments, properties::Properties},
     board::{self, Board, key},
-    document, id,
+    canvas::{self as canvas_artifact, Canvas},
+    document, entry, id,
     kind::Kind,
+    project::{self, Project as _, layout},
     session::record::Record,
     stamp,
 };
 use anyhow::Result;
+#[cfg(feature = "sqlite")]
+use canvas::model::Canvas as CanvasDocument;
 use notify::{RecursiveMode, Watcher as _};
 use std::{
     cmp::Reverse,
@@ -168,11 +169,11 @@ impl Project {
         if board.id.is_empty() {
             board.id = stem(dir);
         }
-        board.description_version = Some(version(description.as_bytes()));
+        board.description_version = Some(project::version(description.as_bytes()));
         board.description = description;
         board.touched = touched;
         board.created = stamp::named(&stem(dir));
-        board.version = Some(version(body.as_bytes()));
+        board.version = Some(project::version(body.as_bytes()));
         Some(board)
     }
 
@@ -302,7 +303,7 @@ impl Project {
         }
         std::fs::create_dir_all(&cards_dir)?;
         let structure = layout::board_toml(board)?;
-        let structure_version = version(structure.as_bytes());
+        let structure_version = project::version(structure.as_bytes());
         let mut lock = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
@@ -316,7 +317,7 @@ impl Project {
         let theirs = board
             .version
             .as_ref()
-            .is_some_and(|seen| *seen != version(held.as_bytes()));
+            .is_some_and(|seen| *seen != project::version(held.as_bytes()));
         if ours && theirs {
             return Err(crate::error::Error::Stale.into());
         }
@@ -352,12 +353,12 @@ impl Project {
             ));
         }
         let described = document::content(&dir);
-        let description_version = version(board.description.as_bytes());
+        let description_version = project::version(board.description.as_bytes());
         let describes = board.description_version.as_deref() != Some(description_version.as_str());
         if describes
             && let Some(seen) = &board.description_version
             && *seen
-                != version(
+                != project::version(
                     std::fs::read_to_string(&described)
                         .unwrap_or_default()
                         .as_bytes(),
@@ -485,11 +486,79 @@ impl Project {
         let path = match kind {
             Kind::Article => self.article_file(id).ok()?.parent()?.to_path_buf(),
             Kind::Board => self.board_dir(component(id).ok()?),
+            Kind::Canvas => self.canvas_file(id).ok()?.parent()?.to_path_buf(),
             Kind::Session => self.session_file(component(id).ok()?),
             Kind::Table => return None,
             Kind::App => return None,
         };
         path.exists().then_some(path)
+    }
+
+    #[cfg(feature = "sqlite")]
+    pub fn import_canvas(&self, source: &Path) -> Result<Canvas> {
+        let mut bundle = canvas_artifact::bundle::Bundle::read(source)?;
+        let title = source.file_stem().unwrap_or_default().to_string_lossy();
+        let mut canvas = self.create_canvas(&title, &bundle.document)?;
+        let result = (|| {
+            let relative = Path::new(DIR)
+                .join(canvas_artifact::DIR)
+                .join(&canvas.id)
+                .join("assets");
+            bundle.write_assets(&self.root, &relative)?;
+            canvas.document = bundle.document;
+            self.save_canvas(&mut canvas)?;
+            Ok(canvas.clone())
+        })();
+        if result.is_err() {
+            let _ = self.remove_canvas(&canvas.id);
+        }
+        result
+    }
+
+    pub fn canvas_file(&self, id: &str) -> Result<PathBuf> {
+        Ok(self
+            .cydonia()
+            .join(canvas_artifact::DIR)
+            .join(component(id)?)
+            .join(canvas_artifact::FILE))
+    }
+
+    pub fn canvas_files(&self) -> Vec<(String, PathBuf)> {
+        let Ok(entries) = std::fs::read_dir(self.cydonia().join(canvas_artifact::DIR)) else {
+            return Vec::new();
+        };
+        entries
+            .flatten()
+            .filter_map(|entry| {
+                let content = entry.path().join(canvas_artifact::FILE);
+                content
+                    .is_file()
+                    .then(|| (entry.file_name().to_string_lossy().into_owned(), content))
+            })
+            .collect()
+    }
+
+    fn canvas_lock(&self, id: &str) -> Result<std::fs::File> {
+        let dir = self.cydonia().join(canvas_artifact::DIR);
+        std::fs::create_dir_all(&dir)?;
+        let lock = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(dir.join(format!(".{}.lock", component(id)?)))?;
+        lock.lock()?;
+        Ok(lock)
+    }
+
+    fn read_canvas(&self, id: &str) -> Option<Canvas> {
+        let file = self.canvas_file(id).ok()?;
+        let mut canvas: Canvas = std::fs::read_to_string(&file).ok()?.parse().ok()?;
+        canvas.id = id.to_owned();
+        canvas.created = stamp::named(id);
+        canvas.touched = stamp::of(&file);
+        canvas.number = self.number(Kind::Canvas, id).ok();
+        Some(canvas)
     }
 
     /// The `content.md` of an article that is here.
@@ -657,6 +726,68 @@ impl super::Project for Project {
         self.retire(Kind::Session, id)
     }
 
+    fn canvases(&self) -> Vec<Canvas> {
+        let mut canvases: Vec<_> = self
+            .canvas_files()
+            .into_iter()
+            .filter_map(|(id, _)| self.read_canvas(&id))
+            .collect();
+        canvases.sort_by_key(|canvas| Reverse(canvas.touched));
+        canvases
+    }
+
+    fn canvas(&self, id: &str) -> Option<Canvas> {
+        self.read_canvas(id)
+    }
+
+    fn create_canvas(&self, title: &str, document: &CanvasDocument) -> super::Result<Canvas> {
+        let dir = self.init()?.join(canvas_artifact::DIR);
+        std::fs::create_dir_all(&dir)?;
+        let mut next = stamp::now();
+        let id = loop {
+            let id = stamp::free(next, |id| dir.join(id).exists());
+            match std::fs::create_dir(dir.join(&id)) {
+                Ok(()) => break id,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => next += 1,
+                Err(error) => return Err(error.into()),
+            }
+        };
+        let mut canvas = Canvas::new(id, title, document.clone());
+        canvas.number = Some(self.number(Kind::Canvas, &canvas.id)?);
+        self.save_canvas(&mut canvas)?;
+        Ok(canvas)
+    }
+
+    fn save_canvas(&self, canvas: &mut Canvas) -> super::Result<()> {
+        let file = self.canvas_file(&canvas.id)?;
+        let _lock = self.canvas_lock(&canvas.id)?;
+        if let Some(seen) = &canvas.version {
+            let held = match std::fs::read(&file) {
+                Ok(held) => held,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    return Err(crate::error::Error::Stale);
+                }
+                Err(error) => return Err(error.into()),
+            };
+            if *seen != project::version(&held) {
+                return Err(crate::error::Error::Stale);
+            }
+        }
+        canvas.labels = crate::label::normalize_all(&canvas.labels);
+        let body = canvas.to_string();
+        crate::fs::save(&file, &body)?;
+        canvas.version = Some(project::version(body.as_bytes()));
+        canvas.touched = stamp::of(&file);
+        Ok(())
+    }
+
+    fn remove_canvas(&self, id: &str) -> super::Result<()> {
+        let file = self.canvas_file(id)?;
+        let _lock = self.canvas_lock(id)?;
+        std::fs::remove_dir_all(file.parent().expect("a canvas file has a directory"))?;
+        self.retire(Kind::Canvas, id)
+    }
+
     fn articles(&self) -> Vec<Article> {
         let Ok(entries) = std::fs::read_dir(article::dir(&self.root)) else {
             return Vec::new();
@@ -818,7 +949,7 @@ pub fn ours(dir: &Path, path: &Path) -> bool {
         return false;
     }
     let head = head.as_os_str().to_string_lossy();
-    if head == article::DIR || head == BOARDS {
+    if head == article::DIR || head == BOARDS || head == canvas_artifact::DIR {
         return true;
     }
     // The database, and the log a commit actually lands in — it runs in WAL,
@@ -843,16 +974,6 @@ fn cover_url(_: &Path) -> Option<Url> {
     None
 }
 
-/// What a file held, as the version a save is checked against: a hash of the
-/// bytes, so every build of cydonia reading one file agrees on it.
-pub(crate) fn version(bytes: &[u8]) -> String {
-    use sha2::{Digest, Sha256};
-    Sha256::digest(bytes)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
-}
-
 /// An id or asset name as one path component, refused where it would reach
 /// outside the directory it names something in.
 pub(crate) fn component(name: &str) -> Result<&str> {
@@ -875,7 +996,7 @@ fn read_card_files(content: &Path) -> Option<(String, String)> {
 
 /// What a card's two files hold, as one version.
 fn card_version(text: &str, properties: &str) -> String {
-    version(format!("{text}\0{properties}").as_bytes())
+    project::version(format!("{text}\0{properties}").as_bytes())
 }
 
 /// A board id no directory or flat file under `dir` is using.

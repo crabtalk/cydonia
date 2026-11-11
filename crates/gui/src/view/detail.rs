@@ -18,7 +18,7 @@ use crate::{
         pane::Edge,
         window::{
             chrome,
-            root::{self, Cydonia, NewArticle, NewBoard, NewSession, NewTable},
+            root::{self, Cydonia, NewArticle, NewBoard, NewCanvas, NewSession, NewTable},
         },
     },
 };
@@ -1073,6 +1073,7 @@ impl Cydonia {
             let (id, chord) = match kind {
                 New::Board => ("board", keys::shortcut(&NewBoard, window)),
                 New::Article => ("article", keys::shortcut(&NewArticle, window)),
+                New::Canvas => ("canvas", keys::shortcut(&NewCanvas, window)),
                 New::Table => ("table", keys::shortcut(&NewTable, window)),
                 New::Session(_) => continue,
             };
@@ -1086,6 +1087,7 @@ impl Cydonia {
                     move |this, _, window, cx| match kind {
                         New::Board => this.ask_new_board(ix, window, cx),
                         New::Article => this.new_article(ix, window, cx),
+                        New::Canvas => this.new_canvas(ix, window, cx),
                         New::Table => this.new_table(ix, window, cx),
                         New::Session(_) => {}
                     },

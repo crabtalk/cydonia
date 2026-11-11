@@ -77,6 +77,14 @@ struct Current(WeakEntity<Workspace>);
 impl Global for Current {}
 
 impl Workspace {
+    /// Nothing for an entry without a number yet.
+    pub fn link_of(&self, project: ProjectId, showing: &Showing, cx: &App) -> Option<String> {
+        let project = self.project(project)?;
+        let number = project.facts(showing, cx)?.number?;
+        let name = reference::project_name(&project.path)?;
+        Some(reference::Reference::entry(Some(&name), number, None).link())
+    }
+
     /// Make this workspace the one [`resolve_in`] reads.
     pub fn install(this: &Entity<Self>, cx: &mut App) {
         cx.set_global(Current(this.downgrade()));
@@ -85,10 +93,19 @@ impl Workspace {
     /// The entry a reference names, or why it names none. A reference with
     /// no project is read in the active one.
     pub fn resolve(&self, text: &str, cx: &App) -> Result<Resolved, String> {
+        self.resolve_from(text, None, cx)
+    }
+
+    pub fn resolve_from(
+        &self,
+        text: &str,
+        home: Option<ProjectId>,
+        cx: &App,
+    ) -> Result<Resolved, String> {
         let Some(reference) = reference::parse(text) else {
             return Err(format!("{text} is not a reference"));
         };
-        let Some(project) = self.named_project(reference.project, None) else {
+        let Some(project) = self.named_project(reference.project, home) else {
             return Err(Error::NoProjectNamed {
                 name: reference.project.unwrap_or_default().to_owned(),
                 open: self.projects.iter().map(|open| open.path.clone()).collect(),
@@ -199,6 +216,13 @@ fn entry(project: &Project, number: u64, cx: &App) -> Option<(Showing, String)> 
                 .map(|held| held.board.read(cx))
                 .find(|board| board.number == Some(number))
                 .map(|board| (Showing::Board(board.id.clone()), board.name.clone()))
+        })
+        .or_else(|| {
+            project.canvases.iter().find_map(|held| {
+                let canvas = &held.canvas.read(cx).record;
+                (canvas.number == Some(number))
+                    .then(|| (Showing::Canvas(held.id.clone()), canvas.label().to_owned()))
+            })
         })
         .or_else(|| {
             project

@@ -1,5 +1,24 @@
 [
   {
+    "version": "0.2.10",
+    "date": "2026-11-11",
+    "summary": "Arrange text, images, links and project entries on canvases. Import and export JSON Canvas files, save PNG images, and let agents edit canvases through MCP tools.",
+    "new": [
+      "Create canvases as project entries and open them in panes, with text, file, link and group cards connected by labelled edges",
+      "Embed project entries with content-specific previews, and edit shared article text from the canvas",
+      "Choose plain text or document cards, adjust text sizes and colors, and group or arrange selections",
+      "Import and export JSON Canvas files with their local file assets, or export the full canvas or current viewport as a PNG at a chosen scale",
+      "Let agents create, read and edit canvases through MCP tools, with atomic edits and stale-version checks",
+      "Show or hide canvases from Settings › Features; canvases are on by default"
+    ],
+    "changed": [
+      "Use Bezel 0.2.25 from crates.io"
+    ],
+    "fixed": [
+      "Keep empty table cells clickable"
+    ]
+  },
+  {
     "version": "0.2.9",
     "date": "2026-11-02",
     "summary": "Agents can create and edit project tables. Browse commands by source, search across sources, and keep sidebar labels visible in narrow rows.",

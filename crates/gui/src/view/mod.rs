@@ -5,6 +5,7 @@
 pub mod app;
 pub mod article;
 pub mod board;
+pub mod canvas;
 pub mod component;
 pub mod detail;
 pub mod keymap;

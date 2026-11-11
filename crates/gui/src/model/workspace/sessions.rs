@@ -44,15 +44,6 @@ impl Workspace {
         self.session(id, cx)?.turn_link(from, to)
     }
 
-    /// How a session is written as a reference, `project#43`: its project's
-    /// directory name and its entry number. Nothing before it has a number.
-    pub fn link_of_session(&self, id: u64, cx: &App) -> Option<String> {
-        let project = &self.projects[self.project_of(id)?];
-        let number = project.session(id, cx)?.number?;
-        let name = artifact::reference::project_name(&project.path)?;
-        Some(artifact::reference::Reference::entry(Some(&name), number, None).link())
-    }
-
     /// [`Self::new_session`] in the project at `ix` rather than the active one.
     /// `front` puts it in front of its project; without it, whatever the
     /// window shows stays put.
