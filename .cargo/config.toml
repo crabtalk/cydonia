@@ -2,18 +2,3 @@
 # Read by cl.exe and clang-cl only. The wasmtime C API headers otherwise mark
 # their symbols dllimport, and tree-sitter links them statically (LNK4217).
 CL = "-DLIBWASM_STATIC"
-
-[patch.crates-io]
-bezel = { path = "../bezel/crates/bezel" }
-bezel-agent = { path = "../bezel/crates/agent" }
-bezel-browser = { path = "../bezel/crates/browser" }
-bezel-canvas = { path = "../bezel/crates/canvas" }
-bezel-editor = { path = "../bezel/crates/editor" }
-bezel-icons = { path = "../bezel/crates/icons" }
-bezel-markdown = { path = "../bezel/crates/markdown" }
-bezel-mermaid = { path = "../bezel/crates/mermaid" }
-bezel-motion = { path = "../bezel/crates/motion" }
-bezel-syntax = { path = "../bezel/crates/syntax" }
-bezel-terminal = { path = "../bezel/crates/terminal" }
-bezel-theme = { path = "../bezel/crates/theme" }
-bezel-ui = { path = "../bezel/crates/ui" }
