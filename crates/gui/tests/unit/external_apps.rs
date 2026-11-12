@@ -158,3 +158,16 @@ fn a_single_app_leaves_nothing_to_pick(cx: &mut gpui::TestAppContext) {
 
     assert!(visual.debug_bounds("file-open-with").is_none());
 }
+
+#[gpui::test]
+fn application_lists_are_shared_by_normalized_extension(cx: &mut gpui::TestAppContext) {
+    let (first, second, files) = cx.update(|cx| {
+        (
+            Applications::get("PNG", true, cx),
+            Applications::get("png", true, cx),
+            Applications::get("png", false, cx),
+        )
+    });
+    assert_eq!(first.entity_id(), second.entity_id());
+    assert_ne!(first.entity_id(), files.entity_id());
+}

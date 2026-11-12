@@ -3,15 +3,20 @@ use crate::model::settings::{self, OpenWith, Opener, Opens};
 use anyhow::{Context as _, Result, bail};
 #[cfg(target_os = "macos")]
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use bezel::gpui::{App, Div, ElementId, Stateful};
 use bezel::{
+    gpui::{App, Context, Div, ElementId, Entity, Global, Stateful, Task},
     theme::ControlSize,
     ui::{icons, popover, tooltip::Tooltip},
 };
 use std::{
+    collections::HashMap,
     process::Command,
+    rc::Rc,
     sync::{Arc, RwLock},
+    time::{Duration, Instant},
 };
+
+const APPLICATION_CACHE_AGE: Duration = Duration::from_secs(60);
 
 /// `settings.open_with`, held for the buttons, which are built without the
 /// workspace in reach.
@@ -510,6 +515,69 @@ pub(crate) fn app_row(
             cx.stop_propagation();
             open(window, cx);
         })
+}
+
+#[derive(Default)]
+struct ApplicationLists(HashMap<(String, bool), Entity<Applications>>);
+impl Global for ApplicationLists {}
+
+pub(crate) struct Applications {
+    pub(crate) apps: Option<Rc<Vec<Application>>>,
+    extension: String,
+    pictures: bool,
+    listed: Option<Instant>,
+    loading: Option<Task<()>>,
+}
+
+impl Applications {
+    pub(crate) fn get(extension: &str, pictures: bool, cx: &mut App) -> Entity<Self> {
+        let key = (extension.to_ascii_lowercase(), pictures);
+        if let Some(apps) = cx.default_global::<ApplicationLists>().0.get(&key).cloned() {
+            apps.update(cx, |apps, cx| apps.refresh(cx));
+            return apps;
+        }
+        let extension = key.0.clone();
+        let apps = cx.new(|cx: &mut Context<Self>| {
+            let mut apps = Self {
+                apps: None,
+                extension,
+                pictures,
+                listed: None,
+                loading: None,
+            };
+            apps.refresh(cx);
+            apps
+        });
+        cx.default_global::<ApplicationLists>()
+            .0
+            .insert(key, apps.clone());
+        apps
+    }
+
+    pub(crate) fn refresh(&mut self, cx: &mut Context<Self>) {
+        if self.loading.is_some()
+            || self
+                .listed
+                .is_some_and(|at| at.elapsed() < APPLICATION_CACHE_AGE)
+        {
+            return;
+        }
+        let extension = self.extension.clone();
+        let pictures = self.pictures;
+        self.loading = Some(cx.spawn(async move |this, cx| {
+            let apps = cx
+                .background_executor()
+                .spawn(async move { listed_for(&extension, pictures) })
+                .await
+                .unwrap_or_default();
+            let _ = this.update(cx, |this, cx| {
+                this.apps = Some(Rc::new(apps));
+                this.listed = Some(Instant::now());
+                this.loading = None;
+                cx.notify();
+            });
+        }));
+    }
 }
 
 /// The applications that open a file of kind `extension`, and those that open

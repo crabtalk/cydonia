@@ -4,12 +4,12 @@
 use crate::{
     model::settings::Opens,
     view::{
-        component::file::external::{self, Application},
+        component::file::external::{self, Application, Applications},
         settings::{SettingsWindow, group, labelled, lead},
     },
 };
 use bezel::{
-    gpui::{AnyElement, Context, SharedString, div, prelude::*, px},
+    gpui::{AnyElement, Context, SharedString, Subscription, div, prelude::*, px},
     theme::{TextStyle, Theme, Typeset},
     ui::{
         icons,
@@ -60,6 +60,7 @@ pub(super) struct Listed {
     open: Option<Opens>,
     /// Whether the unfolded opener's hidden applications are unfolded too.
     hidden_open: bool,
+    _watch: Vec<Subscription>,
 }
 
 impl Listed {
@@ -83,23 +84,21 @@ impl Listed {
 
 impl SettingsWindow {
     /// List both openers' applications off the main thread.
-    pub(super) fn list_apps(cx: &mut Context<Self>) {
+    pub(super) fn list_apps(cx: &mut Context<Self>) -> Listed {
+        let mut listed = Listed::default();
         for opens in Opens::ALL {
-            cx.spawn(async move |this, cx| {
-                let listed = cx
-                    .background_executor()
-                    .spawn(
-                        async move { external::listed_for(probe(opens), opens == Opens::Pictures) },
-                    )
-                    .await
-                    .unwrap_or_default();
-                let _ = this.update(cx, |this, cx| {
-                    this.apps.set(opens, listed);
+            let apps = Applications::get(probe(opens), opens == Opens::Pictures, cx);
+            if let Some(apps) = &apps.read(cx).apps {
+                listed.set(opens, apps.as_ref().clone());
+            }
+            listed._watch.push(cx.observe(&apps, move |this, apps, cx| {
+                if let Some(apps) = &apps.read(cx).apps {
+                    this.apps.set(opens, apps.as_ref().clone());
                     cx.notify();
-                });
-            })
-            .detach();
+                }
+            }));
         }
+        listed
     }
 
     /// `Open with`: a row per opener naming its default, unfolding into its

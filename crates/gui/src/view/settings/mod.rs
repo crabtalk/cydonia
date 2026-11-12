@@ -414,7 +414,7 @@ impl SettingsWindow {
             let current = workspace.read(cx).theme(appearance);
             Self::theme_family_picker(appearance, current, cx)
         });
-        Self::list_apps(cx);
+        let apps = Self::list_apps(cx);
         let mut this = SettingsWindow {
             drag: Default::default(),
             workspace,
@@ -442,7 +442,7 @@ impl SettingsWindow {
             mono_font,
             light_theme,
             dark_theme,
-            apps: Default::default(),
+            apps,
             #[cfg(not(target_os = "linux"))]
             browser_data: Default::default(),
             #[cfg(not(target_os = "linux"))]

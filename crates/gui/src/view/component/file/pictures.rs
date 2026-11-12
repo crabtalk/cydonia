@@ -7,10 +7,15 @@
 //! keeps pointing at the web. A picture on disk is watched once it is
 //! handed over, and repainted when the other application saves it.
 
-use super::external::{self, Application, Target};
-use crate::model::{settings::Opens, watch, workspace::Workspace};
+use crate::{
+    model::{settings::Opens, workspace::Workspace},
+    view::component::file::{
+        external::{self, Application, Applications, Target},
+        picture::Picture,
+    },
+};
 use bezel::{
-    gpui::{self, AnyElement, App, Context, Entity, Task, WeakEntity, prelude::*, px},
+    gpui::{AnyElement, Context, Entity, Subscription, WeakEntity, prelude::*, px},
     theme::{ControlSize, Theme},
     ui::{popover, widgets::Buttons as _},
 };
@@ -18,7 +23,6 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     rc::Rc,
-    time::SystemTime,
 };
 
 /// Where a picture fetched off the web is kept.
@@ -30,14 +34,6 @@ pub(crate) enum Assets {
     Dir(PathBuf),
 }
 
-/// Each picture on disk as gpui's asset cache last decoded it, by path. App
-/// wide, like that cache: a document drawn after a save finds the picture
-/// cached as it was before it.
-#[derive(Default)]
-struct Loaded(HashMap<PathBuf, Option<Stamp>>);
-
-impl gpui::Global for Loaded {}
-
 pub(crate) struct Pictures {
     /// The directory a relative picture path is joined onto.
     base: PathBuf,
@@ -46,15 +42,14 @@ pub(crate) struct Pictures {
     pub(crate) error: Option<String>,
     /// What opens a picture, by its lowercase extension. `None` while the
     /// list is being made.
-    apps: HashMap<String, Option<Rc<Vec<Application>>>>,
+    apps: HashMap<String, Entity<Applications>>,
+    _apps: Vec<Subscription>,
+    workspace: WeakEntity<Workspace>,
     /// The picture whose list of applications is open, by block.
     menu: popover::Popup<usize>,
     /// The document to point at a fetched copy, as one undo step.
     editor: Option<WeakEntity<editor::Editor>>,
-    /// Every picture on disk the document has drawn, polled for a save, and
-    /// its file as the poll last saw it.
-    watching: HashMap<PathBuf, Option<Stamp>>,
-    _poll: Task<()>,
+    watching: HashMap<PathBuf, (Entity<Picture>, Subscription)>,
 }
 
 /// A picture's kind, off the extension of its URL's path.
@@ -64,70 +59,26 @@ fn kind(url: &str) -> Option<String> {
 }
 
 impl Pictures {
-    /// Pictures are checked for a save every `workspace`'s watch delay.
     pub(crate) fn new(
         base: PathBuf,
         assets: Assets,
         workspace: WeakEntity<Workspace>,
-        cx: &mut Context<Self>,
+        _: &mut Context<Self>,
     ) -> Self {
-        let poll = cx.spawn(async move |this, cx| {
-            loop {
-                // Read per pass: moving the setting takes effect on the next.
-                let every = workspace
-                    .read_with(cx, |workspace, _| {
-                        watch::bounce(workspace.settings.watch_bounce)
-                    })
-                    .unwrap_or_else(|_| watch::bounce(watch::BOUNCE));
-                cx.background_executor().timer(every).await;
-                if this.update(cx, |this, cx| this.poll(cx)).is_err() {
-                    break;
-                }
-            }
-        });
         Self {
             base,
             assets,
             error: None,
             apps: HashMap::new(),
+            _apps: Vec::new(),
+            workspace,
             menu: popover::Popup::default(),
             editor: None,
             watching: HashMap::new(),
-            _poll: poll,
         }
     }
 
-    /// Reload each watched picture whose file changed and has since held
-    /// still for a poll — a save can take several writes.
-    fn poll(&mut self, cx: &mut Context<Self>) {
-        let mut changed = false;
-        for (path, last) in &mut self.watching {
-            let now = stamp(path);
-            if now != *last {
-                *last = now;
-                continue;
-            }
-            let loaded = &mut cx.default_global::<Loaded>().0;
-            if loaded.get(path) == Some(&now) {
-                continue;
-            }
-            loaded.insert(path.clone(), now);
-            let source = gpui::ImageSource::from(path.clone());
-            source.remove_asset(cx);
-            // Started now rather than at the next frame; the picture keeps
-            // its old image until this lands.
-            if let gpui::ImageSource::Resource(resource) = &source {
-                cx.fetch_asset::<gpui::ImgResourceLoader>(resource);
-            }
-            changed = true;
-        }
-        if changed {
-            cx.notify();
-        }
-    }
-
-    /// Start watching the picture at `url` if it is on disk.
-    fn watch(&mut self, url: &str, cx: &mut App) {
+    fn watch(&mut self, url: &str, cx: &mut Context<Self>) {
         if url.contains("://") {
             return;
         }
@@ -135,12 +86,9 @@ impl Pictures {
         if self.watching.contains_key(&path) {
             return;
         }
-        let now = stamp(&path);
-        cx.default_global::<Loaded>()
-            .0
-            .entry(path.clone())
-            .or_insert(now);
-        self.watching.insert(path, now);
+        let picture = Picture::open(path.clone(), self.workspace.clone(), cx);
+        let watch = cx.observe(&picture, |_, _, cx| cx.notify());
+        self.watching.insert(path, (picture, watch));
     }
 
     /// Point each picture fetched from here on in `editor` at its copy.
@@ -173,29 +121,17 @@ impl Pictures {
             if !pictures.read(cx).apps.contains_key(&kind) {
                 pictures.update(cx, |this, cx| this.list(kind.clone(), cx));
             }
-            let apps = pictures.read(cx).apps.get(&kind)?.clone()?;
+            let listed = pictures.read(cx).apps.get(&kind)?.clone();
+            listed.update(cx, |listed, cx| listed.refresh(cx));
+            let apps = listed.read(cx).apps.clone()?;
             pictures.update(cx, |this, cx| this.button(ix, url, apps, cx))
         })
     }
 
-    /// List what opens pictures of `kind`.
     fn list(&mut self, kind: String, cx: &mut Context<Self>) {
-        self.apps.insert(kind.clone(), None);
-        cx.spawn(async move |this, cx| {
-            let listed = cx
-                .background_executor()
-                .spawn({
-                    let kind = kind.clone();
-                    async move { external::listed_for(&kind, true) }
-                })
-                .await;
-            let _ = this.update(cx, |this, cx| {
-                let apps = listed.unwrap_or_default();
-                this.apps.insert(kind, Some(Rc::new(apps)));
-                cx.notify();
-            });
-        })
-        .detach();
+        let apps = Applications::get(&kind, true, cx);
+        self._apps.push(cx.observe(&apps, |_, _, cx| cx.notify()));
+        self.apps.insert(kind, apps);
     }
 
     /// Open the picture at `url` in `target`, fetching it first when it is on
@@ -243,14 +179,6 @@ impl Pictures {
         let local = local.to_string_lossy().into_owned();
         editor.update(cx, |editor, cx| editor.relink(url, &local, cx));
     }
-}
-
-/// What a save changes: when the file was written, and how long it is.
-type Stamp = (SystemTime, u64);
-
-fn stamp(path: &Path) -> Option<Stamp> {
-    let meta = std::fs::metadata(path).ok()?;
-    Some((meta.modified().ok()?, meta.len()))
 }
 
 /// Fetch the picture at `url` into `assets`, named for its bytes.

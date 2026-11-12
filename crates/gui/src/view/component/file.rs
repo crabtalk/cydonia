@@ -28,6 +28,7 @@ use std::{
 };
 
 pub(crate) mod external;
+mod picture;
 pub(crate) mod pictures;
 /// How long a keystroke waits before the file is parsed again. Every edit
 /// re-parses the whole file — the field holds text, not a syntax tree — so a
