@@ -149,7 +149,7 @@ impl CanvasView {
                 })
                 .with_snap(Snap {
                     grid: Some(20),
-                    guides: true,
+                    guides: false,
                 })
         });
         cx.observe(&source, |_, _, cx| cx.notify()).detach();
