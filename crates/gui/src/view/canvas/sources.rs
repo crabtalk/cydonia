@@ -1,7 +1,7 @@
 use crate::{
     model::workspace::{Slot, references},
     view::{
-        canvas::{CanvasView, embed},
+        canvas::{CanvasView, embed, image},
         component::file::external,
         kit::link::mention,
         sidebar::Dragged,
@@ -20,8 +20,12 @@ use url::Url;
 
 pub(crate) fn kinds(kinds: Kinds, root: PathBuf) -> Kinds {
     let file_root = root.clone();
+    let controls_root = root.clone();
     let file = kind::Kind::new(move |node, look, window, cx| {
         embed::render(node, look, &file_root, window, cx)
+    })
+    .controls(move |node, card, window, cx| {
+        image::Opener::for_node(node, card, &controls_root, window, cx)
     })
     .edit(
         kind::Field::new(

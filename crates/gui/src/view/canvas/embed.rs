@@ -4,6 +4,7 @@ use crate::{
         references::{self, Part},
     },
     view::{
+        canvas::image,
         component::file::{
             self,
             pictures::{Assets, Pictures},
@@ -14,14 +15,14 @@ use crate::{
 use artifact::{article::anchor, kind::Kind};
 use bezel::{
     gpui::{
-        self, App, AppContext as _, Context, Entity, ObjectFit, Render, SharedString, Subscription,
-        Task, Window, div, img, prelude::*, px,
+        self, App, AppContext as _, Context, Entity, Render, SharedString, Subscription, Task,
+        Window, div, prelude::*, px,
     },
     theme::{TextStyle, Theme, Typeset as _},
     ui::icons,
 };
 use canvas::{
-    kind::{self, Card, Chrome, Content, Look},
+    kind::{Card, Content, Look},
     model::Node,
 };
 use markdown::{AppExt as _, Editing};
@@ -56,12 +57,14 @@ pub(crate) fn render(
             .card
             .render(node, None, Content::Flow(editor), window, cx);
     }
+    if node.file.as_deref().is_some_and(markdown::is_image) {
+        return image::render(node, &look.card, root, window, cx);
+    }
     if let Some(file) = &node.file {
         let path = root.join(file);
-        if !markdown::is_image(file)
-            && !path
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
+        if !path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
         {
             let name = path.file_name().unwrap_or_default().to_string_lossy();
             let text = look.card.typography.body.size();
@@ -284,29 +287,6 @@ impl Embed {
 
 impl Render for Embed {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if let Some(file) = self
-            .node
-            .file
-            .as_ref()
-            .filter(|file| markdown::is_image(file))
-        {
-            let path = self.root.join(file);
-            let name = path.file_name().unwrap_or_default().to_string_lossy();
-            let overlay = Pictures::overlay(&self.pictures);
-            let tools = self
-                .card
-                .selected
-                .then(|| overlay(0, &name, window, cx))
-                .flatten();
-            return kind::chrome(Chrome::Bare, &self.node, self.card.zoom, cx)
-                .relative()
-                .overflow_hidden()
-                .child(img(path.clone()).size_full().object_fit(ObjectFit::Contain))
-                .children(
-                    tools.map(|tools| div().absolute().bottom(px(4.)).right(px(4.)).child(tools)),
-                )
-                .into_any_element();
-        }
         let mut title = self.node.file.clone().unwrap_or_default();
         let mut source = self.source.clone();
         let mut mark = icons::files::FileText.into();

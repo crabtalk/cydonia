@@ -38,6 +38,7 @@ use std::path::PathBuf;
 mod actions;
 mod embed;
 pub(crate) mod entry_picker;
+mod image;
 mod sources;
 mod transfer;
 
