@@ -42,8 +42,6 @@ use std::collections::HashMap;
 
 /// Between the controls in the strip.
 const BAR_GAP: f32 = 2.;
-/// The empty row a track of tabs stops short of the toggle by.
-const DRAG_ROOM: f32 = 32.;
 
 /// Which of the strip's menus is up.
 #[derive(Clone, PartialEq, Eq)]
@@ -367,11 +365,6 @@ impl Render for Strip {
                         })),
                 )
             })
-            // Empty row kept at the end, so the window can be taken by it
-            // however many tabs there are.
-            .child(match tracked {
-                true => div().flex_none().w(px(DRAG_ROOM)),
-                false => div().flex_1(),
-            })
+            .when(!tracked, |el| el.child(div().flex_1()))
     }
 }

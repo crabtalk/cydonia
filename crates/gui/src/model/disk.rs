@@ -7,6 +7,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+pub const TEXT_LIMIT: u64 = 256 * 1024;
+
 /// Where this build's project files are.
 #[cfg(feature = "desktop")]
 pub type Here = Disk;
@@ -22,6 +24,30 @@ pub trait Files {
     /// The file's bytes: at most `limit + 1` of them, so a read longer than
     /// `limit` says the file is.
     fn read(path: &Path, limit: u64) -> io::Result<Vec<u8>>;
+
+    fn read_text(path: &Path) -> anyhow::Result<String> {
+        let bytes = Self::read(path, TEXT_LIMIT)?;
+        anyhow::ensure!(
+            bytes.len() as u64 <= TEXT_LIMIT,
+            "Files larger than 256 KiB must be opened externally"
+        );
+        anyhow::ensure!(
+            !bytes.contains(&0),
+            "Binary files must be opened externally"
+        );
+        Ok(String::from_utf8(bytes)?)
+    }
+
+    fn resolve(path: &Path) -> PathBuf {
+        path.to_path_buf()
+    }
+
+    fn watch(
+        _path: &Path,
+        _knock: impl Fn() + Send + 'static,
+    ) -> Option<artifact::project::Watching> {
+        None
+    }
 
     /// Put `bytes` where `path` is. `check` runs before the file is replaced;
     /// an error from it, or a failed write, leaves the file as it was.
@@ -53,6 +79,45 @@ impl Files for Disk {
             .take(limit + 1)
             .read_to_end(&mut bytes)?;
         Ok(bytes)
+    }
+
+    fn resolve(path: &Path) -> PathBuf {
+        path.canonicalize().unwrap_or_else(|_| {
+            path.parent()
+                .and_then(|parent| parent.canonicalize().ok())
+                .zip(path.file_name())
+                .map_or_else(|| path.to_path_buf(), |(parent, name)| parent.join(name))
+        })
+    }
+
+    fn watch(
+        path: &Path,
+        knock: impl Fn() + Send + 'static,
+    ) -> Option<artifact::project::Watching> {
+        use notify::{RecursiveMode, Watcher as _};
+        let path = Self::resolve(path);
+        let parent = path.parent()?;
+        let watched = parent.ancestors().find(|dir| dir.is_dir())?;
+        let settled = watched == parent;
+        let target = path.clone();
+        let mut watcher =
+            notify::recommended_watcher(move |event: notify::Result<notify::Event>| match event {
+                Ok(event)
+                    if !event.kind.is_access()
+                        && (event.paths.is_empty()
+                            || event
+                                .paths
+                                .iter()
+                                .any(|path| path == &target || target.starts_with(path))) =>
+                {
+                    knock()
+                }
+                Err(_) => knock(),
+                _ => {}
+            })
+            .ok()?;
+        watcher.watch(watched, RecursiveMode::NonRecursive).ok()?;
+        Some(artifact::project::Watching::new(settled, watcher))
     }
 
     fn replace(
@@ -128,3 +193,7 @@ impl Files for Memory {
         Ok(())
     }
 }
+
+#[cfg(all(test, feature = "desktop"))]
+#[path = "../../tests/unit/file_watch.rs"]
+mod tests;

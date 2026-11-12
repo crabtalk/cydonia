@@ -30,6 +30,7 @@ image.workspace = true
 lru.workspace = true
 markdown.workspace = true
 mcp.workspace = true
+notify = { workspace = true, optional = true }
 portable-pty = { workspace = true, optional = true }
 process-wrap.workspace = true
 rusqlite = { workspace = true, optional = true }
@@ -66,6 +67,7 @@ desktop = [
     "cydonia-acp/client",
     "cydonia-acp/install",
     "dep:global-hotkey",
+    "dep:notify",
     "mcp/http",
     "dep:portable-pty",
     "dep:syntax",
