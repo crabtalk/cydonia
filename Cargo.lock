@@ -2361,6 +2361,7 @@ dependencies = [
  "bezel-terminal",
  "chrono",
  "cydonia-acp",
+ "cydonia-acp-events",
  "cydonia-artifact",
  "cydonia-guest",
  "cydonia-mcp",

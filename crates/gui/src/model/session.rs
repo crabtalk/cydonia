@@ -12,7 +12,7 @@
 //! the conversation up where it stopped.
 
 #[cfg(feature = "desktop")]
-use crate::agent::acp::{self, Event, Launch, Reply, Session};
+use crate::agent::acp::{self, Event, Launch, Session};
 #[cfg(feature = "desktop")]
 use crate::model::notify;
 #[cfg(feature = "desktop")]
@@ -24,16 +24,20 @@ use crate::model::{
 };
 #[cfg(feature = "desktop")]
 use anyhow::anyhow;
-use artifact::kind::Kind;
-use artifact::project::Project as _;
 #[cfg(feature = "desktop")]
 use artifact::session::chat::ToolStatus;
-use artifact::session::{
-    chat::{ChatItem, PlanStatus},
-    record::{ForkOrigin, Record},
+use artifact::{
+    kind::Kind,
+    project::Project as _,
+    session::{
+        chat::{ChatItem, PlanStatus},
+        record::{ForkOrigin, Record},
+    },
 };
-use bezel::agent::orbs::engine::Frame;
-use bezel::gpui::{App, Context, Task};
+use bezel::{
+    agent::orbs::engine::Frame,
+    gpui::{App, Context, Task},
+};
 #[cfg(feature = "desktop")]
 use cydonia_acp::proto::{
     ContentBlock, MaybeUndefined, PlanEntryStatus, RequestPermissionRequest,
@@ -42,6 +46,8 @@ use cydonia_acp::proto::{
 use cydonia_acp::proto::{
     PermissionOptionKind, SessionConfigOption, SessionConfigOptionValue, SessionModeState,
 };
+#[cfg(feature = "desktop")]
+use cydonia_acp_events::Reply;
 use std::{
     cell::RefCell,
     collections::{BTreeMap, VecDeque},

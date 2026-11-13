@@ -1,15 +1,9 @@
 //! One ACP session over a spawned agent subprocess.
 //!
-//! Two things here are load-bearing:
-//! - All agent-side events flow through ONE channel. cydonia-acp's read loop awaits
-//!   each notification before it reads the next frame, so a single channel
-//!   preserves the exact wire order (a turn's final updates arrive before its
-//!   result — separate channels lose that).
-//! - The connection runs on its own tokio runtime. cydonia-acp spawns its read and
-//!   write loops with `tokio::spawn`, and gpui's executor is smol's.
+//! ACP connections run on Tokio; GPUI uses a separate executor.
 
 use crate::{
-    agent::{mcp, serve},
+    agent::{context, mcp, path, serve},
     model::{
         media,
         session_preferences::{self, Choices},
@@ -18,7 +12,7 @@ use crate::{
 };
 use anyhow::{Result, anyhow};
 use cydonia_acp::{
-    AgentConn, Client, Direction, Error, Tap,
+    AgentConn, Direction, Error, Tap,
     client::{HistoryEntry, HistoryFork, HistoryRole},
     proto::{
         AuthenticateRequest, CancelNotification, ClientCapabilities, ContentBlock, EnvVariable,
@@ -26,17 +20,14 @@ use cydonia_acp::{
         LoadSessionRequest, McpServer, McpServerHttp, McpServerStdio, NewSessionRequest,
         NewSessionResponse, PromptRequest, ReadTextFileRequest, ReadTextFileResponse,
         RequestPermissionRequest, RequestPermissionResponse, SessionConfigOptionValue, SessionId,
-        SessionNotification, SessionUpdate, SetSessionConfigOptionRequest, SetSessionModeRequest,
-        StopReason, WriteTextFileRequest, WriteTextFileResponse,
+        SessionUpdate, SetSessionConfigOptionRequest, SetSessionModeRequest, StopReason,
+        WriteTextFileResponse,
     },
 };
-use std::process::Stdio;
-
-/// `CREATE_NO_WINDOW` from the Win32 process creation flags.
-#[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+use cydonia_acp_events::{self as acp_events, Reply};
 use std::{
     path::PathBuf,
+    process::Stdio,
     sync::{Arc, OnceLock},
     time::Duration,
 };
@@ -46,6 +37,18 @@ use tokio::{
     runtime::Runtime,
     sync::{Mutex, mpsc, oneshot},
 };
+
+#[cfg(test)]
+#[path = "../../tests/unit/acp_proxy.rs"]
+mod proxy_tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/acp_events.rs"]
+mod event_tests;
+
+/// `CREATE_NO_WINDOW` from the Win32 process creation flags.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// Where the protocol tap writes, and the switch that echoes an agent's stderr
 /// to ours on the way past — it reaches the transcript either way.
@@ -78,7 +81,7 @@ pub fn runtime() -> &'static Runtime {
     RUNTIME.get_or_init(|| Runtime::new().expect("failed to start the tokio runtime"))
 }
 
-/// Everything the agent side feeds into the frontend, in wire order.
+/// Protocol updates and process events for the frontend.
 pub enum Event {
     Update(SessionUpdate),
     /// The agent asks the user to authorize a tool call.
@@ -112,22 +115,13 @@ pub fn channel() -> (Sender, Events) {
     mpsc::unbounded_channel()
 }
 
-/// The answer half of a request the frontend has to make. Dropping it
-/// declines the request rather than hanging the agent.
-pub struct Reply<T>(oneshot::Sender<Result<T, Error>>);
-
-impl<T> Reply<T> {
-    pub fn send(self, value: T) {
-        let _ = self.0.send(Ok(value));
-    }
-}
-
 /// A live session: the connection, its identity, and the agent process.
 pub struct Session {
     /// `Some` for the whole of a session's life — emptied only by
     /// [`Session::drop`], which has to take it to close it before the process.
     conn: Option<AgentConn>,
     tx: mpsc::UnboundedSender<Event>,
+    bridge: Bridge,
     /// The agent process. Held in an `Option` for the same reason as `conn`.
     child: Option<Child>,
     pub session_id: SessionId,
@@ -173,7 +167,7 @@ impl Session {
     /// replays that session's history instead of starting fresh; a failed
     /// load (stale id, agent restart) falls back to a new session.
     pub async fn spawn(entry: &settings::Agent, launch: Launch, tx: Sender) -> Result<Self> {
-        let mut command = Command::new(super::path::program(&entry.command));
+        let mut command = Command::new(path::program(&entry.command));
         command.args(&entry.args).envs(&entry.env);
         // A console program started from a GUI process opens a console window
         // of its own on Windows.
@@ -206,20 +200,22 @@ impl Session {
 
         let configured = mcp::servers();
 
-        let (conn, mut child) =
-            cydonia_acp::spawn(&mut command, Arc::new(Frontend(tx.clone())), debug_tap())
-                .map_err(|e| anyhow!("failed to start {}: {}", entry.command, error_text(&e)))?;
+        let (client, events) = acp_events::channel();
+        let (conn, mut child) = cydonia_acp::spawn(&mut command, client, debug_tap())
+            .map_err(|e| anyhow!("failed to start {}: {}", entry.command, error_text(&e)))?;
         if let Some(stderr) = child.stderr.take() {
             runtime().spawn(drain(stderr, tx.clone()));
         }
 
-        Self::open(conn, child, tx, launch, configured).await
+        let bridge = Bridge::spawn(events, tx.clone());
+        Self::open(conn, child, tx, bridge, launch, configured).await
     }
 
     async fn open(
         conn: AgentConn,
         child: Child,
         tx: mpsc::UnboundedSender<Event>,
+        bridge: Bridge,
         launch: Launch,
         configured: Vec<mcp::McpServer>,
     ) -> Result<Self> {
@@ -344,6 +340,7 @@ impl Session {
         let mut session = Self {
             conn: Some(conn),
             tx,
+            bridge,
             child: Some(child),
             session_id: response.session_id.clone(),
             init,
@@ -354,6 +351,7 @@ impl Session {
             history_fork,
         };
         session.restore_choices(&launch.choices).await?;
+        session.bridge.flush().await;
         Ok(session)
     }
 
@@ -454,7 +452,7 @@ impl Session {
             true => media::attached(content),
             false => Vec::new(),
         };
-        let mut blocks = super::context::prompt(
+        let mut blocks = context::prompt(
             &self.cwd,
             number,
             article,
@@ -466,6 +464,7 @@ impl Session {
         let conn = self.conn();
         let tx = self.tx.clone();
         let history_fork = self.history_fork.clone();
+        let bridge = self.bridge.clone();
         runtime().spawn(async move {
             if !pictures.is_empty() {
                 let images = tokio::task::spawn_blocking(move || {
@@ -493,6 +492,7 @@ impl Session {
                 Some(fork) => fork.lock().await.prompt(request).await,
                 None => conn.prompt(request).await,
             };
+            bridge.flush().await;
             let done = result.map(|response| response.stop_reason);
             let _ = tx.send(Event::TurnDone(done));
         });
@@ -567,40 +567,57 @@ pub fn history(items: &[artifact::session::chat::ChatItem]) -> Vec<HistoryEntry>
         .collect()
 }
 
-/// Serves what the agent asks of us: file access answered here, anything
-/// the user has to see queued for the frontend.
-struct Frontend(mpsc::UnboundedSender<Event>);
+#[derive(Clone)]
+struct Bridge(mpsc::UnboundedSender<oneshot::Sender<()>>);
 
-impl Client for Frontend {
-    async fn session_update(&self, notification: SessionNotification) {
-        let _ = self.0.send(Event::Update(notification.update));
+impl Bridge {
+    fn spawn(mut events: acp_events::Events, tx: Sender) -> Self {
+        let (flush, mut barriers) = mpsc::unbounded_channel::<oneshot::Sender<()>>();
+        runtime().spawn(async move {
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = tx.closed() => break,
+                    event = events.recv() => match event {
+                        Some(acp_events::Event::Update(notification)) => {
+                            let _ = tx.send(Event::Update(notification.update));
+                        }
+                        Some(acp_events::Event::Permission(request, reply)) => {
+                            let _ = tx.send(Event::Permission(request, reply));
+                        }
+                        Some(acp_events::Event::ReadTextFile(request, reply)) => {
+                            match read_text_file(&request) {
+                                Ok(response) => reply.send(response),
+                                Err(error) => reply.fail(error),
+                            }
+                        }
+                        Some(acp_events::Event::WriteTextFile(request, reply)) => {
+                            match std::fs::write(&request.path, &request.content) {
+                                Ok(()) => reply.send(WriteTextFileResponse::default()),
+                                Err(error) => reply.fail(io_error(&request.path, &error)),
+                            }
+                        }
+                        Some(_) => {}
+                        None => {
+                            let _ = tx.send(Event::Closed);
+                            break;
+                        }
+                    },
+                    Some(reply) = barriers.recv() => {
+                        let _ = reply.send(());
+                    }
+                }
+            }
+        });
+        Self(flush)
     }
 
-    async fn request_permission(
-        &self,
-        request: RequestPermissionRequest,
-    ) -> Result<RequestPermissionResponse, Error> {
+    // Responses can arrive before this task forwards their preceding notifications.
+    async fn flush(&self) {
         let (tx, rx) = oneshot::channel();
-        self.0
-            .send(Event::Permission(request, Reply(tx)))
-            .map_err(|_| Error::internal_error().data("the frontend is gone"))?;
-        rx.await.unwrap_or_else(|_| Err(Error::method_not_found()))
-    }
-
-    async fn read_text_file(
-        &self,
-        request: ReadTextFileRequest,
-    ) -> Result<ReadTextFileResponse, Error> {
-        read_text_file(&request)
-    }
-
-    async fn write_text_file(
-        &self,
-        request: WriteTextFileRequest,
-    ) -> Result<WriteTextFileResponse, Error> {
-        std::fs::write(&request.path, &request.content)
-            .map(|()| WriteTextFileResponse::default())
-            .map_err(|e| io_error(&request.path, &e))
+        if self.0.send(tx).is_ok() {
+            let _ = rx.await;
+        }
     }
 }
 
@@ -625,14 +642,6 @@ impl Drop for Session {
         runtime().spawn(async move {
             let _ = tokio::time::timeout(SHUTDOWN_GRACE, child.wait()).await;
         });
-    }
-}
-
-/// cydonia-acp drops the client when its read loop ends, which is the only notice
-/// the frontend gets that the agent is gone.
-impl Drop for Frontend {
-    fn drop(&mut self) {
-        let _ = self.0.send(Event::Closed);
     }
 }
 
@@ -858,7 +867,3 @@ fn debug_tap() -> Option<Tap> {
         }
     }))
 }
-
-#[cfg(test)]
-#[path = "../../tests/unit/acp_proxy.rs"]
-mod proxy_tests;
