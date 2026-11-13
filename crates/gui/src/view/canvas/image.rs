@@ -17,8 +17,10 @@ use std::{
     rc::Rc,
 };
 
+type ImageCache = HashMap<(String, PathBuf), WeakEntity<Image>>;
+
 #[derive(Clone, Default)]
-pub(super) struct Images(Rc<RefCell<HashMap<(String, PathBuf), WeakEntity<Image>>>>);
+pub(super) struct Images(Rc<RefCell<ImageCache>>);
 
 pub(super) fn render(
     node: &Node,
