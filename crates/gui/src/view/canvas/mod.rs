@@ -5,7 +5,7 @@ use crate::{
     },
     view::{
         canvas::actions::Scope,
-        kit::menu::{self, MenuHost},
+        kit::menu::MenuHost,
         window::{
             reach::InWindow,
             root::{Cydonia, NewCanvas},
@@ -15,15 +15,13 @@ use crate::{
 use artifact::kind::Kind;
 use bezel::{
     gpui::{
-        App, AppContext as _, Context, Entity, FocusHandle, Focusable, Subscription, WeakEntity,
-        Window, div, prelude::*, px,
+        App, AppContext as _, Context, Entity, FocusHandle, Focusable, StyleRefinement,
+        Subscription, WeakEntity, Window, div, prelude::*, px,
     },
     theme::{TextStyle, Theme, Typeset},
     ui::{
         context_menu::{ContextMenu, Place},
-        icons,
         popover::Popup,
-        tooltip::Tooltip,
         widgets::{Button, Scaffolding as _},
     },
 };
@@ -36,6 +34,7 @@ use canvas::{
 use std::path::PathBuf;
 
 mod actions;
+mod chrome;
 mod embed;
 pub(crate) mod entry_picker;
 mod image;
@@ -65,6 +64,8 @@ pub(crate) struct CanvasView {
     reference_picker: Popup<entry_picker::ReferencePicker>,
     _events: Option<Subscription>,
     exporting_image: bool,
+    chrome: Entity<chrome::Chrome>,
+    error: Option<String>,
 }
 
 impl Cydonia {
@@ -153,8 +154,17 @@ impl CanvasView {
                     guides: false,
                 })
         });
-        cx.observe(&source, |_, _, cx| cx.notify()).detach();
-        cx.observe(&surface, |_, _, cx| cx.notify()).detach();
+        let error = source.read(cx).error.clone();
+        cx.observe(&source, |this, source, cx| {
+            let error = &source.read(cx).error;
+            if &this.error != error {
+                this.error = error.clone();
+                cx.notify();
+            }
+        })
+        .detach();
+        let owner = cx.entity().downgrade();
+        let chrome = cx.new(|cx| chrome::Chrome::new(owner, &surface, cx));
         Self {
             canvas,
             source,
@@ -166,6 +176,8 @@ impl CanvasView {
             reference_picker: Popup::default(),
             _events: None,
             exporting_image: false,
+            chrome,
+            error,
         }
     }
 
@@ -314,82 +326,7 @@ impl Render for CanvasView {
             ));
         }
         let theme = Theme::of(cx).clone();
-        let read_only = self.surface.read(cx).editor().options().read_only;
-        let error = self.source.read(cx).error.clone();
-        let actions = menu::button(
-            "canvas-actions",
-            icons::account::Settings,
-            menu::Reveal::Always,
-            self.menu.key() == Some(&Menu::Actions),
-            cx,
-        )
-        .tooltip(|window, cx| Tooltip::text("Canvas actions", window, cx))
-        .on_click(cx.listener(|this, _, window, cx| {
-            this.at = this.surface.read(cx).editor().center();
-            this.toggle_menu(
-                Menu::Actions,
-                Place::Above,
-                |this, _, cx| this.rows(Scope::Actions, cx),
-                window,
-                cx,
-            );
-        }));
-        let actions = self
-            .menu_trigger(actions, Menu::Actions, cx)
-            .children(self.menu_here(&Menu::Actions, "canvas-actions-menu", window, cx));
-        let tools = theme
-            .group_box()
-            .flex_row()
-            .p(px(4.))
-            .gap(px(2.))
-            .child(
-                Button::new("canvas-add-text", "Text")
-                    .icon(icons::text::Type)
-                    .enabled(!read_only)
-                    .on_press(cx.listener(|this, _, window, cx| {
-                        this.at = this.surface.read(cx).editor().center();
-                        this.add_text(window, cx);
-                    })),
-            )
-            .child(
-                Button::new("canvas-add-group", "Group")
-                    .icon(icons::layout::PanelsTopLeft)
-                    .enabled(!read_only)
-                    .on_press(cx.listener(|this, _, window, cx| {
-                        this.at = this.surface.read(cx).editor().center();
-                        this.add_group(window, cx);
-                    })),
-            )
-            .child(actions);
-        let zoom = theme
-            .group_box()
-            .flex_row()
-            .p(px(4.))
-            .gap(px(2.))
-            .child(
-                Button::new("canvas-zoom-out", "Zoom out")
-                    .icon(icons::glyph::Minus)
-                    .label_hidden()
-                    .on_press(cx.listener(|this, _, window, cx| {
-                        this.navigate(CanvasEditor::zoom_out, window, cx)
-                    })),
-            )
-            .child(
-                Button::new("canvas-fit", "Zoom to fit")
-                    .icon(icons::layout::Maximize)
-                    .label_hidden()
-                    .on_press(cx.listener(|this, _, window, cx| {
-                        this.navigate(CanvasEditor::fit, window, cx)
-                    })),
-            )
-            .child(
-                Button::new("canvas-zoom-in", "Zoom in")
-                    .icon(icons::math::Plus)
-                    .label_hidden()
-                    .on_press(cx.listener(|this, _, window, cx| {
-                        this.navigate(CanvasEditor::zoom_in, window, cx)
-                    })),
-            );
+        let error = self.error.clone();
         div()
             .flex_1()
             .min_w_0()
@@ -404,11 +341,11 @@ impl Render for CanvasView {
                     .bottom(px(12.))
                     .left(px(12.))
                     .right(px(12.))
-                    .flex()
-                    .justify_between()
-                    .gap(px(8.))
-                    .child(tools)
-                    .child(zoom),
+                    .child(
+                        self.chrome
+                            .clone()
+                            .cached(StyleRefinement::default().w_full().h(px(chrome::HEIGHT))),
+                    ),
             )
             .when(self.exporting_image, |element| {
                 element.child(

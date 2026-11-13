@@ -17,13 +17,16 @@ use std::path::PathBuf;
 use url::Url;
 
 pub(crate) fn kinds(kinds: Kinds, root: PathBuf) -> Kinds {
+    let images = image::Images::default();
+    let file_images = images.clone();
+    let control_images = images.clone();
     let file_root = root.clone();
     let controls_root = root.clone();
     let file = kind::Kind::new(move |node, look, window, cx| {
-        embed::render(node, look, &file_root, window, cx)
+        embed::render(node, look, &file_root, &file_images, window, cx)
     })
     .controls(move |node, card, window, cx| {
-        image::Opener::for_node(node, card, &controls_root, window, cx)
+        image::Opener::for_node(node, card, &controls_root, &control_images, window, cx)
     })
     .edit(
         kind::Field::new(
@@ -47,6 +50,7 @@ pub(crate) fn kinds(kinds: Kinds, root: PathBuf) -> Kinds {
         )
         .with_control(|_| kind::Control::External),
     )
+    .retained()
     .exportable()
     .handles(canvas::handle::frame)
     .open_in_host();
@@ -73,7 +77,7 @@ pub(crate) fn kinds(kinds: Kinds, root: PathBuf) -> Kinds {
             .as_deref()
             .is_some_and(|url| url.starts_with(reference::SCHEME))
         {
-            embed::render(node, look, &root, window, cx)
+            embed::render(node, look, &root, &images, window, cx)
         } else if look.editor.is_none()
             && node.url.as_deref().is_some_and(|url| {
                 Url::parse(url).is_ok_and(|url| matches!(url.scheme(), "http" | "https"))

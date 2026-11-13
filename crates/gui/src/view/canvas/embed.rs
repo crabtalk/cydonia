@@ -45,6 +45,7 @@ pub(crate) fn render(
     node: &Node,
     look: Look,
     root: &Path,
+    images: &image::Images,
     window: &mut Window,
     cx: &mut App,
 ) -> gpui::AnyElement {
@@ -54,7 +55,7 @@ pub(crate) fn render(
             .render(node, None, Content::Flow(editor), window, cx);
     }
     if node.file.as_deref().is_some_and(markdown::is_image) {
-        return image::render(node, &look.card, root, window, cx);
+        return image::render(node, &look.card, root, images, window, cx);
     }
     if let Some(file) = &node.file {
         let path = root.join(file);
