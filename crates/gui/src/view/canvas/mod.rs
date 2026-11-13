@@ -391,18 +391,6 @@ impl Render for CanvasView {
                     })),
             );
         div()
-            .on_drop(cx.listener(
-                |this,
-                 carried: &bezel::ui::drag::Carry<crate::view::sidebar::Dragged>,
-                 window,
-                 cx| {
-                    let at = this.surface.read(cx).canvas_point(window.mouse_position());
-                    this.at = (at.x.round() as i64, at.y.round() as i64);
-                    if this.drop_entry(carried.item(), cx) {
-                        cx.stop_propagation();
-                    }
-                },
-            ))
             .flex_1()
             .min_w_0()
             .size_full()

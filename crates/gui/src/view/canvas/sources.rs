@@ -1,10 +1,8 @@
 use crate::{
-    model::workspace::{Slot, references},
+    model::workspace::references,
     view::{
         canvas::{CanvasView, embed, image},
         component::file::external,
-        kit::link::mention,
-        sidebar::Dragged,
         window::reach::InWindow,
     },
 };
@@ -227,26 +225,6 @@ impl CanvasView {
         } else if let Some(file) = &node.file {
             external::launch(self.path.join(file), cx);
         }
-    }
-
-    pub(crate) fn drop_entry(&mut self, item: &Dragged, cx: &mut Context<Self>) -> bool {
-        let Some(workspace) = references::current(cx) else {
-            return false;
-        };
-        let member = match item {
-            Dragged::Row(row) => row.member(workspace.read(cx), cx),
-            Dragged::Tab(Slot::Entry(member)) => Some(member.clone()),
-            _ => None,
-        };
-        let Some(member) = member else { return false };
-        let Some(item) = mention::read(workspace.read(cx), cx)
-            .0
-            .into_iter()
-            .find(|item| item.row.member(workspace.read(cx), cx).as_ref() == Some(&member))
-        else {
-            return false;
-        };
-        self.reference(&item.url, None, cx).is_ok()
     }
 
     pub(crate) fn convert(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
