@@ -1,5 +1,21 @@
 [
   {
+    "version": "0.2.11",
+    "date": "2026-11-14",
+    "summary": "Canvas performance and interaction fixes, with sidebar labels that use the available row width.",
+    "changed": [
+      "Share canvas file and image previews, and load file changes in the background",
+      "Leave object snapping off by default on canvases",
+      "Use shared ACP event handling for agent sessions",
+      "Use Bezel 0.2.26 from crates.io"
+    ],
+    "fixed": [
+      "Show sidebar labels at their full width whenever they fit on the available line",
+      "Let project entries dragged over a canvas reach workspace docking",
+      "Make the image opener on canvas cards respond to pointer interactions"
+    ]
+  },
+  {
     "version": "0.2.10",
     "date": "2026-11-11",
     "summary": "Arrange text, images, links and project entries on canvases. Import and export JSON Canvas files, save PNG images, and let agents edit canvases through MCP tools.",

@@ -31,9 +31,9 @@ fn saves_refuse_to_overwrite_external_edits_or_deleted_files() {
     let file = Temp::new();
     std::fs::write(&file.0, "agent edit").unwrap();
     assert!(write_text(&file.0, "original\r\n", "user edit", false).is_err());
-    assert_eq!(read_text(&file.0).unwrap(), "agent edit");
+    assert_eq!(Here::read_text(&file.0).unwrap(), "agent edit");
     write_text(&file.0, "original\r\n", "user edit", true).unwrap();
-    assert_eq!(read_text(&file.0).unwrap(), "user edit");
+    assert_eq!(Here::read_text(&file.0).unwrap(), "user edit");
     std::fs::remove_file(&file.0).unwrap();
     assert!(write_text(&file.0, "user edit", "new", false).is_err());
     assert!(!file.0.exists());
@@ -42,9 +42,13 @@ fn saves_refuse_to_overwrite_external_edits_or_deleted_files() {
 #[test]
 fn text_loading_rejects_binary_invalid_utf8_and_large_files() {
     let file = Temp::new();
-    for bytes in [vec![0], vec![255], vec![b'a'; LIMIT as usize + 1]] {
+    for bytes in [
+        vec![0],
+        vec![255],
+        vec![b'a'; disk::TEXT_LIMIT as usize + 1],
+    ] {
         std::fs::write(&file.0, bytes).unwrap();
-        assert!(read_text(&file.0).is_err());
+        assert!(Here::read_text(&file.0).is_err());
     }
 }
 
@@ -77,7 +81,7 @@ fn saving_preserves_crlf_and_clears_dirty_state(cx: &mut gpui::TestAppContext) {
             .update(cx, |field, cx| field.set_content("edited\n", cx));
         assert!(view.save(false, cx));
         assert!(!view.dirty(cx));
-        assert_eq!(read_text(&file.0).unwrap(), "edited\r\n");
+        assert_eq!(Here::read_text(&file.0).unwrap(), "edited\r\n");
     });
 }
 

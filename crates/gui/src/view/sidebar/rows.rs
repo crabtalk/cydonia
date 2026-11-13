@@ -702,7 +702,6 @@ impl Sidebar {
                                 line.child(
                                     div()
                                         .min_w_0()
-                                        .max_w(gpui::relative(0.5))
                                         .flex()
                                         .flex_row()
                                         .items_center()

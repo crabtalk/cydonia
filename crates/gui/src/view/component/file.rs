@@ -1,8 +1,9 @@
 //! Small text-file buffers with explicit saves and external-change detection.
 
-use crate::model::language::{Grammars as _, Installable as _};
 use crate::model::{
-    disk::{Files as _, Here},
+    disk::{self, Files as _, Here},
+    file::File,
+    language::{Grammars as _, Installable as _},
     typography,
     workspace::Workspace,
 };
@@ -12,8 +13,10 @@ use bezel::{
         prelude::*, px,
     },
     theme::{ControlSize, Sizing as _, TextStyle, Theme, Typeset},
-    ui::input::{Edit, FieldEvent, Granularity, Shape, TextField, drag_selection},
-    ui::widgets::{ButtonStyle, Buttons as _, Controls as _},
+    ui::{
+        input::{Edit, FieldEvent, Granularity, Shape, TextField, drag_selection},
+        widgets::{ButtonStyle, Buttons as _, Controls as _},
+    },
 };
 use markdown::AppExt as _;
 use std::{
@@ -24,8 +27,8 @@ use std::{
     time::Duration,
 };
 
-const LIMIT: u64 = 256 * 1024;
 pub(crate) mod external;
+mod picture;
 pub(crate) mod pictures;
 /// How long a keystroke waits before the file is parsed again. Every edit
 /// re-parses the whole file — the field holds text, not a syntax tree — so a
@@ -36,19 +39,6 @@ gpui::actions!(
     [Save, IncreaseTextSize, DecreaseTextSize, ResetTextSize]
 );
 
-pub(crate) fn read_text(path: &Path) -> anyhow::Result<String> {
-    let bytes = Here::read(path, LIMIT)?;
-    anyhow::ensure!(
-        bytes.len() as u64 <= LIMIT,
-        "Files larger than 256 KiB must be opened externally"
-    );
-    anyhow::ensure!(
-        !bytes.contains(&0),
-        "Binary files must be opened externally"
-    );
-    Ok(String::from_utf8(bytes)?)
-}
-
 pub(crate) fn write_text(
     path: &Path,
     saved: &str,
@@ -57,12 +47,12 @@ pub(crate) fn write_text(
 ) -> anyhow::Result<()> {
     if !overwrite {
         anyhow::ensure!(
-            read_text(path)? == saved,
+            Here::read_text(path)? == saved,
             "File changed on disk. Reload or overwrite to continue."
         );
     }
     anyhow::ensure!(
-        source.len() as u64 <= LIMIT,
+        source.len() as u64 <= disk::TEXT_LIMIT,
         "Files larger than 256 KiB must be edited externally"
     );
     Ok(Here::replace(
@@ -70,7 +60,7 @@ pub(crate) fn write_text(
         source.as_bytes(),
         || match overwrite {
             true => Ok(()),
-            false => match read_text(path) {
+            false => match Here::read_text(path) {
                 Ok(text) if text == saved => Ok(()),
                 Ok(_) => Err(std::io::Error::other(
                     "File changed on disk. Reload or overwrite to continue.",
@@ -126,7 +116,8 @@ pub struct FileView {
     grammar_dismissed: bool,
     _grammar_poll: Task<()>,
     _watch: Subscription,
-    _poll: Task<()>,
+    source: Entity<File>,
+    _source_watch: Subscription,
     /// The parse in flight. Replaced by the next edit, which drops it — that
     /// is the debounce.
     _recolour: Task<()>,
@@ -167,28 +158,11 @@ impl FileView {
             }
             cx.notify();
         });
-        let poll = cx.spawn(async move |this, cx| {
-            loop {
-                let Ok((path, saved)) =
-                    this.update(cx, |this, _| (this.path.clone(), this.saved.clone()))
-                else {
-                    return;
-                };
-                let result = cx
-                    .background_executor()
-                    .spawn(async move { read_text(&path) })
-                    .await;
-                if this
-                    .update(cx, |this, cx| {
-                        if this.saved == saved {
-                            this.receive(result, cx);
-                        }
-                    })
-                    .is_err()
-                {
-                    return;
-                }
-                cx.background_executor().timer(Duration::from_secs(3)).await;
+        let source = File::open(path.clone(), workspace.clone(), cx);
+        let source_watch = cx.observe(&source, |this, source, cx| {
+            let result = source.read(cx).result.clone();
+            if let Some(result) = result {
+                this.receive(result.map_err(anyhow::Error::msg), cx);
             }
         });
         let grammar_poll = cx.spawn(async move |this, cx| {
@@ -226,7 +200,7 @@ impl FileView {
         })
         .detach();
         let picture_overlay = pictures::Pictures::overlay(&pictures);
-        Self {
+        let mut this = Self {
             root,
             focus: cx.focus_handle(),
             language: crate::model::language::Here::of(&path),
@@ -253,9 +227,15 @@ impl FileView {
             grammar_dismissed: false,
             _grammar_poll: grammar_poll,
             _watch: watch,
-            _poll: poll,
+            source,
+            _source_watch: source_watch,
             _recolour: Task::ready(()),
+        };
+        let result = this.source.read(cx).result.clone();
+        if let Some(result) = result {
+            this.receive(result.map_err(anyhow::Error::msg), cx);
         }
+        this
     }
 
     /// Parse the file again and hand the spans to the field.
@@ -355,6 +335,8 @@ impl FileView {
         };
         match write_text(&self.path, &self.saved, &source, overwrite) {
             Ok(()) => {
+                self.source
+                    .update(cx, |file, cx| file.publish(Ok(source.clone()), cx));
                 self.saved = source;
                 self.changed = false;
                 self.error = None;
@@ -627,10 +609,12 @@ impl FileView {
     }
 
     fn reload(&mut self, cx: &mut Context<Self>) {
-        match read_text(&self.path) {
+        match Here::read_text(&self.path) {
             Ok(source) => {
                 self.field
                     .update(cx, |field, cx| field.set_content(source.clone(), cx));
+                self.source
+                    .update(cx, |file, cx| file.publish(Ok(source.clone()), cx));
                 self.saved = source;
                 self.ready = true;
                 self.changed = false;

@@ -21,6 +21,7 @@ base64.workspace = true
 bezel.workspace = true
 guest.workspace = true
 cydonia-acp = { workspace = true, features = ["agents"] }
+cydonia-acp-events = { workspace = true, optional = true }
 chrono.workspace = true
 dirs.workspace = true
 editor.workspace = true
@@ -30,6 +31,7 @@ image.workspace = true
 lru.workspace = true
 markdown.workspace = true
 mcp.workspace = true
+notify = { workspace = true, optional = true }
 portable-pty = { workspace = true, optional = true }
 process-wrap.workspace = true
 rusqlite = { workspace = true, optional = true }
@@ -64,8 +66,10 @@ desktop = [
     "bezel/platform",
     "dep:gpui_platform",
     "cydonia-acp/client",
+    "dep:cydonia-acp-events",
     "cydonia-acp/install",
     "dep:global-hotkey",
+    "dep:notify",
     "mcp/http",
     "dep:portable-pty",
     "dep:syntax",

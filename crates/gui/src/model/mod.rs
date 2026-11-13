@@ -7,6 +7,7 @@ pub mod article;
 pub mod canvas;
 pub mod cover;
 pub mod disk;
+pub mod file;
 pub mod file_url;
 pub mod git;
 pub mod identity;

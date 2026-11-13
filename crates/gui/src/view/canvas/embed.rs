@@ -1,37 +1,36 @@
 use crate::{
-    model::workspace::{
-        Showing, Workspace,
-        references::{self, Part},
+    model::{
+        file::File,
+        workspace::{
+            Showing, Workspace,
+            references::{self, Part},
+        },
     },
     view::{
-        component::file::{
-            self,
-            pictures::{Assets, Pictures},
-        },
+        canvas::image,
+        component::file::pictures::{Assets, Pictures},
         kit::{icon, link, text::KindName as _},
     },
 };
 use artifact::{article::anchor, kind::Kind};
 use bezel::{
     gpui::{
-        self, App, AppContext as _, Context, Entity, ObjectFit, Render, SharedString, Subscription,
-        Task, Window, div, img, prelude::*, px,
+        self, App, AppContext as _, Context, Entity, Render, SharedString, Subscription, Window,
+        div, prelude::*, px,
     },
     theme::{TextStyle, Theme, Typeset as _},
     ui::icons,
 };
 use canvas::{
-    kind::{self, Card, Chrome, Content, Look},
+    kind::{Card, Content, Look},
     model::Node,
 };
 use markdown::{AppExt as _, Editing};
-use std::{
-    path::{Path, PathBuf},
-    time::Duration,
-};
+use std::path::{Path, PathBuf};
 
 struct Embed {
     node: Node,
+    file: Option<Entity<File>>,
     root: PathBuf,
     workspace: Entity<Workspace>,
     document: Option<Entity<editor::Document>>,
@@ -39,15 +38,14 @@ struct Embed {
     card: Card,
     parsed: markdown::Doc,
     source: String,
-    error: Option<String>,
     _watch: Vec<Subscription>,
-    _poll: Option<Task<()>>,
 }
 
 pub(crate) fn render(
     node: &Node,
     look: Look,
     root: &Path,
+    images: &image::Images,
     window: &mut Window,
     cx: &mut App,
 ) -> gpui::AnyElement {
@@ -56,12 +54,14 @@ pub(crate) fn render(
             .card
             .render(node, None, Content::Flow(editor), window, cx);
     }
+    if node.file.as_deref().is_some_and(markdown::is_image) {
+        return image::render(node, &look.card, root, images, window, cx);
+    }
     if let Some(file) = &node.file {
         let path = root.join(file);
-        if !markdown::is_image(file)
-            && !path
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
+        if !path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
         {
             let name = path.file_name().unwrap_or_default().to_string_lossy();
             let text = look.card.typography.body.size();
@@ -221,27 +221,16 @@ impl Embed {
                 _ => {}
             }
         }
-        let poll = node.file.as_ref().map(|_| {
-            cx.spawn(async move |this, cx| {
-                loop {
-                    cx.background_executor()
-                        .timer(Duration::from_millis(500))
-                        .await;
-                    if this
-                        .update(cx, |this, cx| {
-                            if this.read_file() {
-                                cx.notify();
-                            }
-                        })
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-            })
-        });
-        let mut this = Self {
+        let file = node
+            .file
+            .as_ref()
+            .map(|file| File::open(root.join(file), workspace.downgrade(), cx));
+        if let Some(file) = &file {
+            watch.push(cx.observe(file, |_, _, cx| cx.notify()));
+        }
+        Self {
             node,
+            file,
             root,
             workspace,
             document,
@@ -249,66 +238,23 @@ impl Embed {
             card,
             parsed: markdown::Doc::default(),
             source: String::new(),
-            error: None,
             _watch: watch,
-            _poll: poll,
-        };
-        this.read_file();
-        this
-    }
-
-    fn read_file(&mut self) -> bool {
-        let Some(file) = &self.node.file else {
-            return false;
-        };
-        let path = self.root.join(file);
-        if !path
-            .extension()
-            .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
-        {
-            return false;
         }
-        let (source, error) = match file::read_text(&path) {
-            Ok(source) => (source, None),
-            Err(error) => (String::new(), Some(error.to_string())),
-        };
-        let changed = self.source != source || self.error != error;
-        if changed {
-            self.parsed = markdown::parse(&source);
-            self.source = source;
-            self.error = error;
-        }
-        changed
     }
 }
 
 impl Render for Embed {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if let Some(file) = self
-            .node
+        let mut title = self.node.file.clone().unwrap_or_default();
+        let (mut source, error) = match self
             .file
             .as_ref()
-            .filter(|file| markdown::is_image(file))
+            .and_then(|file| file.read(cx).result.as_ref())
         {
-            let path = self.root.join(file);
-            let name = path.file_name().unwrap_or_default().to_string_lossy();
-            let overlay = Pictures::overlay(&self.pictures);
-            let tools = self
-                .card
-                .selected
-                .then(|| overlay(0, &name, window, cx))
-                .flatten();
-            return kind::chrome(Chrome::Bare, &self.node, self.card.zoom, cx)
-                .relative()
-                .overflow_hidden()
-                .child(img(path.clone()).size_full().object_fit(ObjectFit::Contain))
-                .children(
-                    tools.map(|tools| div().absolute().bottom(px(4.)).right(px(4.)).child(tools)),
-                )
-                .into_any_element();
-        }
-        let mut title = self.node.file.clone().unwrap_or_default();
-        let mut source = self.source.clone();
+            Some(Ok(source)) => (source.clone(), None),
+            Some(Err(error)) => (String::new(), Some(error.clone())),
+            None => (self.source.clone(), None),
+        };
         let mut mark = icons::files::FileText.into();
         let mut base = self
             .node
@@ -390,7 +336,7 @@ impl Render for Embed {
         });
         let body = div()
             .child(body)
-            .children(self.error.clone().map(|error| {
+            .children(error.map(|error| {
                 div()
                     .text_style_at(TextStyle::Caption, self.card.zoom)
                     .child(error)
