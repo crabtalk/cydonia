@@ -50,9 +50,6 @@ use bezel::{
 };
 use std::{rc::Rc, time::Duration};
 
-/// How many of an extended row's labels it draws before a `+n` for the rest.
-const LABELS_SHOWN: usize = 2;
-
 /// What a busy agent's blob is drawn on, claimed while its row is drawn — see
 /// [`crate::view::kit::orb`].
 const BLOB_FPS: f32 = 15.;
@@ -662,8 +659,6 @@ impl Sidebar {
                             .items_center()
                             .child(button),
                     );
-                let shown = facts.labels.len().min(LABELS_SHOWN);
-                let more = facts.labels.len() - shown;
                 let chip = |text: String, tone| {
                     theme
                         .chip(text, tone)
@@ -705,15 +700,11 @@ impl Sidebar {
                                         .flex()
                                         .flex_row()
                                         .items_center()
-                                        .justify_end()
                                         .gap(px(4.))
                                         .overflow_hidden()
-                                        .children(facts.labels[..shown].iter().map(|label| {
+                                        .children(facts.labels.iter().map(|label| {
                                             chip(label.clone(), multi_select::tint(&theme, label))
-                                        }))
-                                        .when(more > 0, |el| {
-                                            el.child(chip(format!("+{more}"), theme.text_muted))
-                                        }),
+                                        })),
                                 )
                             }),
                     )
