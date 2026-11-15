@@ -28,7 +28,7 @@ const MAX_ELEMENTS: usize = 200;
 const EVAL: Duration = Duration::from_secs(10);
 
 /// How long a tab is given to build its page after it is opened.
-const BUILT: Duration = Duration::from_secs(3);
+const BUILT: Duration = Duration::from_secs(12);
 
 /// How long a page is given to finish loading after an action.
 const SETTLE: Duration = Duration::from_secs(10);
@@ -368,12 +368,21 @@ async fn built(browser: &Entity<Browser>, cx: &mut AsyncApp) -> Result<Entity<We
     let mut waited = Duration::ZERO;
     loop {
         if let Some(page) = browser.read_with(cx, |browser, _| browser.webview()) {
-            return Ok(page);
+            let ready = page.read_with(cx, |page, _| {
+                if let Some(error) = &page.error {
+                    Err(format!("browser unavailable: {error}"))
+                } else {
+                    Ok(page.can_evaluate())
+                }
+            })?;
+            if ready {
+                return Ok(page);
+            }
         }
         if waited >= BUILT {
             return Err(
-                "the tab is open in the project's right panel, but its page loads only \
-                once that panel is on screen"
+                "the browser page did not become ready; show its panel to start it, \
+                or check the tab for a runtime error"
                     .to_owned(),
             );
         }
@@ -396,7 +405,12 @@ async fn eval<T: DeserializeOwned + 'static>(
     js: &str,
     cx: &mut AsyncApp,
 ) -> Result<T, String> {
-    let task = page.read_with(cx, |page, cx| page.eval::<T>(js, EVAL, cx));
+    let task = page.read_with(cx, |page, cx| {
+        if let Some(error) = &page.error {
+            return Err(format!("browser unavailable: {error}"));
+        }
+        Ok(page.eval::<T>(js, EVAL, cx))
+    })?;
     task.await
         .map_err(|error| format!("the page did not answer: {error}"))
 }

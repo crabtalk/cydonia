@@ -227,7 +227,7 @@ impl SettingsWindow {
             "Could not clear browsing data. Try again.".to_owned()
         } else if self.browser_data.result == Some(true) {
             "Browsing data cleared. All browser tabs closed.".to_owned()
-        } else if !cfg!(target_os = "macos") {
+        } else if !DataStore::SUPPORTS_MANAGEMENT {
             "Clearing browsing data is unavailable on this platform.".to_owned()
         } else {
             let amount = match &self.browser_data.usage {
@@ -257,10 +257,10 @@ impl SettingsWindow {
                     )
                     .id("browser-clear")
                     .flex_none()
-                    .when(!clearing && cfg!(target_os = "macos"), |button| {
+                    .when(!clearing && DataStore::SUPPORTS_MANAGEMENT, |button| {
                         button.on_click(cx.listener(|this, _, _, cx| this.clear_browsing_data(cx)))
                     })
-                    .when(clearing || !cfg!(target_os = "macos"), |button| {
+                    .when(clearing || !DataStore::SUPPORTS_MANAGEMENT, |button| {
                         button.opacity(0.5)
                     }),
             )

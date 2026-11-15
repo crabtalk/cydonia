@@ -249,7 +249,7 @@ impl Browser {
                 }
             }
             WebViewEvent::Title(title) => self.title = title.clone(),
-            WebViewEvent::Load(_) | WebViewEvent::History { .. } => {}
+            WebViewEvent::Load(_) | WebViewEvent::History { .. } | WebViewEvent::Error(_) => {}
             WebViewEvent::Console(message) => {
                 let log = cx.default_global::<Logs>().0.entry(self.id).or_default();
                 if log.len() == LOG_LIMIT {
@@ -283,7 +283,7 @@ impl Browser {
         let items = vec![
             Item::action("Reload").with_shortcut_in(&Reload, CONTEXT, window),
             Item::action("Hard Reload").with_shortcut_in(&HardReload, CONTEXT, window),
-            Item::action("Web Inspector"),
+            Item::action("Web Inspector").disabled(!WebView::HAS_INSPECTOR),
         ];
         self.menu.open(
             (),
