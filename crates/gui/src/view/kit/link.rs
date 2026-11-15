@@ -201,28 +201,30 @@ fn file_of(
 }
 
 /// A picture link's hover card: the picture, and its path under it.
-fn picture_hover(path: PathBuf, shown: String, cx: &App) -> AnyElement {
-    let theme = Theme::of(cx).clone();
+fn picture_hover(path: PathBuf, shown: String, _cx: &App) -> AnyElement {
     surface::popover(
+        "picture-hover",
         Theme::surface_radius(),
-        popover::popover_card_flush(&theme)
-            .w(px(HOVER_WIDTH))
-            .flex()
-            .flex_col()
-            .child(
-                gpui::img(path)
-                    .w_full()
-                    .max_h(px(HOVER_HEIGHT))
-                    .object_fit(gpui::ObjectFit::Contain),
-            )
-            .child(
-                div()
-                    .px(px(12.))
-                    .py(px(8.))
-                    .text_style(TextStyle::Callout)
-                    .text_color(theme.text_muted)
-                    .child(shown),
-            ),
+        move |theme, _, _| {
+            popover::popover_card_flush(&theme)
+                .w(px(HOVER_WIDTH))
+                .flex()
+                .flex_col()
+                .child(
+                    gpui::img(path)
+                        .w_full()
+                        .max_h(px(HOVER_HEIGHT))
+                        .object_fit(gpui::ObjectFit::Contain),
+                )
+                .child(
+                    div()
+                        .px(px(12.))
+                        .py(px(8.))
+                        .text_style(TextStyle::Callout)
+                        .text_color(theme.text_muted)
+                        .child(shown),
+                )
+        },
     )
     .into_any_element()
 }
@@ -616,59 +618,65 @@ impl Cydonia {
     fn entry_hover(
         &mut self,
         reference: &str,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let theme = Theme::of(cx).clone();
-        let body = match self.named(reference, cx) {
-            Ok(Named {
-                row,
-                part: Some(Part::Card(card)),
-                ..
-            }) => row
-                .located(self.workspace.read(cx))
-                .and_then(|(project, at)| {
-                    self.card_embed(project, at, &card.id, reference, window, cx)
-                })
-                .unwrap_or_else(|| div().into_any_element()),
-            Ok(Named {
-                row,
-                part: Some(Part::Passage(passage)),
-                number,
-                ..
-            }) => self.article_hover(row, number, passage, window, cx),
-            Ok(Named {
-                row,
-                kind: Kind::Article,
-                number,
-                part: None,
-            }) => match self.opening(&row, cx) {
-                Some(passage) => self.article_hover(row, number, passage, window, cx),
-                None => self.entry_row(
-                    Named {
-                        row,
-                        kind: Kind::Article,
-                        number,
-                        part: None,
-                    },
-                    cx,
-                ),
-            },
-            Ok(named) => self.entry_row(named, cx),
-            Err(why) => div()
-                .p(px(12.))
-                .text_style(TextStyle::Callout)
-                .text_color(theme.text_faint)
-                .child(why)
-                .into_any_element(),
-        };
+        let links = cx.entity();
+        let reference = reference.to_owned();
         surface::popover(
+            "entry-hover",
             Theme::surface_radius(),
-            popover::popover_card_flush(&theme)
-                .w_full()
-                .flex()
-                .flex_col()
-                .child(body),
+            move |theme, window, cx| {
+                links.update(cx, |this, cx| {
+                    let body = match this.named(&reference, cx) {
+                        Ok(Named {
+                            row,
+                            part: Some(Part::Card(card)),
+                            ..
+                        }) => row
+                            .located(this.workspace.read(cx))
+                            .and_then(|(project, at)| {
+                                this.card_embed(project, at, &card.id, &reference, window, cx)
+                            })
+                            .unwrap_or_else(|| div().into_any_element()),
+                        Ok(Named {
+                            row,
+                            part: Some(Part::Passage(passage)),
+                            number,
+                            ..
+                        }) => this.article_hover(row, number, passage, window, cx),
+                        Ok(Named {
+                            row,
+                            kind: Kind::Article,
+                            number,
+                            part: None,
+                        }) => match this.opening(&row, cx) {
+                            Some(passage) => this.article_hover(row, number, passage, window, cx),
+                            None => this.entry_row(
+                                Named {
+                                    row,
+                                    kind: Kind::Article,
+                                    number,
+                                    part: None,
+                                },
+                                cx,
+                            ),
+                        },
+                        Ok(named) => this.entry_row(named, cx),
+                        Err(why) => div()
+                            .p(px(12.))
+                            .text_style(TextStyle::Callout)
+                            .text_color(theme.text_faint)
+                            .child(why)
+                            .into_any_element(),
+                    };
+                    popover::popover_card_flush(&theme)
+                        .w_full()
+                        .flex()
+                        .flex_col()
+                        .child(body)
+                })
+            },
         )
         .into_any_element()
     }

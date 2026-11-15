@@ -38,7 +38,7 @@ use bezel::{
     theme::{Selection, TextStyle, Theme, Typeset},
     ui::{
         context_menu::{ContextMenu, Place as MenuPlace},
-        drag::{self, Carried},
+        drag,
         icons::{self, Icon},
         menu::Item,
         scroll as scrollbars,
@@ -546,20 +546,6 @@ fn offset_at(tops: &[f32], y: f32) -> ListOffset {
         item_ix: ix,
         offset_in_item: px(y - tops[ix]),
     }
-}
-
-/// What rides under the pointer while an item is carried to a pane.
-pub(crate) fn ghost(label: SharedString, theme: &Theme) -> AnyElement {
-    div()
-        .rounded(px(Theme::control_radius()))
-        .px(px(10.))
-        .py(px(4.))
-        .text_style(TextStyle::Callout)
-        .text_color(theme.text)
-        .truncate()
-        .child(label)
-        .ghost(theme)
-        .into_any_element()
 }
 
 /// An entry's own name in the element tree: two rows must never share one.
@@ -1167,25 +1153,29 @@ impl Sidebar {
     fn sidebar_ghost(
         &self,
         item: &Dragged,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let Dragged::Row(row) = item else {
             return Empty.into_any_element();
         };
-        let theme = Theme::of(cx).clone();
-        let width = self
-            .root
-            .upgrade()
-            .map_or(root::SIDEBAR_WIDTH, |root| root.read(cx).sidebar_width);
-        div()
-            .w(px(width - root::SIDEBAR_GUTTER - self.trail(cx)))
-            .h(px(self.shape(row, cx).pill()))
-            .rounded(px(Theme::control_radius()))
-            .overflow_hidden()
-            .child(self.sidebar_row(row, true, window, cx))
-            .ghost(&theme)
-            .into_any_element()
+        let row = row.clone();
+        let sidebar = cx.entity();
+        drag::ghost("sidebar-row-ghost", move |_, window, cx| {
+            sidebar.update(cx, |this, cx| {
+                let width = this
+                    .root
+                    .upgrade()
+                    .map_or(root::SIDEBAR_WIDTH, |root| root.read(cx).sidebar_width);
+                div()
+                    .w(px(width - root::SIDEBAR_GUTTER - this.trail(cx)))
+                    .h(px(this.shape(&row, cx).pill()))
+                    .rounded(px(Theme::control_radius()))
+                    .overflow_hidden()
+                    .child(this.sidebar_row(&row, true, window, cx))
+            })
+        })
+        .into_any_element()
     }
 
     /// A row let go in the list, between the painted rows `after` and

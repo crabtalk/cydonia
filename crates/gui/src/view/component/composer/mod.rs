@@ -32,8 +32,7 @@ use bezel::{
         icons::{self, Icon},
         input::{self, Chip, FieldEvent, Shape, TextField},
         menu::{self, Cursor, Hit, Item},
-        popover, scroll as scrollbars,
-        surface::{self, Surfaced as _},
+        popover, scroll as scrollbars, surface,
         tooltip::Tooltip,
         widgets::Controls as _,
     },
@@ -976,38 +975,43 @@ impl Composer {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let agent = self.agent.and_then(|ix| self.agents.get(ix))?.clone();
-        let mark = px(root::composer_height() / 2.);
-        let button = side_button("composer-agent", theme)
-            .child(match agent.icon {
-                Some(icon) => icons::icon(icon)
-                    .size(mark)
-                    .text_color(theme.text_muted)
-                    .into_any_element(),
-                // A slot the catalog has no mark for still has to open the menu.
-                None => icons::icon(icons::development::Bot)
-                    .size(mark)
-                    .text_color(theme.text_muted)
-                    .into_any_element(),
+        let composer = cx.entity();
+        let button = surface::of("composer-agent-glass", SURFACE, move |theme, _, cx| {
+            composer.update(cx, |_, cx| {
+                let mark = px(root::composer_height() / 2.);
+                let button = side_button("composer-agent", theme)
+                    .child(match agent.icon {
+                        Some(icon) => icons::icon(icon)
+                            .size(mark)
+                            .text_color(theme.text_muted)
+                            .into_any_element(),
+                        // A slot the catalog has no mark for still has to open the menu.
+                        None => icons::icon(icons::development::Bot)
+                            .size(mark)
+                            .text_color(theme.text_muted)
+                            .into_any_element(),
+                    })
+                    .on_click(cx.listener(|composer, _, window, cx| {
+                        ContextMenu::toggle(
+                            composer,
+                            |this| &mut this.menu,
+                            ComposerMenu::Agent,
+                            Place::Above,
+                            |composer, _, _| (composer.menu_rows(), Self::switch),
+                            window,
+                            cx,
+                        );
+                    }));
+                ContextMenu::trigger(button, |this| &mut this.menu, ComposerMenu::Agent, cx)
             })
-            .on_click(cx.listener(|composer, _, window, cx| {
-                ContextMenu::toggle(
-                    composer,
-                    |this| &mut this.menu,
-                    ComposerMenu::Agent,
-                    Place::Above,
-                    |composer, _, _| (composer.menu_rows(), Self::switch),
-                    window,
-                    cx,
-                );
-            }));
-        let button = ContextMenu::trigger(button, |this| &mut this.menu, ComposerMenu::Agent, cx);
+        });
         Some(
             div()
                 .relative()
                 .flex_none()
                 // A surface draws its whole subtree in one layer, so the menu
                 // hangs off the positioning parent beside it.
-                .child(button.surface(theme, SURFACE))
+                .child(button)
                 .children(self.menu_card(theme, window, cx))
                 .into_any_element(),
         )
@@ -1206,27 +1210,30 @@ impl Composer {
         )
     }
 
-    fn tools(&self, theme: &Theme, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let button = side_button("composer-tools", theme)
-            .tooltip(|window, cx| Tooltip::text("Session tools", window, cx))
-            .on_click(cx.listener(|this, _, window, cx| {
-                ContextMenu::toggle(
-                    this,
-                    |this| &mut this.menu,
-                    ComposerMenu::Tools,
-                    Place::AboveEnd,
-                    Self::tools_menu,
-                    window,
-                    cx,
-                );
-            }));
-        let button = ContextMenu::trigger(button, |this| &mut this.menu, ComposerMenu::Tools, cx)
-            .child(
-                icons::icon(icons::math::Plus)
-                    .size(px(18.))
-                    .text_color(theme.text_muted),
-            )
-            .surface(theme, SURFACE);
+    fn tools(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let composer = cx.entity();
+        let button = surface::of("composer-tools-glass", SURFACE, move |theme, _, cx| {
+            composer.update(cx, |_, cx| {
+                let button = side_button("composer-tools", theme)
+                    .tooltip(|window, cx| Tooltip::text("Session tools", window, cx))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        ContextMenu::toggle(
+                            this,
+                            |this| &mut this.menu,
+                            ComposerMenu::Tools,
+                            Place::AboveEnd,
+                            Self::tools_menu,
+                            window,
+                            cx,
+                        );
+                    }));
+                ContextMenu::trigger(button, |this| &mut this.menu, ComposerMenu::Tools, cx).child(
+                    icons::icon(icons::math::Plus)
+                        .size(px(18.))
+                        .text_color(theme.text_muted),
+                )
+            })
+        });
         div()
             .relative()
             .flex_none()
@@ -1292,27 +1299,31 @@ impl Composer {
 
     /// The chevron opening the thread over the field, in the tools button's
     /// place and cut the same.
-    fn thread_button(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
-        let open = self.thread_open;
-        side_button("composer-thread", theme)
-            .tooltip(move |window, cx| {
-                Tooltip::text(if open { "Hide chat" } else { "Show chat" }, window, cx)
+    fn thread_button(&self, cx: &mut Context<Self>) -> AnyElement {
+        let composer = cx.entity();
+        surface::of("composer-thread-glass", SURFACE, move |theme, _, cx| {
+            composer.update(cx, |this, cx| {
+                let open = this.thread_open;
+                side_button("composer-thread", theme)
+                    .tooltip(move |window, cx| {
+                        Tooltip::text(if open { "Hide chat" } else { "Show chat" }, window, cx)
+                    })
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.thread_open = !this.thread_open;
+                        cx.notify();
+                    }))
+                    // Up while it is shut, where the panel opens; down to close it.
+                    .child(
+                        icons::icon(match open {
+                            true => icons::arrows::ChevronDown,
+                            false => icons::arrows::ChevronUp,
+                        })
+                        .size(px(14.))
+                        .text_color(theme.text_muted),
+                    )
             })
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.thread_open = !this.thread_open;
-                cx.notify();
-            }))
-            // Up while it is shut, where the panel opens; down to close it.
-            .child(
-                icons::icon(match open {
-                    true => icons::arrows::ChevronDown,
-                    false => icons::arrows::ChevronUp,
-                })
-                .size(px(14.))
-                .text_color(theme.text_muted),
-            )
-            .surface(theme, SURFACE)
-            .into_any_element()
+        })
+        .into_any_element()
     }
 
     /// The open thread, ruled off from what is under it through the capsule's
@@ -1329,24 +1340,30 @@ impl Composer {
     /// The turn's activity alone, and Stop while it runs: the composer with
     /// no field. Nothing between turns.
     fn status(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let theme = Theme::of(cx).clone();
-        let Some(row) = self.activity_row(&theme, false, root::COMPOSER_INSET, cx) else {
+        if self.activity.is_none() {
             return div().into_any_element();
-        };
-        div()
-            .w_full()
-            .rounded(px(root::composer_height() / 2.))
-            .py(px(root::COMPOSER_INSET))
-            .pl(px(12.))
-            .pr(px(root::COMPOSER_INSET))
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(root::COMPOSER_INSET))
-            .child(div().flex_1().min_w_0().child(row))
-            .children(self.streaming.then(|| self.button(&theme, cx)).flatten())
-            .surface(&theme, SURFACE)
-            .into_any_element()
+        }
+        let composer = cx.entity();
+        surface::of("composer-status-glass", SURFACE, move |theme, _, cx| {
+            composer.update(cx, |this, cx| {
+                let row = this
+                    .activity_row(theme, false, root::COMPOSER_INSET, cx)
+                    .expect("activity for this frame");
+                div()
+                    .w_full()
+                    .rounded(px(root::composer_height() / 2.))
+                    .py(px(root::COMPOSER_INSET))
+                    .pl(px(12.))
+                    .pr(px(root::COMPOSER_INSET))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(root::COMPOSER_INSET))
+                    .child(div().flex_1().min_w_0().child(row))
+                    .children(this.streaming.then(|| this.button(&theme, cx)).flatten())
+            })
+        })
+        .into_any_element()
     }
 
     fn body(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -1355,7 +1372,6 @@ impl Composer {
         }
         let theme = Theme::of(cx).clone();
         let picker = self.picker(&theme, window, cx);
-        let tray = self.tray(&theme, cx);
         let radius = px(root::composer_height() / 2.);
         let right_inset = if self.streaming || !self.is_empty(cx) {
             root::COMPOSER_INSET
@@ -1413,43 +1429,53 @@ impl Composer {
                                         .ok();
                                 }
                             })
-                            .child(
-                                div()
-                                    .w_full()
-                                    .rounded(radius)
-                                    .py(px(root::COMPOSER_INSET))
-                                    .pl(px(12.))
-                                    .pr(px(right_inset))
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(root::COMPOSER_INSET))
-                                    .children(self.thread_panel(&theme, right_inset))
-                                    .children(self.activity_row(&theme, true, right_inset, cx))
-                                    .children(tray)
-                                    .child(
+                            .child(surface::of("composer-field-glass", SURFACE, {
+                                let composer = cx.entity();
+                                move |theme, _, cx| {
+                                    composer.update(cx, |this, cx| {
+                                        let tray = this.tray(theme, cx);
                                         div()
+                                            .w_full()
+                                            .rounded(radius)
+                                            .py(px(root::COMPOSER_INSET))
+                                            .pl(px(12.))
+                                            .pr(px(right_inset))
                                             .flex()
-                                            .flex_row()
-                                            .items_end()
+                                            .flex_col()
                                             .gap(px(root::COMPOSER_INSET))
+                                            .children(this.thread_panel(&theme, right_inset))
+                                            .children(this.activity_row(
+                                                &theme,
+                                                true,
+                                                right_inset,
+                                                cx,
+                                            ))
+                                            .children(tray)
                                             .child(
                                                 div()
-                                                    .flex_1()
-                                                    .min_w_0()
-                                                    .min_h(px(root::composer_disc()))
                                                     .flex()
-                                                    .items_center()
-                                                    .child(self.field.clone()),
+                                                    .flex_row()
+                                                    .items_end()
+                                                    .gap(px(root::COMPOSER_INSET))
+                                                    .child(
+                                                        div()
+                                                            .flex_1()
+                                                            .min_w_0()
+                                                            .min_h(px(root::composer_disc()))
+                                                            .flex()
+                                                            .items_center()
+                                                            .child(this.field.clone()),
+                                                    )
+                                                    .children(this.button(&theme, cx)),
                                             )
-                                            .children(self.button(&theme, cx)),
-                                    )
-                                    .surface(&theme, SURFACE),
-                            )
+                                    })
+                                }
+                            }))
                             .children(picker),
                     )
                     .children(match self.thread.is_some() {
-                        true => Some(self.thread_button(&theme, cx)),
-                        false => self.tools.then(|| self.tools(&theme, window, cx)),
+                        true => Some(self.thread_button(cx)),
+                        false => self.tools.then(|| self.tools(window, cx)),
                     }),
             )
             .children(self.lightbox(window, cx))
@@ -1515,8 +1541,11 @@ impl Focusable for Composer {
 }
 
 impl Render for Composer {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.body(window, cx)
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let composer = cx.entity();
+        surface::group("composer-materials", move |_, window, cx| {
+            composer.update(cx, |this, cx| this.body(window, cx))
+        })
     }
 }
 

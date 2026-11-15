@@ -121,6 +121,7 @@ struct Flight {
 
 /// One way to answer a permission request. `kind` is what decides how the
 /// button paints — allow and reject must not look alike.
+#[derive(Clone)]
 pub struct Choice {
     pub id: String,
     pub name: String,

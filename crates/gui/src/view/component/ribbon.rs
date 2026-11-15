@@ -775,9 +775,11 @@ pub(crate) fn floated(id: &'static str, at: Point<Pixels>, content: AnyElement) 
                 // Hitboxes are paint order only, so without this a press on a
                 // button would also land on the document underneath it and
                 // move the caret out of the run being formatted.
-                div()
-                    .occlude()
-                    .child(surface::popover(Theme::surface_radius(), content)),
+                div().occlude().child(surface::popover(
+                    id,
+                    Theme::surface_radius(),
+                    move |_, _, _| content,
+                )),
             )),
     )
     .priority(1)

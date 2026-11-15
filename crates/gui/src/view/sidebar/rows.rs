@@ -42,8 +42,7 @@ use bezel::{
         context_menu::Place as MenuPlace,
         icons::{self, Icon},
         menu::Item,
-        multi_select, popover,
-        surface::Surfaced as _,
+        multi_select, popover, surface,
         tooltip::Tooltip,
         widgets::{ButtonStyle, Buttons, Content, Layout},
     },
@@ -140,6 +139,27 @@ impl Sidebar {
     /// glass the floating cluster below it is cut from — a heading with rows
     /// running under it has to be read against whatever is passing.
     pub(super) fn group_head(
+        &self,
+        group: Group,
+        pinned: bool,
+        lifted: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        if pinned {
+            let sidebar = cx.entity();
+            let id = SharedString::from(format!("pinned-{}", key_of(&Row::Group(group.clone()))));
+            return surface::popover(id, 0., move |_, window, cx| {
+                sidebar.update(cx, |this, cx| {
+                    this.group_head_content(group, pinned, lifted, window, cx)
+                })
+            })
+            .into_any_element();
+        }
+        self.group_head_content(group, pinned, lifted, window, cx)
+    }
+
+    fn group_head_content(
         &self,
         group: Group,
         pinned: bool,
@@ -484,14 +504,7 @@ impl Sidebar {
                 ),
             Group::Space(_) => head,
         };
-        match pinned {
-            // The same token the cluster at the foot of the column mounts on,
-            // so the two glasses in the sidebar move together.
-            true => head
-                .surface(&theme, theme.popover_surface)
-                .into_any_element(),
-            false => head.into_any_element(),
-        }
+        head.into_any_element()
     }
 
     /// What the sidebar needs of a session, read when its row comes on screen.

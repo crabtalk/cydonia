@@ -1116,12 +1116,12 @@ impl Cydonia {
                         .upgrade()
                         .map(|this| this.read(cx).label_of_dragged(item, cx))
                         .unwrap_or_default();
-                    crate::view::sidebar::ghost(label.into(), Theme::of(cx))
+                    bezel::ui::drag::ghost_label("pane-entry-ghost", label).into_any_element()
                 }
             }),
             board_sort: drag::Domain::with_ghost({
                 let this = cx.entity().downgrade();
-                move |item, window, cx| board::ghost(&this, item, window, cx)
+                move |item, _, cx| board::ghost(&this, item, cx)
             }),
             zoom_glide: None,
             pane_places: Rc::default(),
