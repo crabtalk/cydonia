@@ -16,9 +16,11 @@
 //! nothing installed — the tests, a caller that mounted the tool sets on their
 //! own — refuses rather than pretends.
 
+use crate::tool::Answer;
 #[cfg(feature = "http")]
 use crate::tool::Trouble;
 use artifact::{board::View, kind::Kind};
+use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
     sync::RwLock,
@@ -207,6 +209,9 @@ pub enum Act {
     /// Load `url` in the tab named, or in a new one, and read it.
     Open(String),
     Read,
+    Screenshot,
+    Evaluate(String),
+    Inspect(Target),
     Click(usize),
     Type {
         element: usize,
@@ -216,7 +221,42 @@ pub enum Act {
     /// Screenfuls down; negative goes up.
     Scroll(f64),
     /// What the tab's page has logged.
-    Console,
+    Console {
+        levels: Vec<Level>,
+        since: u64,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Target {
+    Element(usize),
+    Selector(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Level {
+    Debug,
+    Log,
+    Info,
+    Warn,
+    Error,
+}
+
+impl Level {
+    pub const ALL: [Self; 5] = [Self::Debug, Self::Log, Self::Info, Self::Warn, Self::Error];
+}
+
+impl std::fmt::Display for Level {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Debug => "debug",
+            Self::Log => "log",
+            Self::Info => "info",
+            Self::Warn => "warn",
+            Self::Error => "error",
+        })
+    }
 }
 
 /// One browser call, with where its answer goes.
@@ -226,8 +266,8 @@ pub struct Browse {
     /// except for [`Act::Open`], where it is a new tab.
     pub tab: Option<u64>,
     pub act: Act,
-    /// The text the model reads, or why there is none.
-    pub reply: std::sync::mpsc::Sender<Result<String, String>>,
+    /// The tool content, or why it is unavailable.
+    pub reply: std::sync::mpsc::Sender<Result<Answer, String>>,
 }
 
 type Browser = Box<dyn Fn(Browse) + Send + Sync>;
@@ -244,7 +284,7 @@ pub fn install_browser(hand: impl Fn(Browse) + Send + Sync + 'static) {
 /// Blocks the calling thread. Never call it from the thread the window is
 /// drawn on: the answer is made there.
 #[cfg(feature = "http")]
-pub(crate) fn browse(project: PathBuf, tab: Option<u64>, act: Act) -> Result<String, Trouble> {
+pub(crate) fn browse(project: PathBuf, tab: Option<u64>, act: Act) -> Result<Answer, Trouble> {
     let (reply, answer) = std::sync::mpsc::channel();
     {
         let held = BROWSER.read().map_err(|_| no_browser())?;

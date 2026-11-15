@@ -8,13 +8,23 @@
 //! Scripts run through [`WebView::eval`], which exists only once a render has
 //! built the page: a tab whose panel is not on screen has none.
 
-use super::{browser::Browser, panel::Panel};
-use crate::{model::settings::Browsing, view::window::root::Cydonia};
+use crate::{
+    model::{media::Png as _, settings::Browsing},
+    view::{
+        component::{browser::Browser, panel::Panel},
+        window::root::Cydonia,
+    },
+};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use bezel::gpui::{AnyWindowHandle, AsyncApp, Context, Entity, WeakEntity, Window};
 use browser::WebView;
 use futures::{StreamExt as _, channel::mpsc};
-use mcp::rail::{self, Act, Browse};
+use mcp::{
+    rail::{self, Act, Browse, Target},
+    tool::{Answer, Image},
+};
 use serde::{Deserialize, de::DeserializeOwned};
+use serde_json::Value;
 use std::{fmt::Write as _, path::Path, time::Duration};
 
 /// Characters of a page's text a read carries. Sliced in the page, so the rest
@@ -111,6 +121,24 @@ const SCROLL: &str = r#"(() => { try {
   return 'ok';
 } catch (e) { return String(e); } })()"#;
 
+const INSPECT: &str = include_str!("inspect.js");
+
+const EVALUATE: &str = r#"(async () => {
+  const value = await (
+$SCRIPT
+);
+  const json = JSON.stringify(value ?? null);
+  if (json === undefined) throw new Error('result has no JSON representation');
+  if (json.length > 16000) throw new Error('result exceeds 16000 characters; return a smaller selection');
+  return { url: location.href, result: JSON.parse(json) };
+})()"#;
+
+#[derive(Deserialize)]
+struct Evaluation {
+    url: String,
+    result: Value,
+}
+
 #[derive(Deserialize)]
 struct Page {
     url: String,
@@ -194,7 +222,7 @@ async fn serve(
     tab: Option<u64>,
     act: Act,
     cx: &mut AsyncApp,
-) -> Result<String, String> {
+) -> Result<Answer, String> {
     let panel = window
         .update(cx, |_, window, cx| {
             this.update(cx, |this, cx| this.project_panel(project, window, cx))
@@ -219,7 +247,7 @@ async fn serve(
         let url = browser.read_with(cx, |browser, _| browser.url().to_owned());
         refuse_blocked(&browsing, &url)?;
     }
-    match act {
+    let text = match act {
         Act::Tabs => panel.update(cx, |panel, cx| Ok(tabs(panel, cx))),
         Act::Open(url) => {
             refuse_blocked(&browsing, &url)?;
@@ -248,6 +276,46 @@ async fn serve(
             let page = built(&browser, cx).await?;
             read(&browser, &page, cx).await
         }
+        Act::Screenshot => {
+            let browser = pick(&panel, tab, cx)?;
+            let page = built(&browser, cx).await?;
+            settle(&page, cx).await;
+            let url: String = eval(&page, "location.href", cx).await?;
+            refuse_blocked(&browsing, &url)?;
+            let task = page.read_with(cx, |page, cx| page.snapshot(cx));
+            let image = task.await?;
+            let bytes = cx
+                .background_executor()
+                .spawn(async move { image.png().map_err(|error| error.to_string()) })
+                .await?;
+            let url: String = eval(&page, "location.href", cx).await?;
+            refuse_blocked(&browsing, &url)?;
+            let id = browser.read_with(cx, |browser, _| browser.id);
+            let mut answer = Answer::said(format!("tab {id}: {url}"));
+            answer.images.push(Image {
+                data: STANDARD.encode(bytes),
+                mime_type: "image/png".to_owned(),
+            });
+            return Ok(answer);
+        }
+        Act::Evaluate(js) => {
+            let browser = pick(&panel, tab, cx)?;
+            let page = built(&browser, cx).await?;
+            evaluate(&browser, &page, &js, cx).await
+        }
+        Act::Inspect(target) => {
+            let browser = pick(&panel, tab, cx)?;
+            let page = built(&browser, cx).await?;
+            let target = match target {
+                Target::Selector(selector) => format!(
+                    "document.querySelector({})",
+                    serde_json::to_string(&selector).unwrap()
+                ),
+                Target::Element(element) => format!("found[{element}]"),
+            };
+            let js = script(INSPECT).replace("$TARGET", &target);
+            evaluate(&browser, &page, &js, cx).await
+        }
         Act::Click(element) => {
             let js = script(CLICK).replace("$N", &element.to_string());
             act_on(&panel, tab, &js, element, cx).await
@@ -266,15 +334,16 @@ async fn serve(
                 .replace("$ENTER", if enter { "true" } else { "false" });
             act_on(&panel, tab, &js, element, cx).await
         }
-        Act::Console => {
+        Act::Console { levels, since } => {
             let browser = pick(&panel, tab, cx)?;
-            Ok(browser.read_with(cx, |browser, cx| console(&browser.console(cx))))
+            Ok(browser.read_with(cx, |browser, cx| browser.console(&levels, since, cx)))
         }
         Act::Scroll(pages) => {
             let js = SCROLL.replace("$PAGES", &format!("{:.2}", pages.clamp(-20., 20.)));
             act_on(&panel, tab, &js, 0, cx).await
         }
-    }
+    };
+    text.map(Answer::said)
 }
 
 fn refuse_blocked(browsing: &Browsing, url: &str) -> Result<(), String> {
@@ -415,6 +484,28 @@ async fn eval<T: DeserializeOwned + 'static>(
         .map_err(|error| format!("the page did not answer: {error}"))
 }
 
+async fn evaluate(
+    browser: &Entity<Browser>,
+    page: &Entity<WebView>,
+    js: &str,
+    cx: &mut AsyncApp,
+) -> Result<String, String> {
+    let url: String = eval(page, "location.href", cx).await?;
+    let browsing = cx.update(|cx| cx.try_global::<Browsing>().cloned().unwrap_or_default());
+    refuse_blocked(&browsing, &url)?;
+    let js = EVALUATE.replace("$SCRIPT", js);
+    let task = page.read_with(cx, |page, cx| page.eval_async::<Evaluation>(&js, EVAL, cx));
+    let result = task.await.map_err(|error| format!("JavaScript: {error}"))?;
+    let browsing = cx.update(|cx| cx.try_global::<Browsing>().cloned().unwrap_or_default());
+    refuse_blocked(&browsing, &result.url)?;
+    let id = browser.read_with(cx, |browser, _| browser.id);
+    Ok(format!(
+        "tab {id}: {}\n\n{}",
+        result.url,
+        serde_json::to_string_pretty(&result.result).unwrap()
+    ))
+}
+
 async fn read(
     browser: &Entity<Browser>,
     page: &Entity<WebView>,
@@ -445,24 +536,6 @@ fn described(id: u64, page: &Page) -> String {
         }
     }
     out
-}
-
-/// A tab's log as the model reads it: one line per message.
-fn console(log: &[browser::ConsoleMessage]) -> String {
-    if log.is_empty() {
-        return "the page has logged nothing".to_owned();
-    }
-    log.iter()
-        .map(|message| {
-            format!(
-                "[{}] {} ({})",
-                format!("{:?}", message.level).to_lowercase(),
-                message.text,
-                message.source
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 fn tabs(panel: &Panel, cx: &Context<Panel>) -> String {

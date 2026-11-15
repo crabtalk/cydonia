@@ -21,8 +21,12 @@ use bezel::{
         widgets::{ButtonStyle, Buttons as _},
     },
 };
-use browser::{ConsoleMessage, DataStore, WebView, WebViewEvent};
-use std::collections::{HashMap, VecDeque};
+use browser::{ConsoleLevel, ConsoleMessage, DataStore, WebView, WebViewEvent};
+use mcp::rail::Level;
+use std::{
+    collections::{HashMap, VecDeque},
+    fmt::Write as _,
+};
 
 /// Claimed on the address field, so `enter` loads what it holds.
 const ADDRESS_CONTEXT: &str = "CydoniaAddress";
@@ -60,7 +64,55 @@ impl Global for Pages {}
 
 /// What each live page has logged, by tab id, oldest first.
 #[derive(Default)]
-struct Logs(HashMap<u64, VecDeque<ConsoleMessage>>);
+struct Logs(HashMap<u64, ConsoleLog>);
+
+#[derive(Default)]
+struct ConsoleLog {
+    cursor: u64,
+    entries: VecDeque<(u64, ConsoleMessage)>,
+}
+
+impl ConsoleLog {
+    fn push(&mut self, message: ConsoleMessage) {
+        self.cursor += 1;
+        if self.entries.len() == LOG_LIMIT {
+            self.entries.pop_front();
+        }
+        self.entries.push_back((self.cursor, message));
+    }
+
+    fn read(&self, levels: &[Level], since: u64) -> String {
+        let mut out = format!("cursor: {}", self.cursor);
+        if let Some((first, _)) = self.entries.front()
+            && since < first - 1
+        {
+            let _ = write!(out, "\n[messages before {first} are no longer retained]");
+        }
+        let mut matched = false;
+        for (id, message) in &self.entries {
+            let level = match message.level {
+                ConsoleLevel::Debug => Level::Debug,
+                ConsoleLevel::Log => Level::Log,
+                ConsoleLevel::Info => Level::Info,
+                ConsoleLevel::Warn => Level::Warn,
+                ConsoleLevel::Error => Level::Error,
+            };
+            if *id <= since || (!levels.is_empty() && !levels.contains(&level)) {
+                continue;
+            }
+            matched = true;
+            let _ = write!(
+                out,
+                "\n[{id}] [{level}] {} ({})",
+                message.text, message.source
+            );
+        }
+        if !matched {
+            out.push_str("\nno matching console messages");
+        }
+        out
+    }
+}
 
 impl Global for Logs {}
 
@@ -160,13 +212,11 @@ impl Browser {
         }
     }
 
-    /// The tab's page, once a render has built it.
-    /// What the tab's page has logged, oldest first.
-    pub(crate) fn console(&self, cx: &App) -> Vec<ConsoleMessage> {
+    pub(crate) fn console(&self, levels: &[Level], since: u64, cx: &App) -> String {
         cx.try_global::<Logs>()
             .and_then(|logs| logs.0.get(&self.id))
-            .map(|log| log.iter().cloned().collect())
-            .unwrap_or_default()
+            .map(|log| log.read(levels, since))
+            .unwrap_or_else(|| ConsoleLog::default().read(levels, since))
     }
 
     pub(crate) fn webview(&self) -> Option<Entity<WebView>> {
@@ -252,10 +302,7 @@ impl Browser {
             WebViewEvent::Load(_) | WebViewEvent::History { .. } | WebViewEvent::Error(_) => {}
             WebViewEvent::Console(message) => {
                 let log = cx.default_global::<Logs>().0.entry(self.id).or_default();
-                if log.len() == LOG_LIMIT {
-                    log.pop_front();
-                }
-                log.push_back(message.clone());
+                log.push(message.clone());
                 return;
             }
             WebViewEvent::NewWindow(url) => {
@@ -450,3 +497,7 @@ impl Render for Browser {
             .into_any_element()
     }
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit/browser_console.rs"]
+mod tests;

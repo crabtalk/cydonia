@@ -5,10 +5,12 @@ use crate::{
     resources, tool,
 };
 use serde_json::{Value, json};
-use std::path::Path;
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
+use std::{
+    path::Path,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 use tool::{Answer, Args, Tool, Trouble};
 
@@ -267,14 +269,21 @@ impl Server {
             .cloned()
             .unwrap_or_else(|| json!({}));
         match self.call_from(name, arguments, at, session) {
-            Ok(answer) => Ok(result(&answer.text, false)),
+            Ok(answer) => {
+                let mut result = result(&answer.text, false);
+                let content = result["content"].as_array_mut().unwrap();
+                content.extend(answer.images.into_iter().map(|image| {
+                    json!({ "type": "image", "data": image.data, "mimeType": image.mime_type })
+                }));
+                Ok(result)
+            }
             Err(Trouble::Refused(why)) => Ok(result(&why, true)),
             Err(Trouble::Invalid(why)) => Err(Error::invalid_params(why)),
         }
     }
 }
 
-/// A `tools/call` result: the text a model reads.
+/// A `tools/call` result.
 ///
 /// No `structuredContent`: no tool declares an `outputSchema`, and Claude Code
 /// hands the model `structuredContent` in place of `content` when both are

@@ -18,7 +18,7 @@
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 #[cfg(feature = "desktop")]
 use bezel::gpui::WeakEntity;
-use bezel::gpui::{App, ClipboardEntry, ClipboardItem, Entity, Image, hash};
+use bezel::gpui::{App, ClipboardEntry, ClipboardItem, Entity, Image, RenderImage, hash};
 use editor::{AppExt as _, Editor, ImageStore, Mode, PasteContent, PasteContext, Source};
 use image::{DynamicImage, ImageFormat, ImageResult, imageops::FilterType};
 use markdown::BlockKind;
@@ -49,6 +49,19 @@ impl Png for DynamicImage {
         let mut out = Cursor::new(Vec::new());
         self.write_to(&mut out, ImageFormat::Png)?;
         Ok(out.into_inner())
+    }
+}
+
+impl Png for RenderImage {
+    fn png(&self) -> ImageResult<Vec<u8>> {
+        let size = self.size(0);
+        let mut pixels = self.as_bytes(0).unwrap_or_default().to_vec();
+        for pixel in pixels.chunks_exact_mut(4) {
+            pixel.swap(0, 2);
+        }
+        let picture = image::RgbaImage::from_raw(size.width.0, size.height.0, pixels)
+            .ok_or_else(|| std::io::Error::other("invalid snapshot pixels"))?;
+        DynamicImage::ImageRgba8(picture).png()
     }
 }
 
@@ -318,3 +331,7 @@ fn keep(source: Source, _: &Entity<Editor>, base: Option<&Path>, _: &App) -> Opt
     let file = file.strip_prefix(&base).unwrap_or(&file);
     Some(file.to_string_lossy().into_owned())
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/media_png.rs"]
+mod tests;
