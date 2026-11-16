@@ -11,8 +11,8 @@ use crate::{
 use bezel::{
     gpui::{
         self, App, ClipboardEntry, ClipboardItem, Context, Edges, Entity, EventEmitter,
-        ExternalPaths, FocusHandle, Focusable, KeyBinding, Render, Subscription, Task, Window, div,
-        prelude::*, px,
+        ExternalPaths, FocusHandle, Focusable, KeyBinding, KeyBindingContextPredicate, Render,
+        Subscription, Task, Window, div, prelude::*, px,
     },
     theme::{TextStyle, Theme, Typeset},
     ui::{
@@ -89,7 +89,7 @@ gpui::actions!(
     [IncreaseTextSize, DecreaseTextSize, ResetTextSize]
 );
 
-pub fn bindings() -> Vec<KeyBinding> {
+pub fn bindings(cx: &App) -> Vec<KeyBinding> {
     vec![
         // Off macOS `ctrl-c` and `ctrl-v` are the shell's.
         KeyBinding::new(
@@ -102,11 +102,71 @@ pub fn bindings() -> Vec<KeyBinding> {
             input::Paste,
             Some(CONTEXT),
         ),
-        KeyBinding::new("secondary-=", IncreaseTextSize, Some(CONTEXT)),
-        KeyBinding::new("secondary-+", IncreaseTextSize, Some(CONTEXT)),
-        KeyBinding::new("secondary-shift-=", IncreaseTextSize, Some(CONTEXT)),
-        KeyBinding::new("secondary--", DecreaseTextSize, Some(CONTEXT)),
-        KeyBinding::new("secondary-0", ResetTextSize, Some(CONTEXT)),
+        KeyBinding::load(
+            "secondary-=",
+            Box::new(IncreaseTextSize),
+            Some(CONTEXT).map(|context| {
+                KeyBindingContextPredicate::parse(context)
+                    .expect("valid key context")
+                    .into()
+            }),
+            false,
+            None,
+            cx,
+        )
+        .expect("valid key binding"),
+        KeyBinding::load(
+            "secondary-+",
+            Box::new(IncreaseTextSize),
+            Some(CONTEXT).map(|context| {
+                KeyBindingContextPredicate::parse(context)
+                    .expect("valid key context")
+                    .into()
+            }),
+            false,
+            None,
+            cx,
+        )
+        .expect("valid key binding"),
+        KeyBinding::load(
+            "secondary-shift-=",
+            Box::new(IncreaseTextSize),
+            Some(CONTEXT).map(|context| {
+                KeyBindingContextPredicate::parse(context)
+                    .expect("valid key context")
+                    .into()
+            }),
+            false,
+            None,
+            cx,
+        )
+        .expect("valid key binding"),
+        KeyBinding::load(
+            "secondary--",
+            Box::new(DecreaseTextSize),
+            Some(CONTEXT).map(|context| {
+                KeyBindingContextPredicate::parse(context)
+                    .expect("valid key context")
+                    .into()
+            }),
+            false,
+            None,
+            cx,
+        )
+        .expect("valid key binding"),
+        KeyBinding::load(
+            "secondary-0",
+            Box::new(ResetTextSize),
+            Some(CONTEXT).map(|context| {
+                KeyBindingContextPredicate::parse(context)
+                    .expect("valid key context")
+                    .into()
+            }),
+            false,
+            None,
+            cx,
+        )
+        .expect("valid key binding"),
     ]
 }
 
@@ -287,10 +347,10 @@ impl Terminal {
     ) {
         let items = vec![
             Item::action("Copy")
-                .with_shortcut(&input::Copy, window)
+                .with_shortcut(&input::Copy, window, cx)
                 .disabled(self.buffer.read(cx).emulator.selection_text().is_none()),
             Item::action("Paste")
-                .with_shortcut(&input::Paste, window)
+                .with_shortcut(&input::Paste, window, cx)
                 .disabled(cx.read_from_clipboard().is_none()),
         ];
         self.menu.open(

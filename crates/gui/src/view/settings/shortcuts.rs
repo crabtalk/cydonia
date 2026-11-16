@@ -190,8 +190,8 @@ impl SettingsWindow {
         let theme = Theme::of(cx).clone();
         let shortcuts = &self.workspace.read(cx).settings.shortcuts;
         let clash = keymap::chord(command, shortcuts)
-            .and_then(Chord::parse)
-            .map(|chord| keymap::claimed(&chord, command, shortcuts))
+            .and_then(|text| Chord::parse(text, cx.platform_info().os))
+            .map(|chord| keymap::claimed(&chord, command, shortcuts, cx.platform_info().os))
             .unwrap_or_default();
         let (copy, colour) = match (clash.first(), shortcuts.get(command.key())) {
             (Some(other), _) => (
@@ -202,8 +202,8 @@ impl SettingsWindow {
                 match command.default() {
                     Some(default) => format!(
                         "Moved from {}.",
-                        Chord::parse(default)
-                            .map_or_else(|| default.into(), |chord| chord.glyphs())
+                        Chord::parse(default, cx.platform_info().os)
+                            .map_or_else(|| default.into(), |chord| chord.glyphs(cx))
                     ),
                     None => "Moved from nothing.".to_owned(),
                 },
@@ -239,9 +239,8 @@ impl SettingsWindow {
                 .refused
                 .clone()
                 .unwrap_or_else(|| "Press a key…".into()),
-            (None, Some(chord)) => {
-                Chord::parse(chord).map_or_else(|| chord.into(), |parsed| parsed.glyphs())
-            }
+            (None, Some(chord)) => Chord::parse(chord, cx.platform_info().os)
+                .map_or_else(|| chord.into(), |parsed| parsed.glyphs(cx)),
             (None, None) => UNBOUND.into(),
         };
         let button = theme
@@ -368,11 +367,12 @@ impl SettingsWindow {
                 cx.notify();
             }
             _ => {
-                let chord = stroke.unparse();
+                let chord = stroke.unparse(cx.platform_info().os);
                 // Only Activate has a second gate: the keymap will take any
                 // chord gpui can parse, and the system will not.
                 if target == Target::Activate
-                    && !Chord::parse(&chord).is_some_and(|chord| chord.holdable())
+                    && !Chord::parse(&chord, cx.platform_info().os)
+                        .is_some_and(|chord| chord.holdable())
                 {
                     recording.refused = Some("The system cannot hold that".into());
                     cx.notify();

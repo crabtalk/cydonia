@@ -59,8 +59,18 @@ impl Png for RenderImage {
         for pixel in pixels.chunks_exact_mut(4) {
             pixel.swap(0, 2);
         }
-        let picture = image::RgbaImage::from_raw(size.width.0, size.height.0, pixels)
-            .ok_or_else(|| std::io::Error::other("invalid snapshot pixels"))?;
+        let picture = image::RgbaImage::from_raw(
+            size.width
+                .0
+                .try_into()
+                .map_err(|_| std::io::Error::other("invalid snapshot width"))?,
+            size.height
+                .0
+                .try_into()
+                .map_err(|_| std::io::Error::other("invalid snapshot height"))?,
+            pixels,
+        )
+        .ok_or_else(|| std::io::Error::other("invalid snapshot pixels"))?;
         DynamicImage::ImageRgba8(picture).png()
     }
 }

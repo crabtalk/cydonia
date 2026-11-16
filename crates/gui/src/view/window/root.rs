@@ -35,9 +35,9 @@ use artifact::{kind::Kind, session::mode::Mode};
 use bezel::{
     gpui::{
         self, AnyElement, App, Axis, Bounds, Context, Div, DragMoveEvent, Empty, Entity,
-        FocusHandle, Focusable, KeyBinding, PathPromptOptions, Pixels, Point, Render,
-        TitlebarOptions, Window, WindowBounds, WindowHandle, WindowOptions, actions, div, point,
-        prelude::*, px, size,
+        FocusHandle, Focusable, KeyBinding, KeyBindingContextPredicate, PathPromptOptions, Pixels,
+        Point, Render, TitlebarOptions, Window, WindowBounds, WindowHandle, WindowOptions, actions,
+        div, point, prelude::*, px, size,
     },
     motion::{Fade, Painter},
     theme::{TextStyle, Theme, Typeset, appearance},
@@ -248,15 +248,23 @@ pub(crate) fn toolbar_inset(window: &Window, band: f32, cx: &App) -> f32 {
 /// The chords the window keeps whatever the reader says — the commands it also
 /// answers to are bound from [`crate::view::keymap`], which is where they can
 /// be moved.
-pub fn bindings() -> Vec<KeyBinding> {
+pub fn bindings(cx: &App) -> Vec<KeyBinding> {
     let tabs = (1..=9).map(|n| {
-        KeyBinding::new(
+        KeyBinding::load(
             &format!("secondary-{n}"),
-            SwitchTab {
+            Box::new(SwitchTab {
                 index: (n < 9).then(|| n - 1),
-            },
-            Some("Cydonia"),
+            }),
+            Some("Cydonia").map(|context| {
+                KeyBindingContextPredicate::parse(context)
+                    .expect("valid key context")
+                    .into()
+            }),
+            false,
+            None,
+            cx,
         )
+        .expect("valid key binding")
     });
     tabs.chain([
         // What a browser binds its tabs to, and the only chord these answer to:
@@ -283,14 +291,23 @@ pub fn bindings() -> Vec<KeyBinding> {
         KeyBinding::new("ctrl-alt-w", ClosePane, Some("Cydonia")),
         KeyBinding::new("ctrl-alt-z", ZoomPane, Some("Cydonia")),
         // Scope the fallback to the root so focused text surfaces take priority.
-        KeyBinding::new(
+        KeyBinding::load(
             "secondary-c",
-            CopySelection,
+            Box::new(CopySelection),
             Some(crate::view::keymap::platform(
                 "Cydonia",
                 "Cydonia && !CydoniaTerminal",
-            )),
-        ),
+            ))
+            .map(|context| {
+                KeyBindingContextPredicate::parse(context)
+                    .expect("valid key context")
+                    .into()
+            }),
+            false,
+            None,
+            cx,
+        )
+        .expect("valid key binding"),
     ])
     .collect()
 }

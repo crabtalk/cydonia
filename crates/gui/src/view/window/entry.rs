@@ -177,6 +177,7 @@ impl Cydonia {
             let plain_chord = keymap::label(
                 Command::PlainText,
                 &self.workspace.read(cx).settings.shortcuts,
+                cx,
             )
             .unwrap_or_default();
             // The markdown itself, for the times the document is in the way of

@@ -1,6 +1,6 @@
 //! What the article's formatting bar shows, and where it stands.
 
-use bezel::gpui::{Bounds, Pixels, point, px, size};
+use bezel::gpui::{self, Bounds, Pixels, TestAppContext, point, px, size};
 use cydonia_gui::view::component::ribbon::{formats, keystroke, link, perch};
 use editor::{Formatting, Mode};
 use markdown::Mark;
@@ -83,17 +83,19 @@ fn code_is_named_for_what_it_would_make() {
 /// `cmd-b` is the sidebar's in this app and `cmd-e` is Plain text's, so the
 /// editor's bold and code are never reached and the buttons must not claim
 /// otherwise.
-#[test]
-fn the_two_chords_this_app_spent_elsewhere_are_not_advertised() {
-    assert_eq!(keystroke(&Mark::Bold), None);
-    assert_eq!(keystroke(&Mark::Code), None);
-    let (italic, strike) = if cfg!(target_os = "macos") {
-        ("⌘I", "⇧⌘X")
-    } else {
-        ("Ctrl+I", "Ctrl+Shift+X")
-    };
-    assert_eq!(keystroke(&Mark::Italic).as_deref(), Some(italic));
-    assert_eq!(keystroke(&Mark::Strike).as_deref(), Some(strike));
+#[gpui::test]
+fn the_two_chords_this_app_spent_elsewhere_are_not_advertised(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        assert_eq!(keystroke(&Mark::Bold, cx), None);
+        assert_eq!(keystroke(&Mark::Code, cx), None);
+        let (italic, strike) = if cfg!(target_os = "macos") {
+            ("⌘I", "⇧⌘X")
+        } else {
+            ("Ctrl+I", "Ctrl+Shift+X")
+        };
+        assert_eq!(keystroke(&Mark::Italic, cx).as_deref(), Some(italic));
+        assert_eq!(keystroke(&Mark::Strike, cx).as_deref(), Some(strike));
+    });
 }
 
 #[test]

@@ -7,8 +7,8 @@ use crate::model::settings::Browsing;
 use bezel::{
     gpui::{
         self, AnyElement, App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable,
-        Global, KeyBinding, MouseButton, MouseDownEvent, Pixels, Point, Subscription, Window,
-        actions, div, prelude::*, px,
+        Global, KeyBinding, KeyBindingContextPredicate, MouseButton, MouseDownEvent, Pixels, Point,
+        Subscription, Window, actions, div, prelude::*, px,
     },
     motion::{Fade, Painter},
     theme::Theme,
@@ -47,12 +47,36 @@ pub fn home(cx: &App) -> String {
     )
 }
 
-pub fn bindings() -> Vec<KeyBinding> {
+pub fn bindings(cx: &App) -> Vec<KeyBinding> {
     vec![
         KeyBinding::new("enter", Go, Some(ADDRESS_CONTEXT)),
-        KeyBinding::new("secondary-r", Reload, Some(CONTEXT)),
+        KeyBinding::load(
+            "secondary-r",
+            Box::new(Reload),
+            Some(CONTEXT).map(|context| {
+                KeyBindingContextPredicate::parse(context)
+                    .expect("valid key context")
+                    .into()
+            }),
+            false,
+            None,
+            cx,
+        )
+        .expect("valid key binding"),
         KeyBinding::new("f5", Reload, Some(CONTEXT)),
-        KeyBinding::new("secondary-shift-r", HardReload, Some(CONTEXT)),
+        KeyBinding::load(
+            "secondary-shift-r",
+            Box::new(HardReload),
+            Some(CONTEXT).map(|context| {
+                KeyBindingContextPredicate::parse(context)
+                    .expect("valid key context")
+                    .into()
+            }),
+            false,
+            None,
+            cx,
+        )
+        .expect("valid key binding"),
     ]
 }
 
@@ -328,8 +352,8 @@ impl Browser {
     /// Open the reload button's menu at `at`.
     fn open_reload_menu(&mut self, at: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
         let items = vec![
-            Item::action("Reload").with_shortcut_in(&Reload, CONTEXT, window),
-            Item::action("Hard Reload").with_shortcut_in(&HardReload, CONTEXT, window),
+            Item::action("Reload").with_shortcut_in(&Reload, CONTEXT, window, cx),
+            Item::action("Hard Reload").with_shortcut_in(&HardReload, CONTEXT, window, cx),
             Item::action("Web Inspector").disabled(!WebView::HAS_INSPECTOR),
         ];
         self.menu.open(

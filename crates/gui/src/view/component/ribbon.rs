@@ -185,14 +185,14 @@ pub fn formats(formatting: &Formatting) -> Vec<Format> {
 /// Code is the second one spent that way: ⌘E is Plain text here. Both are
 /// chords the reader can move, so what a moved one leaves behind is the
 /// editor's own mark, reachable from this bar either way.
-pub fn keystroke(mark: &Mark) -> Option<SharedString> {
+pub fn keystroke(mark: &Mark, cx: &App) -> Option<SharedString> {
     let chord = match mark {
         Mark::Italic => "secondary-i",
         Mark::Strike => "secondary-shift-x",
         Mark::Custom(name) if name == editor::HIGHLIGHT_MARK => "secondary-shift-h",
         _ => return None,
     };
-    Some(bezel::ui::keys::printed(chord))
+    Some(bezel::ui::keys::printed(chord, cx))
 }
 
 /// The link the selection carries throughout, if it carries one.
@@ -566,7 +566,7 @@ impl Tab {
             true => theme.accent,
             false => theme.text_muted,
         };
-        let key = keystroke(&mark);
+        let key = keystroke(&mark, cx);
         theme
             .ghost(SharedString::from(format!("ribbon-{label}")))
             .w(px(BUTTON))

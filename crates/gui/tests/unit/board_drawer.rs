@@ -434,11 +434,12 @@ fn horizontal_scroll_keeps_offsets_and_lane_geometry_stable(cx: &mut TestAppCont
         scroll.set_offset(point(px(0.), px(0.)));
         cx.update(|window, _| window.refresh());
         settle(&mut cx);
-        cx.simulate_event(gpui::ScrollWheelEvent {
+        cx.simulate_event(gpui::ScrollEvent {
             position: point(px(350.), px(y as f32)),
             delta: gpui::ScrollDelta::Pixels(point(px(-30.), px(0.))),
             modifiers: Default::default(),
             touch_phase: gpui::TouchPhase::Started,
+            source: gpui::ScrollSource::Pointer,
         });
         settle(&mut cx);
         assert_eq!(scroll.offset().x, px(-30.), "y={y}");
@@ -458,11 +459,12 @@ fn horizontal_scroll_keeps_offsets_and_lane_geometry_stable(cx: &mut TestAppCont
             .scroller()
     });
     let horizontal = scroll.offset();
-    cx.simulate_event(gpui::ScrollWheelEvent {
+    cx.simulate_event(gpui::ScrollEvent {
         position: point(px(350.), px(90.)),
         delta: gpui::ScrollDelta::Pixels(point(px(1.), px(-30.))),
         modifiers: Default::default(),
         touch_phase: gpui::TouchPhase::Started,
+        source: gpui::ScrollSource::Pointer,
     });
     settle(&mut cx);
     assert_eq!(scroll.offset(), horizontal);
@@ -481,11 +483,12 @@ fn horizontal_scroll_keeps_offsets_and_lane_geometry_stable(cx: &mut TestAppCont
     });
     settle(&mut cx);
     let before = scroll.offset();
-    cx.simulate_event(gpui::ScrollWheelEvent {
+    cx.simulate_event(gpui::ScrollEvent {
         position: point(px(350.), px(450.)),
         delta: gpui::ScrollDelta::Pixels(point(px(-30.), px(0.))),
         modifiers: Default::default(),
         touch_phase: gpui::TouchPhase::Started,
+        source: gpui::ScrollSource::Pointer,
     });
     settle(&mut cx);
     assert_eq!(
@@ -662,11 +665,12 @@ fn list_scroll_builds_visible_rows_and_keeps_its_extent(cx: &mut TestAppContext)
     let parsed = cx.update(|_, cx| root.read(cx).card_docs.0.borrow().len());
     assert!(parsed < 50, "built {parsed} documents after jumping");
     for step in 1..=5 {
-        cx.simulate_event(gpui::ScrollWheelEvent {
+        cx.simulate_event(gpui::ScrollEvent {
             position: point(px(350.), px(180.)),
             delta: gpui::ScrollDelta::Pixels(point(px(0.), px(-36.))),
             modifiers: Default::default(),
             touch_phase: gpui::TouchPhase::Moved,
+            source: gpui::ScrollSource::Pointer,
         });
         settle(&mut cx);
         assert_eq!(scroll.offset().y, px(-3600. - 36. * step as f32));
@@ -1076,11 +1080,12 @@ fn a_long_lane_builds_only_the_cards_on_screen(cx: &mut TestAppContext) {
     });
     // Both seeded cards, the 150, `Add a card` and the foot.
     assert_eq!(lane.list.item_count(), 154);
-    cx.simulate_event(gpui::ScrollWheelEvent {
+    cx.simulate_event(gpui::ScrollEvent {
         position: point(px(100.), px(300.)),
         delta: gpui::ScrollDelta::Pixels(point(px(0.), px(-600.))),
         modifiers: Default::default(),
         touch_phase: gpui::TouchPhase::Started,
+        source: gpui::ScrollSource::Pointer,
     });
     settle(&mut cx);
     assert!(lane.scroller().offset().y < px(0.));

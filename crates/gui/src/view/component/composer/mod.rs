@@ -1254,7 +1254,7 @@ impl Composer {
     fn tools_menu(
         &mut self,
         window: &mut Window,
-        _: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> (
         Vec<Item>,
         impl Fn(&mut Self, &[usize], &mut Window, &mut Context<Self>) + use<>,
@@ -1264,14 +1264,14 @@ impl Composer {
             Some((
                 Item::action("Terminal")
                     .with_icon(icons::development::Terminal)
-                    .with_shortcut(&root::ToggleTerminal, window),
+                    .with_shortcut(&root::ToggleTerminal, window, cx),
                 (|| ComposerEvent::Terminal) as Emit,
             )),
             tabs.review.then(|| {
                 (
                     Item::action("Review")
                         .with_icon(icons::development::GitCompare)
-                        .with_shortcut(&root::OpenReview, window),
+                        .with_shortcut(&root::OpenReview, window, cx),
                     (|| ComposerEvent::Changes) as Emit,
                 )
             }),
@@ -1279,7 +1279,7 @@ impl Composer {
                 (
                     Item::action("Files")
                         .with_icon(icons::files::Folder)
-                        .with_shortcut(&root::OpenFiles, window),
+                        .with_shortcut(&root::OpenFiles, window, cx),
                     (|| ComposerEvent::Files) as Emit,
                 )
             }),

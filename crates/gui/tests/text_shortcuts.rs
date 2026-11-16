@@ -114,7 +114,8 @@ fn open(cx: &mut TestAppContext) -> (Entity<TextField>, VisualTestContext) {
 }
 
 fn option_letter(cx: &mut VisualTestContext, chord: &str, character: &str) {
-    let mut key = gpui::Keystroke::parse(chord).unwrap();
+    let mut key =
+        cx.update(|_, cx| gpui::Keystroke::parse_with_os(chord, cx.platform_info().os).unwrap());
     key.key_char = Some(character.into());
     cx.update(|window, cx| window.dispatch_keystroke(key, cx));
     cx.run_until_parked();

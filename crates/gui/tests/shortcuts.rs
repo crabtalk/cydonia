@@ -1,9 +1,16 @@
 //! The chords: what the file resolves to, what the system will take, and what
 //! the two of them refuse.
 
+use bezel::gpui::{self, OperatingSystem, TestAppContext};
 use cydonia_gui::{
     model::settings::{Settings, Shortcuts},
     view::keymap::{self, Chord, Command},
+};
+
+const OS: OperatingSystem = if cfg!(target_os = "macos") {
+    OperatingSystem::Mac
+} else {
+    OperatingSystem::Linux
 };
 
 /// A `[shortcuts]` table as the file would hold it.
@@ -12,7 +19,7 @@ fn shortcuts(body: &str) -> Shortcuts {
 }
 
 fn chord(text: &str) -> Chord {
-    Chord::parse(text).expect("a chord")
+    Chord::parse(text, OS).expect("a chord")
 }
 
 #[test]
@@ -70,13 +77,13 @@ fn a_chord_that_is_not_one_falls_back_rather_than_unbinding() {
 fn a_chord_already_spoken_for_names_who_has_it() {
     let held = shortcuts(r#"new_board = "secondary-b""#);
     assert_eq!(
-        keymap::claimed(&chord("secondary-b"), Command::NewBoard, &held),
+        keymap::claimed(&chord("secondary-b"), Command::NewBoard, &held, OS),
         vec![Command::ToggleSidebar]
     );
     // Symmetric, and neither of them counts itself: each is told who else is
     // on the chord, which is what a row has to say.
     assert_eq!(
-        keymap::claimed(&chord("secondary-b"), Command::ToggleSidebar, &held),
+        keymap::claimed(&chord("secondary-b"), Command::ToggleSidebar, &held, OS),
         vec![Command::NewBoard]
     );
 }
@@ -91,7 +98,7 @@ fn a_recorded_chord_meets_the_default_it_spells_differently() {
         "ctrl-b"
     };
     assert_eq!(
-        keymap::claimed(&chord(recorded), Command::NewBoard, &shortcuts("")),
+        keymap::claimed(&chord(recorded), Command::NewBoard, &shortcuts(""), OS),
         vec![Command::ToggleSidebar]
     );
 }
@@ -115,19 +122,21 @@ fn no_two_defaults_want_the_same_chord() {
     for command in Command::ALL {
         assert!(
             keymap::chord(command, &bare)
-                .and_then(Chord::parse)
-                .is_none_or(|held| keymap::claimed(&held, command, &bare).is_empty()),
+                .and_then(|text| Chord::parse(text, OS))
+                .is_none_or(|held| keymap::claimed(&held, command, &bare, OS).is_empty()),
             "{} collides",
             command.title()
         );
     }
 }
 
-#[test]
-fn chords_are_written_the_way_the_platform_writes_them() {
-    assert_eq!(chord("cmd-b").glyphs(), "⌘B");
-    assert_eq!(chord("ctrl-alt-cmd-1").glyphs(), "⌃⌥⌘1");
-    assert_eq!(Chord::parse("not-a-chord"), None);
+#[gpui::test]
+fn chords_are_written_the_way_the_platform_writes_them(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        assert_eq!(chord("cmd-b").glyphs(cx), "⌘B");
+        assert_eq!(chord("ctrl-alt-cmd-1").glyphs(cx), "⌃⌥⌘1");
+        assert_eq!(Chord::parse("not-a-chord", OS), None);
+    });
 }
 
 #[test]
@@ -139,7 +148,7 @@ fn the_system_takes_a_modified_single_stroke_and_nothing_else() {
     assert!(!chord("space").holdable());
     // Carbon registers one combination and has nowhere to put the waiting.
     assert!(!chord("cmd-k cmd-b").holdable());
-    assert_eq!(Chord::parse(""), None);
+    assert_eq!(Chord::parse("", OS), None);
 }
 
 /// A fresh install claims no key across the desktop, and a table that says
@@ -162,4 +171,15 @@ fn a_fresh_file_holds_no_shortcuts_at_all() {
         keymap::chord(Command::ToggleSidebar, &read.shortcuts),
         Some("secondary-b")
     );
+}
+
+#[test]
+fn secondary_modifier_follows_the_host_operating_system() {
+    for (os, explicit) in [
+        (OperatingSystem::Mac, "cmd-b"),
+        (OperatingSystem::Linux, "ctrl-b"),
+        (OperatingSystem::Windows, "ctrl-b"),
+    ] {
+        assert_eq!(Chord::parse("secondary-b", os), Chord::parse(explicit, os));
+    }
 }

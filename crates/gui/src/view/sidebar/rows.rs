@@ -964,7 +964,7 @@ impl Sidebar {
         };
         let open = match heading {
             Heading::Projects => {
-                let chord = keymap::label(Command::OpenProject, &workspace.settings.shortcuts);
+                let chord = keymap::label(Command::OpenProject, &workspace.settings.shortcuts, cx);
                 Some(
                     plus("open-project")
                         .tooltip(move |window, cx| match chord.clone() {
@@ -1215,7 +1215,11 @@ impl Sidebar {
     pub(super) fn search_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let trail = self.trail(cx);
-        let chord = keymap::label(Command::Search, &self.workspace.read(cx).settings.shortcuts);
+        let chord = keymap::label(
+            Command::Search,
+            &self.workspace.read(cx).settings.shortcuts,
+            cx,
+        );
         let raise = cx.listener(|this, _, window, cx| {
             this.defer_window(window, cx, |root, window, cx| {
                 root.toggle_search(&ToggleSearch, window, cx)
@@ -1358,6 +1362,7 @@ impl Sidebar {
         let chord = keymap::label(
             Command::OpenSettings,
             &self.workspace.read(cx).settings.shortcuts,
+            cx,
         );
         // Inset as a row is, so the button ends where the rows' buttons end.
         div()

@@ -1043,7 +1043,7 @@ impl Cydonia {
                 "session",
                 session.label(),
                 session.icon(),
-                keys::shortcut(&NewSession, window),
+                keys::shortcut(&NewSession, window, cx),
                 cx,
                 move |this, at, window, cx| {
                     let place = at.map_or(Place::Below, Place::At);
@@ -1062,7 +1062,7 @@ impl Cydonia {
                     "session",
                     session.label(),
                     session.icon(),
-                    keys::shortcut(&NewSession, window),
+                    keys::shortcut(&NewSession, window, cx),
                     cx,
                     move |this, _, window, cx| this.new_session_action(&NewSession, window, cx),
                 )
@@ -1071,10 +1071,10 @@ impl Cydonia {
         }
         for kind in offered.kinds {
             let (id, chord) = match kind {
-                New::Board => ("board", keys::shortcut(&NewBoard, window)),
-                New::Article => ("article", keys::shortcut(&NewArticle, window)),
-                New::Canvas => ("canvas", keys::shortcut(&NewCanvas, window)),
-                New::Table => ("table", keys::shortcut(&NewTable, window)),
+                New::Board => ("board", keys::shortcut(&NewBoard, window, cx)),
+                New::Article => ("article", keys::shortcut(&NewArticle, window, cx)),
+                New::Canvas => ("canvas", keys::shortcut(&NewCanvas, window, cx)),
+                New::Table => ("table", keys::shortcut(&NewTable, window, cx)),
                 New::Session(_) => continue,
             };
             rows.push(
