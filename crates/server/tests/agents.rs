@@ -90,10 +90,13 @@ fn agents_install_on_the_server_by_catalog_id() {
     let agents = Remote::new(&served.client);
     served.runtime.block_on(async {
         let mut lines = Vec::new();
-        let installed = agents
-            .resolve("fake", |line| lines.push(line.to_owned()))
-            .await
-            .unwrap();
+        let (installed, concurrent) = futures::future::join(
+            agents.resolve("fake", |line| lines.push(line.to_owned())),
+            agents.resolve("fake", |_| {}),
+        )
+        .await;
+        let installed = installed.unwrap();
+        assert_eq!(concurrent.unwrap().command, installed.command);
         assert_eq!(installed.id, "fake");
         assert_eq!(installed.version, "1.2.3");
         assert_eq!(installed.args, ["--acp"]);

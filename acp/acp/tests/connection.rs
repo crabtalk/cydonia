@@ -71,6 +71,45 @@ fn connect(agent: Fake) -> cydonia_acp::AgentConn {
 }
 
 #[tokio::test]
+async fn requests_after_stdout_has_closed_fail_instead_of_waiting() {
+    let conn = cydonia_acp::connect_on(
+        tokio::io::BufReader::new(tokio::io::empty()),
+        tokio::io::sink(),
+        Arc::new(Ui),
+        None,
+    );
+    // Let EOF arrive before the first request, as with a failed agent shim.
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    for _ in 0..3 {
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            conn.initialize(proto::InitializeRequest::new(Default::default())),
+        )
+        .await;
+        assert!(result.expect("a call after EOF must not hang").is_err());
+    }
+}
+
+#[tokio::test]
+async fn a_failed_write_fails_waiting_calls_even_with_stdout_still_open() {
+    let (reader, _hold_stdout) = tokio::io::duplex(1024);
+    let (writer, closed_stdin) = tokio::io::duplex(1024);
+    drop(closed_stdin);
+    let conn = cydonia_acp::connect_on(
+        tokio::io::BufReader::new(reader),
+        writer,
+        Arc::new(Ui),
+        None,
+    );
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        conn.initialize(proto::InitializeRequest::new(Default::default())),
+    )
+    .await;
+    assert!(result.expect("broken stdin must fail the request").is_err());
+}
+
+#[tokio::test]
 async fn initialize_refuses_a_version_this_build_cannot_speak() {
     let agent = connect(Fake {
         version: proto::ProtocolVersion(2),

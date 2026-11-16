@@ -25,7 +25,7 @@ cydonia-acp-agents = { workspace = true, optional = true }
 # crates-io
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
-tokio = { workspace = true, optional = true, features = ["io-util", "rt", "sync"] }
+tokio = { workspace = true, optional = true, features = ["io-util", "rt", "sync", "macros"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "process", "time"] }

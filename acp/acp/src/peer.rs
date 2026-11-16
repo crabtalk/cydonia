@@ -8,24 +8,26 @@ use serde::{Serialize, de::DeserializeOwned};
 use std::{
     collections::HashMap,
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, Weak,
         atomic::{AtomicI64, Ordering},
     },
 };
 use tokio::{
     io::{AsyncBufRead, AsyncWrite, BufReader},
-    sync::{mpsc, oneshot},
+    sync::{mpsc, oneshot, watch},
     task::AbortHandle,
 };
 
-type Pending = Arc<
-    Mutex<
-        HashMap<
-            cydonia_acp_proto::RequestId,
-            oneshot::Sender<Result<serde_json::Value, cydonia_acp_proto::Error>>,
-        >,
+#[derive(Default)]
+struct Calls {
+    closed: bool,
+    waiting: HashMap<
+        cydonia_acp_proto::RequestId,
+        oneshot::Sender<Result<serde_json::Value, cydonia_acp_proto::Error>>,
     >,
->;
+}
+
+type Pending = Mutex<Calls>;
 type InFlight = Arc<Mutex<HashMap<cydonia_acp_proto::RequestId, AbortHandle>>>;
 
 /// A handle for calling the other side. Cheap to clone.
@@ -35,6 +37,7 @@ pub struct Peer(Arc<Inner>);
 struct Inner {
     outgoing: mpsc::UnboundedSender<Message>,
     pending: Pending,
+    closed: watch::Sender<bool>,
     next_id: AtomicI64,
 }
 
@@ -49,12 +52,20 @@ impl Peer {
         H: Handler,
     {
         let (outgoing, rx) = mpsc::unbounded_channel();
+        let (closed, stopped) = watch::channel(false);
         let peer = Self(Arc::new(Inner {
             outgoing,
             pending: Pending::default(),
+            closed,
             next_id: AtomicI64::new(0),
         }));
-        tokio::spawn(write_loop(writer, rx, tap.clone()));
+        tokio::spawn(write_loop(
+            writer,
+            rx,
+            tap.clone(),
+            Arc::downgrade(&peer.0),
+            stopped,
+        ));
         tokio::spawn(read_loop(reader, handler, peer.clone(), tap));
         peer
     }
@@ -79,11 +90,13 @@ impl Peer {
         let params = serde_json::to_value(params)?;
 
         let (tx, rx) = oneshot::channel();
-        self.0
-            .pending
-            .lock()
-            .expect("pending map poisoned")
-            .insert(id.clone(), tx);
+        {
+            let mut calls = self.0.pending.lock().expect("pending map poisoned");
+            if calls.closed {
+                return Err(disconnected());
+            }
+            calls.waiting.insert(id.clone(), tx);
+        }
 
         if self
             .0
@@ -95,6 +108,7 @@ impl Peer {
                 .pending
                 .lock()
                 .expect("pending map poisoned")
+                .waiting
                 .remove(&id);
             return Err(disconnected());
         }
@@ -118,6 +132,9 @@ impl Peer {
         params: P,
     ) -> Result<(), cydonia_acp_proto::Error> {
         let params = serde_json::to_value(params)?;
+        if self.0.pending.lock().expect("pending map poisoned").closed {
+            return Err(disconnected());
+        }
         self.0
             .outgoing
             .send(Message::notification(method, params))
@@ -134,6 +151,7 @@ impl Peer {
             .pending
             .lock()
             .expect("pending map poisoned")
+            .waiting
             .remove(id);
         if let Some(waiter) = waiter {
             let _ = waiter.send(outcome);
@@ -142,7 +160,12 @@ impl Peer {
 
     /// Fail every outstanding call, so callers wake instead of hanging.
     fn fail_all(&self) {
-        let pending = std::mem::take(&mut *self.0.pending.lock().expect("pending map poisoned"));
+        let pending = {
+            let mut calls = self.0.pending.lock().expect("pending map poisoned");
+            calls.closed = true;
+            std::mem::take(&mut calls.waiting)
+        };
+        self.0.closed.send_replace(true);
         for (_, waiter) in pending {
             let _ = waiter.send(Err(disconnected()));
         }
@@ -176,6 +199,7 @@ impl Drop for Abandon<'_> {
             .pending
             .lock()
             .expect("pending map poisoned")
+            .waiting
             .remove(&self.id);
         let _ = self.peer.notify(
             cydonia_acp_proto::method::CANCEL_REQUEST,
@@ -195,14 +219,24 @@ async fn write_loop<W: AsyncWrite + Unpin>(
     mut writer: W,
     mut rx: mpsc::UnboundedReceiver<Message>,
     tap: Option<Tap>,
+    peer: Weak<Inner>,
+    mut closed: watch::Receiver<bool>,
 ) {
-    while let Some(message) = rx.recv().await {
-        if codec::write(&mut writer, &message, tap.as_ref())
-            .await
-            .is_err()
-        {
+    loop {
+        let message = tokio::select! {
+            _ = closed.wait_for(|closed| *closed) => break,
+            message = rx.recv() => match message { Some(message) => message, None => break },
+        };
+        let written = tokio::select! {
+            _ = closed.wait_for(|closed| *closed) => break,
+            written = codec::write(&mut writer, &message, tap.as_ref()) => written,
+        };
+        if written.is_err() {
             break;
         }
+    }
+    if let Some(inner) = peer.upgrade() {
+        Peer(inner).fail_all();
     }
 }
 
@@ -212,8 +246,13 @@ where
     H: Handler,
 {
     let in_flight = InFlight::default();
+    let mut closed = peer.0.closed.subscribe();
     loop {
-        let message = match codec::read(&mut reader, tap.as_ref()).await {
+        let read = tokio::select! {
+            _ = closed.wait_for(|closed| *closed) => break,
+            read = codec::read(&mut reader, tap.as_ref()) => read,
+        };
+        let message = match read {
             Ok(Some(message)) => message,
             Ok(None) => break,
             // A malformed frame is the peer's bug, not ours; report and continue.
@@ -263,6 +302,9 @@ where
         }
     }
     peer.fail_all();
+    for (_, task) in std::mem::take(&mut *in_flight.lock().expect("in-flight map poisoned")) {
+        task.abort();
+    }
 }
 
 fn cancel(in_flight: &InFlight, params: &serde_json::Value) {

@@ -49,3 +49,19 @@ Reopening a project after its host session has ended refreshes the existing
 store and replaces the cached spawner. Ordinary link loss reconnects within the
 transport; daemon replacement refills project replicas. Processes from a replaced
 daemon cannot be resumed.
+
+## Agents and MCP
+
+Remote sessions currently run catalog agents whose source has been approved in
+Settings. Custom local command entries are refused remotely; local executable
+paths and environments are not automatically portable to another host. The host
+installs the catalog agent and runs it in its login environment, with the remote
+project as the working directory. Concurrent resolves of one agent share the
+installed result. Dropping a running session terminates its remote process.
+
+The client advertises no local filesystem capability to a remote agent. Its
+Cydonia MCP server runs on the host and relays requests to the desktop, preserving
+the process's project and session binding. File and store operations resolve the
+full location, including host identity; changing the active project or rail order
+does not change a process's binding. A tool may explicitly name another project
+that the app has open, as described by its arguments.

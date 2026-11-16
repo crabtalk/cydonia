@@ -128,3 +128,58 @@ fn a_call_for_a_project_the_app_does_not_hold_is_refused() {
     assert!(text(&refused).contains(&elsewhere.to_string()), "{refused}");
     assert!(!fs::Project::new(host.path()).cydonia().exists());
 }
+
+#[test]
+fn bound_calls_route_to_their_project_with_multiple_remote_projects_open() {
+    let first = Scratch::new("tools-first");
+    let second = Scratch::new("tools-second");
+    let served = Served::new();
+    let mut stores = std::collections::HashMap::new();
+    let mut locations = Vec::new();
+    for root in [first.path(), second.path()] {
+        let location = Location::Remote {
+            host: "7".parse().unwrap(),
+            root: root.to_owned(),
+        };
+        let (project, refresh) = served
+            .runtime
+            .block_on(remote::Project::open(
+                served.client.clone(),
+                root.to_owned(),
+            ))
+            .unwrap();
+        served.runtime.spawn(refresh);
+        stores.insert(location.clone(), Store::Remote(project));
+        locations.push(location);
+    }
+    mcp::rail::install(|_| {});
+    mcp::rail::set_open(locations.clone());
+    mcp::rail::install_stores(move |at| stores.get(at).cloned());
+    let tools = mcp::Server::new().mount(&mcp::tools::board::TOOLS);
+    Mcp::serve(&served.client, move |request| {
+        tools
+            .message(&request.message, request.binding.project.as_ref(), None)
+            .text()
+    });
+    for (location, name) in locations.iter().zip(["First board", "Second board"]) {
+        let made = call(
+            &served,
+            location,
+            "board_add",
+            json!({"name": name, "key": "PLAN"}),
+        );
+        assert!(made["result"]["isError"].is_null(), "{made}");
+    }
+    // Changing the rail order must not change a process's project binding.
+    mcp::rail::set_open(locations.iter().rev().cloned().collect());
+    let first = call(&served, &locations[0], "board_list", json!({}));
+    let second = call(&served, &locations[1], "board_list", json!({}));
+    assert!(
+        text(&first).contains("First board") && !text(&first).contains("Second board"),
+        "{first}"
+    );
+    assert!(
+        text(&second).contains("Second board") && !text(&second).contains("First board"),
+        "{second}"
+    );
+}

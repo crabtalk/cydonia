@@ -52,6 +52,9 @@ for line in sys.stdin:
         continue
     method = req.get('method')
     if method == 'initialize':
+        fs = req['params'].get('clientCapabilities', {}).get('fs', {})
+        assert not fs.get('readTextFile', False), fs
+        assert not fs.get('writeTextFile', False), fs
         result = {'protocolVersion': 1, 'agentCapabilities': {}, 'authMethods': []}
     elif method == 'session/new':
         result = {'sessionId': 'remote'}
@@ -102,6 +105,8 @@ fn a_remote_runs_agents_in_its_login_environment() {
         var_answers_from_the_login_shell(&remote, &bin);
         a_bare_name_runs_with_args_env_cwd_and_piped_stdio(&remote, home).await;
         acp_connects_over_a_remote_process(&remote).await;
+        a_remote_startup_failure_reports_stderr(&remote).await;
+        dropping_a_remote_process_ends_its_output(&remote).await;
     });
 }
 
@@ -152,11 +157,80 @@ async fn acp_connects_over_a_remote_process(remote: &Remote) {
         env: Default::default(),
     };
     let (tx, _events) = acp::channel();
-    let launch = Launch::new(artifact::location::Location::from(std::env::temp_dir()));
+    let launch = Launch::new(artifact::location::Location::Remote {
+        host: "1".parse().unwrap(),
+        root: std::env::temp_dir(),
+    });
     let opened = Session::spawn_on(remote, &agent, launch, tx);
     let session = tokio::time::timeout(PATIENCE, opened)
         .await
         .unwrap()
         .unwrap();
     assert_eq!(session.session_id.to_string(), "remote");
+}
+
+async fn a_remote_startup_failure_reports_stderr(remote: &Remote) {
+    let agent = settings::Agent {
+        name: "broken".into(),
+        id: None,
+        command: "/bin/sh".into(),
+        args: vec![
+            "-c".into(),
+            "echo 'remote launch failed' >&2; exit 127".into(),
+        ],
+        env: Default::default(),
+    };
+    let (tx, mut events) = acp::channel();
+    let launch = Launch::new(artifact::location::Location::Remote {
+        host: "1".parse().unwrap(),
+        root: std::env::temp_dir(),
+    });
+    let opened = tokio::time::timeout(PATIENCE, Session::spawn_on(remote, &agent, launch, tx))
+        .await
+        .expect("failed initialization must not hang");
+    assert!(opened.is_err());
+    tokio::time::timeout(PATIENCE, async {
+        loop {
+            if let Some(acp::Event::Stderr(line)) = events.recv().await {
+                assert_eq!(line, "remote launch failed");
+                break;
+            }
+        }
+    })
+    .await
+    .expect("remote stderr survives failed initialization");
+}
+
+async fn dropping_a_remote_process_ends_its_output(remote: &Remote) {
+    use tokio::io::AsyncBufReadExt as _;
+    let args = vec![
+        "-u".into(),
+        "-c".into(),
+        "import time; print('ready', flush=True); time.sleep(60)".into(),
+    ];
+    let env = BTreeMap::new();
+    let cwd = std::env::temp_dir();
+    let process = remote
+        .spawn(&Spec {
+            program: "python3",
+            args: &args,
+            env: &env,
+            cwd: &cwd,
+        })
+        .await
+        .unwrap();
+    let mut stdout = tokio::io::BufReader::new(process.stdout);
+    let mut ready = String::new();
+    tokio::time::timeout(PATIENCE, stdout.read_line(&mut ready))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(ready, "ready\n");
+    drop(process.handle);
+    let mut rest = Vec::new();
+    tokio::time::timeout(PATIENCE, stdout.read_to_end(&mut rest))
+        .await
+        .expect("dropping the handle kills the remote agent")
+        .unwrap();
+    assert!(rest.is_empty());
 }
