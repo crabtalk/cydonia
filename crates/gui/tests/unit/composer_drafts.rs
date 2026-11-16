@@ -31,7 +31,7 @@ fn switching_to_a_fork_keeps_drafts_and_attachments_separate(cx: &mut TestAppCon
 }
 
 #[gpui::test]
-fn macos_word_navigation_and_selection(cx: &mut TestAppContext) {
+fn platform_word_navigation_and_selection(cx: &mut TestAppContext) {
     cx.update(|cx| {
         Theme::install(Appearance::Dark, cx);
         crate::view::keymap::bind_all(&crate::model::settings::Shortcuts::default(), cx);
@@ -46,19 +46,25 @@ fn macos_word_navigation_and_selection(cx: &mut TestAppContext) {
     });
     let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
     visual.run_until_parked();
-    visual.simulate_keystrokes("cmd-right alt-left");
+    visual.simulate_keystrokes(crate::view::keymap::platform(
+        "cmd-right alt-left",
+        "end ctrl-left",
+    ));
     composer.read_with(&visual, |composer, cx| {
         assert_eq!(composer.field.read(cx).cursor(), 8)
     });
-    visual.simulate_keystrokes("alt-left");
+    visual.simulate_keystrokes(crate::view::keymap::platform("alt-left", "ctrl-left"));
     composer.read_with(&visual, |composer, cx| {
         assert_eq!(composer.field.read(cx).cursor(), 4)
     });
-    visual.simulate_keystrokes("alt-right");
+    visual.simulate_keystrokes(crate::view::keymap::platform("alt-right", "ctrl-right"));
     composer.read_with(&visual, |composer, cx| {
         assert_eq!(composer.field.read(cx).cursor(), 7)
     });
-    visual.simulate_keystrokes("alt-shift-right cmd-c");
+    visual.simulate_keystrokes(crate::view::keymap::platform(
+        "alt-shift-right cmd-c",
+        "ctrl-shift-right ctrl-c",
+    ));
     visual.update(|_, cx| {
         assert_eq!(
             cx.read_from_clipboard()
@@ -67,7 +73,10 @@ fn macos_word_navigation_and_selection(cx: &mut TestAppContext) {
             Some(" three")
         )
     });
-    visual.simulate_keystrokes("alt-backspace");
+    visual.simulate_keystrokes(crate::view::keymap::platform(
+        "alt-backspace",
+        "ctrl-backspace",
+    ));
     composer.read_with(&visual, |composer, cx| {
         assert_eq!(composer.field.read(cx).content().as_ref(), "one two")
     });

@@ -187,9 +187,9 @@ fn file_save_shortcut_works_in_the_panel(cx: &mut gpui::TestAppContext) {
     let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
     visual.simulate_resize(gpui::size(px(440.), px(600.)));
     visual.run_until_parked();
-    visual.simulate_keystrokes("cmd-s");
+    visual.simulate_keystrokes("secondary-s");
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "edited");
-    visual.simulate_keystrokes("cmd-w");
+    visual.simulate_keystrokes(crate::view::keymap::platform("cmd-w", "ctrl-shift-w"));
     window
         .update(&mut visual, |panel, _, _| assert!(panel.strip.is_empty()))
         .unwrap();
@@ -247,14 +247,14 @@ fn command_w_closes_right_terminal_tabs_and_returns_to_launcher(cx: &mut gpui::T
     let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
     visual.simulate_resize(gpui::size(px(600.), px(400.)));
     visual.run_until_parked();
-    visual.simulate_keystrokes("cmd-w");
+    visual.simulate_keystrokes(crate::view::keymap::platform("cmd-w", "ctrl-shift-w"));
     window
         .update(&mut visual, |panel, _, _| {
             assert_eq!(panel.strip.len(), 1);
             assert_eq!(panel.strip.active().copied(), Some(0));
         })
         .unwrap();
-    visual.simulate_keystrokes("cmd-w");
+    visual.simulate_keystrokes(crate::view::keymap::platform("cmd-w", "ctrl-shift-w"));
     window
         .update(&mut visual, |panel, window, _| {
             assert!(panel.strip.is_empty());
@@ -361,13 +361,16 @@ fn terminal_menu_and_new_tab_use_cmd_t(cx: &mut gpui::TestAppContext) {
             let Item::Action { keystroke, .. } = &items[1] else {
                 panic!("terminal action")
             };
-            assert_eq!(keystroke.as_deref(), Some("⌘T"));
+            assert_eq!(
+                keystroke.as_deref(),
+                Some(crate::view::keymap::platform("⌘T", "Ctrl+Shift+T"))
+            );
             panel.terminal(window, cx);
         })
         .unwrap();
     let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
     visual.run_until_parked();
-    visual.simulate_keystrokes("cmd-t");
+    visual.simulate_keystrokes(crate::view::keymap::platform("cmd-t", "ctrl-shift-t"));
     visual.run_until_parked();
     window
         .update(&mut visual, |panel, window, cx| {

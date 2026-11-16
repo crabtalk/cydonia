@@ -127,8 +127,23 @@ fn no_two_defaults_want_the_same_chord() {
 
 #[test]
 fn chords_are_written_the_way_the_platform_writes_them() {
-    assert_eq!(chord("cmd-b").glyphs(), "⌘B");
-    assert_eq!(chord("ctrl-alt-cmd-1").glyphs(), "⌃⌥⌘1");
+    let (single, modified) = if cfg!(target_os = "macos") {
+        ("⌘B", "⌃⌥⌘1")
+    } else if cfg!(target_os = "windows") {
+        ("Win+B", "Win+Ctrl+Alt+1")
+    } else {
+        ("Super+B", "Super+Ctrl+Alt+1")
+    };
+    assert_eq!(chord("cmd-b").glyphs(), single);
+    assert_eq!(chord("ctrl-alt-cmd-1").glyphs(), modified);
+    assert_eq!(
+        chord("secondary-b").glyphs(),
+        if cfg!(target_os = "macos") {
+            "⌘B"
+        } else {
+            "Ctrl+B"
+        }
+    );
     assert_eq!(Chord::parse("not-a-chord"), None);
 }
 

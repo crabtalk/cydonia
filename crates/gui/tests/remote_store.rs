@@ -524,10 +524,9 @@ fn concurrent_stale_saves_have_one_winner() {
         "exactly one concurrent save must win: {a:?}, {b:?}"
     );
     let winner = if a.is_ok() { "Ours" } else { "Theirs" };
-    let rejected = if a.is_err() {
-        a.unwrap_err()
-    } else {
-        b.unwrap_err()
+    let rejected = match (a, b) {
+        (Err(error), _) | (_, Err(error)) => error,
+        _ => unreachable!("exactly one save was rejected"),
     };
     assert!(matches!(rejected, Error::Stale), "{rejected}");
     assert_eq!(

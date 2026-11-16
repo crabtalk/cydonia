@@ -1,20 +1,24 @@
 use super::*;
 use std::time::Duration;
 
+fn test_dir() -> PathBuf {
+    std::env::temp_dir().canonicalize().unwrap()
+}
+
 fn shell() -> (Shell, mpsc::Receiver<Vec<u8>>) {
     let mut command = CommandBuilder::new("/bin/sh");
     command.arg("-i");
     command.env("ENV", "/dev/null");
-    command.cwd("/private/tmp");
+    command.cwd(test_dir());
     Shell::open_command(command).expect("open PTY")
 }
 
 #[cfg(unix)]
 #[test]
 fn local_login_runs_a_login_shell_at_its_directory() {
-    let command = Login::Local(PathBuf::from("/private/tmp")).command();
+    let command = Login::Local(test_dir()).command();
     assert_eq!(command.get_argv().last().unwrap(), "-l");
-    assert_eq!(command.get_cwd().unwrap(), "/private/tmp");
+    assert_eq!(command.get_cwd().unwrap(), test_dir().as_os_str());
 }
 
 #[cfg(unix)]
@@ -93,7 +97,10 @@ fn shell_has_session_directory_terminal_environment_and_resizes() {
         .recv_timeout(Duration::from_secs(10))
         .expect("shell exits and closes output");
     let text = String::from_utf8_lossy(&bytes);
-    assert!(text.contains("CWD:/private/tmp\r\n"), "{text}");
+    assert!(
+        text.contains(&format!("CWD:{}\r\n", test_dir().display())),
+        "{text}"
+    );
     assert!(text.contains("TERM:xterm-256color\r\n"), "{text}");
     assert!(text.contains("KITTY:1\r\n"), "{text}");
     assert!(text.contains("37 101\r\n"), "{text}");
@@ -114,7 +121,7 @@ fn tabs_keep_shells_and_close_on_exit(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| Theme::install(bezel::theme::Appearance::Dark, cx));
     let window = cx.add_window(|window, cx| {
         TerminalPanel::new(
-            &artifact::location::Location::from(Path::new("/private/tmp")),
+            &artifact::location::Location::from(test_dir().as_path()),
             |_| None,
             window,
             cx,
@@ -151,7 +158,7 @@ fn background_exit_preserves_active_tab_and_focus(cx: &mut gpui::TestAppContext)
     cx.update(|cx| Theme::install(bezel::theme::Appearance::Dark, cx));
     let window = cx.add_window(|window, cx| {
         TerminalPanel::new(
-            &artifact::location::Location::from(Path::new("/private/tmp")),
+            &artifact::location::Location::from(test_dir().as_path()),
             |_| None,
             window,
             cx,
@@ -227,7 +234,7 @@ fn command_w_closes_bottom_tabs_and_emits_empty_for_the_last(cx: &mut gpui::Test
     });
     let window = cx.add_window(|window, cx| {
         TerminalPanel::new(
-            &artifact::location::Location::from(Path::new("/private/tmp")),
+            &artifact::location::Location::from(test_dir().as_path()),
             |_| None,
             window,
             cx,
@@ -243,7 +250,7 @@ fn command_w_closes_bottom_tabs_and_emits_empty_for_the_last(cx: &mut gpui::Test
     let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
     visual.simulate_resize(gpui::size(px(600.), px(240.)));
     visual.run_until_parked();
-    visual.simulate_keystrokes("cmd-w");
+    visual.simulate_keystrokes(crate::view::keymap::platform("cmd-w", "ctrl-shift-w"));
     window
         .update(&mut visual, |panel, window, cx| {
             assert_eq!(panel.tabs.len(), 1);
@@ -252,7 +259,7 @@ fn command_w_closes_bottom_tabs_and_emits_empty_for_the_last(cx: &mut gpui::Test
         })
         .unwrap();
     assert!(!empty.get());
-    visual.simulate_keystrokes("cmd-w");
+    visual.simulate_keystrokes(crate::view::keymap::platform("cmd-w", "ctrl-shift-w"));
     assert!(empty.get());
     window
         .update(&mut visual, |panel, _, _| assert!(panel.tabs.is_empty()))
@@ -266,7 +273,7 @@ fn copy_terminal_selection_takes_priority_over_transcript(cx: &mut gpui::TestApp
         crate::view::keymap::bind_all(&crate::model::settings::Shortcuts::default(), cx);
     });
     let view = cx.new(|cx| Terminal {
-        directory: Path::new("/private/tmp").into(),
+        directory: test_dir().as_path().into(),
         emulator: Emulator::new(80, 24),
         images: terminal::view::Images::new(),
         shell: None,
@@ -310,7 +317,7 @@ fn copy_terminal_selection_takes_priority_over_transcript(cx: &mut gpui::TestApp
         cx.notify();
     });
     visual.run_until_parked();
-    visual.simulate_keystrokes("cmd-c");
+    visual.simulate_keystrokes(crate::view::keymap::platform("cmd-c", "ctrl-shift-c"));
     visual.run_until_parked();
     visual.update(|_, cx| {
         assert_eq!(
@@ -334,7 +341,7 @@ fn cmd_t_adds_a_focused_tab_in_the_bottom_panel(cx: &mut gpui::TestAppContext) {
     let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
     visual.run_until_parked();
     for count in [2, 3] {
-        visual.simulate_keystrokes("cmd-t");
+        visual.simulate_keystrokes(crate::view::keymap::platform("cmd-t", "ctrl-shift-t"));
         visual.run_until_parked();
         window
             .update(&mut visual, |panel, window, cx| {
@@ -349,7 +356,7 @@ fn cmd_t_adds_a_focused_tab_in_the_bottom_panel(cx: &mut gpui::TestAppContext) {
 fn measured(cx: &mut gpui::TestAppContext) -> (Entity<Terminal>, gpui::VisualTestContext) {
     cx.update(|cx| Theme::install(bezel::theme::Appearance::Dark, cx));
     let view = cx.new(|cx| Terminal {
-        directory: Path::new("/private/tmp").into(),
+        directory: test_dir().as_path().into(),
         emulator: Emulator::new(80, 24),
         images: terminal::view::Images::new(),
         shell: None,

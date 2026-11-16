@@ -346,7 +346,7 @@ fn zoom_shortcuts_resize_source_and_work_in_preview(cx: &mut gpui::TestAppContex
             view.field.read(cx).offset_bounds(0).unwrap().size.height
         })
         .unwrap();
-    visual.simulate_keystrokes("cmd-=");
+    visual.simulate_keystrokes("secondary-=");
     visual.run_until_parked();
     window
         .update(&mut visual, |view, _, cx| {
@@ -355,7 +355,7 @@ fn zoom_shortcuts_resize_source_and_work_in_preview(cx: &mut gpui::TestAppContex
             assert!(!view.dirty(cx));
         })
         .unwrap();
-    visual.simulate_keystrokes("cmd--");
+    visual.simulate_keystrokes("secondary--");
     visual.run_until_parked();
     window
         .update(&mut visual, |view, window, cx| {
@@ -366,14 +366,14 @@ fn zoom_shortcuts_resize_source_and_work_in_preview(cx: &mut gpui::TestAppContex
         })
         .unwrap();
     visual.run_until_parked();
-    visual.simulate_keystrokes("cmd-shift-=");
+    visual.simulate_keystrokes("secondary-shift-=");
     visual.run_until_parked();
     window
         .update(&mut visual, |_, _, cx| {
             assert_eq!(typography::file_size(cx), 15.)
         })
         .unwrap();
-    visual.simulate_keystrokes("cmd-0");
+    visual.simulate_keystrokes("secondary-0");
     visual.run_until_parked();
     window
         .update(&mut visual, |_, _, cx| {
@@ -406,7 +406,7 @@ fn copy_source_selection_takes_priority_over_transcript(cx: &mut gpui::TestAppCo
     });
     let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
     visual.run_until_parked();
-    visual.simulate_keystrokes("cmd-a cmd-c");
+    visual.simulate_keystrokes("secondary-a secondary-c");
     visual.run_until_parked();
     visual.update(|_, cx| {
         assert_eq!(
@@ -458,7 +458,7 @@ fn markdown_preview_supports_drag_select_all_and_copy(cx: &mut gpui::TestAppCont
     visual.simulate_mouse_move(end, gpui::MouseButton::Left, gpui::Modifiers::default());
     visual.simulate_mouse_up(end, gpui::MouseButton::Left, gpui::Modifiers::default());
     visual.run_until_parked();
-    visual.simulate_keystrokes("cmd-c");
+    visual.simulate_keystrokes("secondary-c");
     visual.update(|_, cx| {
         assert_eq!(
             cx.read_from_clipboard()
@@ -467,7 +467,7 @@ fn markdown_preview_supports_drag_select_all_and_copy(cx: &mut gpui::TestAppCont
             Some("Title\nCopy this preview.")
         );
     });
-    visual.simulate_keystrokes("cmd-a cmd-c");
+    visual.simulate_keystrokes("secondary-a secondary-c");
     visual.update(|_, cx| {
         assert_eq!(
             cx.read_from_clipboard()

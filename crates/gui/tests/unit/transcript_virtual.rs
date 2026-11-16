@@ -124,7 +124,7 @@ fn long_session_renders_nearby_turns_and_navigates_without_losing_selection(
     view.read_with(&visual, |view, _| view.state.list.scroll_to(800));
     visual.update(|window, _| window.refresh());
     visual.run_until_parked();
-    visual.simulate_keystrokes("cmd-c");
+    visual.simulate_keystrokes("secondary-c");
     visual.update(|_, cx| {
         assert_eq!(
             cx.read_from_clipboard()

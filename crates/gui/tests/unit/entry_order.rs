@@ -144,11 +144,18 @@ fn the_order_survives_a_relaunch(cx: &mut gpui::TestAppContext) {
         .get(&path.clone().into())
         .expect("written down");
     assert_eq!(held.len(), 3, "every entry, not just the one that moved");
+    let ordered = held.clone();
 
-    // And read back into a workspace that never saw the drag.
+    // Reloaded boards may arrive in a different filesystem/timestamp order.
+    // The saved arrangement follows identity, not that incidental vector index.
     let next = cx.new(|cx| Workspace::new(Settings::default(), restored, cx));
     next.update(cx, |workspace, cx| {
-        assert_eq!(workspace.rank_of(0, board(workspace, 0), cx), Some(2));
+        for (rank, entry) in ordered.iter().enumerate() {
+            assert_eq!(
+                workspace.rank_of(0, Showing::Board(entry.id.clone()), cx),
+                Some(rank)
+            );
+        }
     });
 }
 
@@ -226,8 +233,10 @@ fn pins_survive_a_relaunch(cx: &mut gpui::TestAppContext) {
     let scratch = Scratch::new("pin-relaunch");
     let workspace = three_boards(&scratch, cx);
 
-    workspace.update(cx, |workspace, cx| {
-        workspace.pin(0, board(workspace, 1), true, cx);
+    let pinned = workspace.update(cx, |workspace, cx| {
+        let pinned = board(workspace, 1);
+        workspace.pin(0, pinned.clone(), true, cx);
+        pinned
     });
 
     let restored = state::restore();
@@ -242,7 +251,7 @@ fn pins_survive_a_relaunch(cx: &mut gpui::TestAppContext) {
 
     let next = cx.new(|cx| Workspace::new(Settings::default(), restored, cx));
     next.update(cx, |workspace, cx| {
-        assert!(workspace.is_pinned(0, board(workspace, 1), cx));
+        assert!(workspace.is_pinned(0, pinned, cx));
     });
 }
 

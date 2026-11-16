@@ -37,7 +37,7 @@ fn transcript_copy_fallback_still_works(cx: &mut gpui::TestAppContext) {
     });
     let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
     visual.run_until_parked();
-    visual.simulate_keystrokes("cmd-c");
+    visual.simulate_keystrokes("secondary-c");
     visual.update(|_, cx| {
         assert_eq!(
             cx.read_from_clipboard()

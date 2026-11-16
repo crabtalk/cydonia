@@ -33,6 +33,18 @@ jobs:
       - run: sudo mkdir -p /run/sshd
       - run: cargo install cargo-nextest --locked
       - run: scripts/test-remote-ssh
+      - run: cargo nextest run -p cydonia-acp -p cydonia-cupola -p cydonia-server --locked
+
+  desktop-tests:
+    name: desktop tests (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sudo .github/scripts/linux-deps
+      - run: cargo install cargo-nextest --locked
+      - run: cargo nextest run -p cydonia-gui -p cydonia-artifact --locked --no-fail-fast
 
   check:
     name: check

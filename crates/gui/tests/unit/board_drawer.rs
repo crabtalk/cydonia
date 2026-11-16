@@ -134,7 +134,7 @@ fn type_card(root: &Entity<Cydonia>, text: &str, cx: &mut VisualTestContext) {
         let editor = view(root, cx).read(cx).draft().unwrap().editor.clone();
         window.focus(&editor.focus_handle(cx), cx);
     });
-    cx.simulate_keystrokes("cmd-a");
+    cx.simulate_keystrokes("secondary-a");
     match text {
         "" => cx.simulate_keystrokes("backspace"),
         text => cx.simulate_input(text),
