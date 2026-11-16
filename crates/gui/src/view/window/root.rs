@@ -31,7 +31,7 @@ use crate::{
     },
 };
 use anyhow::Result;
-use artifact::kind::Kind;
+use artifact::{kind::Kind, session::mode::Mode};
 use bezel::{
     gpui::{
         self, AnyElement, App, Axis, Bounds, Context, Div, DragMoveEvent, Empty, Entity,
@@ -985,7 +985,7 @@ impl Cydonia {
                 .workspace
                 .read(cx)
                 .session(id, cx)
-                .is_some_and(ChatSession::resumable)
+                .is_some_and(ChatSession::accepts_input)
                 .then(|| self.composer_focus_handle(cx))
                 .flatten(),
             Showing::Article(_) => self.pane_editor(cx).map(|editor| editor.focus_handle(cx)),
@@ -1168,7 +1168,7 @@ impl Cydonia {
             .workspace
             .read(cx)
             .active_session(cx)
-            .is_some_and(ChatSession::resumable)
+            .is_some_and(ChatSession::accepts_input)
             .then(|| this.composer_focus_handle(cx))
             .flatten();
         window.focus(composer.as_ref().unwrap_or(&this.focus), cx);
@@ -1182,18 +1182,19 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.new_session_as(&action.identity, window, cx);
+        self.new_session_as(&action.identity, None, window, cx);
     }
 
     /// Start a session as the identity with this id, and show it.
     pub(crate) fn new_session_as(
         &mut self,
         identity: &str,
+        mode: Option<Mode>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let id = self.workspace.update(cx, |workspace, cx| {
-            workspace.new_session_as(identity, None, cx)
+            workspace.new_session_as(identity, None, mode, true, cx)
         });
         if let Some(id) = id {
             self.land_session(id, window, cx);
@@ -1215,6 +1216,16 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let identity = self
+            .workspace
+            .read(cx)
+            .active_session(cx)
+            .and_then(|chat| chat.identity.clone())
+            .filter(|id| self.workspace.read(cx).identity(id).is_some());
+        if let Some(identity) = identity {
+            self.new_session_as(&identity, None, window, cx);
+            return;
+        }
         let Some(agent) = self.workspace.read(cx).preferred_agent(cx) else {
             // Nothing to open one on: the window says so and offers the
             // install, rather than jumping to Settings on its own.
@@ -1384,7 +1395,7 @@ impl Cydonia {
             .workspace
             .read(cx)
             .session(id, cx)
-            .is_some_and(ChatSession::resumable)
+            .is_some_and(ChatSession::accepts_input)
             && let Some(focus) = self.composer_focus_handle(cx)
         {
             window.focus(&focus, cx);

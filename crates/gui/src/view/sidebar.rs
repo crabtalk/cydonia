@@ -258,7 +258,7 @@ impl Row {
                 ..
             } => *id,
             Row::Group(Group::Agent(identity)) => workspace.update(cx, |workspace, cx| {
-                workspace.new_session_as(identity, None, cx)
+                workspace.new_session_as(identity, None, None, true, cx)
             })?,
             _ => return None,
         };
@@ -652,6 +652,7 @@ pub(crate) enum SidebarMenu {
     Entry(Row),
     /// An agent identity's heading, by its id.
     Agent(String),
+    Launch(String),
 }
 
 /// The column under the window's band: the search and library rows, the list

@@ -727,7 +727,7 @@ impl SessionView {
                                 }),
                         ),
                 )
-                .child(terminal.clone())
+                .child(div().flex_1().min_h_0().child(terminal.clone()))
                 .into_any_element();
         }
         div().flex_1().p(px(20.)).text_color(Theme::of(cx).text_muted)

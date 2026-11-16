@@ -329,18 +329,15 @@ impl ChatSession {
         entry: settings::Agent,
         identity: &Identity,
         seed: Option<String>,
+        mode: Mode,
         cx: &mut Context<Self>,
     ) -> Self {
+        #[cfg(feature = "desktop")]
+        if mode == Mode::Terminal {
+            return Self::terminal_as(id, entry, identity, seed, cx);
+        }
         let cwd = identity.workspace.clone();
-        let mut chat = Self::open(
-            id,
-            entry,
-            cwd,
-            seed,
-            identity.choices.clone(),
-            Mode::Gui,
-            cx,
-        );
+        let mut chat = Self::open(id, entry, cwd, seed, identity.choices.clone(), mode, cx);
         chat.identity = Some(identity.id.clone());
         chat
     }
@@ -862,6 +859,14 @@ impl ChatSession {
     /// cannot reconnect — there is no command left to spawn.
     pub fn resumable(&self) -> bool {
         self.mode == Mode::Gui && !self.entry.command.is_empty()
+    }
+
+    pub fn accepts_input(&self) -> bool {
+        #[cfg(feature = "desktop")]
+        if self.mode == Mode::Terminal {
+            return self.terminal.is_some();
+        }
+        self.resumable()
     }
 
     /// What to call this session: your name, else the agent's, else the

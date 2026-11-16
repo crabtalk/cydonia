@@ -528,6 +528,12 @@ impl Workspace {
     /// seeded with `content`, behind whatever the window shows. Nothing
     /// happens where either is not held.
     pub fn start_in(&mut self, path: &Path, agent: &str, content: String, cx: &mut Context<Self>) {
+        if let Some(identity) = self.identity(agent).cloned() {
+            if self.ids.intern(path) == self.ids.intern(&identity.workspace) {
+                self.new_session_as(&identity.id, Some(content), None, false, cx);
+            }
+            return;
+        }
         let entry = named(&self.settings.agents, Some(agent), agent).cloned();
         let project = self.ids.intern(path);
         if let (Some(ix), Some(entry)) = (self.project_ix(project), entry) {

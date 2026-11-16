@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::model::identity::Store as _;
+use artifact::session::mode::Mode;
 
 impl Workspace {
     /// The identity with this id. Nothing for an id no identity holds: an
@@ -18,15 +19,20 @@ impl Workspace {
         &mut self,
         identity: &str,
         seed: Option<String>,
+        explicit: Option<Mode>,
+        front: bool,
         cx: &mut Context<Self>,
     ) -> Option<u64> {
         let identity = self.identity(identity)?.clone();
         let entry = named(&self.settings.agents, Some(&identity.acp), &identity.acp)?.clone();
-        self.open_project(identity.workspace.clone(), cx);
         let project = self.ids.intern(&identity.workspace);
+        if front || self.project_ix(project).is_none() {
+            self.open_project(identity.workspace.clone(), cx);
+        }
         let ix = self.project_ix(project)?;
-        self.start_session(ix, true, cx, |id, _, cx| {
-            ChatSession::connect_as(id, entry, &identity, seed, cx)
+        let mode = identity.creation.resolve(explicit);
+        self.start_session(ix, front, cx, |id, _, cx| {
+            ChatSession::connect_as(id, entry, &identity, seed, mode, cx)
         })
     }
 
@@ -40,6 +46,7 @@ impl Workspace {
         let identity = identity::Shelf::create(identity)?;
         let id = identity.id.clone();
         self.identities.push(identity);
+        rail::set_agents(self.rail_agents());
         cx.notify();
         Some(id)
     }
@@ -73,6 +80,7 @@ impl Workspace {
         };
         let identity = self.identities.remove(at);
         identity::Shelf::remove(&identity.handle);
+        rail::set_agents(self.rail_agents());
         cx.notify();
     }
 
@@ -149,6 +157,7 @@ impl Workspace {
         change(identity);
         identity::Shelf::save(identity);
         let identity = identity.clone();
+        rail::set_agents(self.rail_agents());
         for project in &self.projects {
             for held in &project.sessions {
                 held.chat.update(cx, |chat, cx| {

@@ -8,6 +8,7 @@ use super::{
 };
 use crate::{
     model::{
+        identity::launch::Creation,
         project::ProjectId,
         session::Status,
         state,
@@ -30,6 +31,7 @@ use crate::{
         },
     },
 };
+use artifact::session::mode::Mode;
 use bezel::{
     agent::{Face, avatar::Motion, mascot},
     gpui::{
@@ -426,30 +428,72 @@ impl Sidebar {
                     )
                     .children(self.add_menu(*project, window, cx)),
                 ),
-                // Nothing to choose between: a session as the identity.
-                Group::Agent(id) => Some(
-                    menu::button(
-                        SharedString::from(format!("group-add-{key}")),
-                        icons::math::Plus,
-                        match reveal {
-                            Some(group) => menu::Reveal::Group(group),
-                            None => menu::Reveal::Always,
-                        },
-                        false,
-                        cx,
-                    )
-                    .tooltip(|window, cx| Tooltip::text("New session", window, cx))
-                    .on_click(cx.listener({
-                        let id = id.clone();
-                        move |this, _, window, cx| {
-                            cx.stop_propagation();
+                Group::Agent(id) => {
+                    let choose = self
+                        .workspace
+                        .read(cx)
+                        .identity(id)
+                        .is_some_and(|agent| agent.creation == Creation::Choose);
+                    let button_id = SharedString::from(format!("group-add-{key}"));
+                    let button = if choose {
+                        self.menu_button(
+                            button_id,
+                            reveal,
+                            icons::math::Plus,
+                            SidebarMenu::Launch(id.clone()),
+                            MenuPlace::Below,
+                            Rc::new({
+                                let id = id.clone();
+                                move |_, _| {
+                                    [("GUI", Mode::Gui), ("Terminal", Mode::Terminal)]
+                                        .into_iter()
+                                        .map(|(label, mode)| {
+                                            let id = id.clone();
+                                            menu::row(
+                                                Item::action(label),
+                                                move |root: &mut Cydonia, window, cx| {
+                                                    root.new_session_as(&id, Some(mode), window, cx)
+                                                },
+                                            )
+                                        })
+                                        .collect()
+                                }
+                            }),
+                            cx,
+                        )
+                    } else {
+                        menu::button(
+                            button_id,
+                            icons::math::Plus,
+                            match reveal {
+                                Some(group) => menu::Reveal::Group(group),
+                                None => menu::Reveal::Always,
+                            },
+                            false,
+                            cx,
+                        )
+                        .on_click(cx.listener({
                             let id = id.clone();
-                            this.defer_window(window, cx, move |root, window, cx| {
-                                root.new_session_as(&id, window, cx)
-                            });
-                        }
-                    })),
-                ),
+                            move |this, _, window, cx| {
+                                cx.stop_propagation();
+                                let id = id.clone();
+                                this.defer_window(window, cx, move |root, window, cx| {
+                                    root.new_session_as(&id, None, window, cx)
+                                });
+                            }
+                        }))
+                    };
+                    Some(
+                        button
+                            .tooltip(|window, cx| Tooltip::text("New session", window, cx))
+                            .children(self.menu_here(
+                                &SidebarMenu::Launch(id.clone()),
+                                SharedString::from(format!("agent-launch-{id}")),
+                                window,
+                                cx,
+                            )),
+                    )
+                }
                 Group::Space(_) => None,
             })
             // A press on the copy is a press on where it came from: the list

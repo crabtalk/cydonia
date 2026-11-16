@@ -24,7 +24,7 @@ use crate::{
         watch::{self, Watch},
     },
 };
-use artifact::board::Board;
+use artifact::{board::Board, session::mode::Mode};
 use bezel::{
     gpui::{App, AppContext as _, Context, Entity, EntityId, EventEmitter},
     theme::{AppExt as _, Brand, Tint, Vibrancy, appearance::AppearanceMode},
@@ -601,13 +601,20 @@ impl Workspace {
 
     /// The configured agents as the tools offer them.
     pub(super) fn rail_agents(&self) -> Vec<rail::Agent> {
-        self.settings
-            .agents
+        self.identities
             .iter()
-            .map(|agent| rail::Agent {
+            .map(|identity| rail::Agent {
+                name: identity.name.clone(),
+                id: Some(identity.id.clone()),
+                workspace: Some(identity.workspace.clone()),
+                mode: identity.creation.resolve(None),
+            })
+            .chain(self.settings.agents.iter().map(|agent| rail::Agent {
                 name: agent.name.clone(),
                 id: agent.id.clone(),
-            })
+                workspace: None,
+                mode: Mode::Gui,
+            }))
             .collect()
     }
 

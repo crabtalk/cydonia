@@ -19,7 +19,7 @@
 use crate::tool::Answer;
 #[cfg(feature = "http")]
 use crate::tool::Trouble;
-use artifact::{board::View, kind::Kind};
+use artifact::{board::View, kind::Kind, session::mode::Mode};
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
@@ -80,16 +80,24 @@ pub enum Change {
     },
 }
 
-/// An agent a session can be started on, as `settings.toml` files it.
+/// A named agent or installed ACP program offered for session creation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Agent {
     pub name: String,
-    /// The registry id, absent for an agent added by hand.
+    /// An identity UUID or registry id; absent for a program added by hand.
     pub id: Option<String>,
+    pub workspace: Option<PathBuf>,
+    pub mode: Mode,
 }
 
 impl Agent {
-    /// What a tool names it by: the id where there is one, else the name.
+    pub fn in_project(&self, project: &Path) -> bool {
+        self.workspace
+            .as_deref()
+            .is_none_or(|workspace| workspace == project)
+    }
+
+    /// The identity or registry id, falling back to the program name.
     pub fn key(&self) -> &str {
         self.id.as_deref().unwrap_or(&self.name)
     }
@@ -129,15 +137,21 @@ pub fn open() -> Vec<PathBuf> {
     OPEN.read().map(|held| held.clone()).unwrap_or_default()
 }
 
-/// Say which agents are configured. Pushed by the app whenever it reads
-/// `settings.toml`.
-pub fn set_agents(agents: Vec<Agent>) {
+/// Replace the offered agents and normalize their workspace paths.
+pub fn set_agents(mut agents: Vec<Agent>) {
+    for agent in &mut agents {
+        if let Some(workspace) = &mut agent.workspace {
+            *workspace = workspace
+                .canonicalize()
+                .unwrap_or_else(|_| workspace.clone());
+        }
+    }
     if let Ok(mut held) = AGENTS.write() {
         *held = agents;
     }
 }
 
-/// The agents configured, in the order `settings.toml` lists them.
+/// The offered agents, in snapshot order.
 pub fn agents() -> Vec<Agent> {
     AGENTS.read().map(|held| held.clone()).unwrap_or_default()
 }
