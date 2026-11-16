@@ -42,6 +42,7 @@ use bezel::{
         icons::{self, Icon},
         menu::Item,
         scroll as scrollbars,
+        surface::Control,
     },
 };
 use std::{collections::HashMap, path::PathBuf, rc::Rc, time::Duration};
@@ -577,9 +578,10 @@ pub(crate) fn row(
     indent: u8,
     trail: f32,
     theme: &Theme,
-) -> Stateful<Div> {
+) -> Control {
     let fill = selected.fill(theme).filter(|_| !lifted);
     row_frame(id, group, indent, trail)
+        .material(!lifted && selected.is_selected())
         // A carried row is drawn inside [`Sidebar::sidebar_ghost`]'s frame.
         .when(lifted, |el| el.m_0())
         .when_some(fill, |el, fill| el.bg(fill).shadow(selected.shadows()))
@@ -599,8 +601,8 @@ pub(crate) fn row_frame(
     group: &'static str,
     indent: u8,
     trail: f32,
-) -> Stateful<Div> {
-    div()
+) -> Control {
+    Control::new(div(), false)
         .id(id)
         .group(group)
         .h(px(ROW_PILL))

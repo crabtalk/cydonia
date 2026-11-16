@@ -7,7 +7,7 @@ use crate::{
         serve,
     },
     model::{
-        identity::Identity,
+        identity::{Identity, launch::Interactive},
         notify,
         session_preferences::{self, Choices, OfferCache, Offers},
         settings,
@@ -376,14 +376,14 @@ impl ChatSession {
             (Some(bootstrap), _) => bootstrap.prompt.clone(),
             (None, task) => task.unwrap_or_default(),
         };
-        let buffer = cx.new(|cx| {
-            Buffer::agent(
-                &chat.cwd,
-                identity.terminal.as_ref(),
-                bootstrap.as_ref(),
-                cx,
-            )
-        });
+        let offers = OfferCache::get(cx, &chat.cwd, &chat.entry).with(&identity.choices);
+        let choices = if offers.config.is_empty() {
+            identity.choices.clone()
+        } else {
+            Choices::capture(offers.modes.as_ref(), &offers.config)
+        };
+        let launch = Interactive::resolve(&chat.entry, &choices, identity.terminal.as_ref());
+        let buffer = cx.new(|cx| Buffer::agent(&chat.cwd, launch.as_ref(), bootstrap.as_ref(), cx));
         cx.observe(&buffer, |chat, buffer, cx| {
             chat.connection = if buffer.read(cx).state.failed() {
                 Connection::Lost

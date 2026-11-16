@@ -196,7 +196,7 @@ impl AgentModal {
                 .as_ref()
                 .map(|launch| launch.command.clone())
                 .unwrap_or_default(),
-            "interactive executable, e.g. claude",
+            "override interactive executable",
             cx,
         );
         let terminal_args = form::field(
@@ -352,30 +352,43 @@ impl AgentModal {
             return;
         }
         let command = self.terminal_command.read(cx).content().trim().to_owned();
-        let terminal = if command.is_empty() {
-            if self.draft.creation != Creation::Gui {
-                self.error = Some("Set the agent's interactive executable.".into());
+        let args = self.terminal_args.read(cx).content().trim().to_owned();
+        let env = self.terminal_env.read(cx).content().trim().to_owned();
+        let parsed =
+            serde_json::from_str(if args.is_empty() { "[]" } else { &args }).and_then(|args| {
+                serde_json::from_str(if env.is_empty() { "{}" } else { &env })
+                    .map(|env| Interactive { command, args, env })
+            });
+        let overrides = match parsed {
+            Ok(launch) => launch,
+            Err(error) => {
+                self.terminal_expanded = true;
+                self.error = Some(format!("Terminal launch: {error}").into());
                 cx.notify();
                 return;
             }
+        };
+        if self.draft.creation != Creation::Gui
+            && self
+                .programs
+                .iter()
+                .find(|agent| agent.reference() == self.draft.acp)
+                .and_then(|agent| {
+                    Interactive::resolve(agent, &self.draft.choices, Some(&overrides))
+                })
+                .is_none()
+        {
+            self.error = Some("Set the agent's interactive executable.".into());
+            cx.notify();
+            return;
+        }
+        let terminal = if overrides.command.is_empty()
+            && overrides.args.is_empty()
+            && overrides.env.is_empty()
+        {
             None
         } else {
-            let args = self.terminal_args.read(cx).content().trim().to_owned();
-            let env = self.terminal_env.read(cx).content().trim().to_owned();
-            let parsed =
-                serde_json::from_str(if args.is_empty() { "[]" } else { &args }).and_then(|args| {
-                    serde_json::from_str(if env.is_empty() { "{}" } else { &env })
-                        .map(|env| Interactive { command, args, env })
-                });
-            match parsed {
-                Ok(launch) => Some(launch),
-                Err(error) => {
-                    self.terminal_expanded = true;
-                    self.error = Some(format!("Terminal launch: {error}").into());
-                    cx.notify();
-                    return;
-                }
-            }
+            Some(overrides)
         };
         let identity = Identity {
             name,
@@ -471,7 +484,13 @@ impl Render for AgentModal {
                 div().id("agent-session-mode").child(self.creation.clone())
                     .tooltip(|window, cx| Tooltip::text("Choose on creation: the add button offers GUI or Terminal. Dragging creates a GUI session.", window, cx))),
         ];
-        let terminal_required = self.draft.creation != Creation::Gui;
+        let terminal_required = self.draft.creation != Creation::Gui
+            && self
+                .programs
+                .iter()
+                .find(|agent| agent.reference() == self.draft.acp)
+                .and_then(|agent| Interactive::resolve(agent, &self.draft.choices, None))
+                .is_none();
         let terminal = div()
             .flex()
             .flex_col()
