@@ -842,7 +842,7 @@ pub(crate) struct BoardView {
 /// The session that last held a card, while it is still open.
 fn card_session<'a>(card: &Card, workspace: &'a Workspace, cx: &'a App) -> Option<&'a ChatSession> {
     let record = card.session.as_deref()?;
-    workspace.session_by_record(record, cx)
+    workspace.session_by_key(record, cx)
 }
 /// A card's mark: the orb while it is busy, the linked session's `#number`
 /// while it is not, and nothing when no session is linked. A session stays

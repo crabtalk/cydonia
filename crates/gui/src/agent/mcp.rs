@@ -14,6 +14,9 @@ use cydonia_acp::agents::mcp::{self as registry, Distribution};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf};
 
+const BYPASS_ENV: [&str; 2] = ["NO_PROXY", "no_proxy"];
+const LOOPBACK: &str = "localhost,127.0.0.1,::1";
+
 /// One MCP server offered to agents: either a local `command args...` over
 /// stdio, or a remote `url`, which needs the agent to advertise HTTP MCP.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,3 +111,35 @@ pub fn install(server: &registry::Server) -> Result<()> {
         id: Some(server.id.clone()),
     })
 }
+
+pub fn bypass_environment(env: &BTreeMap<String, String>) -> [(&'static str, String); 2] {
+    let bypass = loopback_bypass(
+        BYPASS_ENV.map(|key| env.get(key).cloned().or_else(|| std::env::var(key).ok())),
+    );
+    BYPASS_ENV.map(|key| (key, bypass.clone()))
+}
+
+pub(crate) fn loopback_bypass(existing: [Option<String>; 2]) -> String {
+    let mut entries = Vec::new();
+    for value in existing
+        .iter()
+        .flatten()
+        .map(String::as_str)
+        .chain([LOOPBACK])
+    {
+        for entry in value
+            .split(',')
+            .map(str::trim)
+            .filter(|entry| !entry.is_empty())
+        {
+            if !entries.contains(&entry) {
+                entries.push(entry);
+            }
+        }
+    }
+    entries.join(",")
+}
+
+#[cfg(test)]
+#[path = "../../tests/unit/agent_proxy.rs"]
+mod proxy_tests;

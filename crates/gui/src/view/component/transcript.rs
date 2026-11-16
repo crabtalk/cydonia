@@ -40,14 +40,14 @@ use bezel::{
     agent::orbs::engine::Frame,
     gpui::{
         AnyElement, App, Bounds, ClipboardItem, Context, CursorStyle, Empty, Entity,
-        Focusable as _, HitboxBehavior, Pixels, SharedString, Task, WeakEntity, Window, canvas,
-        div, prelude::*, px,
+        HitboxBehavior, Pixels, SharedString, Task, WeakEntity, Window, canvas, div, prelude::*,
+        px,
     },
     theme::{TextStyle, Theme, Typeset, ink},
     ui::{
         icons, scroll,
         tooltip::Tooltip,
-        widgets::{ButtonStyle, Buttons, Icons, Layout, Status, Takeover},
+        widgets::{Icons, Layout, Status, Takeover},
     },
 };
 use cydonia_acp::proto::ToolKind;
@@ -672,66 +672,13 @@ impl SessionView {
         }
     }
 
-    fn terminal_body(&self, chat: Entity<ChatSession>, cx: &mut Context<Self>) -> AnyElement {
+    fn terminal_body(&self, cx: &mut Context<Self>) -> AnyElement {
         #[cfg(feature = "desktop")]
         if let Some(terminal) = &self.terminal {
-            let theme = Theme::of(cx).clone();
-            let pending = !chat.read(cx).draft.is_empty();
-            let buffer = terminal.read(cx).buffer.clone();
-            let running = matches!(
-                buffer.read(cx).state,
-                crate::model::terminal::State::Running
-            );
-            let stop = buffer.clone();
-            let terminal = terminal.clone();
-            let focus = terminal.focus_handle(cx);
-            return div()
-                .size_full()
-                .flex()
-                .flex_col()
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_end()
-                        .gap(px(8.))
-                        .px(px(12.))
-                        .py(px(4.))
-                        .when(pending && running, |row| {
-                            row.child(
-                                theme
-                                    .button("Paste prepared prompt", ButtonStyle::Ghost, None)
-                                    .id("terminal-prompt")
-                                    .on_click(move |_, window, cx| {
-                                        chat.update(cx, |chat, cx| {
-                                            buffer.update(cx, |buffer, _| {
-                                                buffer.write(terminal::view::paste_bytes(
-                                                    &chat.draft,
-                                                    buffer.emulator.bracketed_paste_mode(),
-                                                ));
-                                            });
-                                            chat.draft.clear();
-                                            chat.flush();
-                                            cx.notify();
-                                        });
-                                        window.focus(&focus, cx);
-                                    }),
-                            )
-                        })
-                        .child(
-                            theme
-                                .button("Terminate", ButtonStyle::Ghost, None)
-                                .id("terminal-stop")
-                                .on_click(move |_, _, cx| {
-                                    stop.update(cx, |buffer, cx| buffer.stop(cx))
-                                }),
-                        ),
-                )
-                .child(div().flex_1().min_h_0().child(terminal.clone()))
-                .into_any_element();
+            return div().size_full().child(terminal.clone()).into_any_element();
         }
         div().flex_1().p(px(20.)).text_color(Theme::of(cx).text_muted)
-            .child("The terminal process is no longer running. Create a new session to start the agent again.")
+            .child("The terminal process is no longer running. Start a new terminal run to launch the agent.")
             .into_any_element()
     }
 
@@ -817,7 +764,7 @@ impl Render for SessionView {
         if let Some(chat) = &chat
             && chat.read(cx).mode == Mode::Terminal
         {
-            return self.terminal_body(chat.clone(), cx);
+            return self.terminal_body(cx);
         }
         // In front of a pane, a turn that ended is seen.
         if let Some(chat) =
@@ -1144,7 +1091,7 @@ fn render(
                     move |_, _, cx| {
                         let _ = workspace.update(cx, |workspace, cx| {
                             if let Some(id) =
-                                workspace.session_by_record(&source, cx).map(|chat| chat.id)
+                                workspace.session_by_key(&source, cx).map(|chat| chat.id)
                             {
                                 workspace.select_session(id, cx);
                             }

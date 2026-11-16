@@ -1,11 +1,9 @@
 //! The server: the tools a caller is offered and the frames it answers.
 
 use crate::{
-    context,
     proto::{self, Error, Request, Response},
     resources, tool,
 };
-use artifact::project::{Project as _, fs};
 use serde_json::{Value, json};
 use std::{
     path::Path,
@@ -15,10 +13,6 @@ use std::{
     },
 };
 use tool::{Answer, Args, Tool, Trouble};
-
-/// What the server calls itself in `initialize`.
-const NAME: &str = "cydonia";
-const TERMINAL_GUIDE: &str = include_str!("../instructions/terminal.md");
 
 pub struct Server {
     /// Mounted rather than compiled in. A surface the user has switched off is
@@ -58,6 +52,7 @@ impl Default for Server {
 }
 
 impl Server {
+    pub const NAME: &'static str = "cydonia";
     pub fn new() -> Self {
         Self::default()
     }
@@ -223,19 +218,6 @@ impl Server {
         Err(Trouble::Invalid(format!("no tool {name}")))
     }
 
-    pub(crate) fn terminal_guide(&self, at: Option<&Path>, session: Option<&str>) -> String {
-        let context = match at {
-            Some(at) => {
-                let number = session
-                    .and_then(|id| fs::Project::new(at).session(id))
-                    .and_then(|record| record.number);
-                context::session(at, number, None, true, &self.hidden())
-            }
-            None => prompts::tool_context(false, &self.hidden()),
-        };
-        format!("{TERMINAL_GUIDE}\n{context}\n")
-    }
-
     fn initialize(&self, at: Option<&Path>) -> Value {
         let instructions = prompts::tool_context(at.is_some(), &self.hidden());
         let capabilities = json!({ "tools": { "listChanged": false }, "resources": {} });
@@ -247,7 +229,7 @@ impl Server {
             "capabilities": capabilities,
             // The app's own version. `protocolVersion` above is the spec
             // revision the client matches against, and is not ours to name.
-            "serverInfo": { "name": NAME, "version": env!("CARGO_PKG_VERSION") },
+            "serverInfo": { "name": Self::NAME, "version": env!("CARGO_PKG_VERSION") },
             "instructions": instructions,
         })
     }

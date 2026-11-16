@@ -373,7 +373,7 @@ fn a_terminal_session_reports_the_transcript_boundary() {
 }
 
 #[test]
-fn a_named_terminal_agent_creates_in_its_workspace_and_reports_prepared_input() {
+fn a_named_terminal_agent_requests_a_run_with_the_initial_prompt_in_its_workspace() {
     let scratch = Scratch::new("native-agent-start");
     let other = Scratch::new("native-agent-other");
     let server = scratch.server();
@@ -389,8 +389,8 @@ fn a_named_terminal_agent_creates_in_its_workspace_and_reports_prepared_input() 
         json!({"agent": "named-agent-id", "message": "fix it"}),
         Some(scratch.path()),
     ));
-    assert!(response.contains("prepared a prompt"), "{response}");
-    assert!(response.contains("pastes and submits"), "{response}");
+    assert!(response.contains("requested a terminal run"), "{response}");
+    assert!(response.contains("initial prompt"), "{response}");
     assert!(rail.was_asked(Change::Start {
         project: scratch.path().canonicalize().unwrap(),
         agent: "named-agent-id".into(),
@@ -406,7 +406,7 @@ fn a_named_terminal_agent_creates_in_its_workspace_and_reports_prepared_input() 
 }
 
 #[test]
-fn messages_to_terminal_sessions_are_prepared_without_claiming_delivery() {
+fn messages_to_old_terminal_records_are_refused_without_claiming_delivery() {
     use artifact::{project::Project as _, session::record::Record};
     let scratch = Scratch::new("native-agent-prompt");
     let server = scratch.server();
@@ -416,13 +416,13 @@ fn messages_to_terminal_sessions_are_prepared_without_claiming_delivery() {
     let record: Record = serde_json::from_value(json!({ "id": id, "agent": "Claude", "mode": "terminal", "title": "Native", "name": null, "updated": 0, "items": [] })).unwrap();
     store.save_session(&record).unwrap();
     let number = artifact::entry::number(scratch.path(), Kind::Session, &id).unwrap();
-    let response = said(server.call(
+    let response = refused(server.call(
         "session_send",
         json!({"session": format!("#{number}"), "message": "fix it"}),
         Some(scratch.path()),
     ));
-    assert!(response.contains("prepared a prompt"), "{response}");
-    assert!(rail.was_asked(Change::Send {
+    assert!(response.contains("native CLI"), "{response}");
+    assert!(!rail.was_asked(Change::Send {
         session: id,
         message: "fix it".into()
     }));

@@ -21,8 +21,6 @@ pub mod rail;
 mod resources;
 #[cfg(feature = "http")]
 mod server;
-#[cfg(feature = "http")]
-pub mod terminal;
 pub mod tool;
 #[cfg(feature = "http")]
 pub mod tools;

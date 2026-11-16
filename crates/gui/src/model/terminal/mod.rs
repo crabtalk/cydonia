@@ -4,7 +4,6 @@ use crate::{
 };
 use bezel::gpui::{Context, EventEmitter, Task};
 use futures::{StreamExt, channel::mpsc};
-use mcp::terminal::{self as bridge, Bootstrap};
 use portable_pty::{CommandBuilder, PtySize};
 use std::path::{Path, PathBuf};
 use terminal::emulator::{Emulator, HOLD_TIMEOUT};
@@ -50,12 +49,7 @@ impl Buffer {
         Self::open(cwd, Process::shell(cwd), cx)
     }
 
-    pub fn agent(
-        cwd: &Path,
-        launch: Option<&Interactive>,
-        bootstrap: Option<&Bootstrap>,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub fn agent(cwd: &Path, launch: Option<&Interactive>, cx: &mut Context<Self>) -> Self {
         let opened = launch
             .ok_or_else(|| anyhow::anyhow!("Set the agent's interactive executable."))
             .and_then(|launch| {
@@ -63,14 +57,6 @@ impl Buffer {
                 command.args(&launch.args);
                 for (name, value) in &launch.env {
                     command.env(name, value);
-                }
-                for name in bridge::ENVIRONMENT {
-                    command.env_remove(name);
-                }
-                if let Some(bootstrap) = bootstrap {
-                    for (name, value) in &bootstrap.env {
-                        command.env(name, value);
-                    }
                 }
                 Process::spawn(cwd, command)
             });

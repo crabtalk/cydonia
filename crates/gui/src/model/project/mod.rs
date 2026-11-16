@@ -431,7 +431,7 @@ impl Project {
             Kind::Session => self
                 .sessions
                 .iter()
-                .position(|held| held.chat.read(cx).record.as_deref() == Some(id)),
+                .position(|held| held.chat.read(cx).navigation_key().as_deref() == Some(id)),
             Kind::Board => self.board_ix(id),
             Kind::Article => self.article_ix(id),
             Kind::Table => self.table_ix(id),

@@ -13,7 +13,7 @@ use crate::model::{
     state,
     workspace::{Member, Showing},
 };
-use artifact::{kind::Kind, space::Side};
+use artifact::{kind::Kind, project::Project as _, space::Side};
 
 /// A scratch project or two, torn down when the test ends — and a config
 /// directory beside them that the test's writes land in.
@@ -69,6 +69,55 @@ fn two_boards(
         )
     });
     (workspace, a, b)
+}
+
+#[gpui::test]
+fn terminal_run_tabs_use_runtime_keys_without_saved_conversations(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("terminal-run");
+    let (workspace, _, _) = two_boards(&scratch, cx);
+    workspace.update(cx, |workspace, cx| {
+        let identity = crate::model::identity::Identity::new(
+            "Terminal",
+            workspace.projects[0].path.clone(),
+            "custom",
+            Default::default(),
+        );
+        workspace.settings.features.sessions = true;
+        workspace
+            .settings
+            .agents
+            .push(crate::model::settings::Agent {
+                name: "custom".into(),
+                id: None,
+                command: "".into(),
+                args: Vec::new(),
+                env: Default::default(),
+            });
+        let identity_id = identity.id.clone();
+        workspace.identities.push(identity);
+        let id = workspace
+            .new_session_as(
+                &identity_id,
+                None,
+                Some(artifact::session::mode::Mode::Terminal),
+                true,
+                cx,
+            )
+            .unwrap();
+        workspace.select_session(id, cx);
+        assert!(workspace.mint_record(id, cx).is_none());
+        let member = workspace.member_of_session(id, cx).unwrap();
+        assert_eq!(
+            workspace.showing_of(&member, cx),
+            Some((0, Showing::Session(id)))
+        );
+        workspace.open_tab(member.clone(), crate::model::workspace::Opening::Kept, cx);
+        assert_eq!(workspace.tab_strip().last(), Some(&member));
+        assert!(workspace.retain_active_session(id, cx).is_none());
+        assert!(workspace.projects[0].store().sessions().is_empty());
+        workspace.close_session(id, cx);
+        assert!(workspace.session(id, cx).is_none());
+    });
 }
 
 /// The first drag mints the space over the pane that was already there, and
@@ -878,7 +927,6 @@ fn a_pane_answers_for_its_own_board(cx: &mut gpui::TestAppContext) {
 /// window's edit lands on top of it.
 #[gpui::test]
 fn a_stale_board_write_lands_on_the_other_writers_board(cx: &mut gpui::TestAppContext) {
-    use artifact::project::Project as _;
     let scratch = Scratch::new("stale-board");
     cx.update(|cx| bezel::theme::Theme::install(bezel::theme::Appearance::Light, cx));
     let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));

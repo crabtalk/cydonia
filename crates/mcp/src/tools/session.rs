@@ -85,7 +85,8 @@ pub static TOOLS: [Tool; 4] = [
         name: "session_send",
         description: "Send a message to another agent session in the project, named by its entry \
         reference (#43), or start a new session on a named agent with the message as its first \
-        prompt. Native terminal sessions prepare the message for the user to paste and submit. \
+        prompt. Terminal agents launch a new CLI run with the initial prompt; existing terminal \
+        runs cannot receive messages through this tool. \
         Fire and forget: nothing is waited for or answered back.",
         schema: |bound| {
             let mut schema = fields(bound, &[PROJECT, MESSAGE]);
@@ -176,21 +177,17 @@ fn send(args: Args<'_>) -> Outcome {
             entry.kind
         )));
     }
+    if fs::Project::new(project)
+        .session(&entry.id)
+        .is_some_and(|record| record.mode == Mode::Terminal)
+    {
+        return Err(Trouble::Refused("Messages to terminal runs must be entered in the native CLI. Name an agent to start a new run with this message.".into()));
+    }
     rail::ask(Change::Send {
         session: entry.id.clone(),
         message: message.to_owned(),
     })?;
-    let terminal = fs::Project::new(project)
-        .session(&entry.id)
-        .is_some_and(|record| record.mode == Mode::Terminal);
-    Ok(Answer::said(if terminal {
-        format!(
-            "prepared a prompt for terminal session #{number} {}; the user pastes and submits it in the native CLI",
-            entry.title
-        )
-    } else {
-        format!("sent to #{number} {}", entry.title)
-    }))
+    Ok(Answer::said(format!("sent to #{number} {}", entry.title)))
 }
 
 fn rename(args: Args<'_>) -> Outcome {
@@ -284,7 +281,7 @@ fn start(project: &Path, agent: Option<&str>, message: &str) -> Outcome {
     Ok(Answer::said(match agent.mode {
         Mode::Gui => format!("sent to a new session on {}", agent.name),
         Mode::Terminal => format!(
-            "prepared a prompt for a new terminal session on {}; the user pastes and submits it in the native CLI",
+            "requested a terminal run on {} with the message as its initial prompt; its conversation is managed by the native CLI",
             agent.name
         ),
     }))

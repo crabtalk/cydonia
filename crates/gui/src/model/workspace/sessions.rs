@@ -87,7 +87,7 @@ impl Workspace {
     }
 
     /// The member that names a session wherever it is open — what finds the
-    /// tab holding it. Nothing for one with no record id yet.
+    /// tab holding it.
     pub fn member_of_session(&self, id: u64, cx: &App) -> Option<Member> {
         self.member_of(self.project_of(id)?, super::Showing::Session(id), cx)
     }
@@ -519,7 +519,7 @@ impl Workspace {
 
     /// Send to the session filed under `record`, where one is held.
     pub fn send_to_record(&mut self, record: &str, content: String, cx: &mut Context<Self>) {
-        if let Some(id) = self.session_by_record(record, cx).map(|chat| chat.id) {
+        if let Some(id) = self.session_by_key(record, cx).map(|chat| chat.id) {
             self.send(id, content, cx);
         }
     }
@@ -606,7 +606,7 @@ impl Workspace {
     /// An agent's rename of its own session: the user's name where the user
     /// gave one, else the agent's title.
     pub fn retitle_record(&mut self, record: &str, title: String, cx: &mut Context<Self>) {
-        let Some(id) = self.session_by_record(record, cx).map(|chat| chat.id) else {
+        let Some(id) = self.session_by_key(record, cx).map(|chat| chat.id) else {
             return;
         };
         self.with_session(id, cx, |chat| {
@@ -679,13 +679,9 @@ impl Workspace {
             .is_some_and(|chat| chat.update(cx, |chat, _| chat.load_history()))
     }
 
-    /// The session filed under this id, wherever it is — how a card finds the
-    /// agent it was handed to after a launch that renumbered every session.
-    /// [`ChatSession::id`] is minted per launch and means nothing on disk;
-    /// this is the name that keeps.
-    pub fn session_by_record<'a>(&'a self, record: &str, cx: &'a App) -> Option<&'a ChatSession> {
+    pub fn session_by_key<'a>(&'a self, record: &str, cx: &'a App) -> Option<&'a ChatSession> {
         self.chats(cx)
-            .find(|chat| chat.record.as_deref() == Some(record))
+            .find(|chat| chat.navigation_key().as_deref() == Some(record))
     }
 
     /// The id a session is filed under, minted if it has none — what a

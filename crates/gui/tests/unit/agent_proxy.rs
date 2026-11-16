@@ -1,4 +1,4 @@
-use super::loopback_bypass;
+use crate::agent::mcp::loopback_bypass;
 
 #[test]
 fn loopback_is_exempt_without_existing_bypasses() {

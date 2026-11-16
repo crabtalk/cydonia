@@ -1,4 +1,6 @@
 use artifact::session::mode::Mode;
+#[cfg(feature = "desktop")]
+use cydonia_acp::agents::program::Program;
 use cydonia_acp::proto::SessionConfigOptionValue;
 use cydonia_gui::model::{
     identity::{
@@ -287,4 +289,102 @@ fn custom_agents_require_an_explicit_terminal_command_and_preserve_it() {
         Interactive::resolve(&agent, &Choices::default(), Some(&overrides)),
         Some(overrides)
     );
+}
+
+#[cfg(feature = "desktop")]
+#[test]
+fn codex_mcp_is_project_bound_launch_configuration_without_a_session_id() {
+    let mut launch = Interactive {
+        command: "codex".into(),
+        args: vec!["--no-alt-screen".into()],
+        env: Default::default(),
+    };
+    let path = PathBuf::from("/repos/project with spaces/文档");
+    launch.attach_mcp(Program::Codex, "http://127.0.0.1:1234/mcp", &path);
+    assert_eq!(launch.args[0], "--config");
+    assert_eq!(launch.args[2], "--config");
+    let config: toml::Value =
+        toml::from_str(&format!("{}\n{}", launch.args[1], launch.args[3])).unwrap();
+    let server = &config["mcp_servers"]["cydonia"];
+    assert_eq!(server["url"].as_str(), Some("http://127.0.0.1:1234/mcp"));
+    let headers = server["http_headers"].as_table().unwrap();
+    assert_eq!(headers.len(), 1);
+    assert_eq!(
+        headers[mcp::http::PROJECT].as_str(),
+        Some(mcp::http::encoded(&path).as_str())
+    );
+    assert_eq!(launch.args.last().unwrap(), "--no-alt-screen");
+    assert_eq!(launch.env.len(), 2);
+    assert!(
+        launch.env["NO_PROXY"]
+            .split(',')
+            .any(|host| host == "127.0.0.1")
+    );
+}
+
+#[cfg(feature = "desktop")]
+#[test]
+fn claude_mcp_is_additive_launch_configuration_and_other_agents_are_unchanged() {
+    let original = Interactive {
+        command: "custom-wrapper".into(),
+        args: vec![
+            "--mcp-config".into(),
+            r#"{"mcpServers":{"existing":{"type":"http","url":"https://example.com/mcp"}}}"#.into(),
+        ],
+        env: Default::default(),
+    };
+    let mut launch = original.clone();
+    let path = PathBuf::from("/repos/a");
+    launch.attach_mcp(Program::Claude, "http://127.0.0.1:1234/mcp", &path);
+    let config: serde_json::Value = serde_json::from_str(&launch.args[1]).unwrap();
+    assert_eq!(launch.args[0], "--mcp-config");
+    assert_eq!(
+        config["mcpServers"]["cydonia"],
+        serde_json::json!({
+            "type": "http", "url": "http://127.0.0.1:1234/mcp", "headers": { (mcp::http::PROJECT): mcp::http::encoded(&path) }
+        })
+    );
+    assert_eq!(&launch.args[2..], original.args);
+    assert!(!launch.args.iter().any(|arg| arg == "--strict-mcp-config"));
+    assert_eq!(launch.env.len(), 2);
+    assert!(
+        launch.env["no_proxy"]
+            .split(',')
+            .any(|host| host == "127.0.0.1")
+    );
+    for program in [
+        Program::Gemini,
+        Program::Cursor,
+        Program::OpenCode,
+        Program::Pi,
+        Program::Antigravity,
+    ] {
+        let mut launch = original.clone();
+        launch.attach_mcp(program, "http://127.0.0.1:1234/mcp", &path);
+        assert_eq!(launch, original);
+    }
+}
+
+#[test]
+fn initial_tasks_reach_the_native_interactive_prompt_without_bootstrap_text() {
+    use cydonia_acp::agents::program::Program;
+    for (program, option) in [
+        (Program::Codex, "--"),
+        (Program::Claude, "--"),
+        (Program::Cursor, "--"),
+        (Program::Pi, "--"),
+        (Program::Gemini, "--prompt-interactive"),
+        (Program::Antigravity, "-i"),
+        (Program::OpenCode, "--prompt"),
+    ] {
+        let mut launch = Interactive {
+            command: "agent".into(),
+            args: Vec::new(),
+            env: Default::default(),
+        };
+        let task = "--review 'quoted paths'\nand explain the result";
+        launch.prompt(Some(program), task.to_owned());
+        assert_eq!(launch.args, [option, task]);
+        assert!(launch.env.is_empty());
+    }
 }

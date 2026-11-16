@@ -1389,7 +1389,7 @@ impl Cydonia {
     ) {
         let member = self.workspace.update(cx, |workspace, cx| {
             workspace.select_session(id, cx);
-            workspace.mint_record(id, cx)?;
+            workspace.mint_record(id, cx);
             workspace.member_of_session(id, cx)
         });
         let Some(member) = member else {

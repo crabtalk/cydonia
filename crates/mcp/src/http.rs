@@ -19,7 +19,7 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::post,
 };
 use std::{
     net::{Ipv4Addr, SocketAddr},
@@ -30,7 +30,6 @@ use tokio::{net::TcpListener, sync::oneshot};
 
 /// Where the tools answer.
 pub const PATH: &str = "/mcp";
-pub const GUIDE_SUFFIX: &str = "/guide";
 
 /// The port the door prefers. Pinned so the address survives a restart, which
 /// is what lets a client be configured once.
@@ -110,7 +109,6 @@ pub async fn open_at(port: u16, server: Arc<Server>) -> std::io::Result<Door> {
     let url = format!("http://{}{PATH}", listener.local_addr()?);
     let router = Router::new()
         .route(PATH, post(call).get(no_stream))
-        .route(&format!("{PATH}{GUIDE_SUFFIX}"), get(guide))
         .layer(middleware::from_fn(local_process))
         .with_state(server);
     let (close, closed) = oneshot::channel();
@@ -174,14 +172,6 @@ async fn local_process(request: HttpRequest, next: Next) -> Response {
         return (StatusCode::FORBIDDEN, "this server is not for a browser").into_response();
     }
     next.run(request).await
-}
-
-async fn guide(State(server): State<Arc<Server>>, headers: HeaderMap) -> Response {
-    let caller = Caller::from(&headers);
-    let guide = tokio::task::block_in_place(|| {
-        server.terminal_guide(caller.project.as_deref(), caller.session.as_deref())
-    });
-    ([(header::CACHE_CONTROL, "no-store")], guide).into_response()
 }
 
 /// The GET half of Streamable HTTP is the server's own stream, and this server

@@ -42,9 +42,8 @@ use cydonia_acp::proto::{
 };
 #[cfg(feature = "desktop")]
 use cydonia_acp_events::Reply;
-#[cfg(feature = "desktop")]
-use mcp::terminal::Bootstrap;
 use std::{
+    borrow::Cow,
     cell::RefCell,
     collections::{BTreeMap, VecDeque},
     path::PathBuf,
@@ -365,25 +364,22 @@ impl ChatSession {
             cx,
         );
         chat.identity = Some(identity.id.clone());
-        let bootstrap = chat
-            .record
-            .as_deref()
-            .and_then(|record| serve::url().map(|url| Bootstrap::new(&url, &chat.cwd, record)));
-        chat.draft = match (bootstrap.as_ref(), seed) {
-            (Some(bootstrap), Some(task)) if !task.is_empty() => {
-                format!("{}\n\n{task}", bootstrap.prompt)
-            }
-            (Some(bootstrap), _) => bootstrap.prompt.clone(),
-            (None, task) => task.unwrap_or_default(),
-        };
         let offers = OfferCache::get(cx, &chat.cwd, &chat.entry).with(&identity.choices);
         let choices = if offers.config.is_empty() {
             identity.choices.clone()
         } else {
             Choices::capture(offers.modes.as_ref(), &offers.config)
         };
-        let launch = Interactive::resolve(&chat.entry, &choices, identity.terminal.as_ref());
-        let buffer = cx.new(|cx| Buffer::agent(&chat.cwd, launch.as_ref(), bootstrap.as_ref(), cx));
+        let mut launch = Interactive::resolve(&chat.entry, &choices, identity.terminal.as_ref());
+        if let Some(launch) = &mut launch {
+            if let (Some(program), Some(url)) = (chat.entry.program(), serve::url()) {
+                launch.attach_mcp(program, &url, &chat.cwd);
+            }
+            if let Some(seed) = seed.filter(|seed| !seed.is_empty()) {
+                launch.prompt(chat.entry.program(), seed);
+            }
+        }
+        let buffer = cx.new(|cx| Buffer::agent(&chat.cwd, launch.as_ref(), cx));
         cx.observe(&buffer, |chat, buffer, cx| {
             chat.connection = if buffer.read(cx).state.failed() {
                 Connection::Lost
@@ -433,7 +429,9 @@ impl ChatSession {
         mode: Mode,
         cx: &mut Context<Self>,
     ) -> Self {
-        let record = store::open(&cwd).create_session().ok();
+        let record = (mode == Mode::Gui)
+            .then(|| store::open(&cwd).create_session().ok())
+            .flatten();
         #[cfg(feature = "desktop")]
         let (pump, connection) = (
             if mode == Mode::Gui {
@@ -700,11 +698,20 @@ impl ChatSession {
         Some(chat)
     }
 
+    pub fn navigation_key(&self) -> Option<Cow<'_, str>> {
+        self.record.as_deref().map(Cow::Borrowed).or_else(|| {
+            (self.mode == Mode::Terminal).then(|| Cow::Owned(format!("terminal-{}", self.id)))
+        })
+    }
+
     /// The id this session is filed under, minted now if it has none. The
     /// session is on disk under it before this returns, whether the id was
     /// minted here or when the session opened: the tools find a session by
     /// its file.
     pub fn mint_record(&mut self) -> Option<&str> {
+        if self.mode == Mode::Terminal {
+            return None;
+        }
         if self.record.is_none() {
             self.record = self.store().create_session().ok();
         }
@@ -773,6 +780,9 @@ impl ChatSession {
 
     /// Save a conversation after its first prompt or fork.
     pub fn flush(&mut self) {
+        if self.mode == Mode::Terminal {
+            return;
+        }
         if !self.load_history() {
             return;
         }
@@ -788,6 +798,9 @@ impl ChatSession {
     /// Write the transcript under the session's record, and its choices
     /// beside it. The history must be loaded.
     fn write(&mut self) {
+        if self.mode == Mode::Terminal {
+            return;
+        }
         let _ = self.store().save_session(&self.to_record());
         self.written = true;
         self.save_preferences();
@@ -909,11 +922,6 @@ impl ChatSession {
         }
         self.updated = SystemTime::now();
         if self.mode == Mode::Terminal {
-            if !self.draft.is_empty() {
-                self.draft.push_str("\n\n");
-            }
-            self.draft.push_str(&content);
-            self.flush();
             return;
         }
         // No agent to wait for: the stand-in answers at once.

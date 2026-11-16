@@ -10,6 +10,7 @@ use crate::{
         settings,
     },
 };
+use ::mcp::Server;
 use anyhow::{Result, anyhow};
 use cydonia_acp::{
     AgentConn, Direction, Error, Tap,
@@ -39,10 +40,6 @@ use tokio::{
 };
 
 #[cfg(test)]
-#[path = "../../tests/unit/acp_proxy.rs"]
-mod proxy_tests;
-
-#[cfg(test)]
 #[path = "../../tests/unit/acp_events.rs"]
 mod event_tests;
 
@@ -53,10 +50,6 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 /// Where the protocol tap writes, and the switch that echoes an agent's stderr
 /// to ours on the way past — it reaches the transcript either way.
 const DEBUG: &str = "CYDONIA_DEBUG";
-
-/// What our own tool server is called to an agent. Also the namespace every
-/// tool of ours comes back under, so the two are read from one place.
-const SERVER: &str = "cydonia";
 
 /// How long a `session/cancel` already on the wire is given to land before the
 /// process is killed under it.
@@ -176,14 +169,7 @@ impl Session {
         // HTTP clients can inherit a system proxy that does not exempt IP
         // loopback addresses. Our MCP server must be reached directly. Merge
         // both spellings because agents differ in which one they honor.
-        let bypass = loopback_bypass(["NO_PROXY", "no_proxy"].map(|key| {
-            entry
-                .env
-                .get(key)
-                .cloned()
-                .or_else(|| std::env::var(key).ok())
-        }));
-        command.env("NO_PROXY", &bypass).env("no_proxy", &bypass);
+        command.envs(mcp::bypass_environment(&entry.env));
         // An agent's diagnostics are not this app's to print. cydonia-acp leaves the
         // choice to the caller — "a TUI usually wants it captured and a CLI
         // usually does not" — and a desktop app that inherits them sprays a
@@ -645,27 +631,6 @@ impl Drop for Session {
     }
 }
 
-fn loopback_bypass(existing: [Option<String>; 2]) -> String {
-    let mut entries = Vec::new();
-    for value in existing
-        .iter()
-        .flatten()
-        .map(String::as_str)
-        .chain(["localhost,127.0.0.1,::1"])
-    {
-        for entry in value
-            .split(',')
-            .map(str::trim)
-            .filter(|entry| !entry.is_empty())
-        {
-            if !entries.contains(&entry) {
-                entries.push(entry);
-            }
-        }
-    }
-    entries.join(",")
-}
-
 /// The enabled servers an agent can actually reach, in ACP's shape.
 /// Remote servers are dropped for agents that don't advertise HTTP MCP
 /// rather than being sent and failing.
@@ -682,7 +647,7 @@ fn acp_mcp_servers(
     let http = init.agent_capabilities.mcp_capabilities.http;
     let ours = http.then(serve::url).flatten().map(|url| {
         McpServer::Http(McpServerHttp {
-            name: SERVER.to_owned(),
+            name: Server::NAME.to_owned(),
             url,
             // Which project this session is. The tools then take no directory
             // at all — one a session's model had to supply is one it could
