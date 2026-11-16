@@ -44,7 +44,8 @@ pub trait Hosts: Send + Sync + 'static {
 /// [`Remotes::close`]; their replicas are kept fresh on [`acp::runtime`].
 pub struct Remotes {
     hosts: Box<dyn Hosts>,
-    projects: Mutex<HashMap<Location, remote::Project>>,
+    projects: Mutex<HashMap<Location, (Client, remote::Project)>>,
+    opening: futures::lock::Mutex<()>,
     /// Each host's spawner, with the client it was connected through.
     spawners: Mutex<HashMap<HostId, (Client, Connecting)>>,
 }
@@ -58,6 +59,7 @@ impl Remotes {
         let remotes = Self {
             hosts: Box::new(hosts),
             projects: Mutex::default(),
+            opening: futures::lock::Mutex::new(()),
             spawners: Mutex::default(),
         };
         REMOTES
@@ -87,28 +89,36 @@ impl Remotes {
     /// already open there, or the one opened now. Refused for a location on
     /// this machine.
     pub async fn open(&self, location: &Location) -> anyhow::Result<remote::Project> {
-        if let Some(project) = self.project(location) {
-            return Ok(project);
-        }
+        let _opening = self.opening.lock().await;
         let host = location
             .host()
             .with_context(|| format!("{location} is on this machine"))?;
         let client = self.client(host)?;
-        let (project, refresh) = remote::Project::open(client, location.root().to_owned())
-            .await
-            .with_context(|| format!("open {location}"))?;
-        let mut projects = self.projects();
-        if let Some(held) = projects.get(location) {
-            return Ok(held.clone());
-        }
+        let held = self.projects().get(location).cloned();
+        let (project, refresh) = match held {
+            Some((connected, project)) if connected.same(&client) => return Ok(project),
+            Some((_, project)) => {
+                let refresh = project
+                    .reconnect(client.clone())
+                    .await
+                    .with_context(|| format!("reopen {location}"))?;
+                (project, refresh)
+            }
+            None => remote::Project::open(client.clone(), location.root().to_owned())
+                .await
+                .with_context(|| format!("open {location}"))?,
+        };
         acp::runtime().spawn(refresh);
-        projects.insert(location.clone(), project.clone());
+        self.projects()
+            .insert(location.clone(), (client, project.clone()));
         Ok(project)
     }
 
     /// The project open at `location`.
     pub fn project(&self, location: &Location) -> Option<remote::Project> {
-        self.projects().get(location).cloned()
+        self.projects()
+            .get(location)
+            .map(|(_, project)| project.clone())
     }
 
     /// Lets the project at `location` go. Its replica stops being refreshed
@@ -154,7 +164,7 @@ impl Remotes {
         connected.map_err(io::Error::other)
     }
 
-    fn projects(&self) -> MutexGuard<'_, HashMap<Location, remote::Project>> {
+    fn projects(&self) -> MutexGuard<'_, HashMap<Location, (Client, remote::Project)>> {
         self.projects.lock().unwrap_or_else(|e| e.into_inner())
     }
 }

@@ -46,8 +46,7 @@ pub struct Project {
 
 struct Inner {
     root: PathBuf,
-    client: Client,
-    handle: Handle<Artifact>,
+    connection: Mutex<(Client, Handle<Artifact>)>,
     replica: Mutex<Replica>,
     knocks: Mutex<Knocks>,
 }
@@ -97,8 +96,7 @@ impl Project {
         let events = handle.events();
         let inner = Arc::new(Inner {
             root,
-            client,
-            handle,
+            connection: Mutex::new((client, handle)),
             replica: Mutex::new(Replica {
                 held: Arc::default(),
                 sent: 0,
@@ -113,6 +111,22 @@ impl Project {
         Ok((Self { inner }, refresh))
     }
 
+    /// Reopens this project over a replacement client. Existing clones and
+    /// watches keep their identity; reads are refreshed before this succeeds.
+    /// The caller must poll the returned refresh task in place of the old one.
+    pub async fn reconnect(&self, client: Client) -> super::Result<Refresh> {
+        let handle = client.service::<Artifact>();
+        let events = handle.events();
+        *self.inner.connection.lock().unwrap() = (client, handle);
+        self.inner.fill().await?;
+        self.inner.knock();
+        Ok(Inner::refresh(Arc::downgrade(&self.inner), events).boxed())
+    }
+
+    fn client(&self) -> Client {
+        self.inner.connection.lock().unwrap().0.clone()
+    }
+
     /// The project's directory on the server's machine.
     pub fn root(&self) -> &Path {
         &self.inner.root
@@ -120,7 +134,7 @@ impl Project {
 
     /// The project's tables, on the same server.
     pub fn tables(&self) -> crate::table::remote::Tables {
-        crate::table::remote::Tables::new(&self.inner.client, self.inner.root.clone())
+        crate::table::remote::Tables::new(&self.client(), self.inner.root.clone())
     }
 
     /// The directory `owner`'s pictures are in on the server's machine,
@@ -211,7 +225,7 @@ impl Inner {
         if fills {
             replica.filling.push(sent);
         }
-        let answer = self.handle.send(&request);
+        let answer = self.connection.lock().unwrap().1.send(&request);
         let answer = async move {
             answer
                 .await
@@ -547,7 +561,7 @@ impl super::Project for Project {
         to_board: &str,
         to_card: &str,
     ) -> impl Future<Output = super::Result<()>> + Send + use<> {
-        if !self.inner.client.same(&to.inner.client) {
+        if !self.client().same(&to.client()) {
             let refused = anyhow::anyhow!("a card's files do not move between servers");
             return futures::future::ready(Err(Error::Other(refused))).boxed();
         }
