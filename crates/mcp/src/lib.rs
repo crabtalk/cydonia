@@ -12,6 +12,8 @@
 //! the same way it reaches one it did.
 
 #[cfg(feature = "http")]
+pub mod context;
+#[cfg(feature = "http")]
 pub mod http;
 pub mod proto;
 pub mod rail;
@@ -19,6 +21,8 @@ pub mod rail;
 mod resources;
 #[cfg(feature = "http")]
 mod server;
+#[cfg(feature = "http")]
+pub mod terminal;
 pub mod tool;
 #[cfg(feature = "http")]
 pub mod tools;

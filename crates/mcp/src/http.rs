@@ -15,10 +15,11 @@
 use crate::{Server, proto::Request};
 use axum::{
     Router,
-    extract::State,
+    extract::{Request as HttpRequest, State},
     http::{HeaderMap, StatusCode, header},
+    middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::post,
+    routing::{get, post},
 };
 use std::{
     net::{Ipv4Addr, SocketAddr},
@@ -29,6 +30,7 @@ use tokio::{net::TcpListener, sync::oneshot};
 
 /// Where the tools answer.
 pub const PATH: &str = "/mcp";
+pub const GUIDE_SUFFIX: &str = "/guide";
 
 /// The port the door prefers. Pinned so the address survives a restart, which
 /// is what lets a client be configured once.
@@ -108,6 +110,8 @@ pub async fn open_at(port: u16, server: Arc<Server>) -> std::io::Result<Door> {
     let url = format!("http://{}{PATH}", listener.local_addr()?);
     let router = Router::new()
         .route(PATH, post(call).get(no_stream))
+        .route(&format!("{PATH}{GUIDE_SUFFIX}"), get(guide))
+        .layer(middleware::from_fn(local_process))
         .with_state(server);
     let (close, closed) = oneshot::channel();
     tokio::spawn(async move {
@@ -125,27 +129,17 @@ pub async fn open_at(port: u16, server: Arc<Server>) -> std::io::Result<Door> {
 
 /// One MCP call.
 async fn call(State(server): State<Arc<Server>>, headers: HeaderMap, body: String) -> Response {
-    let at = headers
-        .get(PROJECT)
-        .and_then(|value| value.to_str().ok())
-        .and_then(decoded);
-    let session = headers
-        .get(SESSION)
-        .and_then(|value| value.to_str().ok())
-        .map(str::to_owned);
-    // A client that is not a browser sends no `Origin` at all. One that does is
-    // a page, and a page reaching a loopback port is the rebinding attack this
-    // check exists for — the name it resolved is not one we can vouch for, so
-    // the header is refused rather than matched.
-    if headers.contains_key(header::ORIGIN) {
-        return (StatusCode::FORBIDDEN, "this server is not for a browser").into_response();
-    }
+    let caller = Caller::from(&headers);
     let Ok(request) = serde_json::from_str::<Request>(&body) else {
         return (StatusCode::BAD_REQUEST, "not a JSON-RPC request").into_response();
     };
     // A browser tool waits on the window, so the call may block.
     let answer = tokio::task::block_in_place(|| {
-        server.handle_from(&request, at.as_deref(), session.as_deref())
+        server.handle_from(
+            &request,
+            caller.project.as_deref(),
+            caller.session.as_deref(),
+        )
     });
     match answer {
         Some(response) => axum::Json(response).into_response(),
@@ -153,6 +147,41 @@ async fn call(State(server): State<Arc<Server>>, headers: HeaderMap, body: Strin
         // status that says so.
         None => StatusCode::ACCEPTED.into_response(),
     }
+}
+
+struct Caller {
+    project: Option<PathBuf>,
+    session: Option<String>,
+}
+
+impl From<&HeaderMap> for Caller {
+    fn from(headers: &HeaderMap) -> Self {
+        Self {
+            project: headers
+                .get(PROJECT)
+                .and_then(|value| value.to_str().ok())
+                .and_then(decoded),
+            session: headers
+                .get(SESSION)
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_owned),
+        }
+    }
+}
+
+async fn local_process(request: HttpRequest, next: Next) -> Response {
+    if request.headers().contains_key(header::ORIGIN) {
+        return (StatusCode::FORBIDDEN, "this server is not for a browser").into_response();
+    }
+    next.run(request).await
+}
+
+async fn guide(State(server): State<Arc<Server>>, headers: HeaderMap) -> Response {
+    let caller = Caller::from(&headers);
+    let guide = tokio::task::block_in_place(|| {
+        server.terminal_guide(caller.project.as_deref(), caller.session.as_deref())
+    });
+    ([(header::CACHE_CONTROL, "no-store")], guide).into_response()
 }
 
 /// The GET half of Streamable HTTP is the server's own stream, and this server

@@ -13,17 +13,13 @@ pub fn prompt(
     embedded_context: bool,
     mut blocks: Vec<ContentBlock>,
 ) -> Vec<ContentBlock> {
-    let mut context = prompts::session_context(
+    let context = mcp::context::session(
         cwd,
         session,
         article,
         mcp_available,
         &super::serve::hidden_resources(),
     );
-    if let Some(shown) = mcp::tools::workspace::on_screen() {
-        context.push_str("\n\nOn screen in cydonia:\n");
-        context.push_str(&shown);
-    }
     let context = if embedded_context {
         ContentBlock::Resource(EmbeddedResource {
             resource: EmbeddedResourceResource::Text(TextResourceContents {

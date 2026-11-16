@@ -2,7 +2,10 @@
 
 #[cfg(feature = "desktop")]
 use crate::{
-    agent::acp::{self, Event, Launch, Session},
+    agent::{
+        acp::{self, Event, Launch, Session},
+        serve,
+    },
     model::{
         identity::Identity,
         notify,
@@ -39,6 +42,8 @@ use cydonia_acp::proto::{
 };
 #[cfg(feature = "desktop")]
 use cydonia_acp_events::Reply;
+#[cfg(feature = "desktop")]
+use mcp::terminal::Bootstrap;
 use std::{
     cell::RefCell,
     collections::{BTreeMap, VecDeque},
@@ -360,8 +365,25 @@ impl ChatSession {
             cx,
         );
         chat.identity = Some(identity.id.clone());
-        chat.draft = seed.unwrap_or_default();
-        let buffer = cx.new(|cx| Buffer::agent(&chat.cwd, identity.terminal.as_ref(), cx));
+        let bootstrap = chat
+            .record
+            .as_deref()
+            .and_then(|record| serve::url().map(|url| Bootstrap::new(&url, &chat.cwd, record)));
+        chat.draft = match (bootstrap.as_ref(), seed) {
+            (Some(bootstrap), Some(task)) if !task.is_empty() => {
+                format!("{}\n\n{task}", bootstrap.prompt)
+            }
+            (Some(bootstrap), _) => bootstrap.prompt.clone(),
+            (None, task) => task.unwrap_or_default(),
+        };
+        let buffer = cx.new(|cx| {
+            Buffer::agent(
+                &chat.cwd,
+                identity.terminal.as_ref(),
+                bootstrap.as_ref(),
+                cx,
+            )
+        });
         cx.observe(&buffer, |chat, buffer, cx| {
             chat.connection = if buffer.read(cx).state.failed() {
                 Connection::Lost

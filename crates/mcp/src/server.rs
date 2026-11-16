@@ -1,9 +1,11 @@
 //! The server: the tools a caller is offered and the frames it answers.
 
 use crate::{
+    context,
     proto::{self, Error, Request, Response},
     resources, tool,
 };
+use artifact::project::{Project as _, fs};
 use serde_json::{Value, json};
 use std::{
     path::Path,
@@ -16,6 +18,7 @@ use tool::{Answer, Args, Tool, Trouble};
 
 /// What the server calls itself in `initialize`.
 const NAME: &str = "cydonia";
+const TERMINAL_GUIDE: &str = include_str!("../instructions/terminal.md");
 
 pub struct Server {
     /// Mounted rather than compiled in. A surface the user has switched off is
@@ -218,6 +221,19 @@ impl Server {
             return Err(Trouble::Refused(format!("{name} {why}")));
         }
         Err(Trouble::Invalid(format!("no tool {name}")))
+    }
+
+    pub(crate) fn terminal_guide(&self, at: Option<&Path>, session: Option<&str>) -> String {
+        let context = match at {
+            Some(at) => {
+                let number = session
+                    .and_then(|id| fs::Project::new(at).session(id))
+                    .and_then(|record| record.number);
+                context::session(at, number, None, true, &self.hidden())
+            }
+            None => prompts::tool_context(false, &self.hidden()),
+        };
+        format!("{TERMINAL_GUIDE}\n{context}\n")
     }
 
     fn initialize(&self, at: Option<&Path>) -> Value {

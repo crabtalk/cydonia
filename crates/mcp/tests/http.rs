@@ -216,3 +216,106 @@ fn a_project_survives_the_header_it_rides_on() {
     );
     assert!(answer.contains("no articles"), "{answer}");
 }
+
+#[test]
+fn terminal_guide_is_plain_http_and_rejects_browser_origins() {
+    let (_scratch, _runtime, url) = door("terminal-guide");
+    let guide = format!("{url}{}", http::GUIDE_SUFFIX);
+    let answer = request(&guide, "GET", "", &[]);
+    assert!(answer.starts_with("HTTP/1.1 200"), "{answer}");
+    assert!(answer.contains("text/plain"), "{answer}");
+    assert!(answer.contains("cache-control: no-store"), "{answer}");
+    assert!(answer.contains("tools/list"), "{answer}");
+    assert!(answer.contains("resources/read"), "{answer}");
+    let refused = request(&guide, "GET", "", &[("Origin", "https://example.com")]);
+    assert!(refused.starts_with("HTTP/1.1 403"), "{refused}");
+}
+
+#[test]
+fn terminal_guide_uses_each_sessions_inherited_identity_and_hides_disabled_resources() {
+    use artifact::{project::Project as _, session::record::Record};
+    use cydonia_mcp::terminal::{self, Bootstrap};
+    use std::sync::atomic::AtomicBool;
+    let scratch = Scratch::new("terminal-bound-guide");
+    Rail::also(scratch.path());
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let server = Server::new().mount_switched(
+        &tools::browser::TOOLS,
+        "browser",
+        Arc::new(AtomicBool::new(false)),
+    );
+    let door = runtime
+        .block_on(http::open_at(0, Arc::new(server)))
+        .unwrap();
+    let store = scratch.store();
+    let mut sessions = Vec::new();
+    for name in ["first", "second"] {
+        let id = store.create_session().unwrap();
+        let record: Record = serde_json::from_value(serde_json::json!({
+            "id": id, "agent": name, "mode": "terminal", "title": name,
+            "name": null, "updated": 0, "items": []
+        }))
+        .unwrap();
+        store.save_session(&record).unwrap();
+        let number = store.session(&id).unwrap().number.unwrap();
+        let bootstrap = Bootstrap::new(door.url(), scratch.path(), &id);
+        let value = |name| {
+            bootstrap
+                .env
+                .iter()
+                .find(|(key, _)| *key == name)
+                .unwrap()
+                .1
+                .as_str()
+        };
+        assert_eq!(value(terminal::URL_ENV), door.url());
+        assert_eq!(value(terminal::SESSION_ENV), id);
+        let headers = [
+            (http::PROJECT, value(terminal::PROJECT_ENV)),
+            (http::SESSION, value(terminal::SESSION_ENV)),
+        ];
+        let guide = request(
+            &format!("{}{}", door.url(), http::GUIDE_SUFFIX),
+            "GET",
+            "",
+            &headers,
+        );
+        assert!(
+            guide.contains(&format!("Current session: #{number}")),
+            "{guide}"
+        );
+        assert!(
+            guide.contains(&format!("Current project: {}", scratch.path().display())),
+            "{guide}"
+        );
+        assert!(!guide.contains("cydonia://resources/browser"), "{guide}");
+        sessions.push(number);
+    }
+    assert_ne!(sessions[0], sessions[1]);
+}
+
+#[cfg(unix)]
+#[test]
+fn prepared_bootstrap_command_fetches_guide_without_any_client_configuration() {
+    use cydonia_mcp::terminal::Bootstrap;
+    let (scratch, _runtime, url) = door("terminal-bootstrap");
+    let bootstrap = Bootstrap::new(&url, scratch.path(), "native-session");
+    let command = bootstrap
+        .prompt
+        .lines()
+        .find(|line| line.starts_with("curl "))
+        .unwrap();
+    let answer = std::process::Command::new("/bin/sh")
+        .args(["-c", command])
+        .envs(bootstrap.env)
+        .output()
+        .unwrap();
+    assert!(
+        answer.status.success(),
+        "{}",
+        String::from_utf8_lossy(&answer.stderr)
+    );
+    let guide = String::from_utf8(answer.stdout).unwrap();
+    assert!(guide.contains("# Cydonia tools from a terminal agent"));
+    assert!(guide.contains(&format!("Current project: {}", scratch.path().display())));
+}
