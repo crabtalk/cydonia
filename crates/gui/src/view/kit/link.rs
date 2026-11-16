@@ -206,7 +206,7 @@ fn picture_hover(path: PathBuf, shown: String, _cx: &App) -> AnyElement {
         "picture-hover",
         Theme::surface_radius(),
         move |theme, _, _| {
-            popover::popover_card_flush(&theme)
+            popover::popover_card_flush(theme)
                 .w(px(HOVER_WIDTH))
                 .flex()
                 .flex_col()
@@ -670,7 +670,7 @@ impl Cydonia {
                             .child(why)
                             .into_any_element(),
                     };
-                    popover::popover_card_flush(&theme)
+                    popover::popover_card_flush(theme)
                         .w_full()
                         .flex()
                         .flex_col()

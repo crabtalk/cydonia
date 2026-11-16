@@ -1360,7 +1360,7 @@ impl Composer {
                     .items_center()
                     .gap(px(root::COMPOSER_INSET))
                     .child(div().flex_1().min_w_0().child(row))
-                    .children(this.streaming.then(|| this.button(&theme, cx)).flatten())
+                    .children(this.streaming.then(|| this.button(theme, cx)).flatten())
             })
         })
         .into_any_element()
@@ -1443,9 +1443,9 @@ impl Composer {
                                             .flex()
                                             .flex_col()
                                             .gap(px(root::COMPOSER_INSET))
-                                            .children(this.thread_panel(&theme, right_inset))
+                                            .children(this.thread_panel(theme, right_inset))
                                             .children(this.activity_row(
-                                                &theme,
+                                                theme,
                                                 true,
                                                 right_inset,
                                                 cx,
@@ -1466,7 +1466,7 @@ impl Composer {
                                                             .items_center()
                                                             .child(this.field.clone()),
                                                     )
-                                                    .children(this.button(&theme, cx)),
+                                                    .children(this.button(theme, cx)),
                                             )
                                     })
                                 }

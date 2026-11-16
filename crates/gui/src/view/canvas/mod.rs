@@ -160,7 +160,7 @@ impl CanvasView {
         let error = source.read(cx).error.clone();
         cx.observe(&source, |this, source, cx| {
             let source = source.read(cx);
-            this.pages.retain(&source.document.read(cx));
+            this.pages.retain(source.document.read(cx));
             let error = &source.error;
             if &this.error != error {
                 this.error = error.clone();

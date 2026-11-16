@@ -289,32 +289,32 @@ impl Page {
             }));
             self.browser = Some(page);
         }
-        if let Some(path) = resolved.file {
-            if let Some(workspace) = references::current(cx) {
-                let file = File::open(path, workspace.downgrade(), cx);
-                self._file = Some(cx.observe(&file, |this, file, cx| {
-                    match &file.read(cx).result {
-                        Some(Ok(_)) => {
-                            this.source_error = None;
-                            if let Some(page) = &this.browser {
-                                page.update(cx, |page, _| page.reload_bypassing_cache());
-                            }
+        if let Some(path) = resolved.file
+            && let Some(workspace) = references::current(cx)
+        {
+            let file = File::open(path, workspace.downgrade(), cx);
+            self._file = Some(cx.observe(&file, |this, file, cx| {
+                match &file.read(cx).result {
+                    Some(Ok(_)) => {
+                        this.source_error = None;
+                        if let Some(page) = &this.browser {
+                            page.update(cx, |page, _| page.reload_bypassing_cache());
                         }
-                        Some(Err(error)) => {
-                            this.source_error = Some(error.clone());
-                        }
-                        None => {}
                     }
-                    cx.notify();
-                }));
-                self.source_error = file
-                    .read(cx)
-                    .result
-                    .as_ref()
-                    .and_then(|result| result.as_ref().err())
-                    .cloned();
-                self.source = Some(file);
-            }
+                    Some(Err(error)) => {
+                        this.source_error = Some(error.clone());
+                    }
+                    None => {}
+                }
+                cx.notify();
+            }));
+            self.source_error = file
+                .read(cx)
+                .result
+                .as_ref()
+                .and_then(|result| result.as_ref().err())
+                .cloned();
+            self.source = Some(file);
         }
         self.present(window, cx);
     }

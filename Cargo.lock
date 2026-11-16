@@ -2748,7 +2748,6 @@ dependencies = [
  "global-hotkey",
  "image",
  "libc",
- "lru",
  "notify",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
@@ -4656,15 +4655,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fae87c125b03c1d2c0150c90365d7d6bcc53fb73a9acaef207d2d065860f062"
 dependencies = [
  "imgref",
-]
-
-[[package]]
-name = "lru"
-version = "0.18.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef9ac18847474e638e3702b76c65d4eb93428471a74778ef0f1be711717f89b5"
-dependencies = [
- "hashbrown 0.17.1",
 ]
 
 [[package]]

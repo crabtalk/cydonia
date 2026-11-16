@@ -56,7 +56,7 @@ impl Png for RenderImage {
     fn png(&self) -> ImageResult<Vec<u8>> {
         let size = self.size(0);
         let mut pixels = self.as_bytes(0).unwrap_or_default().to_vec();
-        for pixel in pixels.chunks_exact_mut(4) {
+        for pixel in pixels.as_chunks_mut::<4>().0 {
             pixel.swap(0, 2);
         }
         let picture = image::RgbaImage::from_raw(

@@ -584,217 +584,212 @@ impl Render for Terminal {
         .with_hollow_inactive(cx.inactive_caret() == bezel::ui::input::InactiveCaret::Hollow)
         .with_text_size(typography::terminal_size(cx))
         .with_content_inset(Edges::all(px(12.0)));
-        div()
-            .size_full()
-            .flex()
-            .flex_col()
-            .child(
-                div()
-                    .id("session-terminal")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_hidden()
-                    .key_context(CONTEXT)
-                    .track_focus(&self.focus)
-                    .on_key_down(cx.listener(Self::key))
-                    .on_key_up(cx.listener(Self::key_up))
-                    .on_action(|_: &IncreaseTextSize, _, cx| typography::zoom_terminal(1., cx))
-                    .on_action(|_: &DecreaseTextSize, _, cx| typography::zoom_terminal(-1., cx))
-                    .on_action(|_: &ResetTextSize, _, cx| typography::reset_terminal_zoom(cx))
-                    .on_action(cx.listener(Self::copy))
-                    .on_action(cx.listener(Self::paste))
-                    .on_drop(cx.listener(Self::drop_paths))
-                    .children(
-                        self.menu
-                            .render("terminal-menu", |this| &mut this.menu, window, cx),
-                    )
-                    .on_mouse_down(
-                        gpui::MouseButton::Left,
-                        cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
-                            window.focus(&this.focus, cx);
-                            if this.report(
-                                MouseAction::Press(MouseButton::Left),
-                                event.position,
-                                &event.modifiers,
-                                cx,
-                            ) {
-                                return;
-                            }
-                            if event.click_count > 1 {
-                                this.pressed = None;
-                                this.selecting = true;
-                                this.drag = Some(event.position);
-                                this.select(
-                                    event.position,
-                                    Some(view::selection_type(event.click_count)),
-                                    cx,
-                                );
-                                cx.notify();
-                                return;
-                            }
-                            // The press itself is not yet a selection: the one
-                            // that focuses the panel would otherwise take a
-                            // cell with it.
-                            this.pressed = Some(event.position);
-                            this.buffer.update(cx, |buffer, cx| {
-                                buffer.emulator.clear_selection();
-                                cx.notify();
-                            });
-                            cx.notify();
-                        }),
-                    )
-                    .on_mouse_down(
-                        gpui::MouseButton::Right,
-                        cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
-                            if !this.report(
-                                MouseAction::Press(MouseButton::Right),
-                                event.position,
-                                &event.modifiers,
-                                cx,
-                            ) {
-                                this.open_menu(event.position, window, cx);
-                            }
-                        }),
-                    )
-                    .on_mouse_down(
-                        gpui::MouseButton::Middle,
-                        cx.listener(|this, event: &gpui::MouseDownEvent, _, cx| {
-                            this.report(
-                                MouseAction::Press(MouseButton::Middle),
-                                event.position,
-                                &event.modifiers,
-                                cx,
-                            );
-                        }),
-                    )
-                    .on_mouse_move(cx.listener(|this, event: &gpui::MouseMoveEvent, _, cx| {
-                        // A selection drag is followed window-wide by the canvas below.
-                        if this.selecting {
-                            return;
-                        }
-                        let held = match event.pressed_button {
-                            Some(gpui::MouseButton::Left) => Some(MouseButton::Left),
-                            Some(gpui::MouseButton::Right) => Some(MouseButton::Right),
-                            Some(gpui::MouseButton::Middle) => Some(MouseButton::Middle),
-                            _ => None,
-                        };
+        div().size_full().flex().flex_col().child(
+            div()
+                .id("session-terminal")
+                .flex_1()
+                .min_h_0()
+                .overflow_hidden()
+                .key_context(CONTEXT)
+                .track_focus(&self.focus)
+                .on_key_down(cx.listener(Self::key))
+                .on_key_up(cx.listener(Self::key_up))
+                .on_action(|_: &IncreaseTextSize, _, cx| typography::zoom_terminal(1., cx))
+                .on_action(|_: &DecreaseTextSize, _, cx| typography::zoom_terminal(-1., cx))
+                .on_action(|_: &ResetTextSize, _, cx| typography::reset_terminal_zoom(cx))
+                .on_action(cx.listener(Self::copy))
+                .on_action(cx.listener(Self::paste))
+                .on_drop(cx.listener(Self::drop_paths))
+                .children(
+                    self.menu
+                        .render("terminal-menu", |this| &mut this.menu, window, cx),
+                )
+                .on_mouse_down(
+                    gpui::MouseButton::Left,
+                    cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
+                        window.focus(&this.focus, cx);
                         if this.report(
-                            MouseAction::Motion(held),
+                            MouseAction::Press(MouseButton::Left),
                             event.position,
                             &event.modifiers,
                             cx,
                         ) {
                             return;
                         }
-                        if let Some(origin) = this.pressed {
-                            let travel = event.position - origin;
-                            if f32::from(travel.x).abs().max(f32::from(travel.y).abs())
-                                < SELECTION_DRAG_THRESHOLD
-                            {
-                                return;
-                            }
+                        if event.click_count > 1 {
                             this.pressed = None;
                             this.selecting = true;
-                            this.select(origin, Some(SelectionType::Simple), cx);
-                            this.drag_to(event.position, cx);
-                        }
-                    }))
-                    .on_mouse_up(
-                        gpui::MouseButton::Left,
-                        cx.listener(|this, event: &gpui::MouseUpEvent, _, cx| {
-                            if !this.selecting {
-                                this.report(
-                                    MouseAction::Release(MouseButton::Left),
-                                    event.position,
-                                    &event.modifiers,
-                                    cx,
-                                );
-                            }
-                            this.end_drag();
-                        }),
-                    )
-                    .on_mouse_up(
-                        gpui::MouseButton::Right,
-                        cx.listener(|this, event: &gpui::MouseUpEvent, _, cx| {
-                            this.report(
-                                MouseAction::Release(MouseButton::Right),
+                            this.drag = Some(event.position);
+                            this.select(
                                 event.position,
-                                &event.modifiers,
+                                Some(view::selection_type(event.click_count)),
                                 cx,
                             );
-                        }),
-                    )
-                    .on_mouse_up(
-                        gpui::MouseButton::Middle,
-                        cx.listener(|this, event: &gpui::MouseUpEvent, _, cx| {
-                            this.report(
-                                MouseAction::Release(MouseButton::Middle),
-                                event.position,
-                                &event.modifiers,
-                                cx,
-                            );
-                        }),
-                    )
-                    .on_mouse_up_out(
-                        gpui::MouseButton::Left,
-                        cx.listener(|this, _, _, _| this.end_drag()),
-                    )
-                    .on_scroll(cx.listener(|this, event: &gpui::ScrollEvent, _, cx| {
-                        let line_h = this.geometry.map_or(20., |grid| grid.line_h);
-                        let delta = f32::from(event.delta.pixel_delta(px(line_h)).y) / line_h;
-                        this.scroll_remainder += delta;
-                        let lines = this.scroll_remainder.trunc() as i32;
-                        this.scroll_remainder -= lines as f32;
-                        if lines != 0
-                            && this.report(
-                                MouseAction::Scroll {
-                                    up: lines > 0,
-                                    lines: lines.unsigned_abs() as usize,
-                                },
-                                event.position,
-                                &event.modifiers,
-                                cx,
-                            )
-                        {
-                            cx.stop_propagation();
+                            cx.notify();
                             return;
                         }
+                        // The press itself is not yet a selection: the one
+                        // that focuses the panel would otherwise take a
+                        // cell with it.
+                        this.pressed = Some(event.position);
                         this.buffer.update(cx, |buffer, cx| {
-                            buffer.emulator.scroll(lines);
+                            buffer.emulator.clear_selection();
                             cx.notify();
                         });
-                        cx.stop_propagation();
                         cx.notify();
-                    }))
-                    .child(grid)
-                    .when(self.selecting, |panel| {
-                        let owner = cx.entity().downgrade();
-                        panel.child(
-                            gpui::canvas(
-                                |_, _, _| {},
-                                move |_, _, window, _| {
-                                    window.on_mouse_event(
-                                        move |event: &gpui::MouseMoveEvent, phase, _, cx| {
-                                            if phase != gpui::DispatchPhase::Capture
-                                                || event.pressed_button
-                                                    != Some(gpui::MouseButton::Left)
-                                            {
-                                                return;
-                                            }
-                                            let _ = owner.update(cx, |this, cx| {
-                                                if this.selecting {
-                                                    this.drag_to(event.position, cx);
-                                                }
-                                            });
-                                        },
-                                    );
-                                },
-                            )
-                            .absolute()
-                            .size_full(),
-                        )
                     }),
-            )
+                )
+                .on_mouse_down(
+                    gpui::MouseButton::Right,
+                    cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
+                        if !this.report(
+                            MouseAction::Press(MouseButton::Right),
+                            event.position,
+                            &event.modifiers,
+                            cx,
+                        ) {
+                            this.open_menu(event.position, window, cx);
+                        }
+                    }),
+                )
+                .on_mouse_down(
+                    gpui::MouseButton::Middle,
+                    cx.listener(|this, event: &gpui::MouseDownEvent, _, cx| {
+                        this.report(
+                            MouseAction::Press(MouseButton::Middle),
+                            event.position,
+                            &event.modifiers,
+                            cx,
+                        );
+                    }),
+                )
+                .on_mouse_move(cx.listener(|this, event: &gpui::MouseMoveEvent, _, cx| {
+                    // A selection drag is followed window-wide by the canvas below.
+                    if this.selecting {
+                        return;
+                    }
+                    let held = match event.pressed_button {
+                        Some(gpui::MouseButton::Left) => Some(MouseButton::Left),
+                        Some(gpui::MouseButton::Right) => Some(MouseButton::Right),
+                        Some(gpui::MouseButton::Middle) => Some(MouseButton::Middle),
+                        _ => None,
+                    };
+                    if this.report(
+                        MouseAction::Motion(held),
+                        event.position,
+                        &event.modifiers,
+                        cx,
+                    ) {
+                        return;
+                    }
+                    if let Some(origin) = this.pressed {
+                        let travel = event.position - origin;
+                        if f32::from(travel.x).abs().max(f32::from(travel.y).abs())
+                            < SELECTION_DRAG_THRESHOLD
+                        {
+                            return;
+                        }
+                        this.pressed = None;
+                        this.selecting = true;
+                        this.select(origin, Some(SelectionType::Simple), cx);
+                        this.drag_to(event.position, cx);
+                    }
+                }))
+                .on_mouse_up(
+                    gpui::MouseButton::Left,
+                    cx.listener(|this, event: &gpui::MouseUpEvent, _, cx| {
+                        if !this.selecting {
+                            this.report(
+                                MouseAction::Release(MouseButton::Left),
+                                event.position,
+                                &event.modifiers,
+                                cx,
+                            );
+                        }
+                        this.end_drag();
+                    }),
+                )
+                .on_mouse_up(
+                    gpui::MouseButton::Right,
+                    cx.listener(|this, event: &gpui::MouseUpEvent, _, cx| {
+                        this.report(
+                            MouseAction::Release(MouseButton::Right),
+                            event.position,
+                            &event.modifiers,
+                            cx,
+                        );
+                    }),
+                )
+                .on_mouse_up(
+                    gpui::MouseButton::Middle,
+                    cx.listener(|this, event: &gpui::MouseUpEvent, _, cx| {
+                        this.report(
+                            MouseAction::Release(MouseButton::Middle),
+                            event.position,
+                            &event.modifiers,
+                            cx,
+                        );
+                    }),
+                )
+                .on_mouse_up_out(
+                    gpui::MouseButton::Left,
+                    cx.listener(|this, _, _, _| this.end_drag()),
+                )
+                .on_scroll(cx.listener(|this, event: &gpui::ScrollEvent, _, cx| {
+                    let line_h = this.geometry.map_or(20., |grid| grid.line_h);
+                    let delta = f32::from(event.delta.pixel_delta(px(line_h)).y) / line_h;
+                    this.scroll_remainder += delta;
+                    let lines = this.scroll_remainder.trunc() as i32;
+                    this.scroll_remainder -= lines as f32;
+                    if lines != 0
+                        && this.report(
+                            MouseAction::Scroll {
+                                up: lines > 0,
+                                lines: lines.unsigned_abs() as usize,
+                            },
+                            event.position,
+                            &event.modifiers,
+                            cx,
+                        )
+                    {
+                        cx.stop_propagation();
+                        return;
+                    }
+                    this.buffer.update(cx, |buffer, cx| {
+                        buffer.emulator.scroll(lines);
+                        cx.notify();
+                    });
+                    cx.stop_propagation();
+                    cx.notify();
+                }))
+                .child(grid)
+                .when(self.selecting, |panel| {
+                    let owner = cx.entity().downgrade();
+                    panel.child(
+                        gpui::canvas(
+                            |_, _, _| {},
+                            move |_, _, window, _| {
+                                window.on_mouse_event(
+                                    move |event: &gpui::MouseMoveEvent, phase, _, cx| {
+                                        if phase != gpui::DispatchPhase::Capture
+                                            || event.pressed_button != Some(gpui::MouseButton::Left)
+                                        {
+                                            return;
+                                        }
+                                        let _ = owner.update(cx, |this, cx| {
+                                            if this.selecting {
+                                                this.drag_to(event.position, cx);
+                                            }
+                                        });
+                                    },
+                                );
+                            },
+                        )
+                        .absolute()
+                        .size_full(),
+                    )
+                }),
+        )
     }
 }
 
