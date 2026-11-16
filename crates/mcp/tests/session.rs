@@ -345,3 +345,25 @@ fn a_caller_that_is_not_a_session_cannot_rename() {
 
     assert!(why.contains("not one"), "{why}");
 }
+
+#[test]
+fn a_terminal_session_reports_the_transcript_boundary() {
+    use artifact::{project::Project as _, session::record::Record};
+    let scratch = Scratch::new("terminal-read");
+    let store = scratch.store();
+    let id = store.create_session().unwrap();
+    let record: Record = serde_json::from_value(json!({
+        "id": id, "agent": "Claude", "mode": "terminal", "title": "Native CLI",
+        "name": null, "updated": 0, "items": []
+    }))
+    .unwrap();
+    store.save_session(&record).unwrap();
+    let number = artifact::entry::number(scratch.path(), Kind::Session, &id).unwrap();
+    let text = said(scratch.server().call(
+        "session_read",
+        json!({"session": format!("#{number}")}),
+        Some(scratch.path()),
+    ));
+    assert!(text.contains("native terminal session"), "{text}");
+    assert!(text.contains("structured turns are not recorded"), "{text}");
+}

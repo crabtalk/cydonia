@@ -285,7 +285,7 @@ impl Cydonia {
     }
 
     pub fn composer_focus_handle(&self, cx: &App) -> Option<FocusHandle> {
-        Some(self.leaf()?.read(cx).composer.focus_handle(cx))
+        Some(self.leaf()?.read(cx).input_focus(cx))
     }
 
     fn submit(

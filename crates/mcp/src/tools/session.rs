@@ -5,14 +5,15 @@ use crate::{
     tool::{Answer, Arg, Args, Outcome, Tool, Trouble},
     tools::{HITS, PROJECT, QUERY, fields, project_of, root},
 };
-use artifact::error::{Act, Error};
 use artifact::{
+    error::{Act, Error},
     kind::Kind,
     project::{Project as _, fs},
     reference::{self, Reference, Span, Target, Within},
     search::{self, Block, Query},
     session::{
         chat::{self, ChatItem, ToolStatus},
+        mode::Mode,
         record::Record,
     },
 };
@@ -341,6 +342,12 @@ fn read(args: Args<'_>) -> Outcome {
     let named = args.text(READ)?;
     let full = args.boolean(FULL, false)?;
     let found = found(&args, named)?;
+    if found.record.mode == Mode::Terminal {
+        return Ok(Answer::said(format!(
+            "#{} {} is a native terminal session; structured turns are not recorded.",
+            found.number, found.title
+        )));
+    }
     let asked = match args.maybe(TURNS) {
         Some(turns) => Some(range(turns)?),
         None => found.turns,

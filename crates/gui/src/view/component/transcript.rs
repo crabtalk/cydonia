@@ -29,7 +29,10 @@ use crate::{
 };
 use artifact::{
     search::Query,
-    session::chat::{ChatItem, ToolStatus},
+    session::{
+        chat::{ChatItem, ToolStatus},
+        mode::Mode,
+    },
     text::{clip, one_line},
 };
 
@@ -37,14 +40,14 @@ use bezel::{
     agent::orbs::engine::Frame,
     gpui::{
         AnyElement, App, Bounds, ClipboardItem, Context, CursorStyle, Empty, Entity,
-        HitboxBehavior, Pixels, SharedString, Task, WeakEntity, Window, canvas, div, prelude::*,
-        px,
+        Focusable as _, HitboxBehavior, Pixels, SharedString, Task, WeakEntity, Window, canvas,
+        div, prelude::*, px,
     },
     theme::{TextStyle, Theme, Typeset, ink},
     ui::{
         icons, scroll,
         tooltip::Tooltip,
-        widgets::{Icons, Layout, Status, Takeover},
+        widgets::{ButtonStyle, Buttons, Icons, Layout, Status, Takeover},
     },
 };
 use cydonia_acp::proto::ToolKind;
@@ -607,6 +610,8 @@ struct Hold<'a> {
 /// are its own.
 pub(crate) struct SessionView {
     pub(crate) session: u64,
+    #[cfg(feature = "desktop")]
+    pub(crate) terminal: Option<Entity<crate::view::component::terminal::Terminal>>,
     /// The pane drawing it, as [`crate::view::pane::leaf::Leaf::entry`] names
     /// it. Only a pane's queue and find answer to it.
     pane: Option<Member>,
@@ -638,6 +643,14 @@ impl SessionView {
             .read(cx)
             .session(session, cx)
             .map_or(0, |chat| chat.epoch);
+        #[cfg(feature = "desktop")]
+        let terminal = workspace
+            .read(cx)
+            .session(session, cx)
+            .and_then(|chat| chat.terminal.clone())
+            .map(|buffer| {
+                cx.new(|cx| crate::view::component::terminal::Terminal::for_buffer(buffer, cx))
+            });
         let state = State::default();
         if drawn != Drawn::Pane {
             state.follow_tail();
@@ -645,6 +658,8 @@ impl SessionView {
         cx.observe(&workspace, |_, _, cx| cx.notify()).detach();
         Self {
             session,
+            #[cfg(feature = "desktop")]
+            terminal,
             pane,
             workspace,
             root,
@@ -655,6 +670,69 @@ impl SessionView {
             epoch,
             watch: Watch::default(),
         }
+    }
+
+    fn terminal_body(&self, chat: Entity<ChatSession>, cx: &mut Context<Self>) -> AnyElement {
+        #[cfg(feature = "desktop")]
+        if let Some(terminal) = &self.terminal {
+            let theme = Theme::of(cx).clone();
+            let pending = !chat.read(cx).draft.is_empty();
+            let buffer = terminal.read(cx).buffer.clone();
+            let running = matches!(
+                buffer.read(cx).state,
+                crate::model::terminal::State::Running
+            );
+            let stop = buffer.clone();
+            let terminal = terminal.clone();
+            let focus = terminal.focus_handle(cx);
+            return div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_end()
+                        .gap(px(8.))
+                        .px(px(12.))
+                        .py(px(4.))
+                        .when(pending && running, |row| {
+                            row.child(
+                                theme
+                                    .button("Paste prepared prompt", ButtonStyle::Ghost, None)
+                                    .id("terminal-prompt")
+                                    .on_click(move |_, window, cx| {
+                                        chat.update(cx, |chat, cx| {
+                                            buffer.update(cx, |buffer, _| {
+                                                buffer.write(terminal::view::paste_bytes(
+                                                    &chat.draft,
+                                                    buffer.emulator.bracketed_paste_mode(),
+                                                ));
+                                            });
+                                            chat.draft.clear();
+                                            chat.flush();
+                                            cx.notify();
+                                        });
+                                        window.focus(&focus, cx);
+                                    }),
+                            )
+                        })
+                        .child(
+                            theme
+                                .button("Terminate", ButtonStyle::Ghost, None)
+                                .id("terminal-stop")
+                                .on_click(move |_, _, cx| {
+                                    stop.update(cx, |buffer, cx| buffer.stop(cx))
+                                }),
+                        ),
+                )
+                .child(terminal.clone())
+                .into_any_element();
+        }
+        div().flex_1().p(px(20.)).text_color(Theme::of(cx).text_muted)
+            .child("The terminal process is no longer running. Create a new session to start the agent again.")
+            .into_any_element()
     }
 
     /// The turn the selection is in, from 0.
@@ -736,6 +814,11 @@ impl Render for SessionView {
         let id = self.session;
         let chat = self.workspace.read(cx).session_entity(id).cloned();
         self.watch.set(&chat, cx);
+        if let Some(chat) = &chat
+            && chat.read(cx).mode == Mode::Terminal
+        {
+            return self.terminal_body(chat.clone(), cx);
+        }
         // In front of a pane, a turn that ended is seen.
         if let Some(chat) =
             chat.filter(|chat| matches!(self.drawn, Drawn::Pane) && chat.read(cx).review)

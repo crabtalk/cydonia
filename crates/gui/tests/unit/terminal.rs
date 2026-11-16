@@ -1,11 +1,14 @@
 use super::*;
-use std::time::Duration;
+use crate::model::terminal::process::{Process, directory};
+use futures::{StreamExt, channel::mpsc};
+use portable_pty::{CommandBuilder, PtySize};
+use std::{sync::mpsc as channel, time::Duration};
 
-fn shell() -> (Shell, mpsc::Receiver<Vec<u8>>) {
+fn shell() -> (Process, mpsc::Receiver<Vec<u8>>) {
     let mut command = CommandBuilder::new("/bin/sh");
     command.arg("-i");
     command.env("ENV", "/dev/null");
-    Shell::open_command(Path::new("/private/tmp"), command).expect("open PTY")
+    Process::spawn(Path::new("/private/tmp"), command).expect("open PTY")
 }
 
 fn collect(mut output: mpsc::Receiver<Vec<u8>>) -> channel::Receiver<Vec<u8>> {
@@ -156,7 +159,7 @@ fn directory_tracking_reads_the_shell_after_cd() {
     std::io::BufReader::new(child.stdout.take().unwrap())
         .read_line(&mut ready)
         .unwrap();
-    let directory = process_directory(child.id());
+    let directory = directory(child.id());
     let _ = child.kill();
     let _ = child.wait();
     assert_eq!(ready, "ready\n");
@@ -204,25 +207,7 @@ fn copy_terminal_selection_takes_priority_over_transcript(cx: &mut gpui::TestApp
         Theme::install(bezel::theme::Appearance::Light, cx);
         crate::view::keymap::bind_all(&crate::model::settings::Shortcuts::default(), cx);
     });
-    let view = cx.new(|cx| Terminal {
-        directory: Path::new("/private/tmp").into(),
-        emulator: Emulator::new(80, 24),
-        images: terminal::view::Images::new(),
-        shell: None,
-        focus: cx.focus_handle(),
-        menu: Default::default(),
-        geometry: None,
-        pressed: None,
-        selecting: false,
-        drag: None,
-        edge_scroll: None,
-        scroll_remainder: 0.,
-        status: None,
-        hold: None,
-        cursor_on: true,
-        blink: None,
-        _pump: None,
-    });
+    let view = cx.new(|cx| Terminal::new(Path::new("/private/tmp"), cx));
     let window = cx.add_window(|window, cx| {
         window.focus(&view.focus_handle(cx), cx);
         crate::view::clipboard_tests::CopyRoot(view.clone().into())
@@ -230,18 +215,21 @@ fn copy_terminal_selection_takes_priority_over_transcript(cx: &mut gpui::TestApp
     let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
     visual.run_until_parked();
     view.update(&mut visual, |view, cx| {
-        view.emulator.feed(b"terminal text");
+        view.buffer
+            .update(cx, |buffer, cx| buffer.feed(b"terminal text", cx));
         let grid = view.geometry.unwrap();
         view.select(
             grid.origin + gpui::point(px(0.), px(grid.line_h / 2.)),
             Some(SelectionType::Simple),
+            cx,
         );
         view.select(
             grid.origin + gpui::point(px(grid.cell_w * 13.), px(grid.line_h / 2.)),
             None,
+            cx,
         );
         assert_eq!(
-            view.emulator.selection_text().as_deref(),
+            view.buffer.read(cx).emulator.selection_text().as_deref(),
             Some("terminal text")
         );
         cx.notify();
@@ -284,25 +272,7 @@ fn cmd_t_adds_a_focused_tab_in_the_bottom_panel(cx: &mut gpui::TestAppContext) {
 /// A terminal with a measured grid, and no shell behind it.
 fn measured(cx: &mut gpui::TestAppContext) -> (Entity<Terminal>, gpui::VisualTestContext) {
     cx.update(|cx| Theme::install(bezel::theme::Appearance::Dark, cx));
-    let view = cx.new(|cx| Terminal {
-        directory: Path::new("/private/tmp").into(),
-        emulator: Emulator::new(80, 24),
-        images: terminal::view::Images::new(),
-        shell: None,
-        focus: cx.focus_handle(),
-        menu: Default::default(),
-        geometry: None,
-        pressed: None,
-        selecting: false,
-        drag: None,
-        edge_scroll: None,
-        scroll_remainder: 0.,
-        status: None,
-        hold: None,
-        cursor_on: true,
-        blink: None,
-        _pump: None,
-    });
+    let view = cx.new(|cx| Terminal::new(Path::new("/private/tmp"), cx));
     let window = cx.add_window({
         let view = view.clone();
         |window, cx| {
@@ -318,7 +288,8 @@ fn measured(cx: &mut gpui::TestAppContext) -> (Entity<Terminal>, gpui::VisualTes
 fn a_tracking_program_takes_the_pointer_unless_shift_is_held(cx: &mut gpui::TestAppContext) {
     let (view, mut visual) = measured(cx);
     view.update(&mut visual, |view, cx| {
-        view.emulator.feed(b"\x1b[?1000h\x1b[?1006h");
+        view.buffer
+            .update(cx, |buffer, cx| buffer.feed(b"\x1b[?1000h\x1b[?1006h", cx));
         let grid = view.geometry.unwrap();
         let at = grid.origin + gpui::point(px(grid.cell_w * 2.), px(grid.line_h / 2.));
         assert!(view.report(
@@ -342,7 +313,8 @@ fn a_tracking_program_takes_the_pointer_unless_shift_is_held(cx: &mut gpui::Test
 fn a_press_becomes_a_selection_only_past_the_drag_threshold(cx: &mut gpui::TestAppContext) {
     let (view, mut visual) = measured(cx);
     let grid = view.update(&mut visual, |view, cx| {
-        view.emulator.feed(b"terminal text");
+        view.buffer
+            .update(cx, |buffer, cx| buffer.feed(b"terminal text", cx));
         cx.notify();
         view.geometry.unwrap()
     });
@@ -362,18 +334,18 @@ fn a_press_becomes_a_selection_only_past_the_drag_threshold(cx: &mut gpui::TestA
         Some(gpui::MouseButton::Left),
         gpui::Modifiers::none(),
     );
-    view.read_with(&visual, |view, _| {
+    view.read_with(&visual, |view, cx| {
         assert!(!view.selecting);
-        assert_eq!(view.emulator.selection_text(), None);
+        assert_eq!(view.buffer.read(cx).emulator.selection_text(), None);
     });
     visual.simulate_mouse_move(
         grid.origin + gpui::point(px(grid.cell_w * 13.), row),
         Some(gpui::MouseButton::Left),
         gpui::Modifiers::none(),
     );
-    view.read_with(&visual, |view, _| {
+    view.read_with(&visual, |view, cx| {
         assert_eq!(
-            view.emulator.selection_text().as_deref(),
+            view.buffer.read(cx).emulator.selection_text().as_deref(),
             Some("terminal text")
         );
     });

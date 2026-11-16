@@ -13,11 +13,11 @@ use crate::{
         window::{reach::InWindow as _, section::Section},
     },
 };
-use artifact::session::chat::PlanStatus;
+use artifact::session::{chat::PlanStatus, mode::Mode};
 use bezel::{
     gpui::{
-        self, AnyElement, App, AppContext as _, Context, Entity, Focusable as _, IntoElement,
-        Pixels, SharedString, Window, div, prelude::*, px,
+        self, AnyElement, App, AppContext as _, Context, Entity, FocusHandle, Focusable as _,
+        IntoElement, Pixels, SharedString, Window, div, prelude::*, px,
     },
     motion::{Fade, Painter},
     theme::{TextStyle, Theme, Typeset},
@@ -255,6 +255,16 @@ impl Band {
 }
 
 impl Tab {
+    pub(crate) fn input_focus(&self, cx: &App) -> FocusHandle {
+        #[cfg(feature = "desktop")]
+        if let Some(view) = self.session_shown(cx)
+            && let Some(terminal) = &view.read(cx).terminal
+        {
+            return terminal.focus_handle(cx);
+        }
+        self.composer.focus_handle(cx)
+    }
+
     /// A press on the pane's band: the focus comes to the pane.
     fn press(&self) -> Option<Press> {
         let on = self.entry.clone();
@@ -268,6 +278,12 @@ impl Tab {
     /// The band under session `session`'s transcript, over the pane's own
     /// composer.
     pub(crate) fn session_footer(&self, session: Option<u64>, cx: &Context<Self>) -> AnyElement {
+        if session
+            .and_then(|id| self.workspace.read(cx).session(id, cx))
+            .is_some_and(|chat| chat.mode == Mode::Terminal)
+        {
+            return div().into_any_element();
+        }
         let height = self
             .session_shown(cx)
             .map(|view| view.read(cx).state.footer_height.clone());

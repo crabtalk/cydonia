@@ -9,7 +9,7 @@ use crate::model::{
     session_preferences::{self, OfferCache},
     workspace::Member,
 };
-use artifact::{kind::Kind, project::Project as _};
+use artifact::{kind::Kind, project::Project as _, session::mode::Mode};
 use bezel::gpui::Entity;
 
 /// One pick on an article's composer before its session exists, which changes
@@ -571,6 +571,10 @@ impl Workspace {
     /// Put a session away, or bring it back. Closing tears the agent down and
     /// keeps the transcript; opening it again is what reconnects.
     pub fn archive_session(&mut self, id: u64, archived: bool, cx: &mut Context<Self>) {
+        #[cfg(feature = "desktop")]
+        if archived && let Some(chat) = self.session_entity(id).cloned() {
+            chat.update(cx, |chat, cx| chat.stop_terminal(cx));
+        }
         self.with_session(id, cx, |chat| match archived {
             true => chat.close(),
             false => {
@@ -609,6 +613,10 @@ impl Workspace {
     }
 
     pub fn close_session(&mut self, id: u64, cx: &mut Context<Self>) {
+        #[cfg(feature = "desktop")]
+        if let Some(chat) = self.session_entity(id).cloned() {
+            chat.update(cx, |chat, cx| chat.stop_terminal(cx));
+        }
         let Some(project) = self.project_of(id).map(|ix| &mut self.projects[ix]) else {
             return;
         };
@@ -831,6 +839,7 @@ impl Workspace {
 
     /// [`Self::reachable`] for `chat`, in front or not.
     pub fn reachable_session(&self, chat: &ChatSession) -> bool {
-        chat.live() || (chat.resumable() && self.agent_for(&chat.entry).is_some())
+        chat.mode == Mode::Gui
+            && (chat.live() || (chat.resumable() && self.agent_for(&chat.entry).is_some()))
     }
 }

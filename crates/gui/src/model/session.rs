@@ -1,26 +1,16 @@
-//! One agent session bridged into the UI.
-//!
-//! The connection opens on the ACP runtime and the `Session` it yields is
-//! held here, so dropping `ChatSession` tears the connection (and the agent
-//! process) down. A foreground pump drains the ACP event channel in coalesced
-//! batches with a 120ms frame floor while streaming — one notify per frame,
-//! not per chunk.
-//!
-//! A session outlives its connection. [`ChatSession::flush`] writes the
-//! transcript whenever a turn settles, and the agent's own session id goes
-//! with it, so a relaunch reads the session back and `session/load` can pick
-//! the conversation up where it stopped.
+//! ACP conversations and native terminal sessions.
 
 #[cfg(feature = "desktop")]
-use crate::agent::acp::{self, Event, Launch, Session};
-#[cfg(feature = "desktop")]
-use crate::model::notify;
-#[cfg(feature = "desktop")]
-use crate::model::{
-    identity::Identity,
-    session_preferences::{self, Choices, OfferCache, Offers},
-    settings,
-    store::{self, Store},
+use crate::{
+    agent::acp::{self, Event, Launch, Session},
+    model::{
+        identity::Identity,
+        notify,
+        session_preferences::{self, Choices, OfferCache, Offers},
+        settings,
+        store::{self, Store},
+        terminal::Buffer,
+    },
 };
 #[cfg(feature = "desktop")]
 use anyhow::anyhow;
@@ -31,12 +21,13 @@ use artifact::{
     project::Project as _,
     session::{
         chat::{ChatItem, PlanStatus},
+        mode::Mode,
         record::{ForkOrigin, Record},
     },
 };
 use bezel::{
     agent::orbs::engine::Frame,
-    gpui::{App, Context, Task},
+    gpui::{App, AppContext as _, Context, Entity, Task},
 };
 #[cfg(feature = "desktop")]
 use cydonia_acp::proto::{
@@ -186,6 +177,9 @@ pub struct ChatSession {
     /// a session can reconnect and file itself without asking the workspace.
     pub cwd: PathBuf,
     pub connection: Connection,
+    pub mode: Mode,
+    #[cfg(feature = "desktop")]
+    pub terminal: Option<Entity<Buffer>>,
     pub items: Vec<ChatItem>,
     history_unloaded: bool,
     /// [`ChatSession::preview`] as it stood when the history was unloaded.
@@ -325,7 +319,7 @@ impl ChatSession {
         cx: &mut Context<Self>,
     ) -> Self {
         let preferences = session_preferences::load(&cwd, &entry, None);
-        Self::open(id, entry, cwd, seed, preferences, cx)
+        Self::open(id, entry, cwd, seed, preferences, Mode::Gui, cx)
     }
 
     /// [`Self::connect`] as `identity`, in its workspace, with its choices.
@@ -338,9 +332,70 @@ impl ChatSession {
         cx: &mut Context<Self>,
     ) -> Self {
         let cwd = identity.workspace.clone();
-        let mut chat = Self::open(id, entry, cwd, seed, identity.choices.clone(), cx);
+        let mut chat = Self::open(
+            id,
+            entry,
+            cwd,
+            seed,
+            identity.choices.clone(),
+            Mode::Gui,
+            cx,
+        );
         chat.identity = Some(identity.id.clone());
         chat
+    }
+
+    #[cfg(feature = "desktop")]
+    pub fn terminal_as(
+        id: u64,
+        entry: settings::Agent,
+        identity: &Identity,
+        seed: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut chat = Self::open(
+            id,
+            entry,
+            identity.workspace.clone(),
+            None,
+            identity.choices.clone(),
+            Mode::Terminal,
+            cx,
+        );
+        chat.identity = Some(identity.id.clone());
+        chat.draft = seed.unwrap_or_default();
+        let buffer = cx.new(|cx| Buffer::agent(&chat.cwd, identity.terminal.as_ref(), cx));
+        cx.observe(&buffer, |chat, buffer, cx| {
+            chat.connection = if buffer.read(cx).state.failed() {
+                Connection::Lost
+            } else {
+                Connection::Idle
+            };
+            cx.notify();
+        })
+        .detach();
+        cx.on_release(|chat: &mut Self, cx| chat.stop_terminal(cx))
+            .detach();
+        chat.connection = if buffer.read(cx).state.failed() {
+            Connection::Lost
+        } else {
+            Connection::Idle
+        };
+        cx.on_app_quit(|chat: &mut Self, cx| {
+            chat.stop_terminal(cx);
+            async {}
+        })
+        .detach();
+        chat.terminal = Some(buffer);
+        chat.flush();
+        chat
+    }
+
+    #[cfg(feature = "desktop")]
+    pub fn stop_terminal(&mut self, cx: &mut App) {
+        if let Some(buffer) = &self.terminal {
+            buffer.update(cx, |buffer, cx| buffer.stop(cx));
+        }
     }
 
     /// Take `identity`'s choices, for a session read back as it.
@@ -356,21 +411,30 @@ impl ChatSession {
         cwd: PathBuf,
         seed: Option<String>,
         preferences: Choices,
+        mode: Mode,
         cx: &mut Context<Self>,
     ) -> Self {
         let record = store::open(&cwd).create_session().ok();
         #[cfg(feature = "desktop")]
         let (pump, connection) = (
-            pump(
-                &entry,
-                Launch {
-                    choices: preferences.clone(),
-                    record: record.clone(),
-                    ..Launch::new(cwd.clone())
-                },
-                cx,
-            ),
-            Connection::Connecting,
+            if mode == Mode::Gui {
+                pump(
+                    &entry,
+                    Launch {
+                        choices: preferences.clone(),
+                        record: record.clone(),
+                        ..Launch::new(cwd.clone())
+                    },
+                    cx,
+                )
+            } else {
+                Task::ready(())
+            },
+            if mode == Mode::Gui {
+                Connection::Connecting
+            } else {
+                Connection::Idle
+            },
         );
         #[cfg(not(feature = "desktop"))]
         let (pump, connection) = {
@@ -382,6 +446,9 @@ impl ChatSession {
             entry,
             cwd,
             connection,
+            mode,
+            #[cfg(feature = "desktop")]
+            terminal: None,
             items: Vec::new(),
             history_unloaded: false,
             unloaded_preview: String::new(),
@@ -431,7 +498,7 @@ impl ChatSession {
         choices: Choices,
         cx: &mut Context<Self>,
     ) -> Self {
-        let mut chat = Self::open(id, entry, cwd, None, choices, cx);
+        let mut chat = Self::open(id, entry, cwd, None, choices, Mode::Gui, cx);
         chat.article = Some(article);
         chat
     }
@@ -447,6 +514,9 @@ impl ChatSession {
             entry,
             cwd,
             connection: Connection::Idle,
+            mode: record.mode,
+            #[cfg(feature = "desktop")]
+            terminal: None,
             replay: record.replay,
             items: record.items,
             history_unloaded: false,
@@ -577,6 +647,7 @@ impl ChatSession {
             agent: self.entry.name.clone(),
             agent_id: self.entry.id.clone(),
             identity: self.identity.clone(),
+            mode: self.mode,
             session: self.agent_session.clone(),
             title: self.title.clone(),
             name: self.name.clone(),
@@ -637,7 +708,7 @@ impl ChatSession {
 
     /// Whether nothing has been said in it yet — see [`nothing_said`].
     pub fn unsaid(&self) -> bool {
-        !self.history_unloaded && nothing_said(&self.items)
+        self.mode == Mode::Gui && !self.history_unloaded && nothing_said(&self.items)
     }
 
     /// Cut the transcript back to before the user message at `at` and return
@@ -708,6 +779,9 @@ impl ChatSession {
     ///
     /// Nothing without the `desktop` feature: there is no agent to point at.
     pub fn resume(&mut self, cx: &mut Context<Self>) {
+        if self.mode == Mode::Terminal {
+            return;
+        }
         #[cfg(not(feature = "desktop"))]
         {
             let _ = cx;
@@ -787,7 +861,7 @@ impl ChatSession {
     /// A session whose agent is no longer in `settings.toml` reads back but
     /// cannot reconnect — there is no command left to spawn.
     pub fn resumable(&self) -> bool {
-        !self.entry.command.is_empty()
+        self.mode == Mode::Gui && !self.entry.command.is_empty()
     }
 
     /// What to call this session: your name, else the agent's, else the
@@ -807,6 +881,14 @@ impl ChatSession {
             return;
         }
         self.updated = SystemTime::now();
+        if self.mode == Mode::Terminal {
+            if !self.draft.is_empty() {
+                self.draft.push_str("\n\n");
+            }
+            self.draft.push_str(&content);
+            self.flush();
+            return;
+        }
         // No agent to wait for: the stand-in answers at once.
         #[cfg(not(feature = "desktop"))]
         self.prompt(content);

@@ -1,4 +1,4 @@
-use cydonia_artifact::session::{chat::ChatItem, record::Record};
+use cydonia_artifact::session::{chat::ChatItem, mode::Mode, record::Record};
 
 #[test]
 fn message_times_survive_round_trip_and_legacy_records_stay_readable() {
@@ -75,4 +75,16 @@ fn replay_is_read_from_where_an_older_fork_kept_it() {
     }))
     .unwrap();
     assert_eq!(done.replay, None);
+}
+
+#[test]
+fn session_launch_mode_defaults_to_gui_and_terminal_mode_roundtrips() {
+    let mut record = source();
+    assert_eq!(record.mode, Mode::Gui);
+    record.mode = Mode::Terminal;
+    record.identity = Some("named-agent".into());
+    let restored: Record = serde_json::from_str(&serde_json::to_string(&record).unwrap()).unwrap();
+    assert_eq!(restored.mode, Mode::Terminal);
+    assert_eq!(restored.identity.as_deref(), Some("named-agent"));
+    assert!(restored.fork_at(2).is_none());
 }
