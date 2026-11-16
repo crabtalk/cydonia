@@ -9,7 +9,7 @@ use crate::{
     view::{
         component::{composer, ribbon, transcript},
         detail::{adrift, agent_missing, footer},
-        kit::text::ShownPath as _,
+        kit::{bubble, text::ShownPath as _},
         window::{reach::InWindow as _, section::Section},
     },
 };
@@ -547,14 +547,11 @@ impl Tab {
                     .items_end()
                     .gap(px(4.))
                     .child(
-                        div()
+                        bubble::bubble(&theme)
+                            .debug_selector(move || format!("queued-message-{ix}"))
                             .min_w_0()
                             .when(gallery.is_some(), |bubble| bubble.w_full())
-                            .px(px(14.))
-                            .py(px(9.))
-                            .rounded(px(Theme::surface_radius()))
                             .bg(theme.surface_raised.opacity(0.6))
-                            .text_style(TextStyle::Body)
                             .text_color(theme.text_muted)
                             .flex()
                             .flex_col()
