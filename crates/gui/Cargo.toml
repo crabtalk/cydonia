@@ -42,6 +42,7 @@ syntax = { workspace = true, optional = true }
 prompts.workspace = true
 pulldown-cmark.workspace = true
 terminal = { workspace = true, optional = true }
+tempfile = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true, features = ["io-util", "net", "process", "rt-multi-thread", "sync", "time"] }
 toml.workspace = true
 toml_edit.workspace = true
@@ -73,6 +74,7 @@ desktop = [
     "dep:server",
     "dep:syntax",
     "dep:terminal",
+    "dep:tempfile",
     "dep:tokio",
     "dep:ureq",
 ]

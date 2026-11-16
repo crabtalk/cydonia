@@ -5,6 +5,23 @@ OpenSSH client, including SSH config aliases, keys, agent, and known hosts. The
 remote shell must understand POSIX shell syntax. Supported hosts are Linux and
 macOS on x86_64 or aarch64.
 
+## Server installation
+
+The desktop downloads `cydonia-server-<version>-<platform>` and its `.sha256`
+from the matching `v<version>` GitHub release. Linux assets are static musl
+binaries; macOS assets are built for each architecture. Verified binaries are
+cached under the Cydonia data directory's `servers` folder and can be reused
+offline. A corrupt cache entry is downloaded again. Missing releases and invalid
+checksums fail explicitly; connecting never installs Rust or builds a checkout.
+
+SSH uploads to a temporary name and checks the binary's reported version before
+replacing the installed server. The `Build` helper remains available to developer
+tools for explicit source builds. To prepare release assets after building a
+native server, run `.github/scripts/server-artifact <binary> <platform> <output>`.
+The nightly workflow builds all four platforms and release promotion preserves
+both the binaries and checksums. These assets must be published before a new
+desktop version can bootstrap a remote host.
+
 ## Testing without a desktop
 
 Run the store, files, spawner, and recovery integration tests with:

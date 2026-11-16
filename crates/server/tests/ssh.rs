@@ -22,6 +22,66 @@ use std::{ffi::OsString, path::PathBuf, sync::Arc, time::Duration};
 
 struct Binary;
 
+struct WrongVersion;
+
+impl Delegate for WrongVersion {
+    fn name(&self) -> &str {
+        "cydonia-ssh-wrong-version"
+    }
+    fn version(&self) -> &str {
+        "0.0.0-wrong"
+    }
+    fn version_args(&self) -> Vec<OsString> {
+        Binary.version_args()
+    }
+    fn proxy_args(&self, mode: Mode) -> Vec<OsString> {
+        Binary.proxy_args(mode)
+    }
+    fn binary(&self, platform: Platform) -> BoxFuture<'static, anyhow::Result<PathBuf>> {
+        Binary.binary(platform)
+    }
+    fn ask(&self, _: String) -> BoxFuture<'static, Option<String>> {
+        async { None }.boxed()
+    }
+}
+
+#[test]
+#[ignore = "requires the isolated sshd fixture: scripts/test-remote-ssh"]
+fn an_uploaded_version_mismatch_preserves_the_installed_server() {
+    use cupola::client::session::Transport as _;
+    use std::os::unix::fs::PermissionsExt as _;
+    let home = PathBuf::from(
+        std::env::var_os("CYDONIA_SSH_TEST_HOME").expect("run scripts/test-remote-ssh"),
+    );
+    let port = std::env::var("CYDONIA_SSH_TEST_PORT")
+        .unwrap()
+        .parse()
+        .unwrap();
+    let user = std::env::var("CYDONIA_SSH_TEST_USER").unwrap();
+    let installed =
+        home.join(ServerPath::new(WrongVersion.name(), WrongVersion.version()).as_path());
+    std::fs::create_dir_all(installed.parent().unwrap()).unwrap();
+    let previous = b"#!/bin/sh\necho previous\n";
+    std::fs::write(&installed, previous).unwrap();
+    std::fs::set_permissions(&installed, std::fs::Permissions::from_mode(0o755)).unwrap();
+    tokio::runtime::Runtime::new().unwrap().block_on(async {
+        let transport = Remote::new(
+            Host::new(format!("{user}@127.0.0.1")).unwrap().port(port),
+            WrongVersion,
+        )
+        .unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(20), transport.open(Mode::Start))
+            .await
+            .unwrap();
+        let error = match result {
+            Ok(_) => panic!("a wrong version was installed"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("does not match"), "{error:#}");
+    });
+    assert_eq!(std::fs::read(installed).unwrap(), previous);
+}
+
 impl Delegate for Binary {
     fn name(&self) -> &str {
         "cydonia-ssh-test-server"

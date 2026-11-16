@@ -1,0 +1,25 @@
+#!/usr/bin/env python3
+"""Package a native server binary and checksum using the desktop resolver's names."""
+import hashlib
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+
+binary, platform, output = sys.argv[1:]
+if platform not in ("linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-aarch64"):
+    raise SystemExit(f"unsupported server platform: {platform}")
+manifest = Path("Cargo.toml").read_text()
+version = re.search(r'\[workspace.package\]\s*\nversion = "([^"]+)"', manifest)[1]
+printed = subprocess.check_output([str(Path(binary).resolve()), "version"], text=True).strip()
+if printed != version:
+    raise SystemExit(f"server version {printed!r} does not match {version!r}")
+directory = Path(output)
+directory.mkdir(parents=True, exist_ok=True)
+asset = directory / f"cydonia-server-{version}-{platform}"
+shutil.copyfile(binary, asset)
+asset.chmod(0o755)
+digest = hashlib.sha256(asset.read_bytes()).hexdigest()
+asset.with_name(asset.name + ".sha256").write_text(f"{digest}  {asset.name}\n")
+print(asset)

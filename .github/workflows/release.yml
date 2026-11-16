@@ -41,6 +41,6 @@ jobs:
       - name: publish
         run: |
           gh release download nightly --dir dist \
-            --pattern '*.tar.xz' --pattern '*.exe' --pattern '*.dmg'
+            --pattern '*.tar.xz' --pattern '*.exe' --pattern '*.dmg' --pattern 'cydonia-server-*'
           gh release create "$TAG" dist/* --title "$TAG" --notes-file notes.md \
             --verify-tag --latest

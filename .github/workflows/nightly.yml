@@ -20,6 +20,32 @@ env:
   ICON_URL: https://cdn.crabtalk.ai/logos/cydonia.png
 
 jobs:
+  servers:
+    name: server (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux-x86_64, os: ubuntu-22.04, target: x86_64-unknown-linux-musl }
+          - { platform: linux-aarch64, os: ubuntu-22.04-arm, target: aarch64-unknown-linux-musl }
+          - { platform: macos-x86_64, os: macos-15-intel, target: x86_64-apple-darwin }
+          - { platform: macos-aarch64, os: macos-15, target: aarch64-apple-darwin }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: cargo build --release --locked -p cydonia-server --target ${{ matrix.target }}
+      - run: .github/scripts/server-artifact target/${{ matrix.target }}/release/cydonia-server ${{ matrix.platform }} target/server-release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-${{ matrix.platform }}
+          path: target/server-release/*
+          if-no-files-found: error
+
   build:
     name: build (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
@@ -114,7 +140,7 @@ jobs:
         run: security delete-keychain "$KEYCHAIN" || true
 
   publish:
-    needs: build
+    needs: [build, servers]
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}

@@ -481,14 +481,21 @@ impl<D: Delegate> Remote<D> {
         mkdir.raw("mkdir -p").word(SERVER_DIR);
         self.output(&mkdir).await?;
         self.upload(&binary, &upload).await?;
+        let mut chmod = Script::new();
+        chmod.raw("chmod").word(SERVER_MODE).word(&upload);
+        self.output(&chmod).await?;
+        let mut check = Script::new();
+        check.word(&upload).words(self.delegate.version_args());
+        let printed = self.output(&check).await?;
+        if printed.trim() != self.delegate.version() {
+            bail!(
+                "uploaded server version {:?} does not match {:?}",
+                printed.trim(),
+                self.delegate.version()
+            );
+        }
         let mut place = Script::new();
-        place
-            .raw("chmod")
-            .word(SERVER_MODE)
-            .word(&upload)
-            .raw("&& mv -f")
-            .word(&upload)
-            .word(self.server.as_path());
+        place.raw("mv -f").word(&upload).word(self.server.as_path());
         self.output(&place).await?;
         Ok(platform)
     }

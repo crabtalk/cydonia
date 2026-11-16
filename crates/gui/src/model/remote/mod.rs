@@ -7,6 +7,8 @@
 //! store, git, the files and the spawner.
 
 #[cfg(unix)]
+mod binary;
+#[cfg(unix)]
 mod ssh;
 
 #[cfg(unix)]

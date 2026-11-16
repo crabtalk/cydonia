@@ -1,5 +1,5 @@
-//! What cydonia hands Cupola for a remote host: cydonia-server, built from
-//! the checkout this app was built from, ssh's prompts, answered by whoever
+//! What cydonia hands Cupola for a remote host: a version-matched server
+//! release, and ssh's prompts, answered by whoever
 //! holds the [`Prompt`] receiver, and the services the app answers the
 //! server with. [`Delegate::install`] puts Cupola's controller over the
 //! saved hosts behind [`super::Remotes`].
@@ -29,9 +29,6 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Output},
 };
-
-/// The checkout this app was built from.
-const CHECKOUT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
 
 /// Where server builds go, under the checkout.
 const TARGET_DIR: &str = "target/cydonia-server";
@@ -130,9 +127,8 @@ impl ssh::Delegate for Delegate {
 
     fn binary(&self, platform: Platform) -> BoxFuture<'static, anyhow::Result<PathBuf>> {
         let (sender, receiver) = oneshot::channel();
-        let build = Build::new(Path::new(CHECKOUT), platform);
         std::thread::spawn(move || {
-            let _ = sender.send(build.and_then(|build| build.run()));
+            let _ = sender.send(super::binary::resolve(platform));
         });
         receiver
             .map(|built| built.unwrap_or_else(|_| Err(anyhow::anyhow!("the build was lost"))))
@@ -225,7 +221,7 @@ impl Build {
     }
 
     /// Sets up and builds, blocking until the binary is there.
-    fn run(self) -> anyhow::Result<PathBuf> {
+    pub fn run(self) -> anyhow::Result<PathBuf> {
         for mut step in self.setup() {
             let done = step
                 .unless
