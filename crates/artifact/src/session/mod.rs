@@ -6,4 +6,5 @@
 //! opens one reads the rest.
 
 pub mod chat;
+pub mod mode;
 pub mod record;

@@ -4,7 +4,10 @@
 
 use crate::{
     model::{
-        identity::{Avatar, Identity},
+        identity::{
+            Avatar, Identity,
+            launch::{Creation, Interactive},
+        },
         session_preferences::{self, Choices, OfferCache},
         settings,
         workspace::Workspace,
@@ -69,13 +72,17 @@ pub(crate) struct AgentModal {
     /// The installed programs, index for index with `program`'s rows.
     programs: Vec<settings::Agent>,
     program: Entity<Combobox>,
+    creation: Entity<Combobox>,
+    terminal_command: Entity<TextField>,
+    terminal_args: Entity<TextField>,
+    terminal_env: Entity<TextField>,
     /// What the program offers in the workspace, one picker each.
     switches: Vec<(Switch, Entity<Combobox>)>,
     /// What was wrong last time. The modal stays open while there is one.
     error: Option<SharedString>,
     workspace_model: Entity<Workspace>,
     root: WeakEntity<Cydonia>,
-    _pickers: [Subscription; 2],
+    _pickers: [Subscription; 3],
     _switches: Vec<Subscription>,
 }
 
@@ -170,7 +177,53 @@ impl AgentModal {
                 .position(|agent| agent.reference() == draft.acp),
             cx,
         );
+        let creation = picker(
+            Creation::ALL
+                .into_iter()
+                .map(|mode| mode.to_string().into())
+                .collect(),
+            "Session",
+            Creation::ALL
+                .iter()
+                .position(|mode| *mode == draft.creation),
+            cx,
+        );
+        let terminal_command = form::field(
+            AGENT_CONTEXT,
+            draft
+                .terminal
+                .as_ref()
+                .map(|launch| launch.command.clone())
+                .unwrap_or_default(),
+            "interactive executable, e.g. claude",
+            cx,
+        );
+        let terminal_args = form::field(
+            AGENT_CONTEXT,
+            draft
+                .terminal
+                .as_ref()
+                .map(|launch| serde_json::to_string(&launch.args).unwrap())
+                .unwrap_or_default(),
+            "arguments as a JSON list: []",
+            cx,
+        );
+        let terminal_env = form::field(
+            AGENT_CONTEXT,
+            draft
+                .terminal
+                .as_ref()
+                .map(|launch| serde_json::to_string(&launch.env).unwrap())
+                .unwrap_or_default(),
+            "environment as JSON: {}",
+            cx,
+        );
         let pickers = [
+            cx.subscribe_in(&creation, window, |this, _, event, _, cx| {
+                let ComboboxEvent::Selected(at) = event;
+                this.draft.creation = Creation::ALL[*at];
+                cx.notify();
+            }),
             cx.subscribe_in(&workspace, window, |this, _, event, window, cx| {
                 let ComboboxEvent::Selected(at) = event;
                 if let Some(path) = this.workspaces.get(*at) {
@@ -197,6 +250,10 @@ impl AgentModal {
             workspace,
             programs,
             program,
+            creation,
+            terminal_command,
+            terminal_args,
+            terminal_env,
             switches: Vec::new(),
             error: None,
             workspace_model,
@@ -292,8 +349,34 @@ impl AgentModal {
             cx.notify();
             return;
         }
+        let command = self.terminal_command.read(cx).content().trim().to_owned();
+        let terminal = if command.is_empty() {
+            if self.draft.creation != Creation::Gui {
+                self.error = Some("Set the agent's interactive executable.".into());
+                cx.notify();
+                return;
+            }
+            None
+        } else {
+            let args = self.terminal_args.read(cx).content().trim().to_owned();
+            let env = self.terminal_env.read(cx).content().trim().to_owned();
+            let parsed =
+                serde_json::from_str(if args.is_empty() { "[]" } else { &args }).and_then(|args| {
+                    serde_json::from_str(if env.is_empty() { "{}" } else { &env })
+                        .map(|env| Interactive { command, args, env })
+                });
+            match parsed {
+                Ok(launch) => Some(launch),
+                Err(error) => {
+                    self.error = Some(format!("Terminal launch: {error}").into());
+                    cx.notify();
+                    return;
+                }
+            }
+        };
         let identity = Identity {
             name,
+            terminal,
             ..self.draft.clone()
         };
         let (kept, from) = (self.kept, self.from);
@@ -381,6 +464,12 @@ impl Render for AgentModal {
             form::labelled(&theme, LABEL_WIDTH, "Name", self.name.clone()),
             form::labelled(&theme, LABEL_WIDTH, "Workspace", self.workspace.clone()),
             form::labelled(&theme, LABEL_WIDTH, "Program", self.program.clone()),
+            form::labelled(&theme, LABEL_WIDTH, "Session",
+                div().id("agent-session-mode").child(self.creation.clone())
+                    .tooltip(|window, cx| Tooltip::text("Choose on creation: the add button offers GUI or Terminal. Dragging creates a GUI session.", window, cx))),
+            form::labelled(&theme, LABEL_WIDTH, "Terminal", self.terminal_command.clone()),
+            form::labelled(&theme, LABEL_WIDTH, "Arguments", self.terminal_args.clone()),
+            form::labelled(&theme, LABEL_WIDTH, "Environment", self.terminal_env.clone()),
         ];
         let switches = self.switches.iter().map(|(switch, combobox)| {
             form::labelled(&theme, LABEL_WIDTH, &switch.name, combobox.clone())
