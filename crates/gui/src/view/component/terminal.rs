@@ -542,7 +542,6 @@ impl Focusable for Terminal {
 
 impl Render for Terminal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = Theme::of(cx).clone();
         let focused = self.focus.is_focused(window);
         let caret = caret_override(cx);
         let blinking = self.buffer.update(cx, |buffer, _| {
@@ -589,9 +588,6 @@ impl Render for Terminal {
             .size_full()
             .flex()
             .flex_col()
-            .when_some(self.buffer.read(cx).state.message(), |panel, status| {
-                panel.child(div().px(px(12.)).text_color(theme.text_muted).child(status))
-            })
             .child(
                 div()
                     .id("session-terminal")

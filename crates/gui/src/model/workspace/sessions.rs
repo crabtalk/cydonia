@@ -4,6 +4,8 @@
 //! `use super::*`: these methods work on the same struct and reach the same
 //! names as the rest of it.
 use super::*;
+#[cfg(feature = "desktop")]
+use crate::model::terminal::Exited;
 use crate::model::{
     project::HeldSession,
     session_preferences::{self, OfferCache},
@@ -76,6 +78,21 @@ impl Workspace {
         self.next_id += 1;
         let cwd = self.projects[ix].path.clone();
         let chat = cx.new(|cx| make(id, cwd, cx));
+        #[cfg(feature = "desktop")]
+        if let Some(buffer) = chat.read(cx).terminal.clone() {
+            cx.subscribe(&buffer, move |_, _, _: &Exited, cx| {
+                let workspace = cx.weak_entity();
+                cx.defer(move |cx| {
+                    let _ = workspace.update(cx, |workspace, cx| {
+                        if let Some(member) = workspace.member_of_session(id, cx) {
+                            workspace.drop_from_spaces(&member, cx);
+                        }
+                        workspace.close_session(id, cx);
+                    });
+                });
+            })
+            .detach();
+        }
         let project = &mut self.projects[ix];
         project.sessions.push(HeldSession { id, chat });
         if front {

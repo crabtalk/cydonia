@@ -75,7 +75,7 @@ fn two_boards(
 fn terminal_run_tabs_use_runtime_keys_without_saved_conversations(cx: &mut gpui::TestAppContext) {
     let scratch = Scratch::new("terminal-run");
     let (workspace, _, _) = two_boards(&scratch, cx);
-    workspace.update(cx, |workspace, cx| {
+    let (id, buffer, member, identity_id) = workspace.update(cx, |workspace, cx| {
         let identity = crate::model::identity::Identity::new(
             "Terminal",
             workspace.projects[0].path.clone(),
@@ -115,8 +115,26 @@ fn terminal_run_tabs_use_runtime_keys_without_saved_conversations(cx: &mut gpui:
         assert_eq!(workspace.tab_strip().last(), Some(&member));
         assert!(workspace.retain_active_session(id, cx).is_none());
         assert!(workspace.projects[0].store().sessions().is_empty());
-        workspace.close_session(id, cx);
+        let buffer = workspace.session(id, cx).unwrap().terminal.clone().unwrap();
+        (id, buffer, member, identity_id)
+    });
+    buffer.update(cx, |buffer, cx| {
+        buffer.state = crate::model::terminal::State::Exited {
+            success: true,
+            code: 0,
+        };
+        cx.emit(crate::model::terminal::Exited);
+        cx.notify();
+    });
+    workspace.read_with(cx, |workspace, cx| {
         assert!(workspace.session(id, cx).is_none());
+        assert!(!workspace.tab_strip().contains(&member));
+        assert!(
+            workspace
+                .identities
+                .iter()
+                .any(|identity| identity.id == identity_id)
+        );
     });
 }
 

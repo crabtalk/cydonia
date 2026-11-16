@@ -157,6 +157,7 @@ impl Cydonia {
         // display-only and this is the way.
         // An app's name is its manifest's, and it is not filed or pinned.
         let app = matches!(entry, Row::App(_));
+        let terminal = entry.terminal_run(self.workspace.read(cx), cx);
         let named = !app
             && !matches!(
                 entry.showing(),
@@ -324,14 +325,21 @@ impl Cydonia {
                 this.pin_entry(&entry, !pinned, cx)
             }));
         }
-        let put = match archived {
-            true => Item::action("Unarchive").with_icon(icons::files::ArchiveRestore),
-            false => Item::action("Archive").with_icon(icons::files::Archive),
+        let put = match (terminal, archived) {
+            (true, _) => Item::action("Terminate").with_icon(icons::multimedia::CircleStop),
+            (false, true) => Item::action("Unarchive").with_icon(icons::files::ArchiveRestore),
+            (false, false) => Item::action("Archive").with_icon(icons::files::Archive),
         };
         if !app {
             held.push(menu::row::<Cydonia>(put, {
                 let entry = entry.clone();
-                move |this, window, cx| this.archive_entry(&entry, !archived, window, cx)
+                move |this, window, cx| {
+                    if terminal {
+                        this.delete_entry(&entry, window, cx);
+                    } else {
+                        this.archive_entry(&entry, !archived, window, cx);
+                    }
+                }
             }));
         }
         // Into any other open project, the folder and its pictures with it.
@@ -372,13 +380,17 @@ impl Cydonia {
             .unwrap_or_default();
 
         // Alone, so it is never the row beside the one meant.
-        let delete = vec![menu::row::<Cydonia>(
-            Item::action("Delete").with_icon(icons::files::Trash),
-            {
-                let entry = entry.clone();
-                move |this, window, cx| this.ask_delete(&entry, window, cx)
-            },
-        )];
+        let delete = if terminal {
+            Vec::new()
+        } else {
+            vec![menu::row::<Cydonia>(
+                Item::action("Delete").with_icon(icons::files::Trash),
+                {
+                    let entry = entry.clone();
+                    move |this, window, cx| this.ask_delete(&entry, window, cx)
+                },
+            )]
+        };
         // ── what the open page is, at the foot: read, never chosen ──
         let mut about: Vec<(Item, menu::Act)> = Vec::new();
         if matches!(entry.showing(), Some(Showing::Article(_)))

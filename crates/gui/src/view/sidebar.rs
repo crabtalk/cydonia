@@ -28,7 +28,7 @@ use crate::{
         },
     },
 };
-use artifact::kind::Kind;
+use artifact::{kind::Kind, session::mode::Mode};
 use bezel::{
     gpui::{
         self, AnyElement, App, Context, Div, Empty, Entity, FocusHandle, Hsla, ListAlignment,
@@ -200,6 +200,15 @@ impl Row {
         match self {
             Row::Entry { showing, .. } => Some(showing),
             Row::Group(_) | Row::Heading(_) | Row::App(_) => None,
+        }
+    }
+
+    pub(crate) fn terminal_run(&self, workspace: &Workspace, cx: &App) -> bool {
+        match self.showing() {
+            Some(Showing::Session(id)) => workspace
+                .session(*id, cx)
+                .is_some_and(|chat| chat.mode == Mode::Terminal),
+            _ => false,
         }
     }
 

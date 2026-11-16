@@ -30,15 +30,6 @@ pub enum State {
 }
 
 impl State {
-    pub fn message(&self) -> Option<String> {
-        match self {
-            Self::Running => None,
-            Self::Exited { code, .. } => Some(format!("Process exited ({code}).")),
-            Self::Failed(error) => Some(format!("Terminal error: {error}")),
-            Self::Stopped => Some("Process stopped.".into()),
-        }
-    }
-
     pub fn failed(&self) -> bool {
         matches!(self, Self::Failed(_) | Self::Exited { success: false, .. })
     }

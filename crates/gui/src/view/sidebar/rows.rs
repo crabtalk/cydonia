@@ -658,7 +658,7 @@ impl Sidebar {
                 false => row_label(facts.label, tint),
             };
         let open = entry.clone();
-        let button = self.archive_button(group, entry, archived, preview.is_some(), window, cx);
+        let button = self.trailing_button(group, entry, archived, preview.is_some(), window, cx);
         let frame = row(
             id,
             group,
@@ -816,14 +816,11 @@ impl Sidebar {
         .into_any_element()
     }
 
-    /// The button at the end of a row: archive, or — for a pinned row — the
-    /// pin it is marked with, which opens the row's menu.
-    ///
     /// A pin is the one state a row carries that nothing else on it shows, so
     /// it is drawn at rest rather than on hover. Under the pointer the same
     /// button becomes the `···`, and what a pinned row can have done to it is
     /// in the menu rather than behind a press that has to mean one of them.
-    fn archive_button(
+    fn trailing_button(
         &self,
         group: &'static str,
         entry: &Row,
@@ -867,10 +864,12 @@ impl Sidebar {
                 .children(self.entry_menu(&at, window, cx));
         }
         let held = matches!(self.menu.key(), Some(SidebarMenu::Entry(at)) if at == entry);
+        let terminal = entry.terminal_run(self.workspace.read(cx), cx);
         let entry = entry.clone();
-        let mark = match archived {
-            true => icons::files::ArchiveRestore,
-            false => icons::files::Archive,
+        let (mark, label) = match (terminal, archived) {
+            (true, _) => (icons::multimedia::CircleStop, "Terminate"),
+            (false, true) => (icons::files::ArchiveRestore, "Unarchive"),
+            (false, false) => (icons::files::Archive, "Archive"),
         };
         theme
             .icon_button(
@@ -906,21 +905,16 @@ impl Sidebar {
             // still falls either side of a child with no width, so the margin
             // that cancels it comes back with the width.
             .overflow_hidden()
-            .tooltip(move |window, cx| {
-                Tooltip::text(
-                    match archived {
-                        true => "Unarchive",
-                        false => "Archive",
-                    },
-                    window,
-                    cx,
-                )
-            })
+            .tooltip(move |window, cx| Tooltip::text(label, window, cx))
             .on_click(cx.listener(move |this, _, window, cx| {
                 cx.stop_propagation();
                 let entry = entry.clone();
                 this.defer_window(window, cx, move |root, window, cx| {
-                    root.archive_entry(&entry, !archived, window, cx)
+                    if terminal {
+                        root.delete_entry(&entry, window, cx);
+                    } else {
+                        root.archive_entry(&entry, !archived, window, cx);
+                    }
                 });
             }))
     }
