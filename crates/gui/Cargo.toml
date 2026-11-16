@@ -83,7 +83,7 @@ desktop = [
 developer = []
 
 [dev-dependencies]
-syntax = { workspace = true }
+syntax = { workspace = true, features = ["rust"] }
 gpui = { workspace = true, features = ["test-support"] }
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]

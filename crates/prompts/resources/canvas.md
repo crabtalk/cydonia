@@ -32,6 +32,14 @@ edges accept a positive `fontSize` in canvas units; the default is 16. Zoom
 scales the authored size. A label's side handles change its wrapping width;
 its corner handles scale its dimensions and text together.
 
+Web design frames use `type: "web"` with exactly one `url` (HTTP/HTTPS,
+including development servers) or `file` (project-relative HTML). Their
+`viewport: {"width": 1440, "height": 900}` sets page layout independently of
+canvas width, height and zoom; dimensions range from 1 to 8192. Missing
+viewport defaults to 1440 × 900. Use separate frames to compare variants.
+HTML source edits reload their frame; development-server HMR remains available.
+Ordinary `link` nodes retain metadata previews.
+
 An edge has a unique nonempty `id`, `fromNode`, and `toNode`. Both nodes must
 exist after the edit. Optional `fromSide` and `toSide` are `top`, `right`,
 `bottom`, or `left`; `fromEnd` and `toEnd` are `none` or `arrow`. Edges can carry

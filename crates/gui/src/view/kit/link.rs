@@ -743,7 +743,7 @@ impl Cydonia {
         div()
             // The excerpt's wheel stops here, at its ends too, so what is
             // under it does not scroll with it.
-            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+            .on_scroll(|_, _, cx| cx.stop_propagation())
             .child(match max_height {
                 Some(height) => scroll::Viewport::new(id, rows.max_h(height), gpui::Axis::Vertical),
                 None => {
@@ -952,7 +952,7 @@ impl Cydonia {
         div()
             // The excerpt's wheel stops here, at its ends too, so what is
             // under it does not scroll with it.
-            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+            .on_scroll(|_, _, cx| cx.stop_propagation())
             .child(match max_height {
                 Some(height) => scroll::Viewport::new(
                     SharedString::from(format!("session-excerpt-{id}")),

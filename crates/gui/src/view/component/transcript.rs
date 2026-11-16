@@ -920,7 +920,7 @@ impl Render for SessionView {
                 .min_h_0()
                 // The transcript's wheel stops here, at its ends too, so what
                 // is under it does not scroll with it.
-                .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+                .on_scroll(|_, _, cx| cx.stop_propagation())
                 .flex()
                 .flex_col()
                 .child(body)

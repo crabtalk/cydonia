@@ -743,7 +743,7 @@ impl Render for Terminal {
                         gpui::MouseButton::Left,
                         cx.listener(|this, _, _, _| this.end_drag()),
                     )
-                    .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| {
+                    .on_scroll(cx.listener(|this, event: &gpui::ScrollEvent, _, cx| {
                         let line_h = this.geometry.map_or(20., |grid| grid.line_h);
                         let delta = f32::from(event.delta.pixel_delta(px(line_h)).y) / line_h;
                         this.scroll_remainder += delta;

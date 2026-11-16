@@ -71,6 +71,10 @@ impl CanvasView {
         };
         let creation = vec![
             menu::row(
+                Item::action("Web page…").disabled(read_only),
+                |this: &mut Self, window, cx| this.add_web(window, cx),
+            ),
+            menu::row(
                 Item::action("Link card").disabled(read_only),
                 |this: &mut Self, window, cx| this.add_link(window, cx),
             ),

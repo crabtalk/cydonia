@@ -40,6 +40,7 @@ pub(crate) mod entry_picker;
 mod image;
 mod sources;
 mod transfer;
+mod web;
 
 const CARD_WIDTH: i64 = 360;
 const CARD_HEIGHT: i64 = 220;
@@ -66,6 +67,7 @@ pub(crate) struct CanvasView {
     exporting_image: bool,
     chrome: Entity<chrome::Chrome>,
     error: Option<String>,
+    pages: web::Frames,
 }
 
 impl Cydonia {
@@ -141,7 +143,8 @@ impl CanvasView {
             }
             kinds = kinds.with(name, declared);
         }
-        kinds = sources::kinds(kinds, path.clone());
+        let pages = web::Frames::new(cx.entity().downgrade(), path.clone());
+        kinds = sources::kinds(kinds, path.clone()).with(artifact::canvas::web::KIND, pages.kind());
         let surface = cx.new(|cx| {
             Surface::for_document(document, layout::FREE, cx)
                 .with_kinds(kinds)
@@ -156,7 +159,9 @@ impl CanvasView {
         });
         let error = source.read(cx).error.clone();
         cx.observe(&source, |this, source, cx| {
-            let error = &source.read(cx).error;
+            let source = source.read(cx);
+            this.pages.retain(&source.document.read(cx));
+            let error = &source.error;
             if &this.error != error {
                 this.error = error.clone();
                 cx.notify();
@@ -178,6 +183,7 @@ impl CanvasView {
             exporting_image: false,
             chrome,
             error,
+            pages,
         }
     }
 
@@ -212,6 +218,22 @@ impl CanvasView {
                     kind: model::LINK.into(),
                     width: CARD_WIDTH,
                     height: 360,
+                    ..Node::default()
+                },
+                self.at,
+                window,
+                cx,
+            );
+        });
+    }
+
+    fn add_web(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.surface.update(cx, |surface, cx| {
+            surface.create_node(
+                Node {
+                    kind: artifact::canvas::web::KIND.into(),
+                    width: 960,
+                    height: 600,
                     ..Node::default()
                 },
                 self.at,
@@ -293,7 +315,10 @@ impl Render for CanvasView {
                     }
                     if let CanvasEvent::EditRequested { id } = event {
                         let node = this.surface.read(cx).editor().canvas().node(id);
-                        if node.is_some_and(|node| node.kind == model::FILE) {
+                        if node.is_some_and(|node| {
+                            node.kind == model::FILE
+                                || (node.kind == artifact::canvas::web::KIND && node.file.is_some())
+                        }) {
                             this.pick_files(Some(id.clone()), cx);
                         } else {
                             this.pick_reference(Some(id.clone()), window, cx);
