@@ -136,3 +136,33 @@ fn a_replica_refills_after_the_daemon_is_replaced() {
 fn acp_runtime() -> tokio::runtime::Runtime {
     tokio::runtime::Runtime::new().unwrap()
 }
+
+#[test]
+fn dropping_the_last_project_stops_its_refresh_on_a_live_connection() {
+    acp_runtime().block_on(async {
+        let scratch = tempfile::tempdir().unwrap();
+        let server = server();
+        let (client, runner) = Client::new();
+        let runner = tokio::spawn(runner);
+        let (_wire, near, far) = Wire::pair();
+        let attached = client.clone();
+        let near = tokio::spawn(async move { attached.attach(near).await });
+        let far = tokio::spawn(async move { server.attach(far).await });
+        let (project, refresh) = remote::Project::open(client, scratch.path().to_owned())
+            .await
+            .unwrap();
+        let refresh = tokio::spawn(refresh);
+        let copy = project.clone();
+        let _watch = project.watch(|| {});
+        drop(project);
+        assert!(!refresh.is_finished(), "a held project keeps refreshing");
+        drop(copy);
+        tokio::time::timeout(Duration::from_secs(2), refresh)
+            .await
+            .expect("a closed project must not leave an idle refresh task")
+            .unwrap();
+        near.abort();
+        far.abort();
+        runner.abort();
+    });
+}

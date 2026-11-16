@@ -46,10 +46,32 @@ pub trait Hosts: Send + Sync + 'static {
 /// [`Remotes::close`]; their replicas are kept fresh on [`acp::runtime`].
 pub struct Remotes {
     hosts: Box<dyn Hosts>,
-    projects: Mutex<HashMap<Location, (Client, remote::Project)>>,
-    opening: futures::lock::Mutex<()>,
+    projects: Mutex<HashMap<Location, Arc<Slot>>>,
     /// Each host's spawner, with the client it was connected through.
     spawners: Mutex<HashMap<HostId, (Client, Connecting)>>,
+}
+
+struct Slot {
+    opening: futures::lock::Mutex<()>,
+    held: Mutex<Option<(Client, remote::Project)>>,
+    cancel: Mutex<Option<futures::channel::oneshot::Sender<()>>>,
+    closed: Shared<BoxFuture<'static, ()>>,
+}
+
+impl Default for Slot {
+    fn default() -> Self {
+        let (cancel, closed) = futures::channel::oneshot::channel();
+        Self {
+            opening: Default::default(),
+            held: Default::default(),
+            cancel: Mutex::new(Some(cancel)),
+            closed: async move {
+                let _ = closed.await;
+            }
+            .boxed()
+            .shared(),
+        }
+    }
 }
 
 /// A spawner being connected, or connected; the error of one that failed.
@@ -61,7 +83,6 @@ impl Remotes {
         let remotes = Self {
             hosts: Box::new(hosts),
             projects: Mutex::default(),
-            opening: futures::lock::Mutex::new(()),
             spawners: Mutex::default(),
         };
         REMOTES
@@ -91,42 +112,79 @@ impl Remotes {
     /// already open there, or the one opened now. Refused for a location on
     /// this machine.
     pub async fn open(&self, location: &Location) -> anyhow::Result<remote::Project> {
-        let _opening = self.opening.lock().await;
         let host = location
             .host()
             .with_context(|| format!("{location} is on this machine"))?;
-        let client = self.client(host)?;
-        let held = self.projects().get(location).cloned();
-        let (project, refresh) = match held {
-            Some((connected, project)) if connected.same(&client) => return Ok(project),
-            Some((_, project)) => {
-                let refresh = project
-                    .reconnect(client.clone())
+        let slot = self.projects().entry(location.clone()).or_default().clone();
+        let opening = async {
+            let _opening = slot.opening.lock().await;
+            anyhow::ensure!(
+                self.projects()
+                    .get(location)
+                    .is_some_and(|held| Arc::ptr_eq(held, &slot)),
+                "project was closed while opening: {location}"
+            );
+            let client = self.client(host)?;
+            let held = slot.held.lock().unwrap().clone();
+            let (project, refresh) = match held {
+                Some((connected, project)) if connected.same(&client) => return Ok(project),
+                Some((_, project)) => {
+                    let refresh = project
+                        .reconnect(client.clone())
+                        .await
+                        .with_context(|| format!("reopen {location}"))?;
+                    (project, refresh)
+                }
+                None => remote::Project::open(client.clone(), location.root().to_owned())
                     .await
-                    .with_context(|| format!("reopen {location}"))?;
-                (project, refresh)
-            }
-            None => remote::Project::open(client.clone(), location.root().to_owned())
-                .await
-                .with_context(|| format!("open {location}"))?,
+                    .with_context(|| format!("open {location}"))?,
+            };
+            let projects = self.projects();
+            anyhow::ensure!(
+                projects
+                    .get(location)
+                    .is_some_and(|held| Arc::ptr_eq(held, &slot)),
+                "project was closed while opening: {location}"
+            );
+            *slot.held.lock().unwrap() = Some((client, project.clone()));
+            acp::runtime().spawn(refresh);
+            Ok(project)
         };
-        acp::runtime().spawn(refresh);
-        self.projects()
-            .insert(location.clone(), (client, project.clone()));
-        Ok(project)
+        match futures::future::select(Box::pin(opening), slot.closed.clone()).await {
+            futures::future::Either::Left((opened, _)) => opened,
+            futures::future::Either::Right(_) => {
+                anyhow::bail!("project was closed while opening: {location}")
+            }
+        }
     }
 
     /// The project open at `location`.
     pub fn project(&self, location: &Location) -> Option<remote::Project> {
-        self.projects()
-            .get(location)
-            .map(|(_, project)| project.clone())
+        self.projects().get(location).and_then(|slot| {
+            slot.held
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|(_, project)| project.clone())
+        })
     }
 
     /// Lets the project at `location` go. Its replica stops being refreshed
     /// once every clone of it is dropped.
     pub fn close(&self, location: &Location) {
-        self.projects().remove(location);
+        let mut projects = self.projects();
+        if let Some(slot) = projects.remove(location)
+            && let Some(cancel) = slot.cancel.lock().unwrap().take()
+        {
+            let _ = cancel.send(());
+        }
+        if let Some(host) = location.host()
+            && !projects
+                .keys()
+                .any(|location| location.host() == Some(host))
+        {
+            self.spawners.lock().unwrap().remove(&host);
+        }
     }
 
     /// `host`'s spawner, connected once per client of the host. A failed
@@ -166,7 +224,7 @@ impl Remotes {
         connected.map_err(io::Error::other)
     }
 
-    fn projects(&self) -> MutexGuard<'_, HashMap<Location, (Client, remote::Project)>> {
+    fn projects(&self) -> MutexGuard<'_, HashMap<Location, Arc<Slot>>> {
         self.projects.lock().unwrap_or_else(|e| e.into_inner())
     }
 }

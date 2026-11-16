@@ -461,3 +461,77 @@ fn a_stale_board_save_is_refused() {
     ours.name = "Ours again".into();
     runtime.block_on(first.store.save_board(&mut ours)).unwrap();
 }
+
+#[test]
+fn concurrent_clients_allocate_distinct_numbers_and_keep_every_write() {
+    let scratch = Scratch::new("concurrent");
+    let runtime = runtime();
+    let first = Side::open(&runtime, &scratch.0);
+    let second = Side::open(&runtime, &scratch.0);
+    let boards = runtime.block_on(async {
+        futures::future::join_all((0..16).map(|at| {
+            let store = if at % 2 == 0 {
+                &first.store
+            } else {
+                &second.store
+            };
+            async move {
+                store
+                    .create_board(&format!("Board {at}"), &format!("B{at}"))
+                    .await
+                    .unwrap()
+            }
+        }))
+        .await
+    });
+    let numbers = boards
+        .iter()
+        .map(|board| board.number.unwrap())
+        .collect::<std::collections::HashSet<_>>();
+    assert_eq!(numbers.len(), boards.len());
+    let disk = fs::Project::new(&scratch.0);
+    for board in &boards {
+        assert_eq!(disk.board(&board.id).unwrap().name, board.name);
+    }
+    eventually("both replicas see all concurrent writes", || {
+        first.store.boards().len() == boards.len() && second.store.boards().len() == boards.len()
+    });
+}
+
+#[test]
+fn concurrent_stale_saves_have_one_winner() {
+    let scratch = Scratch::new("save-race");
+    let runtime = runtime();
+    let first = Side::open(&runtime, &scratch.0);
+    let made = runtime
+        .block_on(first.store.create_board("Original", "RACE"))
+        .unwrap();
+    let second = Side::open(&runtime, &scratch.0);
+    let mut ours = first.store.board(&made.id).unwrap();
+    let mut theirs = second.store.board(&made.id).unwrap();
+    ours.name = "Ours".into();
+    theirs.name = "Theirs".into();
+    let (a, b) = runtime.block_on(async {
+        futures::future::join(
+            first.store.save_board(&mut ours),
+            second.store.save_board(&mut theirs),
+        )
+        .await
+    });
+    assert_ne!(
+        a.is_ok(),
+        b.is_ok(),
+        "exactly one concurrent save must win: {a:?}, {b:?}"
+    );
+    let winner = if a.is_ok() { "Ours" } else { "Theirs" };
+    let rejected = if a.is_err() {
+        a.unwrap_err()
+    } else {
+        b.unwrap_err()
+    };
+    assert!(matches!(rejected, Error::Stale), "{rejected}");
+    assert_eq!(
+        fs::Project::new(&scratch.0).board(&made.id).unwrap().name,
+        winner
+    );
+}

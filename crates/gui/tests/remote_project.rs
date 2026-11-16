@@ -38,10 +38,13 @@ use futures::{FutureExt as _, future::BoxFuture};
 use server::Services;
 
 /// Opens every session's links to one in-process server.
-struct Mock;
+struct Mock {
+    ready: futures::future::Shared<BoxFuture<'static, ()>>,
+}
 
 struct Served {
     server: Server,
+    ready: futures::future::Shared<BoxFuture<'static, ()>>,
 }
 
 /// The controller as the app holds it, with no ssh connection behind it.
@@ -50,26 +53,34 @@ struct Probe(Controller<Mock>);
 impl Connector for Mock {
     type Transport = Served;
 
-    fn transport(&self, _: &Host) -> anyhow::Result<Served> {
+    fn transport(&self, host: &Host) -> anyhow::Result<Served> {
         let (server, runner) = Server::new();
         Services::register(&server);
         acp::runtime().spawn(runner);
-        Ok(Served { server })
+        let ready = if host.destination() == "slow" {
+            self.ready.clone()
+        } else {
+            async {}.boxed().shared()
+        };
+        Ok(Served { server, ready })
     }
 }
 
 impl Transport for Served {
     fn open(&self, _: Mode) -> BoxFuture<'_, anyhow::Result<Link>> {
-        let (wire, near, far) = Wire::pair();
-        let server = self.server.clone();
-        acp::runtime().spawn(async move {
-            let _wire: Wire = wire;
-            let _ = server.attach(far).await;
-        });
-        futures::future::ready(Ok(Link {
-            connection: near,
-            exit: futures::future::pending().boxed(),
-        }))
+        async move {
+            self.ready.clone().await;
+            let (wire, near, far) = Wire::pair();
+            let server = self.server.clone();
+            acp::runtime().spawn(async move {
+                let _wire: Wire = wire;
+                let _ = server.attach(far).await;
+            });
+            Ok(Link {
+                connection: near,
+                exit: futures::future::pending().boxed(),
+            })
+        }
         .boxed()
     }
 }
@@ -88,9 +99,20 @@ impl Hosts for Probe {
 /// cydonia's services, installed as the process's [`Remotes`]. Answers the
 /// host.
 fn install(hosts: &Path) -> (HostId, Controller<Mock>) {
+    install_with(hosts, async {}.boxed().shared())
+}
+
+fn install_with(
+    hosts: &Path,
+    ready: futures::future::Shared<BoxFuture<'static, ()>>,
+) -> (HostId, Controller<Mock>) {
     let runtime = acp::runtime();
-    let (controller, runner) =
-        Controller::open(hosts.join("hosts.toml"), Mock, Heartbeat::default()).unwrap();
+    let (controller, runner) = Controller::open(
+        hosts.join("hosts.toml"),
+        Mock { ready },
+        Heartbeat::default(),
+    )
+    .unwrap();
     runtime.spawn(runner);
     let host = controller.add("box", Host::new("box").unwrap()).unwrap();
     Remotes::install(Probe(controller.clone())).unwrap();
@@ -234,5 +256,64 @@ fn reopening_after_a_disconnect_refreshes_held_stores_and_replaces_the_spawner()
         })
         .await
         .expect("reopen must finish rather than wait on a closed client");
+    });
+}
+
+#[test]
+fn slow_open_does_not_block_other_hosts_and_close_prevents_a_late_open() {
+    use std::time::Duration;
+    let scratch = tempfile::tempdir().unwrap();
+    let (release, ready) = futures::channel::oneshot::channel::<()>();
+    let (fast, controller) = install_with(
+        scratch.path(),
+        async {
+            ready.await.unwrap();
+        }
+        .boxed()
+        .shared(),
+    );
+    let slow = controller.add("Slow", Host::new("slow").unwrap()).unwrap();
+    let fast = Location::Remote {
+        host: fast,
+        root: scratch.path().join("fast"),
+    };
+    let slow = Location::Remote {
+        host: slow,
+        root: scratch.path().join("slow"),
+    };
+    let remotes = Remotes::get().unwrap();
+    acp::runtime().block_on(async {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            let opening = acp::runtime().spawn({
+                let slow = slow.clone();
+                async move { remotes.open(&slow).await }
+            });
+            while controller.status(slow.host().unwrap()).status()
+                != cupola::client::session::Status::Connecting
+            {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            remotes.open(&fast).await.unwrap();
+            remotes.close(&slow);
+            let error = opening
+                .await
+                .unwrap()
+                .err()
+                .expect("a closed open cannot publish a project");
+            assert!(
+                error.to_string().contains("closed while opening"),
+                "{error}"
+            );
+            assert!(remotes.project(&slow).is_none());
+            release.send(()).unwrap();
+            // A new open gets its own slot; closing another project leaves it held.
+            remotes.open(&slow).await.unwrap();
+            remotes.close(&fast);
+            assert!(remotes.project(&fast).is_none());
+            assert!(remotes.project(&slow).is_some());
+            remotes.close(&slow);
+        })
+        .await
+        .expect("a slow host must not hold another host's open");
     });
 }

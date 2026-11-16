@@ -24,7 +24,11 @@ use crate::{
     stamp,
 };
 use cupola::{Client, Events, Handle};
-use futures::{FutureExt as _, StreamExt as _, future::BoxFuture};
+use futures::{
+    FutureExt as _, StreamExt as _,
+    channel::oneshot,
+    future::{BoxFuture, Shared},
+};
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard, Weak},
@@ -42,10 +46,14 @@ type Knocker = Arc<dyn Fn() + Send + Sync>;
 #[derive(Clone)]
 pub struct Project {
     inner: Arc<Inner>,
+    // Only project clones hold the sender. A refresh pulling a snapshot must
+    // not keep itself alive when the last project is closed.
+    _alive: Arc<oneshot::Sender<()>>,
 }
 
 struct Inner {
     root: PathBuf,
+    closed: Shared<BoxFuture<'static, ()>>,
     connection: Mutex<(Client, Handle<Artifact>)>,
     replica: Mutex<Replica>,
     knocks: Mutex<Knocks>,
@@ -94,8 +102,14 @@ impl Project {
     pub async fn open(client: Client, root: PathBuf) -> super::Result<(Self, Refresh)> {
         let handle = client.service::<Artifact>();
         let events = handle.events();
+        let (alive, closed) = oneshot::channel();
         let inner = Arc::new(Inner {
             root,
+            closed: async move {
+                let _ = closed.await;
+            }
+            .boxed()
+            .shared(),
             connection: Mutex::new((client, handle)),
             replica: Mutex::new(Replica {
                 held: Arc::default(),
@@ -107,8 +121,14 @@ impl Project {
             knocks: Mutex::default(),
         });
         inner.fill().await?;
-        let refresh = Inner::refresh(Arc::downgrade(&inner), events).boxed();
-        Ok((Self { inner }, refresh))
+        let refresh = Inner::refresh_task(&inner, events);
+        Ok((
+            Self {
+                inner,
+                _alive: Arc::new(alive),
+            },
+            refresh,
+        ))
     }
 
     /// Reopens this project over a replacement client. Existing clones and
@@ -120,7 +140,7 @@ impl Project {
         *self.inner.connection.lock().unwrap() = (client, handle);
         self.inner.fill().await?;
         self.inner.knock();
-        Ok(Inner::refresh(Arc::downgrade(&self.inner), events).boxed())
+        Ok(Inner::refresh_task(&self.inner, events))
     }
 
     fn client(&self) -> Client {
@@ -290,6 +310,15 @@ impl Inner {
             Change::Article(article).apply(&held);
         }
         held
+    }
+
+    fn refresh_task(inner: &Arc<Self>, events: Events<Artifact>) -> Refresh {
+        let closed = inner.closed.clone();
+        let refresh = Self::refresh(Arc::downgrade(inner), events).boxed();
+        async move {
+            futures::future::select(refresh, closed).await;
+        }
+        .boxed()
     }
 
     async fn refresh(inner: Weak<Self>, mut events: Events<Artifact>) {

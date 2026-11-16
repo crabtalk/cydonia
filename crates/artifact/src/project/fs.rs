@@ -541,7 +541,7 @@ impl Project {
     fn make_board(&self, name: &str, key: &str) -> super::Result<Board> {
         let dir = self.init()?.join(BOARDS);
         std::fs::create_dir_all(&dir)?;
-        let mut board = Board::new(free_board(&dir, stamp::now()), name);
+        let mut board = Board::new(reserve_entry(&dir, stamp::now(), true)?, name);
         board.created = stamp::named(&board.id);
         // Reading the other boards is also what settles any key they are
         // still missing.
@@ -751,7 +751,7 @@ impl super::Project for Project {
     ) -> impl Future<Output = super::Result<Article>> + Send + use<> {
         let made = || -> super::Result<Article> {
             let dir = article::init(&self.root)?;
-            let landing = article::free(&dir, stamp::now());
+            let landing = dir.join(reserve_entry(&dir, stamp::now(), false)?);
             let content = article::content(&landing);
             crate::fs::save(&content, markdown)?;
             Ok(self.describe(&content))
@@ -1033,6 +1033,24 @@ fn card_version(card: &board::Card) -> String {
 }
 
 /// A board id no directory or flat file under `dir` is using.
+/// Claim the directory before assigning an entry number. Checking for a free
+/// timestamp alone races with another server process creating the same entry.
+fn reserve_entry(dir: &Path, start: u128, flat_boards: bool) -> std::io::Result<String> {
+    std::fs::create_dir_all(dir)?;
+    for stamp in start.. {
+        let id = stamp.to_string();
+        if flat_boards && dir.join(format!("{id}.toml")).exists() {
+            continue;
+        }
+        match std::fs::create_dir(dir.join(&id)) {
+            Ok(()) => return Ok(id),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Err(std::io::Error::other("entry timestamps exhausted"))
+}
+
 fn free_board(dir: &Path, stamp: u128) -> String {
     stamp::free(stamp, |id| {
         dir.join(id).exists() || dir.join(format!("{id}.toml")).exists()
@@ -1050,4 +1068,33 @@ fn read_flat_board(path: &Path) -> Option<Board> {
         board.id = stem(path);
     }
     Some(board)
+}
+
+#[cfg(test)]
+mod reservation_tests {
+    use super::*;
+    #[test]
+    fn simultaneous_creators_reserve_different_directories() {
+        let scratch = std::env::temp_dir().join(format!("cydonia-reserve-{}", std::process::id()));
+        std::fs::create_dir_all(&scratch).unwrap();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(16));
+        let ids = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..16)
+                .map(|_| {
+                    let dir = &scratch;
+                    let barrier = barrier.clone();
+                    scope.spawn(move || {
+                        barrier.wait();
+                        reserve_entry(dir, 100, false).unwrap()
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| handle.join().unwrap())
+                .collect::<std::collections::HashSet<_>>()
+        });
+        assert_eq!(ids.len(), 16);
+        std::fs::remove_dir_all(scratch).unwrap();
+    }
 }
