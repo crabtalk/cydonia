@@ -36,7 +36,7 @@ use bezel::{
         input::TextField,
         popover,
         tooltip::Tooltip,
-        widgets::{ButtonStyle, Buttons},
+        widgets::{ButtonStyle, Buttons, Layout},
     },
 };
 use cydonia_acp::proto::SessionConfigOptionValue;
@@ -76,6 +76,7 @@ pub(crate) struct AgentModal {
     terminal_command: Entity<TextField>,
     terminal_args: Entity<TextField>,
     terminal_env: Entity<TextField>,
+    terminal_expanded: bool,
     /// What the program offers in the workspace, one picker each.
     switches: Vec<(Switch, Entity<Combobox>)>,
     /// What was wrong last time. The modal stays open while there is one.
@@ -254,6 +255,7 @@ impl AgentModal {
             terminal_command,
             terminal_args,
             terminal_env,
+            terminal_expanded: false,
             switches: Vec::new(),
             error: None,
             workspace_model,
@@ -368,6 +370,7 @@ impl AgentModal {
             match parsed {
                 Ok(launch) => Some(launch),
                 Err(error) => {
+                    self.terminal_expanded = true;
                     self.error = Some(format!("Terminal launch: {error}").into());
                     cx.notify();
                     return;
@@ -467,10 +470,53 @@ impl Render for AgentModal {
             form::labelled(&theme, LABEL_WIDTH, "Session",
                 div().id("agent-session-mode").child(self.creation.clone())
                     .tooltip(|window, cx| Tooltip::text("Choose on creation: the add button offers GUI or Terminal. Dragging creates a GUI session.", window, cx))),
-            form::labelled(&theme, LABEL_WIDTH, "Terminal", self.terminal_command.clone()),
-            form::labelled(&theme, LABEL_WIDTH, "Arguments", self.terminal_args.clone()),
-            form::labelled(&theme, LABEL_WIDTH, "Environment", self.terminal_env.clone()),
         ];
+        let terminal_required = self.draft.creation != Creation::Gui;
+        let terminal = div()
+            .flex()
+            .flex_col()
+            .gap(px(10.))
+            .when(terminal_required, |section| {
+                section.child(form::labelled(
+                    &theme,
+                    LABEL_WIDTH,
+                    "Terminal",
+                    self.terminal_command.clone(),
+                ))
+            })
+            .child(
+                theme
+                    .collapsible_header("Advanced terminal settings", self.terminal_expanded)
+                    .id("agent-terminal-settings")
+                    .hover(|style| style.bg(theme.element_hover))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.terminal_expanded = !this.terminal_expanded;
+                        cx.notify();
+                    })),
+            )
+            .when(self.terminal_expanded, |section| {
+                section
+                    .when(!terminal_required, |section| {
+                        section.child(form::labelled(
+                            &theme,
+                            LABEL_WIDTH,
+                            "Terminal",
+                            self.terminal_command.clone(),
+                        ))
+                    })
+                    .child(form::labelled(
+                        &theme,
+                        LABEL_WIDTH,
+                        "Arguments",
+                        self.terminal_args.clone(),
+                    ))
+                    .child(form::labelled(
+                        &theme,
+                        LABEL_WIDTH,
+                        "Environment",
+                        self.terminal_env.clone(),
+                    ))
+            });
         let switches = self.switches.iter().map(|(switch, combobox)| {
             form::labelled(&theme, LABEL_WIDTH, &switch.name, combobox.clone())
         });
@@ -504,6 +550,7 @@ impl Render for AgentModal {
             ]
             .into_iter()
             .chain(fields)
+            .chain([terminal.into_any_element()])
             .chain((!self.switches.is_empty()).then(|| popover::divider(&theme).into_any_element()))
             .chain(switches)
             .chain(
