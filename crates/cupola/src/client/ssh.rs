@@ -240,8 +240,7 @@ impl Control {
     }
 
     /// The ControlMaster: authenticates, then holds the connection open
-    /// without running a command. Its stdout closes once it has connected or
-    /// exited.
+    /// without running a command. Readiness is checked through its socket.
     pub fn master(&self) -> Command {
         let mut command = Command::new("ssh");
         command
@@ -405,15 +404,29 @@ impl<D: Delegate> Remote<D> {
         let mut child = async_process::Command::from(self.control.master())
             .envs(askpass.env(&program))
             .stdin(Stdio::null())
-            .stdout(Stdio::piped())
+            .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .kill_on_drop(true)
             .spawn()
             .context("start ssh")?;
-        let mut stdout = child.stdout.take().context("ssh has no stdout")?;
-        let connected = async move {
-            let mut ignored = Vec::new();
-            stdout.read_to_end(&mut ignored).await
+        // OpenSSH keeps stdout open for the lifetime of an `ssh -N`
+        // master. Probe its control socket instead of waiting for EOF.
+        let connected = async {
+            loop {
+                if child.try_status()?.is_some() {
+                    return Ok::<_, io::Error>(());
+                }
+                let checked = async_process::Command::from(self.control.check())
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status()
+                    .await?;
+                if checked.success() {
+                    return Ok(());
+                }
+                async_io::Timer::after(std::time::Duration::from_millis(50)).await;
+            }
         };
         let prompts = askpass.serve(|prompt| self.delegate.ask(prompt));
         match select(pin!(prompts), pin!(connected)).await {

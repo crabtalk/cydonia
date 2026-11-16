@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+"""Run the SSH acceptance test with private keys, sshd, HOME and loopback port.
+
+Requires OpenSSH client/server, Python 3 and cargo-nextest. Nothing is added to
+the user's SSH config, authorized_keys, known_hosts, or remote server install.
+"""
+import getpass
+import os
+from pathlib import Path
+import shlex
+import shutil
+import socket
+import subprocess
+import tempfile
+import time
+
+
+def main():
+    sshd = shutil.which("sshd") or "/usr/sbin/sshd"
+    with tempfile.TemporaryDirectory(prefix="cydonia-ssh-", dir="/tmp") as tmp:
+        root = Path(tmp)
+        home = root / "home"
+        home.mkdir()
+        bins = root / "bin"
+        bins.mkdir()
+        for name in ("host", "identity"):
+            subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(root / name)], check=True)
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            port = listener.getsockname()[1]
+        config = root / "sshd_config"
+        config.write_text(f"""Port {port}
+ListenAddress 127.0.0.1
+HostKey {root}/host
+PidFile {root}/sshd.pid
+AuthorizedKeysFile {root}/identity.pub
+StrictModes no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+UsePAM no
+AllowUsers {getpass.getuser()}
+SetEnv HOME={home} SHELL=/bin/sh
+Subsystem sftp internal-sftp -d {home}
+""")
+        client_config = root / "ssh_config"
+        client_config.write_text(f"""Host *
+  IdentityFile {root}/identity
+  IdentitiesOnly yes
+  BatchMode yes
+  StrictHostKeyChecking yes
+  UserKnownHostsFile {root}/known_hosts
+  ConnectTimeout 5
+""")
+        key = (root / "host.pub").read_text().split()
+        (root / "known_hosts").write_text(f"[127.0.0.1]:{port} {key[0]} {key[1]}\n")
+        for name in ("ssh", "sftp", "scp"):
+            program = shutil.which(name)
+            wrapper = bins / name
+            wrapper.write_text(f"#!/bin/sh\nexec {shlex.quote(program)} -F {shlex.quote(str(client_config))} \"$@\"\n")
+            wrapper.chmod(0o700)
+        env = dict(os.environ, PATH=str(bins) + os.pathsep + os.environ["PATH"],
+                   CYDONIA_SSH_TEST_HOME=str(home), CYDONIA_SSH_TEST_PORT=str(port),
+                   CYDONIA_SSH_TEST_USER=getpass.getuser())
+        with (root / "sshd.log").open("w+") as log:
+            daemon = subprocess.Popen([sshd, "-D", "-e", "-f", str(config)], stdout=log, stderr=log)
+            try:
+                for _ in range(100):
+                    if daemon.poll() is not None:
+                        log.seek(0)
+                        raise RuntimeError(log.read())
+                    try:
+                        with socket.create_connection(("127.0.0.1", port), timeout=0.1):
+                            break
+                    except OSError:
+                        time.sleep(0.05)
+                else:
+                    raise RuntimeError("fixture sshd did not start")
+                result = subprocess.run(["cargo", "nextest", "run", "-p", "cydonia-server", "--locked",
+                                         "--nocapture", "--run-ignored", "ignored-only", "-E", "binary(ssh)"], env=env)
+                if result.returncode:
+                    log.seek(0)
+                    print(log.read())
+                return result.returncode
+            finally:
+                # The remote daemon deliberately outlives SSH; only stop the
+                # daemon in our private fixture HOME.
+                pid = home / ".cupola/cydonia-server/cupola.pid"
+                if pid.exists():
+                    try:
+                        os.kill(int(pid.read_text()), 15)
+                    except ProcessLookupError:
+                        pass
+                daemon.terminate()
+                daemon.wait(timeout=5)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
