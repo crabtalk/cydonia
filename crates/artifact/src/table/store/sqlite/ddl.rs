@@ -85,7 +85,7 @@ impl Data {
     /// foreign key: table-to-table relations are deliberately unbuilt, so there
     /// are no children for the drop to cascade into.
     fn rebuild(&mut self, key: &str, columns: &[Column]) -> Result<()> {
-        let tmp = format!("{key}_rebuilding");
+        let tmp = self.mint_key(&format!("{key}_rebuilding"))?;
         let defs = columns
             .iter()
             .map(|col| format!("{} {}", table::quote(&col.name), col.kind.sql()))
@@ -99,7 +99,6 @@ impl Data {
 
         let tx = self.writer.transaction()?;
         for stmt in [
-            format!("DROP TABLE IF EXISTS {}", table::quote(&tmp)),
             format!("CREATE TABLE {} ({defs})", table::quote(&tmp)),
             format!(
                 "INSERT INTO {} (rowid, {names}) SELECT rowid, {names} FROM {}",

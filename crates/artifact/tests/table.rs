@@ -74,3 +74,36 @@ fn writing_a_missing_row_rejects_the_whole_batch() {
     assert!(data.read(&key, None, false, 10, 0).unwrap().rows[0].cells[0].is_null());
     std::fs::remove_dir_all(path).unwrap();
 }
+
+#[test]
+fn retyping_preserves_tables_with_the_scratch_name() {
+    let path = std::env::temp_dir().join(format!("cydonia-rebuild-{}", std::process::id()));
+    let mut data = Data::open(&Home::App(path.clone())).unwrap();
+    let columns = [Column {
+        name: "Name".into(),
+        kind: ColType::Text,
+    }];
+    let key = data.create("Tasks", None, &columns, None).unwrap().key;
+    let other = data
+        .create("Tasks rebuilding", None, &columns, None)
+        .unwrap()
+        .key;
+    let ids = data.add_rows(&other, 1).unwrap();
+    data.write_cells(
+        &other,
+        &[Edit {
+            rowid: ids[0],
+            column: "Name".into(),
+            value: "Keep".into(),
+        }],
+    )
+    .unwrap();
+    data.write_column(&key, "Name", Some(ColType::Number), None)
+        .unwrap();
+    assert_eq!(
+        data.read(&other, None, false, 10, 0).unwrap().rows[0].cells[0],
+        "Keep"
+    );
+    assert_eq!(data.list().unwrap().len(), 2);
+    std::fs::remove_dir_all(path).unwrap();
+}
