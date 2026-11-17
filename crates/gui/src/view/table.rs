@@ -48,6 +48,7 @@ const ACTIONS: f32 = 44.;
 
 const COLUMN_WIDTH: f32 = 180.;
 const MIN_COLUMN_WIDTH: f32 = 80.;
+const COLUMN_RESIZE_HIT: f32 = 12.;
 const INSET: f32 = 24.;
 const PREVIEW_INSET: f32 = 16.;
 
@@ -621,6 +622,10 @@ impl TableView {
             unreachable!("table columns have measured widths");
         };
         let column = shape.label.to_string();
+        let dragging = self
+            .resizing
+            .as_ref()
+            .is_some_and(|resizing| resizing.column == column);
         let grip = theme
             .split_handle(Axis::Horizontal, SplitStyle::Ghost)
             .id(("column-resize", ix))
@@ -628,6 +633,16 @@ impl TableView {
             .absolute()
             .top_0()
             .right_0()
+            .w(px(COLUMN_RESIZE_HIT))
+            .justify_end()
+            .group("column-resize")
+            .child(
+                div()
+                    .w(px(1.))
+                    .h_full()
+                    .bg(if dragging { theme.caret } else { theme.border })
+                    .group_hover("column-resize", |line| line.bg(theme.caret)),
+            )
             .occlude()
             .on_mouse_down(
                 MouseButton::Left,
@@ -920,10 +935,7 @@ impl Render for TableView {
                 .into_any_element(),
         );
 
-        let mut body = table::table(&theme)
-            .w(width)
-            .min_w_full()
-            .child(table::header(&theme).children(headings));
+        let mut body = div().relative().flex().flex_col();
         for (n, (rowid, held)) in rows.iter().enumerate() {
             let mut cells: Vec<AnyElement> = Vec::with_capacity(count + 1);
             for (ix, column) in columns.iter().enumerate() {
@@ -934,6 +946,35 @@ impl Render for TableView {
                 table::row(&theme, &declared, n == 0, Selection::None, cells).group("grid-row"),
             );
         }
+        let mut edge = px(0.);
+        for column in &declared[..count] {
+            let table::Width::Fixed(width) = column.width else {
+                unreachable!("table columns have measured widths");
+            };
+            edge += width;
+            let dragging = self
+                .resizing
+                .as_ref()
+                .is_some_and(|resize| resize.column == column.label.as_ref());
+            body = body.child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .bottom_0()
+                    .left(edge - px(1.))
+                    .w(px(1.))
+                    .bg(if dragging {
+                        theme.caret
+                    } else {
+                        theme.border.opacity(0.6)
+                    }),
+            );
+        }
+        let grid = table::table(&theme)
+            .w(width)
+            .min_w_full()
+            .child(table::header(&theme).children(headings))
+            .child(body);
 
         div()
             .id("table-view")
@@ -953,11 +994,15 @@ impl Render for TableView {
                     cx.notify();
                 }
             }))
-            .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, _| {
-                this.resizing = None;
+            .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                if this.resizing.take().is_some() {
+                    cx.notify();
+                }
             }))
-            .on_mouse_up_out(MouseButton::Left, cx.listener(|this, _, _, _| {
-                this.resizing = None;
+            .on_mouse_up_out(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                if this.resizing.take().is_some() {
+                    cx.notify();
+                }
             }))
             .on_action(cx.listener(Self::commit_cell_action))
             .on_action(cx.listener(Self::dismiss_cell))
@@ -994,7 +1039,7 @@ impl Render for TableView {
                             .track_scroll(&self.scroll)
                             .px(px(INSET))
                             .pb(px(20.))
-                            .child(body)
+                            .child(grid)
                             .child(
                                 add::row("add-row", "New row", theme.text_muted, &theme)
                                     .mt(px(6.))
