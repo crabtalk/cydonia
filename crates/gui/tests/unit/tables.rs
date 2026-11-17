@@ -49,7 +49,7 @@ fn table_pages_survive_selecting_another_table(cx: &mut gpui::TestAppContext) {
             project.tables[project.table_ix(&first).unwrap()]
                 .table
                 .read(cx)
-                .page
+                .page(0)
                 .is_some(),
             "the first pane still needs its page"
         );
@@ -57,7 +57,7 @@ fn table_pages_survive_selecting_another_table(cx: &mut gpui::TestAppContext) {
             project.tables[project.table_ix(&second).unwrap()]
                 .table
                 .read(cx)
-                .page
+                .page(0)
                 .is_some()
         );
         std::fs::remove_dir_all(path).unwrap();
@@ -131,15 +131,14 @@ fn editing_a_table_keeps_other_projects_and_loaded_pages_intact(cx: &mut gpui::T
             })
             .unwrap();
         assert_eq!(
-            source.read(cx).page.as_ref().unwrap().rows[0].cells[0],
+            source.read(cx).page(0).unwrap().rows[0].cells[0],
             "Second project"
         );
         assert!(
             workspace.projects[0].tables[0]
                 .table
                 .read(cx)
-                .page
-                .as_ref()
+                .page(0)
                 .unwrap()
                 .rows[0]
                 .cells[0]
@@ -150,7 +149,7 @@ fn editing_a_table_keeps_other_projects_and_loaded_pages_intact(cx: &mut gpui::T
             .unwrap();
         workspace.projects[1].reload_tables(cx);
         assert_eq!(*workspace.table_entity(&entry).unwrap(), source);
-        assert_eq!(source.read(cx).page.as_ref().unwrap().name, "Renamed");
+        assert_eq!(source.read(cx).page(0).unwrap().name, "Renamed");
         assert_eq!(
             workspace.projects[0].tables[0].table.read(cx).record.name,
             "Tasks"

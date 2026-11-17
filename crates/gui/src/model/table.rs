@@ -1,14 +1,14 @@
 use crate::data::{ColType, Data, Edit, Page, Revision, Table as Record};
 use bezel::gpui::Context;
 use serde_json::Value;
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
-const PAGE: i64 = 200;
+pub const PAGE: i64 = 200;
 const COLUMN: &str = "Column";
 
 pub struct Table {
     pub record: Record,
-    pub page: Option<Page>,
+    pages: BTreeMap<i64, Page>,
     pub error: Option<String>,
     data: Rc<RefCell<Data>>,
 }
@@ -17,14 +17,26 @@ impl Table {
     pub fn new(record: Record, data: Rc<RefCell<Data>>) -> Self {
         Self {
             record,
-            page: None,
+            pages: BTreeMap::new(),
             error: None,
             data,
         }
     }
 
+    pub fn page(&self, offset: i64) -> Option<&Page> {
+        self.pages.get(&offset)
+    }
+
+    pub fn last_page(&self) -> i64 {
+        (self.record.rows.saturating_sub(1) / PAGE) * PAGE
+    }
+
     pub fn load(&mut self, cx: &mut Context<Self>) {
-        if self.page.is_none() && self.read_page() {
+        self.load_page(0, cx);
+    }
+
+    pub fn load_page(&mut self, offset: i64, cx: &mut Context<Self>) {
+        if !self.pages.contains_key(&offset) && self.read_page(offset) {
             cx.notify();
         }
     }
@@ -32,23 +44,43 @@ impl Table {
     pub fn adopt(&mut self, record: Record, cx: &mut Context<Self>) {
         let mut changed = self.record != record;
         self.record = record;
-        if self.page.is_some() {
-            changed |= self.read_page();
-        }
+        changed |= self.reload_pages();
         if changed {
             cx.notify();
         }
     }
 
-    fn read_page(&mut self) -> bool {
+    fn reload_pages(&mut self) -> bool {
+        if self.pages.is_empty() {
+            return false;
+        }
+        let last = self.last_page();
+        let mut offsets: Vec<_> = self
+            .pages
+            .keys()
+            .copied()
+            .filter(|offset| *offset <= last)
+            .collect();
+        offsets.push(last);
+        offsets.sort_unstable();
+        offsets.dedup();
+        self.pages.retain(|offset, _| *offset <= last);
+        let mut changed = false;
+        for offset in offsets {
+            changed |= self.read_page(offset);
+        }
+        changed
+    }
+
+    fn read_page(&mut self, offset: i64) -> bool {
         match self
             .data
             .borrow()
-            .read(&self.record.key, None, false, PAGE, 0)
+            .read(&self.record.key, None, false, PAGE, offset)
         {
             Ok(page) => {
-                let changed = self.page.as_ref() != Some(&page);
-                self.page = Some(page);
+                let changed = self.pages.get(&offset) != Some(&page);
+                self.pages.insert(offset, page);
                 changed
             }
             Err(error) => {
@@ -159,9 +191,7 @@ impl Table {
                     Err(error) => self.error = Some(error.to_string()),
                 }
                 drop(data);
-                if self.page.is_some() {
-                    self.read_page();
-                }
+                self.reload_pages();
             }
             Err(error) => self.error = Some(error.clone()),
         }

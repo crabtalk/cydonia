@@ -3,7 +3,7 @@
 use crate::{
     data::{ColType, Column, Revision},
     model::{
-        table::Table,
+        table::{self as model, Table},
         workspace::{Entry, Member, Opening, Workspace},
     },
     view::{
@@ -261,7 +261,7 @@ impl Render for TablePreview {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::of(cx).clone();
         let source = self.source.read(cx);
-        let Some(page) = source.page.as_ref() else {
+        let Some(page) = source.page(0) else {
             return div()
                 .text_color(theme.danger)
                 .child(source.error.clone().unwrap_or_default())
@@ -344,6 +344,7 @@ pub(crate) struct TableView {
     source: Entity<Table>,
     sizing: Sizing,
     scroll: ScrollHandle,
+    offset: i64,
     resizing: Option<Resizing>,
     root: WeakEntity<Cydonia>,
     /// What the field is attached to, and the field itself.
@@ -382,6 +383,7 @@ impl TableView {
             source,
             sizing: Sizing::default(),
             scroll: ScrollHandle::new(),
+            offset: 0,
             resizing: None,
             root,
             cell: None,
@@ -392,7 +394,22 @@ impl TableView {
     }
 
     fn page<'a>(&self, cx: &'a App) -> Option<&'a crate::data::Page> {
-        self.source.read(cx).page.as_ref()
+        self.source.read(cx).page(self.offset)
+    }
+
+    fn show_page(&mut self, offset: i64, cx: &mut Context<Self>) {
+        if !self.commit_cell(cx) {
+            return;
+        }
+        let offset = offset.max(0).min(self.source.read(cx).last_page());
+        self.source
+            .update(cx, |source, cx| source.load_page(offset, cx));
+        if self.source.read(cx).page(offset).is_some() {
+            self.offset = offset;
+            self.scroll
+                .set_offset(gpui::point(self.scroll.offset().x, px(0.)));
+            cx.notify();
+        }
     }
 
     /// Point the field at `at`, filing whatever any pane had open first — so
@@ -506,6 +523,9 @@ impl TableView {
                 .first()
                 .map(|column| column.name.clone())
         {
+            self.show_page(self.source.read(cx).last_page(), cx);
+            self.scroll.set_offset(gpui::point(px(0.), px(0.)));
+            self.scroll.scroll_to_bottom();
             self.edit_cell(
                 Cell::Value {
                     rowid,
@@ -750,6 +770,7 @@ impl TableView {
 impl Render for TableView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::of(cx).clone();
+        self.offset = self.offset.min(self.source.read(cx).last_page());
         let Some((name, columns, rows, total)) = self.page(cx).map(|page| {
             (
                 page.name.clone(),
@@ -817,13 +838,52 @@ impl Render for TableView {
                 div()
                     .text_style(TextStyle::Subheadline)
                     .text_color(theme.text_faint)
-                    // The table's own count, not the window's — a pane that
-                    // stops at its limit without saying so reads as the end.
                     .child(match total as usize == rows.len() {
                         true => format!("{total} rows"),
-                        false => format!("{} of {total} rows", rows.len()),
+                        false => format!(
+                            "{}–{} of {total} rows",
+                            self.offset + 1,
+                            self.offset + rows.len() as i64
+                        ),
                     }),
-            );
+            )
+            .when(total > model::PAGE, |head| {
+                head.child(div().flex_1())
+                    .child(
+                        theme
+                            .ghost("table-previous")
+                            .debug_selector(|| "table-previous".into())
+                            .px(px(8.))
+                            .py(px(4.))
+                            .text_style(TextStyle::Subheadline)
+                            .opacity(if self.offset > 0 { 1. } else { 0.4 })
+                            .child("Previous")
+                            .when(self.offset > 0, |button| {
+                                button.on_click(cx.listener(|this, _, _, cx| {
+                                    this.show_page(this.offset - model::PAGE, cx)
+                                }))
+                            }),
+                    )
+                    .child(
+                        theme
+                            .ghost("table-next")
+                            .debug_selector(|| "table-next".into())
+                            .px(px(8.))
+                            .py(px(4.))
+                            .text_style(TextStyle::Subheadline)
+                            .opacity(if self.offset + model::PAGE < total {
+                                1.
+                            } else {
+                                0.4
+                            })
+                            .child("Next")
+                            .when(self.offset + model::PAGE < total, |button| {
+                                button.on_click(cx.listener(|this, _, _, cx| {
+                                    this.show_page(this.offset + model::PAGE, cx)
+                                }))
+                            }),
+                    )
+            });
 
         let count = columns.len();
         let mut headings: Vec<AnyElement> = Vec::with_capacity(count + 1);

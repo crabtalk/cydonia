@@ -99,7 +99,7 @@ fn failed_table_edits_keep_the_draft_and_failed_archives_keep_the_tab(
                 assert!(view.cell.is_none());
             });
             assert_eq!(
-                source.read(cx).page.as_ref().unwrap().rows[0].cells[0],
+                source.read(cx).page(0).unwrap().rows[0].cells[0],
                 "Keep this draft"
             );
             view.update(cx, |view, cx| {
@@ -121,7 +121,7 @@ fn failed_table_edits_keep_the_draft_and_failed_archives_keep_the_tab(
                 assert!(view.commit_cell(cx));
             });
             assert_eq!(
-                source.read(cx).page.as_ref().unwrap().rows[0].cells[0],
+                source.read(cx).page(0).unwrap().rows[0].cells[0],
                 "After schema change"
             );
             connection.execute_batch("CREATE TRIGGER reject_archive BEFORE UPDATE ON _tables WHEN NEW.archived = 1 BEGIN SELECT RAISE(ABORT, 'archive refused'); END;").unwrap();
