@@ -228,6 +228,7 @@ fn entry(project: &Project, number: u64, cx: &App) -> Option<(Showing, String)> 
             project
                 .tables
                 .iter()
+                .map(|held| &held.table.read(cx).record)
                 .find(|table| table.number == Some(number))
                 .map(|table| (Showing::Table(table.key.clone()), table.name.clone()))
         })

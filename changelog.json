@@ -2,24 +2,30 @@
   {
     "version": "0.2.12",
     "date": "2026-11-17",
-    "summary": "Run agents in embedded terminals, with automatic commands and MCP attachment for Codex and Claude Code. Add canvas web frames and browser debugging tools.",
+    "summary": "Run agents in embedded terminals, with automatic commands and MCP attachment for Codex and Claude Code. Add canvas web frames and browser debugging tools. Improve table editing and user-message visibility.",
     "new": [
       "Choose GUI or terminal mode when creating agent runs, with defaults per agent",
       "Launch popular agents in embedded terminals with automatic commands and optional advanced overrides",
       "Attach Cydonia MCP automatically to Codex and Claude Code terminal runs",
       "Embed web frames on canvases",
-      "Let agents capture browser screenshots and use browser debugging tools"
+      "Let agents capture browser screenshots and use browser debugging tools",
+      "Resize table columns, scroll wide tables horizontally, and browse rows beyond the first page"
     ],
     "changed": [
       "Keep terminal runs unnumbered, without saved Cydonia conversations or a separate terminal toolbar",
       "Replace Archive with Terminate for terminal runs, and remove runs from navigation when their processes exit",
       "Use native material scopes for shared surfaces",
-      "Use Bezel 0.2.28 from crates.io"
+      "Use Bezel 0.2.29 from crates.io"
     ],
     "fixed": [
       "Keep all sidebar labels at their natural width",
       "Constrain pending message bubbles to the available width",
-      "Keep process status messages from taking space above embedded terminals"
+      "Keep process status messages from taking space above embedded terminals",
+      "Keep table edits and archive actions tied to the correct project, and retain unsaved drafts after failed saves",
+      "Preserve table data and schema when changing column types, and reject stale edits after concurrent changes",
+      "Keep tables usable with columns named rowid, _rowid_ or oid",
+      "Preserve cell whitespace and unchanged values",
+      "Keep user-message bubbles visible in focused and resting panes"
     ]
   },
   {

@@ -58,15 +58,17 @@ pub(crate) const SHOWN: usize = 50;
 
 const PLACEHOLDER: &str = "Search articles, boards, sessions and commands…";
 
-const LINK_PLACEHOLDER: &str = "Link a session…";
+const LINK_PLACEHOLDER: &str = "Link an entry…";
 
 /// The filters in the order the chips show and `tab` steps them.
-const FILTERS: [(Option<Filter>, &str); 5] = [
+const FILTERS: [(Option<Filter>, &str); 7] = [
     (None, "All"),
     (Some(Filter::Commands), "Commands"),
     (Some(Filter::Kind(Kind::Session)), "Sessions"),
     (Some(Filter::Kind(Kind::Board)), "Boards"),
     (Some(Filter::Kind(Kind::Article)), "Articles"),
+    (Some(Filter::Kind(Kind::Canvas)), "Canvases"),
+    (Some(Filter::Kind(Kind::Table)), "Tables"),
 ];
 
 actions!(
@@ -217,14 +219,20 @@ impl Cydonia {
 
     /// Raise the palette to link an entry: Enter hands the one picked to `on`
     /// rather than opening it.
-    pub(crate) fn link_search(&mut self, on: OnLink, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn link_search(
+        &mut self,
+        kind: Kind,
+        on: OnLink,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let recent = self.list(cx).recent_rows();
         let workspace = self.workspace.clone();
         let root = cx.entity().downgrade();
         self.toggle_modal(window, cx, |window, cx| {
             let mut palette = Palette::new(workspace, root, recent, window, cx);
             palette.linking = Some(on);
-            palette.filter = Some(Filter::Kind(Kind::Session));
+            palette.filter = Some(Filter::Kind(kind));
             palette
                 .field
                 .update(cx, |field, cx| field.set_placeholder(LINK_PLACEHOLDER, cx));
@@ -618,12 +626,12 @@ impl Palette {
         self.set_filter(filters[at].0, cx);
     }
 
-    /// The kinds on offer: every one, or sessions alone while linking.
+    /// Linking keeps the kind chosen by the slash menu.
     fn filters(&self) -> Vec<(Option<Filter>, &'static str)> {
         FILTERS
             .into_iter()
             .filter(|(kind, _)| match self.linking {
-                Some(_) => *kind == Some(Filter::Kind(Kind::Session)),
+                Some(_) => *kind == self.filter,
                 None => true,
             })
             .collect()

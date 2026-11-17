@@ -1,10 +1,6 @@
-//! Shape changes. One entry point, because add, rename and retype differ only
-//! by which arguments arrive — and because the shape is the thing the display
-//! reads back, so every path to it has to be the same path.
-
 use crate::table::{
     self, ColType, Column,
-    store::sqlite::{self as data, Data},
+    store::sqlite::{self as data, Data, identity::Identity, schema::Schema},
 };
 use anyhow::{Result, bail};
 
@@ -31,6 +27,11 @@ impl Data {
             .iter()
             .position(|col| col.name.eq_ignore_ascii_case(column));
 
+        Identity::for_table(
+            &self.writer,
+            &key,
+            Some((column, rename.map(str::trim).unwrap_or(column))),
+        )?;
         let Some(at) = at else {
             let Some(kind) = kind else {
                 bail!("no column {column} on {key} — say what it holds to add it");
@@ -47,6 +48,11 @@ impl Data {
             return data::columns_of(&self.writer, &key);
         };
 
+        if let Some(kind) = kind.filter(|kind| *kind != existing[at].kind) {
+            self.rebuild(&key, &existing[at].name, kind, rename)?;
+            return data::columns_of(&self.writer, &key);
+        }
+        let tx = self.writer.savepoint()?;
         if let Some(new) = rename.map(str::trim) {
             if new.is_empty() {
                 bail!("a column needs a name");
@@ -58,63 +64,91 @@ impl Data {
             {
                 bail!("{key} already has a column {new}");
             }
-            self.writer.execute_batch(&format!(
+            tx.execute_batch(&format!(
                 "ALTER TABLE {} RENAME COLUMN {} TO {}",
                 table::quote(&key),
                 table::quote(&existing[at].name),
                 table::quote(new)
             ))?;
         }
-
-        if let Some(kind) = kind.filter(|kind| *kind != existing[at].kind) {
-            let mut next = data::columns_of(&self.writer, &key)?;
-            next[at].kind = kind;
-            self.rebuild(&key, &next)?;
-        }
+        tx.commit()?;
         data::columns_of(&self.writer, &key)
     }
 
-    /// Retype by rebuilding the table around the new declaration, which is the
-    /// only way SQLite changes a column's type.
-    ///
-    /// The copy needs no `CAST`: affinity is applied on insert, so each value
-    /// converts if it can and stays as it is if it cannot — which is the honest
-    /// outcome for a column of hand-typed text becoming a date.
-    ///
-    /// Safe to `DROP` mid-transaction because nothing in this file carries a
-    /// foreign key: table-to-table relations are deliberately unbuilt, so there
-    /// are no children for the drop to cascade into.
-    fn rebuild(&mut self, key: &str, columns: &[Column]) -> Result<()> {
-        let tmp = format!("{key}_rebuilding");
-        let defs = columns
-            .iter()
-            .map(|col| format!("{} {}", table::quote(&col.name), col.kind.sql()))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let names = columns
+    fn rebuild(
+        &mut self,
+        key: &str,
+        column: &str,
+        kind: ColType,
+        rename: Option<&str>,
+    ) -> Result<()> {
+        let tmp = self.mint_key(&format!("{key}_rebuilding"))?;
+        let schema = Schema(self.writer.query_row(
+            "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?1",
+            [key],
+            |row| row.get(0),
+        )?);
+        let create = schema.retype(&tmp, column, kind)?;
+        let rowid = Identity::for_table(&self.writer, key, None)?.0;
+        let primary: bool = self.writer.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2 AND pk <> 0)",
+            [key, column],
+            |row| row.get(0),
+        )?;
+        if primary {
+            bail!("a primary key column cannot be retyped");
+        }
+        let objects = self.writer.prepare("SELECT sql FROM sqlite_schema WHERE tbl_name = ?1 AND type IN ('index', 'trigger') AND sql IS NOT NULL")?
+            .query_map([key], |row| row.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        let names = data::columns_of(&self.writer, key)?
             .iter()
             .map(|col| table::quote(&col.name))
             .collect::<Vec<_>>()
             .join(", ");
-
-        let tx = self.writer.transaction()?;
-        for stmt in [
-            format!("DROP TABLE IF EXISTS {}", table::quote(&tmp)),
-            format!("CREATE TABLE {} ({defs})", table::quote(&tmp)),
-            format!(
-                "INSERT INTO {} (rowid, {names}) SELECT rowid, {names} FROM {}",
+        let foreign_keys: bool = self
+            .writer
+            .pragma_query_value(None, "foreign_keys", |row| row.get(0))?;
+        self.writer.pragma_update(None, "foreign_keys", false)?;
+        let result = (|| -> Result<()> {
+            let tx = self.writer.transaction()?;
+            tx.execute_batch(&create)?;
+            tx.execute_batch(&format!(
+                "INSERT INTO {} ({rowid}, {names}) SELECT {rowid}, {names} FROM {}",
                 table::quote(&tmp),
                 table::quote(key)
-            ),
-            format!("DROP TABLE {}", table::quote(key)),
-            format!(
+            ))?;
+            tx.execute_batch(&format!("DROP TABLE {}", table::quote(key)))?;
+            tx.execute_batch(&format!(
                 "ALTER TABLE {} RENAME TO {}",
                 table::quote(&tmp),
                 table::quote(key)
-            ),
-        ] {
-            tx.execute_batch(&stmt)?;
-        }
-        Ok(tx.commit()?)
+            ))?;
+            for sql in objects {
+                tx.execute_batch(&sql)?;
+            }
+            if let Some(new) = rename {
+                if new.trim().is_empty() {
+                    bail!("a column needs a name");
+                }
+                tx.execute_batch(&format!(
+                    "ALTER TABLE {} RENAME COLUMN {} TO {}",
+                    table::quote(key),
+                    table::quote(column),
+                    table::quote(new.trim())
+                ))?;
+            }
+            let violations: i64 =
+                tx.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |row| {
+                    row.get(0)
+                })?;
+            if violations != 0 {
+                bail!("column type change violates foreign keys");
+            }
+            tx.commit()?;
+            Ok(())
+        })();
+        self.writer
+            .pragma_update(None, "foreign_keys", foreign_keys)?;
+        result
     }
 }

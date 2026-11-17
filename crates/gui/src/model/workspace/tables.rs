@@ -1,262 +1,148 @@
-//! The tables a project holds: the store behind them, and every edit that
-//! reaches one.
-//!
-//! A continuation of [`Workspace`]'s one `impl`, which is why it opens on
-//! `use super::*`: these methods work on the same struct and reach the same
-//! names as the rest of it.
-use super::*;
-use crate::data::Home;
+use crate::{
+    data::{ColType, Column, Data, Home},
+    model::{
+        table::Table,
+        workspace::{Entry, Workspace},
+    },
+};
 use artifact::kind::Kind;
+use bezel::gpui::{App, Context, Entity};
+use std::{cell::RefCell, rc::Rc};
+
+const UNTITLED: &str = "Untitled";
 
 impl Workspace {
-    /// A fresh table in the active project, opened as it lands.
-    ///
-    /// One text column, because the store will not make a table without one
-    /// and a column you can rename is a better start than a dialog asking for
-    /// the shape before anything exists to shape.
     pub fn new_table(&mut self, cx: &mut Context<Self>) -> Option<usize> {
-        let ix = self.create_table()?;
+        let ix = self.create_table(cx)?;
         self.open_table(self.active?, ix, cx);
         Some(ix)
     }
 
-    /// The same, not opened — what a space's pane takes as a tab without
-    /// leaving the space.
-    pub fn create_table(&mut self) -> Option<usize> {
+    pub fn create_table(&mut self, cx: &mut App) -> Option<usize> {
         if !self.settings.features.tables {
             return None;
         }
-        let at = self.active?;
-        let project = self.projects.get_mut(at)?;
-        // The one place a store is created: making a table is the moment the
-        // project has something to keep in one.
+        let project = self.projects.get_mut(self.active?)?;
         if project.data.is_none() {
-            project.data = Data::open(&Home::Project(project.path.clone())).ok();
+            project.data = Data::open(&Home::Project(project.path.clone()))
+                .ok()
+                .map(|data| Rc::new(RefCell::new(data)));
         }
         let mut name = UNTITLED.to_owned();
         for n in 2.. {
-            if !project.tables.iter().any(|table| table.name == name) {
+            if !project
+                .tables
+                .iter()
+                .any(|held| held.table.read(cx).record.name == name)
+            {
                 break;
             }
             name = format!("{UNTITLED} {n}");
         }
-        let column = Column {
-            name: "Name".to_owned(),
-            kind: ColType::Text,
-        };
         let key = project
             .data
-            .as_mut()?
-            .create(&name, None, &[column], None)
+            .as_ref()?
+            .borrow_mut()
+            .create(
+                &name,
+                None,
+                &[Column {
+                    name: "Name".into(),
+                    kind: ColType::Text,
+                }],
+                None,
+            )
             .ok()?
             .key;
-        project.reload_tables();
-        // Found by key rather than taken as a known row: the list is ordered by
-        // age, and where the newest lands is the list's business, not this one's.
+        project.reload_tables(cx);
         project.table_ix(&key)
     }
 
-    /// Every project's tables are on show, so picking one brings its project
-    /// forward with it.
     pub fn open_table(&mut self, project: usize, ix: usize, cx: &mut Context<Self>) {
         let Some(open) = self.projects.get_mut(project) else {
             return;
         };
-        if ix >= open.tables.len() {
+        let Some(held) = open.tables.get(ix) else {
             return;
-        }
+        };
+        let id = held.key.clone();
         open.table = Some(ix);
-        open.reload_page();
-        let id = open.tables[ix].key.clone();
+        open.load_table(ix, cx);
         self.active = Some(project);
         self.remember(project, Kind::Table, id, cx);
         cx.notify();
     }
 
-    /// Drop the table: its rows go with it.
     pub fn delete_table(&mut self, project: usize, ix: usize, cx: &mut Context<Self>) {
         let Some(open) = self.projects.get_mut(project) else {
             return;
         };
-        let Some(key) = open.tables.get(ix).map(|table| table.key.clone()) else {
+        let Some(held) = open.tables.get(ix) else {
             return;
         };
-        if let Some(data) = open.data.as_mut() {
-            let _ = data.remove(&key);
+        let Some(data) = open.data.as_ref() else {
+            return;
+        };
+        if let Err(error) = data.borrow_mut().remove(&held.key) {
+            held.table.update(cx, |table, cx| {
+                table.error = Some(error.to_string());
+                cx.notify();
+            });
+            return;
         }
-        open.table = open
-            .table
-            .filter(|shown| *shown != ix)
-            .map(|shown| if shown > ix { shown - 1 } else { shown });
-        open.reload_tables();
+        open.reload_tables(cx);
         cx.notify();
     }
 
-    /// The name of column `at` of one table, which is what the store addresses
-    /// one by.
-    fn column_name(&self, key: &str, at: usize) -> Option<String> {
-        let page = self.page_at(key)?;
-        page.columns.get(at).map(|column| column.name.clone())
+    pub fn table_entity(&self, entry: &Entry) -> Option<&Entity<Table>> {
+        if !self.settings.features.tables || entry.kind != Kind::Table {
+            return None;
+        }
+        let project = self.project(entry.project)?;
+        Some(&project.tables.get(project.table_ix(&entry.id)?)?.table)
     }
 
-    /// Write one cell. The text goes in as text whatever the column holds —
-    /// SQLite's affinity converts it on the way, so a number typed into a
-    /// number column lands as one and the same text in a text column stays put.
-    pub fn write_cell(
+    pub fn edit_table<T>(
         &mut self,
-        key: &str,
-        rowid: i64,
-        at: usize,
-        text: String,
+        entry: &Entry,
         cx: &mut Context<Self>,
-    ) {
-        let Some(column) = self.column_name(key, at) else {
-            return;
-        };
-        self.keep_edited(Kind::Table, key);
-        let value = match text.is_empty() {
-            true => serde_json::Value::Null,
-            false => serde_json::Value::String(text),
-        };
-        self.with_store(key, cx, |data, key| {
-            let _ = data.write_cells(
-                key,
-                &[Edit {
-                    rowid,
-                    column,
-                    value,
-                }],
-            );
-        });
-    }
-
-    pub fn add_row(&mut self, key: &str, cx: &mut Context<Self>) -> Option<i64> {
-        self.with_store(key, cx, |data, key| {
-            data.add_rows(key, 1)
-                .ok()
-                .and_then(|ids| ids.first().copied())
-        })
-        .flatten()
-    }
-
-    pub fn delete_row(&mut self, key: &str, rowid: i64, cx: &mut Context<Self>) {
-        self.with_store(key, cx, |data, key| {
-            let _ = data.delete_rows(key, &[rowid]);
-        });
-    }
-
-    /// A fresh text column, named so it does not collide with one already
-    /// there — the header is where it gets its real name.
-    pub fn add_column(&mut self, key: &str, cx: &mut Context<Self>) {
-        let taken: Vec<String> = self
-            .page_at(key)
-            .map(|page| page.columns.iter().map(|col| col.name.clone()).collect())
-            .unwrap_or_default();
-        let mut name = COLUMN.to_owned();
-        for n in 2.. {
-            if !taken.contains(&name) {
-                break;
+        edit: impl FnOnce(&mut Table, &mut Context<Table>) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let source = self
+            .table_entity(entry)
+            .cloned()
+            .ok_or("table is no longer open")?;
+        let result = source.update(cx, edit);
+        if result.is_ok() {
+            if self.preview.as_ref().and_then(|member| member.entry()) == Some(entry) {
+                self.preview = None;
             }
-            name = format!("{COLUMN} {n}");
+            let project = self
+                .projects
+                .iter_mut()
+                .find(|project| project.id == entry.project)
+                .expect("table belongs to an open project");
+            project.reload_tables(cx);
+            cx.notify();
         }
-        self.with_store(key, cx, |data, key| {
-            let _ = data.write_column(key, &name, Some(ColType::Text), None);
-        });
+        result
     }
 
-    /// Rename column `at`, retype it, or both — one call, as the store has it.
-    pub fn write_column(
+    pub fn rename_table(
         &mut self,
-        key: &str,
-        at: usize,
-        kind: Option<ColType>,
-        rename: Option<String>,
+        entry: &Entry,
+        name: String,
         cx: &mut Context<Self>,
-    ) {
-        let Some(column) = self.column_name(key, at) else {
-            return;
-        };
-        self.with_store(key, cx, |data, key| {
-            let _ = data.write_column(key, &column, kind, rename.as_deref());
-        });
+    ) -> Result<(), String> {
+        self.edit_table(entry, cx, |table, cx| table.rename(&name, cx))
     }
 
-    pub fn delete_column(&mut self, key: &str, at: usize, cx: &mut Context<Self>) {
-        let Some(column) = self.column_name(key, at) else {
-            return;
-        };
-        self.with_store(key, cx, |data, key| {
-            let _ = data.drop_column(key, &column);
-        });
-    }
-
-    /// The display name only. The key stays where it is, so a query already
-    /// written against this table goes on running.
-    pub fn rename_table(&mut self, key: &str, name: String, cx: &mut Context<Self>) {
-        self.with_store(key, cx, |data, key| {
-            let _ = data.update(key, Some(name.trim()), None);
-        });
-    }
-
-    pub fn archive_table(&mut self, key: &str, archived: bool, cx: &mut Context<Self>) {
-        self.with_store(key, cx, |data, key| {
-            let _ = data.archive(key, archived);
-        });
-        self.prune_archived(cx);
-    }
-
-    /// Run `f` against whichever store holds `key`, then re-read what it did.
-    ///
-    /// Every table mutation goes through here, named by the table: none of
-    /// them can forget the reload — a grid still showing the row you just
-    /// deleted is the bug this shape makes unwritable — and none of them can
-    /// land in a table other than the one asked for, which the window can have
-    /// two of on screen.
-    fn with_store<T>(
+    pub fn archive_table(
         &mut self,
-        key: &str,
+        entry: &Entry,
+        archived: bool,
         cx: &mut Context<Self>,
-        f: impl FnOnce(&mut Data, &str) -> T,
-    ) -> Option<T> {
-        let project = self
-            .projects
-            .iter_mut()
-            .find(|open| open.tables.iter().any(|table| table.key == key))?;
-        let done = f(project.data.as_mut()?, key);
-        // Working in a table is what makes it the table you were last in, and
-        // the list is ordered by that.
-        let _ = project.data.as_mut()?.touch(key);
-        project.reload_tables();
-        cx.notify();
-        Some(done)
-    }
-
-    /// Hold the pages of the tables drawn outside the table pane, by project
-    /// path and key, letting go of every other held page.
-    pub fn hold_pages(&mut self, held: &[(ProjectId, String)]) {
-        for open in &mut self.projects {
-            open.hold_pages(
-                held.iter()
-                    .filter(|(project, _)| *project == open.id)
-                    .map(|(_, key)| key.clone())
-                    .collect(),
-            );
-        }
-    }
-
-    /// The rows of one table, wherever it is open.
-    pub fn page_at(&self, key: &str) -> Option<&Page> {
-        if !self.settings.features.tables {
-            return None;
-        }
-        self.projects.iter().find_map(|open| open.pages.get(key))
-    }
-
-    pub fn active_table(&self) -> Option<&Table> {
-        if !self.settings.features.tables {
-            return None;
-        }
-        let project = self.active_project()?;
-        project.tables.get(project.table?)
+    ) -> Result<(), String> {
+        self.edit_table(entry, cx, |table, cx| table.archive(archived, cx))
     }
 }

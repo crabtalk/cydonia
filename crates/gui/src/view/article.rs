@@ -8,7 +8,7 @@ use crate::{
     model::{
         article,
         palette::Washes,
-        workspace::{Entry, Opening, Showing, Workspace},
+        workspace::{Entry, Member, Opening, Showing, Workspace},
     },
     view::{
         component::{
@@ -453,12 +453,19 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.commit(cx) {
+            return;
+        }
         self.select_project(project, cx);
         let ix = self
             .workspace
             .update(cx, |workspace, cx| workspace.new_article(cx));
         if let Some(ix) = ix {
-            self.open_article(project, ix, Opening::Kept, window, cx);
+            let Some(member) = self.workspace.read(cx).article_member(project, ix) else {
+                return;
+            };
+            self.land_member(member.clone(), window, cx);
+            self.focus_article(member, window, cx);
         }
     }
 
@@ -472,11 +479,17 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.commit(cx);
+        if !self.commit(cx) {
+            return;
+        }
         let Some(member) = self.workspace.read(cx).article_member(project, ix) else {
             return;
         };
         self.enter_member(member.clone(), opening, window, cx);
+        self.focus_article(member, window, cx);
+    }
+
+    fn focus_article(&mut self, member: Member, window: &mut Window, cx: &mut Context<Self>) {
         let Some(pane) = self.leaf().cloned() else {
             return;
         };

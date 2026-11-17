@@ -155,7 +155,12 @@ impl Tab {
             return view.clone();
         }
         let (workspace, root) = (self.workspace.clone(), self.root.clone());
-        let view = cx.new(|cx| TableView::new(table, workspace, root, cx));
+        let source = workspace
+            .read(cx)
+            .table_entity(&table)
+            .expect("table is open")
+            .clone();
+        let view = cx.new(|cx| TableView::new(table, workspace, root, source, cx));
         self.tables.push(view.clone());
         view
     }

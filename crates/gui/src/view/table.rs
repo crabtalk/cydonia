@@ -1,11 +1,11 @@
 //! The table pane: one table's rows, and the sidebar row that opens it.
 //!
-//! Every edit runs through the one field, the way the board's cards do — a
-//! field per cell would mint an entity for every value on screen.
-
 use crate::{
-    data::ColType,
-    model::workspace::{Entry, Member, Opening, Workspace},
+    data::{ColType, Column, Revision},
+    model::{
+        table::{self as model, Table},
+        workspace::{Entry, Member, Opening, Workspace},
+    },
     view::{
         kit::{
             add,
@@ -16,8 +16,9 @@ use crate::{
 };
 use bezel::{
     gpui::{
-        self, AnyElement, App, Context, Div, Entity, Focusable as _, KeyBinding, SharedString,
-        WeakEntity, Window, actions, div, prelude::*, px,
+        self, AnyElement, App, Axis, Context, Div, DragMoveEvent, Empty, Entity, EntityId,
+        Focusable as _, KeyBinding, MouseButton, Pixels, ScrollHandle, SharedString, WeakEntity,
+        Window, actions, div, prelude::*, px,
     },
     theme::{Selection, TextStyle, Theme, Typeset},
     ui::{
@@ -26,10 +27,11 @@ use bezel::{
         input::{Shape, TextField},
         menu::Item,
         scroll as scrollbars, table,
-        widgets::Buttons,
+        widgets::{Buttons, Layout as _, SplitStyle},
     },
 };
 use serde_json::Value;
+use std::{cell::Cell as ValueCell, collections::HashMap, rc::Rc};
 
 /// Claimed on top of `TextField`, so `enter` files the cell here and stays a
 /// newline in every other field.
@@ -43,6 +45,70 @@ const LINE: f32 = 18.;
 /// The column the row actions sit in — the trash on a row, the `+` on the
 /// header. Declared with the data columns so both halves line up.
 const ACTIONS: f32 = 44.;
+
+const COLUMN_WIDTH: f32 = 180.;
+const MIN_COLUMN_WIDTH: f32 = 80.;
+const INSET: f32 = 24.;
+const PREVIEW_INSET: f32 = 16.;
+
+#[derive(Default)]
+struct Sizing {
+    available: Rc<ValueCell<Pixels>>,
+    widths: HashMap<String, Pixels>,
+}
+
+impl Sizing {
+    fn columns(&self, columns: &[Column], tail: Pixels) -> (Vec<table::Column>, Pixels) {
+        let default = ((self.available.get() - tail - px(2.)) / columns.len().max(1) as f32)
+            .max(px(COLUMN_WIDTH));
+        let mut width = tail + px(2.);
+        let declared = columns
+            .iter()
+            .map(|column| {
+                let measure = self.widths.get(&column.name).copied().unwrap_or(default);
+                width += measure;
+                let declared =
+                    table::Column::new(column.name.clone(), table::Width::Fixed(measure));
+                match column.kind {
+                    ColType::Number => declared.align_end(),
+                    _ => declared,
+                }
+            })
+            .collect();
+        (declared, width)
+    }
+
+    fn rename(&mut self, before: &str, after: String) {
+        if let Some(width) = self.widths.remove(before) {
+            self.widths.insert(after, width);
+        }
+    }
+
+    fn measure<V: 'static>(&self, inset: f32, cx: &Context<V>) -> AnyElement {
+        let available = self.available.clone();
+        let view = cx.weak_entity();
+        gpui::canvas(
+            move |bounds, _, cx| {
+                let width = (bounds.size.width - px(inset * 2.)).max(px(0.));
+                if available.replace(width) != width {
+                    view.update(cx, |_, cx| cx.notify()).ok();
+                }
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .size_full()
+        .into_any_element()
+    }
+}
+
+struct Resizing {
+    column: String,
+    start: Pixels,
+    width: Pixels,
+}
+
+struct ColumnResize(EntityId);
 
 actions!(cydonia_table, [CommitCell, DismissCell]);
 
@@ -66,12 +132,12 @@ pub fn field(cx: &mut App) -> Entity<TextField> {
 }
 
 /// What the field is attached to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Cell {
     /// A value being written, in the row with this id.
-    Value { rowid: i64, column: usize },
+    Value { rowid: i64, column: String },
     /// A column being renamed.
-    Head(usize),
+    Head(String),
     /// The table being renamed.
     Name,
 }
@@ -99,12 +165,17 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.commit(cx) {
+            return;
+        }
         self.select_project(project, cx);
         let ix = self
             .workspace
             .update(cx, |workspace, cx| workspace.new_table(cx));
-        if let Some(ix) = ix {
-            self.open_table(project, ix, Opening::Kept, window, cx);
+        if let Some(ix) = ix
+            && let Some(member) = self.workspace.read(cx).table_member(project, ix)
+        {
+            self.land_member(member, window, cx);
         }
     }
 
@@ -116,7 +187,9 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.commit(cx);
+        if !self.commit(cx) {
+            return;
+        }
         let Some(member) = self.workspace.read(cx).table_member(project, ix) else {
             return;
         };
@@ -139,47 +212,71 @@ impl Cydonia {
 
     /// File every table view's open field. Called from [`Cydonia::commit`],
     /// so every way out of a pane goes through it.
-    pub(crate) fn commit_cell(&mut self, cx: &mut Context<Self>) {
-        for view in self.table_views(cx) {
-            view.update(cx, |view, cx| view.commit_cell(cx));
-        }
-    }
-
-    /// Let go of every table view's open field: a re-read moved what it was
-    /// attached to, which is addressed by where it sits.
-    pub(crate) fn drop_cells(&mut self, cx: &mut Context<Self>) {
-        for view in self.table_views(cx) {
-            view.update(cx, |view, cx| view.drop_cell(cx));
-        }
+    pub(crate) fn commit_cell(&mut self, cx: &mut Context<Self>) -> bool {
+        self.table_views(cx)
+            .into_iter()
+            .all(|view| view.update(cx, |view, cx| view.commit_cell(cx)))
     }
 
     // ── chrome ───────────────────────────────────────────────────
 
-    /// A table's rows, read only — what a drawer shows of one. Nothing until
-    /// its page has been read; see [`Cydonia::hold_drawn_tables`].
     pub(crate) fn table_peek(
         &self,
         project: usize,
         at: usize,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        let theme = Theme::of(cx).clone();
-        let page = self.workspace.read(cx).page_in(project, at)?;
-        let declared: Vec<table::Column> = page
-            .columns
-            .iter()
-            .map(|column| {
-                let shape = table::Column::new(column.name.clone(), table::Width::Flex(1.));
-                match column.kind {
-                    ColType::Number => shape.align_end(),
-                    _ => shape,
+        let source = self
+            .workspace
+            .read(cx)
+            .projects
+            .get(project)?
+            .tables
+            .get(at)?
+            .table
+            .clone();
+        let view = window.use_keyed_state(
+            SharedString::from(format!("table-peek-{:?}", source.entity_id())),
+            cx,
+            move |_, cx| {
+                cx.observe(&source, |_, _, cx| cx.notify()).detach();
+                source.update(cx, |table, cx| table.load(cx));
+                TablePreview {
+                    source,
+                    sizing: Sizing::default(),
+                    scroll: ScrollHandle::new(),
                 }
-            })
-            .collect();
+            },
+        );
+        Some(view.into_any_element())
+    }
+}
+
+struct TablePreview {
+    source: Entity<Table>,
+    sizing: Sizing,
+    scroll: ScrollHandle,
+}
+
+impl Render for TablePreview {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = Theme::of(cx).clone();
+        let source = self.source.read(cx);
+        let Some(page) = source.page(0) else {
+            return div()
+                .text_color(theme.danger)
+                .child(source.error.clone().unwrap_or_default())
+                .into_any_element();
+        };
+        let (declared, width) = self.sizing.columns(&page.columns, px(0.));
         let headings = declared
             .iter()
             .map(|column| table::header_cell(&theme, column, None).cursor_default());
-        let mut body = table::table(&theme).child(table::header(&theme).children(headings));
+        let mut body = table::table(&theme)
+            .w(width)
+            .min_w_full()
+            .child(table::header(&theme).children(headings));
         for (n, record) in page.rows.iter().enumerate() {
             let cells = (0..declared.len())
                 .map(|ix| {
@@ -201,26 +298,42 @@ impl Cydonia {
             true => format!("{} rows", page.total),
             false => format!("{} of {} rows", page.rows.len(), page.total),
         };
-        Some(
-            div()
-                .id("table-peek")
-                .flex_1()
-                .min_h_0()
-                .map(|el| scrollbars::scrolls(el, scrollbars::Axes::Vertical))
-                .px(px(16.))
-                .py(px(12.))
-                .flex()
-                .flex_col()
-                .gap(px(8.))
-                .child(body)
-                .child(
-                    div()
-                        .text_style(TextStyle::Subheadline)
-                        .text_color(theme.text_faint)
-                        .child(count),
-                )
-                .into_any_element(),
-        )
+        div()
+            .relative()
+            .flex_1()
+            .min_w_0()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .child(
+                scrollbars::pane("table-peek", scrollbars::Axes::Both)
+                    .flex_1()
+                    .min_w_0()
+                    .min_h_0()
+                    .track_scroll(&self.scroll)
+                    .px(px(PREVIEW_INSET))
+                    .py(px(12.))
+                    .child(body)
+                    .child(
+                        div()
+                            .mt(px(8.))
+                            .text_style(TextStyle::Subheadline)
+                            .text_color(theme.text_faint)
+                            .child(count),
+                    ),
+            )
+            .child(scrollbars::Overlay::new(
+                "table-peek-vertical",
+                &self.scroll,
+                Axis::Vertical,
+            ))
+            .child(scrollbars::Overlay::new(
+                "table-peek-horizontal",
+                &self.scroll,
+                Axis::Horizontal,
+            ))
+            .child(self.sizing.measure(PREVIEW_INSET, cx))
+            .into_any_element()
     }
 }
 
@@ -230,9 +343,16 @@ pub(crate) struct TableView {
     /// The table, as the space names it.
     pub(crate) table: Entry,
     workspace: Entity<Workspace>,
+    source: Entity<Table>,
+    sizing: Sizing,
+    scroll: ScrollHandle,
+    offset: i64,
+    resizing: Option<Resizing>,
     root: WeakEntity<Cydonia>,
     /// What the field is attached to, and the field itself.
     pub(crate) cell: Option<Cell>,
+    revision: Option<Revision>,
+    original: Option<String>,
     pub(crate) cell_field: Entity<TextField>,
     /// The column menu that is up, by column.
     menu: ContextMenu<Self, usize>,
@@ -255,30 +375,45 @@ impl TableView {
         table: Entry,
         workspace: Entity<Workspace>,
         root: WeakEntity<Cydonia>,
+        source: Entity<Table>,
         cx: &mut Context<Self>,
     ) -> Self {
+        cx.observe(&source, |_, _, cx| cx.notify()).detach();
+        source.update(cx, |table, cx| table.load(cx));
         Self {
             table,
             workspace,
+            source,
+            sizing: Sizing::default(),
+            scroll: ScrollHandle::new(),
+            offset: 0,
+            resizing: None,
             root,
             cell: None,
+            revision: None,
+            original: None,
             cell_field: field(cx),
             menu: ContextMenu::default(),
         }
     }
 
-    /// The table's key, while it is open.
-    fn key(&self, cx: &App) -> Option<String> {
-        self.workspace
-            .read(cx)
-            .table_of(Some(&self.table.clone().into()), cx)
-            .map(|table| table.key.clone())
+    fn page<'a>(&self, cx: &'a App) -> Option<&'a crate::data::Page> {
+        self.source.read(cx).page(self.offset)
     }
 
-    /// The rows the view is showing.
-    fn page<'a>(&self, cx: &'a App) -> Option<&'a crate::data::Page> {
-        let key = self.key(cx)?;
-        self.workspace.read(cx).page_at(&key)
+    fn show_page(&mut self, offset: i64, cx: &mut Context<Self>) {
+        if !self.commit_cell(cx) {
+            return;
+        }
+        let offset = offset.max(0).min(self.source.read(cx).last_page());
+        self.source
+            .update(cx, |source, cx| source.load_page(offset, cx));
+        if self.source.read(cx).page(offset).is_some() {
+            self.offset = offset;
+            self.scroll
+                .set_offset(gpui::point(self.scroll.offset().x, px(0.)));
+            cx.notify();
+        }
     }
 
     /// Point the field at `at`, filing whatever any pane had open first — so
@@ -286,67 +421,92 @@ impl TableView {
     fn edit_cell(&mut self, at: Cell, window: &mut Window, cx: &mut Context<Self>) {
         let (root, view) = (self.root.clone(), cx.entity());
         window.defer(cx, move |window, cx| {
-            let _ = root.update(cx, |root, cx| root.commit(cx));
-            view.update(cx, |view, cx| view.start_edit(at, window, cx));
+            if root
+                .update(cx, |root, cx| root.commit(cx))
+                .is_ok_and(|saved| !saved)
+            {
+                return;
+            }
+            view.update(cx, |view, cx| {
+                if view.cell.is_none() {
+                    view.start_edit(at, window, cx);
+                }
+            });
         });
     }
 
     fn start_edit(&mut self, at: Cell, window: &mut Window, cx: &mut Context<Self>) {
-        let text = match at {
+        let text = match &at {
             Cell::Value { rowid, column } => self
                 .page(cx)
-                .and_then(|page| page.rows.iter().find(|record| record.rowid == rowid))
-                .and_then(|record| record.cells.get(column))
+                .and_then(|page| {
+                    let ix = page.columns.iter().position(|held| held.name == *column)?;
+                    page.rows
+                        .iter()
+                        .find(|record| record.rowid == *rowid)?
+                        .cells
+                        .get(ix)
+                })
                 .map(text)
                 .unwrap_or_default(),
-            Cell::Head(ix) => self
-                .page(cx)
-                .and_then(|page| page.columns.get(ix))
-                .map(|column| column.name.clone())
-                .unwrap_or_default(),
-            Cell::Name => self
-                .workspace
-                .read(cx)
-                .table_of(Some(&self.table.clone().into()), cx)
-                .map(|table| table.name.clone())
-                .unwrap_or_default(),
+            Cell::Head(name) => name.clone(),
+            Cell::Name => self.source.read(cx).record.name.clone(),
         };
+        self.original = Some(text.clone());
         self.cell_field
             .update(cx, |field, cx| field.set_content(text, cx));
+        self.revision = self.page(cx).map(|page| page.revision);
         self.cell = Some(at);
         window.focus(&self.cell_field.read(cx).focus_handle(cx), cx);
         cx.notify();
     }
 
-    /// File whatever the field is attached to.
-    ///
-    /// A heading and a title cannot be emptied — a column with no name is not
-    /// addressable and a table with none has nothing to show in the sidebar — so
-    /// an empty one is a cancel. A *cell* may be emptied: that is how a value
-    /// is cleared.
-    pub(crate) fn commit_cell(&mut self, cx: &mut Context<Self>) {
-        let Some(at) = self.cell.take() else {
-            return;
+    pub(crate) fn commit_cell(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(at) = self.cell.clone() else {
+            return true;
         };
-        let text = self.cell_field.read(cx).content().trim().to_owned();
-        self.cell_field.update(cx, |field, cx| field.clear(cx));
-        let Some(key) = self.key(cx) else {
-            return;
+        let text = self.cell_field.read(cx).content().to_string();
+        if self.original.as_deref() == Some(&text) {
+            self.drop_cell(cx);
+            return true;
+        }
+        let text = match at {
+            Cell::Value { .. } => text,
+            _ => text.trim().to_owned(),
         };
-        self.workspace.update(cx, |workspace, cx| match at {
-            Cell::Value { rowid, column } => workspace.write_cell(&key, rowid, column, text, cx),
-            Cell::Head(ix) if !text.is_empty() => {
-                workspace.write_column(&key, ix, None, Some(text), cx);
-            }
-            Cell::Name if !text.is_empty() => workspace.rename_table(&key, text, cx),
-            _ => {}
+        let renamed = match &at {
+            Cell::Head(column) if !text.is_empty() => Some((column.clone(), text.clone())),
+            _ => None,
+        };
+        let entry = self.table.clone();
+        let revision = self.revision;
+        let saved = self.workspace.update(cx, |workspace, cx| {
+            workspace.edit_table(&entry, cx, |table, cx| match at {
+                Cell::Value { rowid, column } => {
+                    table.write_cell(rowid, column, text, revision, cx)
+                }
+                Cell::Head(column) if !text.is_empty() => {
+                    table.write_column(&column, None, Some(&text), cx)
+                }
+                Cell::Name if !text.is_empty() => table.rename(&text, cx),
+                _ => Ok(()),
+            })
         });
+        if saved.is_ok() {
+            if let Some((before, after)) = renamed {
+                self.sizing.rename(&before, after);
+            }
+            self.drop_cell(cx);
+        }
         cx.notify();
+        saved.is_ok()
     }
 
     /// Let go of the field without filing it.
     fn drop_cell(&mut self, cx: &mut Context<Self>) {
         self.cell = None;
+        self.original = None;
+        self.revision = None;
         self.cell_field.update(cx, |field, cx| field.clear(cx));
         cx.notify();
     }
@@ -360,54 +520,77 @@ impl TableView {
         self.drop_cell(cx);
     }
 
-    /// A row, and the caret in the first cell of it — an empty row you have to
-    /// go and click is two actions for one intent.
     fn add_row(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.commit_cell(cx);
-        let Some(key) = self.key(cx) else {
+        if !self.commit_cell(cx) {
             return;
-        };
-        let rowid = self
-            .workspace
-            .update(cx, |workspace, cx| workspace.add_row(&key, cx));
-        if let Some(rowid) = rowid {
-            self.edit_cell(Cell::Value { rowid, column: 0 }, window, cx);
+        }
+        let entry = self.table.clone();
+        let rowid = self.workspace.update(cx, |workspace, cx| {
+            workspace.edit_table(&entry, cx, |table, cx| table.add_row(cx))
+        });
+        if let Ok(rowid) = rowid
+            && let Some(column) = self
+                .source
+                .read(cx)
+                .record
+                .columns
+                .first()
+                .map(|column| column.name.clone())
+        {
+            self.show_page(self.source.read(cx).last_page(), cx);
+            self.scroll.set_offset(gpui::point(px(0.), px(0.)));
+            self.scroll.scroll_to_bottom();
+            self.edit_cell(
+                Cell::Value {
+                    rowid,
+                    column: column.clone(),
+                },
+                window,
+                cx,
+            );
         }
     }
 
     fn delete_row(&mut self, rowid: i64, cx: &mut Context<Self>) {
-        self.commit_cell(cx);
-        let Some(key) = self.key(cx) else {
+        if !self.commit_cell(cx) {
             return;
-        };
-        self.workspace
-            .update(cx, |workspace, cx| workspace.delete_row(&key, rowid, cx));
-    }
-
-    fn add_column(&mut self, cx: &mut Context<Self>) {
-        self.commit_cell(cx);
-        let Some(key) = self.key(cx) else {
-            return;
-        };
-        self.workspace
-            .update(cx, |workspace, cx| workspace.add_column(&key, cx));
-    }
-
-    fn retype_column(&mut self, at: usize, kind: ColType, cx: &mut Context<Self>) {
-        let Some(key) = self.key(cx) else {
-            return;
-        };
-        self.workspace.update(cx, |workspace, cx| {
-            workspace.write_column(&key, at, Some(kind), None, cx)
+        }
+        let entry = self.table.clone();
+        let _ = self.workspace.update(cx, |workspace, cx| {
+            workspace.edit_table(&entry, cx, |table, cx| table.delete_row(rowid, cx))
         });
     }
 
-    fn delete_column(&mut self, at: usize, cx: &mut Context<Self>) {
-        let Some(key) = self.key(cx) else {
+    fn add_column(&mut self, cx: &mut Context<Self>) {
+        if !self.commit_cell(cx) {
             return;
-        };
-        self.workspace
-            .update(cx, |workspace, cx| workspace.delete_column(&key, at, cx));
+        }
+        let entry = self.table.clone();
+        let _ = self.workspace.update(cx, |workspace, cx| {
+            workspace.edit_table(&entry, cx, |table, cx| table.add_column(cx))
+        });
+    }
+
+    fn retype_column(&mut self, column: &str, kind: ColType, cx: &mut Context<Self>) {
+        if !self.commit_cell(cx) {
+            return;
+        }
+        let entry = self.table.clone();
+        let _ = self.workspace.update(cx, |workspace, cx| {
+            workspace.edit_table(&entry, cx, |table, cx| {
+                table.write_column(column, Some(kind), None, cx)
+            })
+        });
+    }
+
+    fn delete_column(&mut self, column: &str, cx: &mut Context<Self>) {
+        if !self.commit_cell(cx) {
+            return;
+        }
+        let entry = self.table.clone();
+        let _ = self.workspace.update(cx, |workspace, cx| {
+            workspace.edit_table(&entry, cx, |table, cx| table.delete_column(column, cx))
+        });
     }
 
     /// The field, wired so a click anywhere else files it.
@@ -419,7 +602,9 @@ impl TableView {
         div()
             .w_full()
             .child(self.cell_field.clone())
-            .on_mouse_down_out(cx.listener(|this, _, _, cx| this.commit_cell(cx)))
+            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                this.commit_cell(cx);
+            }))
     }
 
     /// One heading: the column's name, and the menu that changes what it is.
@@ -432,16 +617,47 @@ impl TableView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        if self.cell == Some(Cell::Head(ix)) {
+        let table::Width::Fixed(width) = shape.width else {
+            unreachable!("table columns have measured widths");
+        };
+        let column = shape.label.to_string();
+        let grip = theme
+            .split_handle(Axis::Horizontal, SplitStyle::Ghost)
+            .id(("column-resize", ix))
+            .debug_selector(move || format!("table-resize-{ix}"))
+            .absolute()
+            .top_0()
+            .right_0()
+            .occlude()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, event: &gpui::MouseDownEvent, _, cx| {
+                    this.resizing = Some(Resizing {
+                        column: column.clone(),
+                        start: event.position.x,
+                        width,
+                    });
+                    cx.stop_propagation();
+                }),
+            )
+            .on_click(cx.listener(|_, _, _, cx| cx.stop_propagation()))
+            .on_drag(ColumnResize(cx.entity().entity_id()), |_, _, _, cx| {
+                cx.new(|_| Empty)
+            });
+        if self.cell == Some(Cell::Head(shape.label.to_string())) {
             // `header_cell` paints the label itself, so the shape handed to it
             // while editing carries none — otherwise the old name sits beside
             // the field that is rewriting it.
             let mut blank = shape.clone();
             blank.label = SharedString::default();
             return table::header_cell(&theme, &blank, None)
+                .relative()
                 .child(self.cell_editor(cx))
+                .child(grip)
                 .into_any_element();
         }
+        let name = shape.label.to_string();
+        let menu_name = name.clone();
         let id = SharedString::from(format!("column-menu-{ix}"));
         let button = menu::button(
             id.clone(),
@@ -452,10 +668,11 @@ impl TableView {
         )
         .on_click(cx.listener(move |this, _, window, cx| {
             cx.stop_propagation();
+            let menu_name = menu_name.clone();
             this.toggle_menu(
                 ix,
                 Place::Below,
-                move |_, _, _| Self::column_rows(ix, kind),
+                move |_, _, _| Self::column_rows(menu_name.clone(), kind),
                 window,
                 cx,
             );
@@ -464,33 +681,37 @@ impl TableView {
             .menu_trigger(button, ix, cx)
             .children(self.menu_here(&ix, id, window, cx));
         table::header_cell(&theme, shape, None)
+            .relative()
+            .debug_selector(move || format!("table-heading-{ix}"))
+            .child(grip)
             .line_height(px(LINE))
             .id(("heading", ix))
             .group("grid-head")
             .child(button)
             .on_click(cx.listener(move |this, _, window, cx| {
-                this.edit_cell(Cell::Head(ix), window, cx);
+                this.edit_cell(Cell::Head(name.clone()), window, cx);
             }))
             .into_any_element()
     }
 
     /// What the `···` does to a column: what it holds, and whether it stays.
-    fn column_rows(ix: usize, kind: ColType) -> Vec<(Item, menu::Act<Self>)> {
+    fn column_rows(column: String, kind: ColType) -> Vec<(Item, menu::Act<Self>)> {
         let mut rows: Vec<_> = ColType::ALL
             .iter()
             .map(|declared| {
                 let declared = *declared;
+                let column = column.clone();
                 menu::row::<Self>(
                     Item::action(declared.name())
                         .with_icon(glyph(declared))
                         .checked(declared == kind),
-                    move |this, _, cx| this.retype_column(ix, declared, cx),
+                    move |this, _, cx| this.retype_column(&column, declared, cx),
                 )
             })
             .collect();
         rows.push(menu::row::<Self>(
             Item::action("Delete column").with_icon(icons::files::Trash),
-            move |this, _, cx| this.delete_column(ix, cx),
+            move |this, _, cx| this.delete_column(&column, cx),
         ));
         rows
     }
@@ -499,16 +720,26 @@ impl TableView {
     fn value(
         &self,
         rowid: i64,
-        column: usize,
+        column: &str,
         held: Option<&Value>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        if self.cell == Some(Cell::Value { rowid, column }) {
+        if self.cell
+            == Some(Cell::Value {
+                rowid,
+                column: column.to_owned(),
+            })
+        {
             return self.cell_editor(cx).into_any_element();
         }
+        let column = column.to_owned();
         div()
             .id(SharedString::from(format!("cell-{rowid}-{column}")))
+            .debug_selector({
+                let column = column.clone();
+                move || format!("table-cell-{rowid}-{column}")
+            })
             .w_full()
             .min_h(px(LINE))
             .truncate()
@@ -518,7 +749,14 @@ impl TableView {
             .text_color(theme.text)
             .child(held.map(text).unwrap_or_default())
             .on_click(cx.listener(move |this, _, window, cx| {
-                this.edit_cell(Cell::Value { rowid, column }, window, cx);
+                this.edit_cell(
+                    Cell::Value {
+                        rowid,
+                        column: column.clone(),
+                    },
+                    window,
+                    cx,
+                );
             }))
             .into_any_element()
     }
@@ -546,6 +784,7 @@ impl TableView {
 impl Render for TableView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::of(cx).clone();
+        self.offset = self.offset.min(self.source.read(cx).last_page());
         let Some((name, columns, rows, total)) = self.page(cx).map(|page| {
             (
                 page.name.clone(),
@@ -557,24 +796,36 @@ impl Render for TableView {
                 page.total,
             )
         }) else {
-            return div().flex_1().into_any_element();
+            return div()
+                .flex_1()
+                .px(px(INSET))
+                .py(px(20.))
+                .text_color(theme.danger)
+                .child(
+                    self.source
+                        .read(cx)
+                        .error
+                        .clone()
+                        .unwrap_or_else(|| "Table could not be loaded".into()),
+                )
+                .into_any_element();
         };
 
-        let mut declared: Vec<table::Column> = columns
-            .iter()
-            .map(|column| {
-                let shape = table::Column::new(column.name.clone(), table::Width::Flex(1.));
-                match column.kind {
-                    ColType::Number => shape.align_end(),
-                    _ => shape,
-                }
-            })
-            .collect();
-        declared.push(table::Column::new("", table::Width::Fixed(px(ACTIONS))));
+        let detached = match &self.cell {
+            Some(Cell::Value { rowid, column }) => {
+                !rows.iter().any(|(id, _)| id == rowid)
+                    || !columns.iter().any(|held| held.name == *column)
+            }
+            Some(Cell::Head(column)) => !columns.iter().any(|held| held.name == *column),
+            _ => false,
+        };
+
+        let (mut declared, width) = self.sizing.columns(&columns, px(ACTIONS));
+        declared.push(table::Column::new("", table::Width::Flex(1.)).align_end());
 
         let head = div()
             .flex_none()
-            .px(px(24.))
+            .px(px(INSET))
             .pt(px(20.))
             .pb(px(12.))
             .flex()
@@ -601,13 +852,52 @@ impl Render for TableView {
                 div()
                     .text_style(TextStyle::Subheadline)
                     .text_color(theme.text_faint)
-                    // The table's own count, not the window's — a pane that
-                    // stops at its limit without saying so reads as the end.
                     .child(match total as usize == rows.len() {
                         true => format!("{total} rows"),
-                        false => format!("{} of {total} rows", rows.len()),
+                        false => format!(
+                            "{}–{} of {total} rows",
+                            self.offset + 1,
+                            self.offset + rows.len() as i64
+                        ),
                     }),
-            );
+            )
+            .when(total > model::PAGE, |head| {
+                head.child(div().flex_1())
+                    .child(
+                        theme
+                            .ghost("table-previous")
+                            .debug_selector(|| "table-previous".into())
+                            .px(px(8.))
+                            .py(px(4.))
+                            .text_style(TextStyle::Subheadline)
+                            .opacity(if self.offset > 0 { 1. } else { 0.4 })
+                            .child("Previous")
+                            .when(self.offset > 0, |button| {
+                                button.on_click(cx.listener(|this, _, _, cx| {
+                                    this.show_page(this.offset - model::PAGE, cx)
+                                }))
+                            }),
+                    )
+                    .child(
+                        theme
+                            .ghost("table-next")
+                            .debug_selector(|| "table-next".into())
+                            .px(px(8.))
+                            .py(px(4.))
+                            .text_style(TextStyle::Subheadline)
+                            .opacity(if self.offset + model::PAGE < total {
+                                1.
+                            } else {
+                                0.4
+                            })
+                            .child("Next")
+                            .when(self.offset + model::PAGE < total, |button| {
+                                button.on_click(cx.listener(|this, _, _, cx| {
+                                    this.show_page(this.offset + model::PAGE, cx)
+                                }))
+                            }),
+                    )
+            });
 
         let count = columns.len();
         let mut headings: Vec<AnyElement> = Vec::with_capacity(count + 1);
@@ -630,11 +920,14 @@ impl Render for TableView {
                 .into_any_element(),
         );
 
-        let mut body = table::table(&theme).child(table::header(&theme).children(headings));
+        let mut body = table::table(&theme)
+            .w(width)
+            .min_w_full()
+            .child(table::header(&theme).children(headings));
         for (n, (rowid, held)) in rows.iter().enumerate() {
             let mut cells: Vec<AnyElement> = Vec::with_capacity(count + 1);
-            for ix in 0..count {
-                cells.push(self.value(*rowid, ix, held.get(ix), cx));
+            for (ix, column) in columns.iter().enumerate() {
+                cells.push(self.value(*rowid, &column.name, held.get(ix), cx));
             }
             cells.push(self.row_actions(*rowid, &theme, cx));
             body = body.child(
@@ -643,33 +936,78 @@ impl Render for TableView {
         }
 
         div()
+            .id("table-view")
             .flex_1()
+            .min_w_0()
             .min_h_0()
             .flex()
             .flex_col()
+            .on_drag_move(cx.listener(|this, event: &DragMoveEvent<ColumnResize>, _, cx| {
+                if event.drag(cx).0 != cx.entity().entity_id() {
+                    return;
+                }
+                if let Some(resizing) = &this.resizing {
+                    let width = (resizing.width + event.event.position.x - resizing.start)
+                        .max(px(MIN_COLUMN_WIDTH));
+                    this.sizing.widths.insert(resizing.column.clone(), width);
+                    cx.notify();
+                }
+            }))
+            .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, _| {
+                this.resizing = None;
+            }))
+            .on_mouse_up_out(MouseButton::Left, cx.listener(|this, _, _, _| {
+                this.resizing = None;
+            }))
             .on_action(cx.listener(Self::commit_cell_action))
             .on_action(cx.listener(Self::dismiss_cell))
             .child(head)
+            .when(detached, |element| element.child(
+                div().px(px(INSET)).pb(px(12.)).flex().flex_col().gap(px(8.))
+                    .child(div().text_style(TextStyle::Callout).text_color(theme.danger).child("This cell is no longer shown. Copy your text or press Escape to discard it."))
+                    .child(self.cell_editor(cx))
+            ))
+            .when_some(self.source.read(cx).error.clone(), |element, error| {
+                element.child(
+                    div()
+                        .px(px(INSET))
+                        .pb(px(12.))
+                        .text_style(TextStyle::Callout)
+                        .text_color(theme.danger)
+                        .child(error),
+                )
+            })
             .child(
                 div()
-                    .id("table-body")
+                    .relative()
                     .flex_1()
+                    .min_w_0()
                     .min_h_0()
-                    .map(|el| scrollbars::scrolls(el, scrollbars::Axes::Vertical))
-                    .px(px(24.))
-                    .pb(px(20.))
-                    .child(body)
+                    .flex()
+                    .flex_col()
                     .child(
-                        add::row("add-row", "New row", theme.text_muted, &theme)
-                            .mt(px(6.))
-                            .px(px(10.))
-                            .py(px(7.))
-                            .on_click(cx.listener(|this, _, window, cx| this.add_row(window, cx))),
+                        scrollbars::pane("table-body", scrollbars::Axes::Both)
+                            .debug_selector(|| "table-body".into())
+                            .flex_1()
+                            .min_w_0()
+                            .min_h_0()
+                            .track_scroll(&self.scroll)
+                            .px(px(INSET))
+                            .pb(px(20.))
+                            .child(body)
+                            .child(
+                                add::row("add-row", "New row", theme.text_muted, &theme)
+                                    .mt(px(6.))
+                                    .px(px(10.))
+                                    .py(px(7.))
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.add_row(window, cx);
+                                    })),
+                            ),
                     )
-                    .map(|pane| {
-                        scrollbars::Viewport::new("table-scroll", pane, bezel::gpui::Axis::Vertical)
-                            .fill()
-                    }),
+                    .child(scrollbars::Overlay::new("table-vertical", &self.scroll, Axis::Vertical))
+                    .child(scrollbars::Overlay::new("table-horizontal", &self.scroll, Axis::Horizontal))
+                    .child(self.sizing.measure(INSET, cx)),
             )
             .into_any_element()
     }
@@ -695,3 +1033,11 @@ pub(crate) fn text(value: &Value) -> String {
         other => other.to_string(),
     }
 }
+
+#[cfg(all(test, feature = "desktop"))]
+#[path = "../../tests/unit/table_editing.rs"]
+mod editing_tests;
+
+#[cfg(all(test, feature = "desktop"))]
+#[path = "../../tests/unit/table_layout.rs"]
+mod layout_tests;

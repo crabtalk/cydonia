@@ -88,12 +88,15 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.commit(cx) {
+            return;
+        }
         self.select_project(project, cx);
         let made = self
             .workspace
             .update(cx, |workspace, cx| workspace.create_canvas(project, cx));
         match made {
-            Ok(member) => self.enter_member(member, Opening::Kept, window, cx),
+            Ok(member) => self.land_member(member, window, cx),
             Err(message) => self.show_error("Cannot create canvas".into(), message, window, cx),
         }
     }
@@ -106,7 +109,9 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.commit(cx);
+        if !self.commit(cx) {
+            return;
+        }
         let Some(open) = self.workspace.read(cx).projects.get(project) else {
             return;
         };

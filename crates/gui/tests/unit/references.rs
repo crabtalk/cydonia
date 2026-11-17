@@ -106,7 +106,7 @@ fn a_number_names_a_table(cx: &mut gpui::TestAppContext) {
             .unwrap()
             .key;
         let project = Project::new(ProjectIds::default().intern(&dir), dir.clone(), cx);
-        let number = project.tables[0].number.unwrap();
+        let number = project.tables[0].table.read(cx).record.number.unwrap();
 
         let (showing, title) = entry(&project, number, cx).unwrap();
         assert_eq!(showing, Showing::Table(key));

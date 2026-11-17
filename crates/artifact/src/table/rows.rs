@@ -1,10 +1,5 @@
 //! What is in a table: a window of it, one row, and one cell to write.
 //!
-//! Everything here addresses a row by its `rowid`, SQLite's own identity for
-//! it — a handle that survives a sort, an insert above it and a neighbour's
-//! deletion, with no surrogate key column to hide from the person and no
-//! position index that means something different the moment the order changes.
-
 use crate::table::Column;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -16,9 +11,20 @@ pub struct Rows {
     pub rows: Vec<Vec<Value>>,
 }
 
+/// A snapshot token is valid only for the Data connection that issued it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Revision {
+    pub(crate) connection: u64,
+    pub(crate) changes: u64,
+    pub(crate) external: i64,
+    pub(crate) schema: i64,
+}
+
 /// One window of a table, with everything a grid needs to draw it.
-#[derive(Debug, Serialize)]
+#[derive(Debug, PartialEq, Serialize)]
 pub struct Page {
+    #[serde(skip)]
+    pub revision: Revision,
     pub key: String,
     pub name: String,
     pub columns: Vec<Column>,
@@ -30,7 +36,7 @@ pub struct Page {
     pub rows: Vec<Row>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, PartialEq, Serialize)]
 pub struct Row {
     pub rowid: i64,
     /// In `columns` order.

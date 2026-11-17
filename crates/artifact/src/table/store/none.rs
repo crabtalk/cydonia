@@ -3,7 +3,7 @@
 
 use crate::table::{
     ColType, Column, Table,
-    rows::{Edit, Page, Rows},
+    rows::{Edit, Page, Revision, Rows},
     store::Home,
 };
 use anyhow::{Result, bail};
@@ -22,6 +22,10 @@ impl Data {
     }
 
     pub fn resolve(&self, _: &str) -> Result<String> {
+        match *self {}
+    }
+
+    pub fn table(&self, _: &str) -> Result<Table> {
         match *self {}
     }
 
@@ -70,6 +74,10 @@ impl Data {
     }
 
     pub fn write_cells(&mut self, _: &str, _: &[Edit]) -> Result<()> {
+        match *self {}
+    }
+
+    pub fn write_cells_at(&mut self, _: &str, _: &[Edit], _: Option<Revision>) -> Result<()> {
         match *self {}
     }
 

@@ -6,12 +6,13 @@
 //! persists.
 
 use crate::{
-    data::{Data, Home, Page, Table},
+    data::{Data, Home, Table as TableRecord},
     model::{
         article::{self, Article},
         canvas::Canvas,
         session::ChatSession,
         store::{self, Store},
+        table::Table,
         watch::Watch,
         workspace::{Showing, Workspace},
     },
@@ -21,16 +22,14 @@ use artifact::{
 };
 use bezel::gpui::{App, AppContext as _, Context, Entity};
 use std::{
+    cell::RefCell,
     collections::HashMap,
     path::{Path, PathBuf},
+    rc::Rc,
 };
 
 mod id;
 pub use id::{ProjectId, ProjectIds};
-
-/// How many rows the table pane reads at once. The count beside them is the
-/// table's own, so a window that does not reach the end says so.
-const PAGE: i64 = 200;
 
 /// What every entry has, whatever its kind. `touched` is in milliseconds.
 #[derive(PartialEq)]
@@ -96,6 +95,21 @@ impl HeldCanvas {
     }
 }
 
+#[derive(Clone)]
+pub struct HeldTable {
+    pub key: String,
+    pub table: Entity<Table>,
+}
+
+impl HeldTable {
+    pub fn new(record: TableRecord, data: Rc<RefCell<Data>>, cx: &mut App) -> Self {
+        Self {
+            key: record.key.clone(),
+            table: cx.new(|_| Table::new(record, data)),
+        }
+    }
+}
+
 pub struct Project {
     pub id: ProjectId,
     pub path: PathBuf,
@@ -109,22 +123,9 @@ pub struct Project {
     pub canvas: Option<usize>,
     /// Which article the article pane shows.
     pub article: Option<usize>,
-    /// The project's database, once there is one. Opening a project must not
-    /// write a database into it, so this stays `None` until a table is made.
-    pub data: Option<Data>,
-    pub tables: Vec<Table>,
-    /// Which table the table pane shows.
+    pub data: Option<Rc<RefCell<Data>>>,
+    pub tables: Vec<HeldTable>,
     pub table: Option<usize>,
-    /// The window of rows each table on screen was last read with, by the
-    /// table's key. Read when a table is opened rather than while it is drawn
-    /// — a query per frame is a query too many.
-    ///
-    /// By key rather than one slot: a space can stand two tables side by
-    /// side, and one page between them would draw the same rows in both.
-    pub pages: HashMap<String, Page>,
-    /// Tables drawn somewhere other than the table pane — a drawer — by key.
-    /// Their pages are read alongside the open table's.
-    held: std::collections::BTreeSet<String>,
     /// Whether the sidebar shows what is under this project's heading.
     pub expanded: bool,
     /// The one label the sidebar lists this project's entries by, or every
@@ -152,7 +153,8 @@ impl Project {
                 .map(|record| HeldCanvas::new(record, store.clone(), cx))
                 .collect(),
             canvas: None,
-            data: Data::attach(&Home::Project(path.clone())),
+            data: Data::attach(&Home::Project(path.clone()))
+                .map(|data| Rc::new(RefCell::new(data))),
             path,
             sessions: Vec::new(),
             active: None,
@@ -160,13 +162,11 @@ impl Project {
             article: None,
             tables: Vec::new(),
             table: None,
-            pages: HashMap::new(),
-            held: Default::default(),
             expanded: true,
             label: None,
             watch: None,
         };
-        this.reload_tables();
+        this.reload_tables(cx);
         this
     }
 
@@ -183,38 +183,23 @@ impl Project {
         Some(self.boards.get(ix)?.board.read(cx))
     }
 
-    /// Re-read everything on disk and reconcile it with what is held. The
-    /// answer to any event under `.cydonia/` — see [`crate::model::watch`] for
-    /// why the event itself is never read for more than where it landed.
-    ///
-    /// Answers whether anything a view holds *about* an entry moved: a card's
-    /// place on a board, a column's place in a table. Everything else is drawn off the model each frame and
-    /// nobody keeps a handle on it, so a re-read that only changed those has
-    /// nothing to announce — and announcing it would drop the edit somebody has
-    /// open over the echo of their own save.
     pub fn reload(&mut self, cx: &mut Context<Workspace>) -> bool {
         // The store can appear long after the project was opened, and an agent
         // making one is exactly the case this watch is here for.
         if self.data.is_none() {
-            self.data = Data::attach(&Home::Project(self.path.clone()));
+            self.data = Data::attach(&Home::Project(self.path.clone()))
+                .map(|data| Rc::new(RefCell::new(data)));
         }
         self.reload_articles(cx);
         self.reload_canvases(cx);
         let boards = self.reload_boards(cx);
         let before = self.shape();
-        self.reload_tables();
+        self.reload_tables(cx);
         boards || before != self.shape()
     }
 
-    /// What the table pane addresses by position: which tables there are, and
-    /// what the open one's columns are called.
-    fn shape(&self) -> (Vec<String>, Vec<String>) {
-        let keys = self.tables.iter().map(|table| table.key.clone()).collect();
-        let columns = self
-            .open_page()
-            .map(|page| page.columns.iter().map(|col| col.name.clone()).collect())
-            .unwrap_or_default();
-        (keys, columns)
+    fn shape(&self) -> Vec<String> {
+        self.tables.iter().map(|table| table.key.clone()).collect()
     }
 
     /// Re-list the articles and merge the re-read into what is open.
@@ -310,63 +295,47 @@ impl Project {
         self.canvas = open.and_then(|id| self.canvas_ix(&id));
     }
 
-    /// Re-read what tables exist. The store is the list — nothing here keeps a
-    /// second copy of it that a failed write could leave standing.
-    pub fn reload_tables(&mut self) {
-        // Held by key across the re-read, not by index: a table made or dropped
-        // beside the open one shifts every index past it, and the pane would be
-        // left showing whichever table slid into its place.
+    pub fn reload_tables(&mut self, cx: &mut App) {
+        let Some(data) = self.data.clone() else {
+            return;
+        };
+        let records = match data.borrow().list() {
+            Ok(records) => records,
+            Err(error) => {
+                for held in &self.tables {
+                    held.table.update(cx, |table, cx| {
+                        table.error = Some(error.to_string());
+                        cx.notify();
+                    });
+                }
+                return;
+            }
+        };
         let open = self
             .table
             .and_then(|ix| self.tables.get(ix))
-            .map(|table| table.key.clone());
-        self.tables = self
-            .data
-            .as_ref()
-            .and_then(|data| data.list().ok())
-            .unwrap_or_default();
-        self.table = match open.and_then(|key| self.table_ix(&key)) {
-            found @ Some(_) => found,
-            None => self.table.filter(|ix| *ix < self.tables.len()),
-        };
-        self.reload_page();
-    }
-
-    /// Read the open table's rows.
-    /// The page the open table is on.
-    pub fn open_page(&self) -> Option<&Page> {
-        let key = &self.tables.get(self.table?)?.key;
-        self.pages.get(key)
-    }
-
-    /// Read the rows for the open table and the held ones. Any other page is
-    /// dropped: a page is a window on a table nobody is looking at.
-    pub fn reload_page(&mut self) {
-        let wanted: Vec<String> = self
-            .table
-            .and_then(|ix| self.tables.get(ix))
-            .map(|table| table.key.clone())
-            .into_iter()
-            .chain(self.held.iter().cloned())
+            .map(|held| held.key.clone());
+        let mut held: HashMap<_, _> = self
+            .tables
+            .drain(..)
+            .map(|held| (held.key.clone(), held))
             .collect();
-        self.pages.retain(|key, _| wanted.contains(key));
-        let Some(data) = self.data.as_ref() else {
-            self.pages.clear();
-            return;
-        };
-        for key in wanted {
-            if let Ok(page) = data.read(&key, None, false, PAGE, 0) {
-                self.pages.insert(key, page);
-            }
-        }
+        self.tables = records
+            .into_iter()
+            .map(|record| match held.remove(&record.key) {
+                Some(held) => {
+                    held.table.update(cx, |table, cx| table.adopt(record, cx));
+                    held
+                }
+                None => HeldTable::new(record, data.clone(), cx),
+            })
+            .collect();
+        self.table = open.and_then(|key| self.table_ix(&key));
     }
 
-    /// Hold the pages of these tables beside the open one's, read now when the
-    /// set changes.
-    pub fn hold_pages(&mut self, held: std::collections::BTreeSet<String>) {
-        if self.held != held {
-            self.held = held;
-            self.reload_page();
+    pub fn load_table(&self, ix: usize, cx: &mut App) {
+        if let Some(held) = self.tables.get(ix) {
+            held.table.update(cx, |table, cx| table.load(cx));
         }
     }
 
@@ -501,7 +470,7 @@ impl Project {
                 }
             }
             Kind::Table => {
-                let table = &self.tables[ix];
+                let table = &self.tables[ix].table.read(cx).record;
                 Facts {
                     showing: Showing::Table(table.key.clone()),
                     label: table.name.clone(),
@@ -608,3 +577,7 @@ impl Project {
 #[cfg(test)]
 #[path = "../../../tests/unit/archive_boards.rs"]
 mod archive_tests;
+
+#[cfg(all(test, feature = "desktop"))]
+#[path = "../../../tests/unit/tables.rs"]
+mod table_tests;

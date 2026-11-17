@@ -6,9 +6,8 @@
 //! moment the key is free is the moment before there are any, and that is this
 //! one.
 
-use crate::model::workspace::Opening;
 use crate::{
-    model::workspace::Workspace,
+    model::workspace::{Opening, Workspace},
     view::{
         kit::{
             dialog::{answers, dialog},
@@ -67,7 +66,9 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.commit(cx);
+        if !self.commit(cx) {
+            return;
+        }
         self.close_menu(cx);
         let workspace = self.workspace.clone();
         let root = cx.entity().downgrade();

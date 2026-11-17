@@ -10,11 +10,20 @@ use crate::{
 use anyhow::{Result, anyhow, bail};
 use rusqlite::{Connection, OpenFlags, Row as SqlRow, types::ValueRef};
 use serde_json::Value;
-use std::{collections::HashSet, path::PathBuf, time::Duration};
+use std::{
+    collections::HashSet,
+    path::PathBuf,
+    sync::atomic::{AtomicU64, Ordering},
+    time::Duration,
+};
 
 mod ddl;
+mod identity;
 mod rows;
+mod schema;
 mod sql;
+
+static CONNECTION: AtomicU64 = AtomicU64::new(1);
 
 const BUSY: Duration = Duration::from_secs(5);
 
@@ -30,6 +39,7 @@ const DDL: &str = "CREATE TABLE IF NOT EXISTS _tables (
 )";
 
 pub struct Data {
+    identity: u64,
     home: Home,
     writer: Connection,
     /// Opened `SQLITE_OPEN_READ_ONLY`, and that is the point: a `SELECT` an
@@ -89,6 +99,7 @@ impl Data {
         )?;
         reader.busy_timeout(BUSY)?;
         Ok(Self {
+            identity: CONNECTION.fetch_add(1, Ordering::Relaxed),
             home: home.clone(),
             writer,
             reader,
@@ -124,9 +135,11 @@ impl Data {
     /// Put a table away, or bring it back. The rows stay exactly where they
     /// are — this is the sidebar's business and nothing else's.
     pub fn archive(&mut self, key: &str, archived: bool) -> Result<()> {
+        let key = self.resolve(key)?;
         self.writer.execute(
-            "UPDATE _tables SET archived = ?2 WHERE key = ?1",
-            rusqlite::params![key, archived],
+            "INSERT INTO _tables (key, name, created_at, archived) VALUES (?1, ?1, ?3, ?2) \
+             ON CONFLICT(key) DO UPDATE SET archived = ?2",
+            rusqlite::params![key, archived, now()],
         )?;
         Ok(())
     }
@@ -145,7 +158,7 @@ impl Data {
     /// `_tables`: the data is what exists, and a table whose name row went
     /// missing must still list — under its key — instead of vanishing from a
     /// surface that is supposed to show everything in the file.
-    fn table(&self, key: &str) -> Result<Table> {
+    pub fn table(&self, key: &str) -> Result<Table> {
         let meta = self
             .reader
             .query_row(
@@ -235,6 +248,12 @@ impl Data {
                 bail!("two columns named {column}");
             }
         }
+        identity::Identity::for_names(
+            &columns
+                .iter()
+                .map(|column| column.name.trim().to_owned())
+                .collect::<Vec<_>>(),
+        )?;
         let key = self.mint_key(key.filter(|k| !k.trim().is_empty()).unwrap_or(name))?;
         let defs = columns
             .iter()

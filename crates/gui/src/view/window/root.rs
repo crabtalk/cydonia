@@ -877,6 +877,9 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.commit(cx) {
+            return;
+        }
         match self.workspace.read(cx).space_holding(&member) {
             Some(at) => {
                 if self.workspace.read(cx).space() != Some(at) {
@@ -894,6 +897,9 @@ impl Cydonia {
 
     /// Bring a tab of the strip forward, and the focus with it.
     pub(crate) fn show_slot(&mut self, slot: &Slot, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.commit(cx) {
+            return;
+        }
         match slot {
             Slot::Space { space } => {
                 if let Some(ix) = self.workspace.read(cx).space_ix(space) {
@@ -1064,15 +1070,9 @@ impl Cydonia {
             this.model_changed(window, cx)
         })
         .detach();
-        // A re-read replaced what a pane is showing — see
-        // [`Workspace::reload_project`]. The card is held by id, so it comes
-        // through unless what it names is gone; the cell is still addressed by
-        // where it sits, so filing it now would file it into whatever slid
-        // under the index, and it is dropped.
         cx.subscribe_in(&workspace, window, |this, _, _: &Reloaded, _, cx| {
             this.drop_stale_edit(cx);
             this.rest_ribbon(cx);
-            this.drop_cells(cx);
             cx.notify();
         })
         .detach();
@@ -1364,13 +1364,17 @@ impl Cydonia {
     /// Leaving a project is the moment a half-written card has to be filed:
     /// the spot it points at belongs to the board being navigated away from.
     pub(crate) fn select_project(&mut self, ix: usize, cx: &mut Context<Self>) {
-        self.commit(cx);
+        if !self.commit(cx) {
+            return;
+        }
         self.workspace
             .update(cx, |workspace, cx| workspace.select_project(ix, cx));
     }
 
     pub(crate) fn close_project(&mut self, ix: usize, cx: &mut Context<Self>) {
-        self.commit(cx);
+        if !self.commit(cx) {
+            return;
+        }
         self.workspace
             .update(cx, |workspace, cx| workspace.close_project(ix, cx));
     }
@@ -1561,7 +1565,6 @@ impl Render for Cydonia {
         self.sync_strip(cx);
         self.sync_edges(cx);
         self.publish_shown(cx);
-        self.hold_drawn_tables(cx);
         let theme = Theme::of(cx).clone();
         let floating = self.workspace.read(cx).settings.appearance.floating;
         let root = div()

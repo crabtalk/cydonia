@@ -99,7 +99,9 @@ impl Cydonia {
         if !self.workspace.read(cx).settings.features.sessions {
             return;
         }
-        self.commit(cx);
+        if !self.commit(cx) {
+            return;
+        }
         self.close_menu(cx);
         let workspace = self.workspace.clone();
         let root = cx.entity().downgrade();

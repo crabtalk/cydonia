@@ -1,6 +1,6 @@
 pub use artifact::table::{
     ColType, Column, Table,
-    rows::{Edit, Page, Row, Rows},
+    rows::{Edit, Page, Revision, Row, Rows},
     store::{Data, Home},
 };
 mod call;

@@ -57,7 +57,9 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.commit(cx);
+        if !self.commit(cx) {
+            return;
+        }
         self.enter_member(Member::app(id), opening, window, cx);
         cx.notify();
     }
@@ -83,7 +85,9 @@ impl Cydonia {
         if !self.workspace.read(cx).settings.developer_mode {
             return;
         }
-        self.commit(cx);
+        if !self.commit(cx) {
+            return;
+        }
         self.close_menu(cx);
         let picked = cx.prompt_for_paths(PathPromptOptions {
             files: false,
