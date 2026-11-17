@@ -14,6 +14,7 @@ use std::{collections::HashSet, path::PathBuf, time::Duration};
 
 mod ddl;
 mod rows;
+mod schema;
 mod sql;
 
 const BUSY: Duration = Duration::from_secs(5);
