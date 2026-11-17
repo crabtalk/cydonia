@@ -261,3 +261,102 @@ fn checked_edits_reject_reused_ids_after_raw_writes_and_reopening() {
     .unwrap();
     std::fs::remove_dir_all(path).unwrap();
 }
+
+#[test]
+fn rowid_named_columns_keep_reads_edits_deletes_and_retyping_usable() {
+    let path = std::env::temp_dir().join(format!("cydonia-rowid-alias-{}", std::process::id()));
+    let mut data = Data::open(&Home::App(path.clone())).unwrap();
+    for alias in ["rowid", "_rowid_", "OID"] {
+        let key = data
+            .create(
+                "Tasks",
+                None,
+                &[Column {
+                    name: "Name".into(),
+                    kind: ColType::Text,
+                }],
+                None,
+            )
+            .unwrap()
+            .key;
+        let id = data.add_rows(&key, 1).unwrap()[0];
+        data.write_cells(
+            &key,
+            &[Edit {
+                rowid: id,
+                column: "Name".into(),
+                value: "keep".into(),
+            }],
+        )
+        .unwrap();
+        data.write_column(&key, "Name", None, Some(alias)).unwrap();
+        let page = data.read(&key, None, false, 10, 0).unwrap();
+        assert_eq!(page.rows[0].rowid, id);
+        assert_eq!(page.rows[0].cells[0], "keep");
+        data.write_column(&key, alias, Some(ColType::Number), None)
+            .unwrap();
+        data.write_cells(
+            &key,
+            &[Edit {
+                rowid: id,
+                column: alias.into(),
+                value: "updated".into(),
+            }],
+        )
+        .unwrap();
+        let page = data.read(&key, None, false, 10, 0).unwrap();
+        assert_eq!(page.rows[0].rowid, id);
+        assert_eq!(page.rows[0].cells[0], "updated");
+        data.delete_rows(&key, &[id]).unwrap();
+        assert!(data.read(&key, None, false, 10, 0).unwrap().rows.is_empty());
+    }
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn schema_changes_cannot_shadow_every_row_identifier() {
+    let path = std::env::temp_dir().join(format!("cydonia-rowid-guard-{}", std::process::id()));
+    let mut data = Data::open(&Home::App(path.clone())).unwrap();
+    let columns: Vec<_> = ["rowid", "_rowid_", "Name"]
+        .into_iter()
+        .map(|name| Column {
+            name: name.into(),
+            kind: ColType::Text,
+        })
+        .collect();
+    data.create("Tasks", None, &columns, None).unwrap();
+    let id = data.add_rows("tasks", 1).unwrap()[0];
+    assert!(
+        data.write_column("tasks", "oid", Some(ColType::Text), None)
+            .is_err()
+    );
+    assert!(
+        data.write_column("tasks", "Name", None, Some("OID"))
+            .is_err()
+    );
+    assert!(
+        data.write_column("tasks", "Name", Some(ColType::Number), Some("oid"))
+            .is_err()
+    );
+    let mut invalid = columns.clone();
+    invalid[2].name = " oid ".into();
+    assert!(data.create("Invalid", None, &invalid, None).is_err());
+    assert_eq!(data.list().unwrap().len(), 1);
+    let page = data.read("tasks", None, false, 10, 0).unwrap();
+    assert_eq!(page.rows[0].rowid, id);
+    assert_eq!(page.columns[2].name, "Name");
+    assert_eq!(page.columns[2].kind, ColType::Text);
+    let connection = rusqlite::Connection::open(path.join("data.db")).unwrap();
+    connection.execute_batch("CREATE TABLE generated (value TEXT, rowid TEXT GENERATED ALWAYS AS (value) VIRTUAL, _rowid_ TEXT); INSERT INTO generated(value) VALUES('kept')").unwrap();
+    assert!(
+        data.write_column("generated", "value", None, Some("oid"))
+            .is_err()
+    );
+    data.write_column("generated", "value", Some(ColType::Number), None)
+        .unwrap();
+    assert_eq!(
+        data.read("generated", None, false, 10, 0).unwrap().rows[0].cells[0],
+        "kept"
+    );
+    std::fs::remove_dir_all(path).unwrap();
+}

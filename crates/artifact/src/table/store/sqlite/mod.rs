@@ -18,6 +18,7 @@ use std::{
 };
 
 mod ddl;
+mod identity;
 mod rows;
 mod schema;
 mod sql;
@@ -247,6 +248,12 @@ impl Data {
                 bail!("two columns named {column}");
             }
         }
+        identity::Identity::for_names(
+            &columns
+                .iter()
+                .map(|column| column.name.trim().to_owned())
+                .collect::<Vec<_>>(),
+        )?;
         let key = self.mint_key(key.filter(|k| !k.trim().is_empty()).unwrap_or(name))?;
         let defs = columns
             .iter()

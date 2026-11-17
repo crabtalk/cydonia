@@ -1,6 +1,6 @@
 use crate::table::{
     self, ColType, Column,
-    store::sqlite::{self as data, Data, schema::Schema},
+    store::sqlite::{self as data, Data, identity::Identity, schema::Schema},
 };
 use anyhow::{Result, bail};
 
@@ -27,6 +27,11 @@ impl Data {
             .iter()
             .position(|col| col.name.eq_ignore_ascii_case(column));
 
+        Identity::for_table(
+            &self.writer,
+            &key,
+            Some((column, rename.map(str::trim).unwrap_or(column))),
+        )?;
         let Some(at) = at else {
             let Some(kind) = kind else {
                 bail!("no column {column} on {key} — say what it holds to add it");
@@ -84,6 +89,7 @@ impl Data {
             |row| row.get(0),
         )?);
         let create = schema.retype(&tmp, column, kind)?;
+        let rowid = Identity::for_table(&self.writer, key, None)?.0;
         let primary: bool = self.writer.query_row(
             "SELECT EXISTS(SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2 AND pk <> 0)",
             [key, column],
@@ -107,7 +113,7 @@ impl Data {
             let tx = self.writer.transaction()?;
             tx.execute_batch(&create)?;
             tx.execute_batch(&format!(
-                "INSERT INTO {} (rowid, {names}) SELECT rowid, {names} FROM {}",
+                "INSERT INTO {} ({rowid}, {names}) SELECT {rowid}, {names} FROM {}",
                 table::quote(&tmp),
                 table::quote(key)
             ))?;

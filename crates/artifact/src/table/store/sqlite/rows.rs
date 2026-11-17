@@ -1,7 +1,7 @@
 use crate::table::{
     self, Column,
     rows::{Edit, Page, Revision, Row},
-    store::sqlite::{self as data, Data},
+    store::sqlite::{self as data, Data, identity::Identity},
 };
 use anyhow::{Result, bail};
 use rusqlite::{Transaction, TransactionBehavior, params_from_iter};
@@ -25,6 +25,7 @@ impl Data {
         let revision = self.revision()?;
         let key = self.resolve(table)?;
         let columns = data::columns_of(&self.reader, &key)?;
+        let rowid = Identity::for_table(&self.reader, &key, None)?.0;
         let name = self
             .reader
             .query_row("SELECT name FROM _tables WHERE key = ?1", [&key], |row| {
@@ -38,8 +39,8 @@ impl Data {
             .collect::<Vec<_>>()
             .join(", ");
         let projection = match columns.is_empty() {
-            true => "rowid".to_owned(),
-            false => format!("rowid, {selected}"),
+            true => rowid.to_owned(),
+            false => format!("{rowid}, {selected}"),
         };
         // Empty sorts with null: a blank cell is absent, whichever direction
         // you are reading in, and burying it under the values is what makes a
@@ -112,6 +113,7 @@ impl Data {
         }
         let key = self.resolve(table)?;
         let columns = data::columns_of(&self.writer, &key)?;
+        let rowid = Identity::for_table(&self.writer, &key, None)?.0;
         for edit in edits {
             if !columns.iter().any(|col| col.name == edit.column) {
                 bail!("no column {} on {key}", edit.column);
@@ -121,12 +123,14 @@ impl Data {
         if let Some(revision) = revision
             && revision != self.revision()?
         {
-            bail!("table data changed while editing; copy your draft, press Escape, and reopen the cell to retry");
+            bail!(
+                "table data changed while editing; copy your draft, press Escape, and reopen the cell to retry"
+            );
         }
         for edit in edits {
             let changed = tx.execute(
                 &format!(
-                    "UPDATE {} SET {} = ?1 WHERE rowid = ?2",
+                    "UPDATE {} SET {} = ?1 WHERE {rowid} = ?2",
                     table::quote(&key),
                     table::quote(&edit.column)
                 ),
@@ -142,6 +146,7 @@ impl Data {
     /// Append empty rows, answering with their ids in the order they were made.
     pub fn add_rows(&mut self, table: &str, count: i64) -> Result<Vec<i64>> {
         let key = self.resolve(table)?;
+        Identity::for_table(&self.writer, &key, None)?;
         let sql = format!("INSERT INTO {} DEFAULT VALUES", table::quote(&key));
         let tx = self.writer.transaction()?;
         let mut ids = Vec::new();
@@ -158,6 +163,7 @@ impl Data {
     pub fn insert(&mut self, table: &str, rows: &[Map<String, Value>]) -> Result<Vec<i64>> {
         let key = self.resolve(table)?;
         let columns = data::columns_of(&self.writer, &key)?;
+        Identity::for_table(&self.writer, &key, None)?;
         for row in rows {
             if let Some(name) = row
                 .keys()
@@ -216,10 +222,11 @@ impl Data {
             return Ok(());
         }
         let key = self.resolve(table)?;
+        let rowid = Identity::for_table(&self.writer, &key, None)?.0;
         let places = vec!["?"; rowids.len()].join(", ");
         self.writer.execute(
             &format!(
-                "DELETE FROM {} WHERE rowid IN ({places})",
+                "DELETE FROM {} WHERE {rowid} IN ({places})",
                 table::quote(&key)
             ),
             params_from_iter(rowids),
