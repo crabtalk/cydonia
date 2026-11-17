@@ -835,11 +835,10 @@ impl Render for TableView {
         let head = div()
             .flex_none()
             .px(px(INSET))
-            .pt(px(20.))
-            .pb(px(12.))
+            .py(px(6.))
             .flex()
             .flex_row()
-            .items_baseline()
+            .items_center()
             .gap(px(8.))
             .child(
                 div()
