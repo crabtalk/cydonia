@@ -1,7 +1,7 @@
 //! The table pane: one table's rows, and the sidebar row that opens it.
 //!
 use crate::{
-    data::{ColType, Column, ColumnLayout, Revision},
+    data::{ColType, Column, ColumnDisplay, ColumnFormat, ColumnLayout, DateFormat, Revision},
     model::{
         table::{self as model, Table},
         workspace::{Entry, Member, Opening, Workspace},
@@ -14,6 +14,7 @@ use crate::{
         window::root::{Cydonia, NewTable},
     },
 };
+use artifact::table::MAX_DECIMAL_PLACES;
 use bezel::{
     gpui::{
         self, AnyElement, App, Axis, ClickEvent, Context, Div, DragMoveEvent, Empty, Entity,
@@ -33,7 +34,7 @@ use bezel::{
 };
 use markdown::{Link, Links as _};
 use serde_json::Value;
-use std::{cell::Cell as ValueCell, rc::Rc};
+use std::{cell::Cell as ValueCell, collections::BTreeSet, rc::Rc};
 
 mod clipboard;
 mod grid;
@@ -310,6 +311,7 @@ impl Render for TablePreview {
         };
         let layout = &source.record.column_layout;
         let order = layout.order(&page.columns);
+        let wraps = wrapping(layout, &page.columns);
         let (declared, width) = self
             .sizing
             .columns(&page.columns, &order, layout, None, px(0.));
@@ -324,18 +326,27 @@ impl Render for TablePreview {
             let cells = order
                 .iter()
                 .map(|&ix| {
+                    let column = &page.columns[ix];
+                    let display = layout.settings.get(&column.name);
                     div()
                         .line_height(px(LINE))
-                        .child(record.cells.get(ix).map(text).unwrap_or_default())
+                        .child(
+                            record
+                                .cells
+                                .get(ix)
+                                .map(|value| display_text(value, column.kind, display))
+                                .unwrap_or_default(),
+                        )
                         .into_any_element()
                 })
                 .collect();
-            body = body.child(table::row(
+            body = body.child(table::row_with_wrapping(
                 &theme,
                 &declared,
                 n == 0,
                 Selection::None,
                 cells,
+                &wraps,
             ));
         }
         let count = match page.total as usize == page.rows.len() {
@@ -803,6 +814,17 @@ impl TableView {
         cx.notify();
     }
 
+    fn set_column_format(&mut self, column: &str, format: ColumnFormat, cx: &mut Context<Self>) {
+        if self.commit_cell(cx) {
+            let entry = self.table.clone();
+            let _ = self.workspace.update(cx, |workspace, cx| {
+                workspace.edit_table(&entry, cx, |table, cx| {
+                    table.set_column_format(column, format, cx)
+                })
+            });
+        }
+    }
+
     fn move_column(
         &mut self,
         event: &drag::Drop<(), String>,
@@ -944,6 +966,15 @@ impl TableView {
         sorted: Option<bool>,
         cx: &App,
     ) -> Vec<(Item, menu::Act<Self>)> {
+        let default = ColumnDisplay::default();
+        let display = self
+            .source
+            .read(cx)
+            .record
+            .column_layout
+            .settings
+            .get(&column)
+            .unwrap_or(&default);
         let mut rows = Vec::new();
         for (label, ascending, icon) in [
             ("Sort ascending", true, icons::arrows::ArrowUp),
@@ -971,39 +1002,82 @@ impl TableView {
                 |this, _, cx| this.sort_rows(None, cx),
             ));
         }
-        rows.extend(ColType::ALL.iter().map(|declared| {
-            let declared = *declared;
+        let name = column.clone();
+        rows.push(menu::row::<Self>(
+            Item::action("Rename column").with_icon(icons::text::SquarePen),
+            move |this, window, cx| this.edit_cell(Cell::Head(name.clone()), window, cx),
+        ));
+        let types = ColType::ALL
+            .iter()
+            .map(|declared| {
+                let declared = *declared;
+                let column = column.clone();
+                menu::row::<Self>(
+                    Item::action(declared.name())
+                        .with_icon(glyph(declared))
+                        .checked(declared == kind),
+                    move |this, _, cx| this.retype_column(&column, declared, cx),
+                )
+            })
+            .collect();
+        rows.push(menu::submenu("Column type", glyph(kind), types));
+        let format = |label: String, current: bool, format: ColumnFormat| {
             let column = column.clone();
-            menu::row::<Self>(
-                Item::action(declared.name())
-                    .with_icon(glyph(declared))
-                    .checked(declared == kind),
-                move |this, _, cx| this.retype_column(&column, declared, cx),
-            )
-        }));
-        if kind == ColType::Select {
-            let add_column = column.clone();
-            let mut options = vec![menu::row::<Self>(
-                Item::action("Add option").with_icon(icons::math::Plus),
-                move |this, window, cx| {
-                    this.edit_cell(
-                        Cell::Option {
-                            column: add_column.clone(),
-                            previous: None,
-                        },
-                        window,
-                        cx,
+            menu::row::<Self>(Item::action(label).checked(current), move |this, _, cx| {
+                this.set_column_format(&column, format, cx)
+            })
+        };
+        match kind {
+            ColType::Text => rows.push(format(
+                "Wrap text".into(),
+                display.wrap,
+                ColumnFormat::Wrap(!display.wrap),
+            )),
+            ColType::Number => {
+                let decimals = std::iter::once(None)
+                    .chain((0..=MAX_DECIMAL_PLACES).map(Some))
+                    .map(|places| {
+                        format(
+                            places.map_or_else(|| "Automatic".into(), |places| places.to_string()),
+                            places == display.decimal_places,
+                            ColumnFormat::DecimalPlaces(places),
+                        )
+                    })
+                    .collect();
+                rows.push(menu::submenu("Decimal places", icons::text::Hash, decimals));
+            }
+            ColType::Date => {
+                let formats = [
+                    ("Stored value", None),
+                    ("YYYY-MM-DD", Some(DateFormat::Iso)),
+                    ("Month D, YYYY", Some(DateFormat::Long)),
+                ]
+                .into_iter()
+                .map(|(label, date)| {
+                    format(
+                        label.into(),
+                        date == display.date_format,
+                        ColumnFormat::Date(date),
                     )
-                },
-            )];
-            if let Some(display) = self
-                .source
-                .read(cx)
-                .record
-                .column_layout
-                .settings
-                .get(&column)
-            {
+                })
+                .collect();
+                rows.push(menu::submenu("Date format", icons::time::Calendar, formats));
+            }
+            ColType::Select => {
+                let add_column = column.clone();
+                let mut options = vec![menu::row::<Self>(
+                    Item::action("Add option").with_icon(icons::math::Plus),
+                    move |this, window, cx| {
+                        this.edit_cell(
+                            Cell::Option {
+                                column: add_column.clone(),
+                                previous: None,
+                            },
+                            window,
+                            cx,
+                        )
+                    },
+                )];
                 options.extend(display.select_options.iter().map(|option| {
                     let column = column.clone();
                     let option = option.clone();
@@ -1021,8 +1095,9 @@ impl TableView {
                         },
                     )
                 }));
+                rows.push(menu::submenu("Edit options", glyph(kind), options));
             }
-            rows.push(menu::submenu("Edit options", glyph(kind), options));
+            _ => {}
         }
         rows.push(menu::row::<Self>(
             Item::action("Delete column").with_icon(icons::files::Trash),
@@ -1051,7 +1126,17 @@ impl TableView {
         {
             return self.cell_editor(cx).into_any_element();
         }
-        let contents = held.map(text).unwrap_or_default();
+        let display = self
+            .source
+            .read(cx)
+            .record
+            .column_layout
+            .settings
+            .get(&column.name);
+        let wrap = column.kind == ColType::Text && display.is_some_and(|display| display.wrap);
+        let contents = held
+            .map(|value| display_text(value, column.kind, display))
+            .unwrap_or_default();
         let select = column.kind == ColType::Select;
         let url = (column.kind == ColType::Url)
             .then(|| url::Url::parse(&contents).ok())
@@ -1075,7 +1160,7 @@ impl TableView {
             .w_full()
             .relative()
             .min_h(px(LINE))
-            .truncate()
+            .when(!wrap, |cell| cell.truncate())
             .cursor_pointer()
             .text_style(TextStyle::Body)
             .line_height(px(LINE))
@@ -1092,7 +1177,13 @@ impl TableView {
             )
             .flex()
             .items_center()
-            .child(div().min_w_0().flex_1().truncate().child(contents))
+            .child(
+                div()
+                    .min_w_0()
+                    .flex_1()
+                    .when(!wrap, |value| value.truncate())
+                    .child(contents),
+            )
             .when(select, |cell| {
                 cell.child(
                     icons::icon(icons::arrows::ChevronDown)
@@ -1265,6 +1356,7 @@ impl Render for TableView {
 
         let layout = &self.source.read(cx).record.column_layout;
         let order = layout.order(&columns);
+        let wraps = wrapping(layout, &columns);
         let selection = self
             .grid
             .range
@@ -1394,7 +1486,8 @@ impl Render for TableView {
             }
             cells.push(self.row_actions(*rowid, revision, manual, &theme, cx));
             body = body.child(
-                table::row(&theme, &declared, n == 0, Selection::None, cells).group("grid-row"),
+                table::row_with_wrapping(&theme, &declared, n == 0, Selection::None, cells, &wraps)
+                    .group("grid-row"),
             );
         }
         let mut edge = px(0.);
@@ -1557,6 +1650,63 @@ pub(crate) fn text(value: &Value) -> String {
         Value::String(s) => s.clone(),
         other => other.to_string(),
     }
+}
+
+fn display_text(value: &Value, kind: ColType, display: Option<&ColumnDisplay>) -> String {
+    if let Some(display) = display {
+        match kind {
+            ColType::Number => {
+                if let Some(places) = display.decimal_places
+                    && let Value::Number(number) = value
+                {
+                    let places = usize::from(places.min(MAX_DECIMAL_PLACES));
+                    if number.is_i64() || number.is_u64() {
+                        return match places {
+                            0 => number.to_string(),
+                            _ => format!("{number}.{}", "0".repeat(places)),
+                        };
+                    }
+                    if let Some(number) = number.as_f64() {
+                        return format!("{number:.places$}");
+                    }
+                }
+            }
+            ColType::Date => {
+                if let Some(format) = display.date_format
+                    && let Some(date) = value
+                        .as_i64()
+                        .and_then(|seconds| chrono::DateTime::from_timestamp(seconds, 0))
+                {
+                    return date
+                        .format(match format {
+                            DateFormat::Iso => "%Y-%m-%d",
+                            DateFormat::Long => "%B %-d, %Y",
+                        })
+                        .to_string();
+                }
+            }
+            _ => {}
+        }
+    }
+    text(value)
+}
+
+fn wrapping<'a>(
+    layout: &ColumnLayout,
+    columns: &'a [Column],
+) -> impl Fn(&table::Column) -> bool + use<'a> {
+    let wrapped: BTreeSet<_> = columns
+        .iter()
+        .filter(|column| {
+            column.kind == ColType::Text
+                && layout
+                    .settings
+                    .get(&column.name)
+                    .is_some_and(|display| display.wrap)
+        })
+        .map(|column| column.name.as_str())
+        .collect();
+    move |column| wrapped.contains(column.label.as_ref())
 }
 
 #[cfg(all(test, feature = "desktop"))]

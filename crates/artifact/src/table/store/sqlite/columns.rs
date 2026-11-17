@@ -1,5 +1,5 @@
 use crate::table::{
-    self, ColType, ColumnDisplay, ColumnLayout,
+    self, ColType, ColumnDisplay, ColumnFormat, ColumnLayout,
     store::sqlite::{self as data, Data},
 };
 use anyhow::{Result, bail};
@@ -102,21 +102,43 @@ impl Data {
     }
 
     pub fn set_column_width(&mut self, table: &str, column: &str, width: u32) -> Result<()> {
+        self.edit_column_display(table, column, |_, display| {
+            display.width = Some(width);
+            Ok(())
+        })
+    }
+
+    pub fn set_column_format(
+        &mut self,
+        table: &str,
+        column: &str,
+        format: ColumnFormat,
+    ) -> Result<()> {
+        self.edit_column_display(table, column, |kind, display| format.apply(kind, display))
+    }
+
+    fn edit_column_display(
+        &mut self,
+        table: &str,
+        column: &str,
+        edit: impl FnOnce(ColType, &mut ColumnDisplay) -> Result<()>,
+    ) -> Result<()> {
         let key = self.resolve(table)?;
         let tx = self
             .writer
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        if !data::columns_of(&tx, &key)?
-            .iter()
-            .any(|held| held.name == column)
-        {
+        let Some(kind) = data::columns_of(&tx, &key)?
+            .into_iter()
+            .find(|held| held.name == column)
+            .map(|column| column.kind)
+        else {
             bail!("no column {column} on {key}");
-        }
+        };
         let mut settings = layout(&tx, &key)?
             .settings
             .remove(column)
             .unwrap_or_default();
-        settings.width = Some(width);
+        edit(kind, &mut settings)?;
         write_display(&tx, &key, column, &settings)?;
         tx.commit()?;
         Ok(())

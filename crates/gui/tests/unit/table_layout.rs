@@ -410,6 +410,65 @@ fn moving_the_grid_selection_reveals_cells_and_drag_can_extend_it(cx: &mut TestA
 }
 
 #[gpui::test]
+fn column_formats_persist_and_preserve_cell_values(cx: &mut TestAppContext) {
+    let (directory, view, mut cx) = open(cx, 3, 500.);
+    let home = Home::Project(directory.0.clone());
+    let mut data = Data::open(&home).unwrap();
+    data.write_column("stories", "Field 1", Some(ColType::Number), None)
+        .unwrap();
+    data.write_column("stories", "Field 2", Some(ColType::Date), None)
+        .unwrap();
+    data.write(&format!(
+        "UPDATE stories SET \"Field 0\" = '{}', \"Field 1\" = 12.345, \"Field 2\" = 0 WHERE rowid = 1",
+        "words that should wrap ".repeat(12),
+    ))
+    .unwrap();
+    cx.update(|_, cx| {
+        view.update(cx, |view, cx| {
+            view.source.update(cx, |source, cx| {
+                source.adopt(data.table("stories").unwrap(), cx);
+            });
+        });
+    });
+    settle(&mut cx);
+    let short = cx.debug_bounds("table-cell-1-Field 0").unwrap();
+    cx.update(|_, cx| {
+        view.update(cx, |view, cx| {
+            view.set_column_format("Field 0", table::ColumnFormat::Wrap(true), cx);
+            view.set_column_format("Field 1", table::ColumnFormat::DecimalPlaces(Some(2)), cx);
+            view.set_column_format(
+                "Field 2",
+                table::ColumnFormat::Date(Some(table::DateFormat::Iso)),
+                cx,
+            );
+        });
+    });
+    settle(&mut cx);
+    assert!(cx.debug_bounds("table-cell-1-Field 0").unwrap().size.height > short.size.height);
+    let reopened = Data::open(&home).unwrap();
+    let table = reopened.table("stories").unwrap();
+    let page = reopened.read("stories", None, false, 1, 0).unwrap();
+    assert_eq!(page.rows[0].cells[1], serde_json::json!(12.345));
+    assert_eq!(
+        super::display_text(
+            &page.rows[0].cells[1],
+            ColType::Number,
+            table.column_layout.settings.get("Field 1")
+        ),
+        "12.35"
+    );
+    assert_eq!(page.rows[0].cells[2], serde_json::json!(0));
+    assert_eq!(
+        super::display_text(
+            &page.rows[0].cells[2],
+            ColType::Date,
+            table.column_layout.settings.get("Field 2")
+        ),
+        "1970-01-01"
+    );
+}
+
+#[gpui::test]
 fn table_sort_runs_before_paging_and_can_be_cleared(cx: &mut TestAppContext) {
     let (directory, view, mut cx) = open(cx, 1, 650.);
     let mut data = Data::open(&Home::Project(directory.0.clone())).unwrap();

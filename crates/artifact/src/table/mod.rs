@@ -9,6 +9,8 @@ use std::collections::BTreeMap;
 pub mod rows;
 pub mod store;
 
+pub const MAX_DECIMAL_PLACES: u8 = 6;
+
 /// The declared type is stored in the SQLite catalog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -86,6 +88,39 @@ pub struct ColumnDisplay {
     pub position: Option<usize>,
     pub width: Option<u32>,
     pub select_options: Vec<String>,
+    pub wrap: bool,
+    pub decimal_places: Option<u8>,
+    pub date_format: Option<DateFormat>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DateFormat {
+    Iso,
+    Long,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ColumnFormat {
+    Wrap(bool),
+    DecimalPlaces(Option<u8>),
+    Date(Option<DateFormat>),
+}
+
+impl ColumnFormat {
+    pub fn apply(self, kind: ColType, display: &mut ColumnDisplay) -> anyhow::Result<()> {
+        match (self, kind) {
+            (Self::Wrap(wrap), ColType::Text) => display.wrap = wrap,
+            (Self::DecimalPlaces(places), ColType::Number)
+                if places.is_none_or(|places| places <= MAX_DECIMAL_PLACES) =>
+            {
+                display.decimal_places = places;
+            }
+            (Self::Date(format), ColType::Date) => display.date_format = format,
+            _ => anyhow::bail!("this format is unavailable for the column"),
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

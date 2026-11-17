@@ -1154,8 +1154,6 @@ dependencies = [
 [[package]]
 name = "bezel-icons"
 version = "0.2.29"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5cab36baa42715427fe3e45751dad8d6d22482ca9d9d8693912b2dbee41f9cad"
 dependencies = [
  "bezel-gpui",
 ]
@@ -1196,8 +1194,6 @@ dependencies = [
 [[package]]
 name = "bezel-motion"
 version = "0.2.29"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf3ac7b3055ed89fcccaaaca62fd11e915fb1f659f4d8a117091ff9cf855281a"
 dependencies = [
  "bezel-gpui",
  "web-time",
@@ -1272,8 +1268,6 @@ dependencies = [
 [[package]]
 name = "bezel-theme"
 version = "0.2.29"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7bae1d1d89fd77d5377ba172c209074851a1885d9101a003ae41e7f8b660c2dd"
 dependencies = [
  "bezel-gpui",
  "objc",
@@ -1286,8 +1280,6 @@ dependencies = [
 [[package]]
 name = "bezel-ui"
 version = "0.2.29"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b971f4e12608047282e9d390dcdd3f05f009c53318fe7d251730c02916da7488"
 dependencies = [
  "bezel-gpui",
  "bezel-icons",

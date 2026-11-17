@@ -1,4 +1,4 @@
-use crate::data::{ColType, Data, Edit, Page, Revision, Table as Record};
+use crate::data::{ColType, ColumnFormat, Data, Edit, Page, Revision, Table as Record};
 use bezel::gpui::Context;
 use serde_json::Value;
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
@@ -229,6 +229,15 @@ impl Table {
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
         self.edit(cx, |data, key| data.set_column_width(key, column, width))
+    }
+
+    pub fn set_column_format(
+        &mut self,
+        column: &str,
+        format: ColumnFormat,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        self.edit(cx, |data, key| data.set_column_format(key, column, format))
     }
 
     pub fn move_column(

@@ -63,6 +63,12 @@ uuid = { version = "1", features = ["v7"] }
 web-time = "1"
 which = "8"
 
+[patch.crates-io]
+bezel-icons = { path = "../bezel/crates/icons" }
+bezel-motion = { path = "../bezel/crates/motion" }
+bezel-theme = { path = "../bezel/crates/theme" }
+bezel-ui = { path = "../bezel/crates/ui" }
+
 [profile.dev]
 debug = "line-tables-only"
 

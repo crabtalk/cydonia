@@ -2,7 +2,7 @@
 //! project's `Option<Data>` is always empty and nothing here can be called.
 
 use crate::table::{
-    ColType, Column, Table,
+    ColType, Column, ColumnFormat, Table,
     rows::{Edit, Page, Revision, Rows},
     store::Home,
 };
@@ -74,6 +74,10 @@ impl Data {
     }
 
     pub fn set_column_width(&mut self, _: &str, _: &str, _: u32) -> Result<()> {
+        match *self {}
+    }
+
+    pub fn set_column_format(&mut self, _: &str, _: &str, _: ColumnFormat) -> Result<()> {
         match *self {}
     }
 
