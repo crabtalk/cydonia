@@ -488,15 +488,29 @@ impl Cydonia {
         }
     }
 
-    /// Put session `id` in front of the focused pane's stack, and the focus in
-    /// its composer. Outside a space, or with no pane focused, it opens as a
-    /// tab of its own.
-    pub(crate) fn land_session(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
+    /// New entries join the focused stack in a space, or open in the strip.
+    pub(crate) fn land_member(
+        &mut self,
+        member: Member,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.commit(cx) {
+            return;
+        }
         let arranged = self.workspace.read(cx).active_space().is_some();
-        let target = self.focused_entry(cx).filter(|_| arranged);
-        let Some(target) = target else {
-            return self.select_session(id, Opening::Kept, window, cx);
-        };
+        match self.focused_entry(cx).filter(|_| arranged) {
+            Some(target) => {
+                self.workspace.update(cx, |workspace, cx| {
+                    workspace.stack_pane(&target, &member, cx)
+                });
+                self.show_pane(&member, window, cx);
+            }
+            None => self.enter_member(member, Opening::Kept, window, cx),
+        }
+    }
+
+    pub(crate) fn land_session(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
         let member = self.workspace.update(cx, |workspace, cx| {
             workspace.select_session(id, cx);
             workspace.mint_record(id, cx)?;
@@ -505,10 +519,7 @@ impl Cydonia {
         let Some(member) = member else {
             return;
         };
-        self.workspace.update(cx, |workspace, cx| {
-            workspace.stack_pane(&target, &member, cx)
-        });
-        self.show_pane(&member, window, cx);
+        self.land_member(member, window, cx);
         self.sync_composer(cx);
         self.focus_composer_of(id, window, cx);
     }

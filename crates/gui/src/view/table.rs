@@ -172,8 +172,10 @@ impl Cydonia {
         let ix = self
             .workspace
             .update(cx, |workspace, cx| workspace.new_table(cx));
-        if let Some(ix) = ix {
-            self.open_table(project, ix, Opening::Kept, window, cx);
+        if let Some(ix) = ix
+            && let Some(member) = self.workspace.read(cx).table_member(project, ix)
+        {
+            self.land_member(member, window, cx);
         }
     }
 

@@ -96,7 +96,7 @@ impl Cydonia {
             .workspace
             .update(cx, |workspace, cx| workspace.create_canvas(project, cx));
         match made {
-            Ok(member) => self.enter_member(member, Opening::Kept, window, cx),
+            Ok(member) => self.land_member(member, window, cx),
             Err(message) => self.show_error("Cannot create canvas".into(), message, window, cx),
         }
     }

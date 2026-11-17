@@ -103,11 +103,9 @@ fn opening_an_entry_outside_the_space_lands_on_it(cx: &mut gpui::TestAppContext)
         .unwrap();
 }
 
-/// Making an entry while an arrangement is up does the same: the space is
-/// left and the window lands on the thing just made, not on whichever pane
-/// the arrangement had first.
+/// Newly created entries join the focused stack without adding strip tabs.
 #[gpui::test]
-fn making_an_entry_inside_a_space_lands_on_it(cx: &mut gpui::TestAppContext) {
+fn making_entries_inside_a_space_lands_in_the_focused_pane(cx: &mut gpui::TestAppContext) {
     let scratch = Scratch::new("making");
     cx.update(|cx| {
         Theme::install(bezel::theme::Appearance::Light, cx);
@@ -133,14 +131,58 @@ fn making_an_entry_inside_a_space_lands_on_it(cx: &mut gpui::TestAppContext) {
             root.sync_leaves(window, cx);
             root.focus_pane(&b, window, cx);
 
-            root.new_article(0, window, cx);
+            root.workspace.update(cx, |workspace, _| {
+                workspace.settings.features.tables = true;
+                workspace.settings.features.canvases = true;
+            });
+            let strip = root.workspace.read(cx).strip().to_vec();
+            for kind in [Kind::Article, Kind::Table, Kind::Canvas] {
+                match kind {
+                    Kind::Article => root.new_article(0, window, cx),
+                    Kind::Table => root.new_table(0, window, cx),
+                    Kind::Canvas => root.new_canvas(0, window, cx),
+                    _ => unreachable!(),
+                }
+                assert!(root.workspace.read(cx).active_space().is_some());
+                assert_eq!(root.workspace.read(cx).strip(), strip);
+                root.sync_leaves(window, cx);
+                assert_eq!(root.showing(cx), Some(kind));
+                let member = root.focused_entry(cx).expect("focused entry");
+                let stack = root.workspace.read(cx).stack_of(&member);
+                assert!(stack.contains(&b));
+                assert!(!stack.contains(&a));
+            }
+        })
+        .unwrap();
+}
 
-            assert!(
-                root.workspace.read(cx).active_space().is_none(),
-                "the space is left"
-            );
-            root.sync_leaves(window, cx);
-            assert_eq!(root.showing(cx), Some(Kind::Article));
+#[gpui::test]
+fn making_entries_outside_a_space_opens_strip_tabs(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("making-outside");
+    cx.update(|cx| Theme::install(bezel::theme::Appearance::Light, cx));
+    let window = cx.add_window(|window, cx| {
+        Cydonia::new(Settings::default(), state::State::default(), window, cx)
+    });
+    window
+        .update(cx, |root, window, cx| {
+            root.workspace.update(cx, |workspace, cx| {
+                workspace.settings.features.tables = true;
+                workspace.settings.features.canvases = true;
+                workspace.open_project(scratch.project("one"), cx);
+            });
+            for kind in [Kind::Article, Kind::Table, Kind::Canvas] {
+                let before = root.workspace.read(cx).strip().len();
+                match kind {
+                    Kind::Article => root.new_article(0, window, cx),
+                    Kind::Table => root.new_table(0, window, cx),
+                    Kind::Canvas => root.new_canvas(0, window, cx),
+                    _ => unreachable!(),
+                }
+                root.sync_leaves(window, cx);
+                assert!(root.workspace.read(cx).active_space().is_none());
+                assert_eq!(root.workspace.read(cx).strip().len(), before + 1);
+                assert_eq!(root.showing(cx), Some(kind));
+            }
         })
         .unwrap();
 }

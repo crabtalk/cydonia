@@ -12,14 +12,9 @@
 //! [`Links`] is what cydonia does with every link a document paints: these,
 //! files and web pages.
 
-pub mod mention;
-
-use crate::model::workspace::Opening;
-use std::{path::PathBuf, rc::Rc};
-
 use crate::{
     model::workspace::{
-        Showing,
+        Opening, Showing, Workspace,
         references::{Part, Passage},
     },
     view::{
@@ -37,6 +32,7 @@ use crate::{
         window::root::Cydonia,
     },
 };
+pub(crate) use artifact::reference::SCHEME;
 use artifact::{
     kind::Kind,
     reference::{Reference, Span},
@@ -58,8 +54,9 @@ use markdown::{
     fence::{fence_band, fence_panel},
     render::Editing,
 };
+use std::{path::PathBuf, rc::Rc};
+pub mod mention;
 
-pub(crate) use artifact::reference::SCHEME;
 /// The transcript's box. It scrolls inside; the article does not grow with
 /// the conversation.
 const TRANSCRIPT_HEIGHT: f32 = 320.;
@@ -301,32 +298,49 @@ fn nested_row(url: &str, cx: &App) -> AnyElement {
         .into_any_element()
 }
 
-/// The slash menu: the editor's blocks, then a session already running.
-pub(crate) fn slash_items() -> Vec<SlashItem> {
-    let existing = |at: SlashAt, window: &mut Window, cx: &mut App| {
-        let Some(root) = window.root::<Cydonia>().flatten() else {
-            return;
-        };
-        root.update(cx, |root, cx| {
-            root.link_search(
-                Rc::new(move |_, linked: Linked, _, cx| {
-                    at.editor
-                        .update(cx, |editor, cx| {
-                            editor.place_block(at.block, embed(&linked.url), cx)
-                        })
-                        .ok();
-                }),
-                window,
-                cx,
-            )
-        });
-    };
+/// The editor's blocks and links to enabled entry kinds.
+pub(crate) fn slash_items(workspace: &Workspace) -> Vec<SlashItem> {
     let mut items = editor::slash_defaults();
-    items.push(SlashItem::Row(SlashRow {
-        label: "Session".into(),
-        icon: Some(kind_icon(Kind::Session)),
-        action: SlashAction::Run(Rc::new(existing)),
-    }));
+    for (enabled, kind, label) in [
+        (
+            workspace.settings.features.sessions,
+            Kind::Session,
+            "Session",
+        ),
+        (workspace.settings.features.canvases, Kind::Canvas, "Canvas"),
+        (
+            workspace.settings.features.tables,
+            Kind::Table,
+            "Table entry",
+        ),
+    ] {
+        if !enabled {
+            continue;
+        }
+        items.push(SlashItem::Row(SlashRow {
+            label: label.into(),
+            icon: Some(kind_icon(kind)),
+            action: SlashAction::Run(Rc::new(move |at: SlashAt, window, cx| {
+                let Some(root) = window.root::<Cydonia>().flatten() else {
+                    return;
+                };
+                root.update(cx, |root, cx| {
+                    root.link_search(
+                        kind,
+                        Rc::new(move |_, linked: Linked, _, cx| {
+                            at.editor
+                                .update(cx, |editor, cx| {
+                                    editor.place_block(at.block, embed(&linked.url), cx)
+                                })
+                                .ok();
+                        }),
+                        window,
+                        cx,
+                    )
+                });
+            })),
+        }));
+    }
     items
 }
 
@@ -1046,7 +1060,7 @@ impl Cydonia {
     /// [`Cydonia::sync_composer`].
     pub(crate) fn sync_session_cards(&mut self, cx: &mut Context<Self>) {
         let workspace = self.workspace.read(cx);
-        let items = slash_items();
+        let items = slash_items(workspace);
         let linkables = crate::view::kit::link::mention::read(workspace, cx);
         let agents = composer_agents(workspace);
         let pointed: Vec<_> = self
