@@ -153,6 +153,19 @@ impl Table {
         self.edit(cx, |data, key| data.delete_rows(key, &[rowid]))
     }
 
+    pub fn move_row(
+        &mut self,
+        row: i64,
+        after: Option<i64>,
+        before: Option<i64>,
+        revision: Revision,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        self.edit(cx, |data, key| {
+            data.move_row(key, row, after, before, revision)
+        })
+    }
+
     pub fn add_column(&mut self, cx: &mut Context<Self>) -> Result<(), String> {
         let mut name = COLUMN.to_owned();
         for n in 2.. {

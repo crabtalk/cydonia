@@ -46,7 +46,7 @@ const LINE: f32 = 18.;
 
 /// The column the row actions sit in — the trash on a row, the `+` on the
 /// header. Declared with the data columns so both halves line up.
-const ACTIONS: f32 = 44.;
+const ACTIONS: f32 = 62.;
 
 const COLUMN_WIDTH: f32 = 180.;
 const MIN_COLUMN_WIDTH: f32 = 80.;
@@ -124,6 +124,18 @@ struct Resizing {
 }
 
 struct ColumnResize(EntityId);
+
+#[derive(Clone)]
+struct RowDrag {
+    id: i64,
+    revision: Revision,
+}
+
+impl PartialEq for RowDrag {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
 
 actions!(cydonia_table, [CommitCell, DismissCell]);
 
@@ -367,6 +379,7 @@ pub(crate) struct TableView {
     offset: i64,
     resizing: Option<Resizing>,
     column_drag: drag::Domain<(), String>,
+    row_drag: drag::Domain<(), RowDrag>,
     root: WeakEntity<Cydonia>,
     /// What the field is attached to, and the field itself.
     pub(crate) cell: Option<Cell>,
@@ -409,6 +422,9 @@ impl TableView {
             resizing: None,
             column_drag: drag::Domain::with_ghost(|name: &String, _, _| {
                 drag::ghost_label("table-column-ghost", name.clone()).into_any_element()
+            }),
+            row_drag: drag::Domain::with_ghost(|_, _, _| {
+                drag::ghost_label("table-row-ghost", "Move row").into_any_element()
             }),
             root,
             cell: None,
@@ -578,6 +594,28 @@ impl TableView {
         let _ = self.workspace.update(cx, |workspace, cx| {
             workspace.edit_table(&entry, cx, |table, cx| table.delete_row(rowid, cx))
         });
+    }
+
+    fn move_row(
+        &mut self,
+        event: &drag::Drop<(), RowDrag>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.source.read(cx).sort.is_none() && self.commit_cell(cx) {
+            let entry = self.table.clone();
+            let _ = self.workspace.update(cx, |workspace, cx| {
+                workspace.edit_table(&entry, cx, |table, cx| {
+                    table.move_row(
+                        event.item.id,
+                        event.after.as_ref().map(|row| row.id),
+                        event.before.as_ref().map(|row| row.id),
+                        event.item.revision,
+                        cx,
+                    )
+                })
+            });
+        }
     }
 
     fn add_column(&mut self, cx: &mut Context<Self>) {
@@ -887,8 +925,15 @@ impl TableView {
             .into_any_element()
     }
 
-    fn row_actions(&self, rowid: i64, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
-        theme
+    fn row_actions(
+        &self,
+        rowid: i64,
+        revision: Revision,
+        manual: bool,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let remove = theme
             .ghost(SharedString::from(format!("delete-row-{rowid}")))
             .flex_none()
             .invisible()
@@ -902,7 +947,31 @@ impl TableView {
             .on_click(cx.listener(move |this, _, _, cx| {
                 cx.stop_propagation();
                 this.delete_row(rowid, cx);
-            }))
+            }));
+        div()
+            .flex()
+            .justify_end()
+            .gap(px(2.))
+            .when(manual, |actions| {
+                actions.child(
+                    self.row_drag.handle(
+                        RowDrag {
+                            id: rowid,
+                            revision,
+                        },
+                        theme
+                            .ghost(SharedString::from(format!("move-row-{rowid}")))
+                            .debug_selector(move || format!("table-move-row-{rowid}"))
+                            .flex_none()
+                            .group_hover("grid-row", |el| el.text_color(theme.text))
+                            .p(px(3.))
+                            .text_color(theme.text_faint)
+                            .child(icons::icon(icons::arrows::ArrowUpDown).size(px(12.)))
+                            .tooltip(|window, cx| Tooltip::text("Move row", window, cx)),
+                    ),
+                )
+            })
+            .child(remove)
             .into_any_element()
     }
 }
@@ -911,7 +980,7 @@ impl Render for TableView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::of(cx).clone();
         self.offset = self.offset.min(self.source.read(cx).last_page());
-        let Some((columns, rows, total)) = self.page(cx).map(|page| {
+        let Some((columns, rows, total, revision)) = self.page(cx).map(|page| {
             (
                 page.columns.clone(),
                 page.rows
@@ -919,6 +988,7 @@ impl Render for TableView {
                     .map(|record| (record.rowid, record.cells.clone()))
                     .collect::<Vec<_>>(),
                 page.total,
+                page.revision,
             )
         }) else {
             return div()
@@ -1043,12 +1113,13 @@ impl Render for TableView {
         );
 
         let mut body = div().relative().flex().flex_col();
+        let manual = self.source.read(cx).sort.is_none();
         for (n, (rowid, held)) in rows.iter().enumerate() {
             let mut cells: Vec<AnyElement> = Vec::with_capacity(count + 1);
             for &ix in &order {
                 cells.push(self.value(*rowid, &columns[ix], held.get(ix), cx));
             }
-            cells.push(self.row_actions(*rowid, &theme, cx));
+            cells.push(self.row_actions(*rowid, revision, manual, &theme, cx));
             body = body.child(
                 table::row(&theme, &declared, n == 0, Selection::None, cells).group("grid-row"),
             );
@@ -1098,7 +1169,13 @@ impl Render for TableView {
                 scrollbars::pane("table-rows", scrollbars::Axes::Vertical)
                     .min_h_0()
                     .track_scroll(&self.vertical)
-                    .child(body)
+                    .child(
+                        self.row_drag
+                            .region("table-row-order", (), Axis::Vertical, body)
+                            .track_scroll(&self.vertical)
+                            .feedback(drag::Feedback::Indicator)
+                            .on_drop(cx.listener(Self::move_row)),
+                    )
                     .child(
                         add::row("add-row", "New row", theme.text_muted, &theme)
                             .mt(px(6.))

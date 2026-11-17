@@ -20,6 +20,7 @@ use std::{
 mod columns;
 mod ddl;
 mod identity;
+mod row_order;
 mod rows;
 mod schema;
 mod sql;
@@ -27,6 +28,11 @@ mod sql;
 static CONNECTION: AtomicU64 = AtomicU64::new(1);
 
 const BUSY: Duration = Duration::from_secs(5);
+const INTERNAL_TABLES: [&str; 3] = [
+    "_tables",
+    "_cydonia_table_columns",
+    "_cydonia_table_row_order",
+];
 
 const DDL: &str = "CREATE TABLE IF NOT EXISTS _tables (
     key        TEXT PRIMARY KEY,
@@ -41,6 +47,12 @@ CREATE TABLE IF NOT EXISTS _cydonia_table_columns (
     column_name TEXT NOT NULL,
     display TEXT NOT NULL,
     PRIMARY KEY (table_key, column_name)
+);
+CREATE TABLE IF NOT EXISTS _cydonia_table_row_order (
+    table_key TEXT NOT NULL,
+    row_id INTEGER NOT NULL,
+    position INTEGER NOT NULL,
+    PRIMARY KEY (table_key, row_id)
 )";
 
 pub struct Data {
@@ -219,11 +231,11 @@ impl Data {
         let mut stmt = self.reader.prepare(
             "SELECT m.name FROM sqlite_master m \
              LEFT JOIN _tables t ON t.key = m.name \
-             WHERE m.type = 'table' AND m.name NOT LIKE 'sqlite_%' AND m.name NOT IN ('_tables', '_cydonia_table_columns') \
+             WHERE m.type = 'table' AND m.name NOT LIKE 'sqlite_%' AND m.name NOT IN (?1, ?2, ?3) \
              ORDER BY COALESCE(t.updated_at, t.created_at, 0) DESC, m.name",
         )?;
         let keys = stmt
-            .query_map([], |row| row.get(0))?
+            .query_map(INTERNAL_TABLES, |row| row.get(0))?
             .collect::<rusqlite::Result<Vec<String>>>()?;
         Ok(keys)
     }
@@ -298,6 +310,7 @@ impl Data {
                 }
                 let numbered = self.project().is_some();
                 let tx = self.writer.transaction()?;
+                row_order::drop_tracking(&tx, &current)?;
                 tx.execute_batch(&format!(
                     "ALTER TABLE {} RENAME TO {}",
                     table::quote(&current),
@@ -311,6 +324,11 @@ impl Data {
                     "UPDATE _cydonia_table_columns SET table_key = ?2 WHERE table_key = ?1",
                     [&current, &next],
                 )?;
+                tx.execute(
+                    "UPDATE _cydonia_table_row_order SET table_key = ?2 WHERE table_key = ?1",
+                    [&current, &next],
+                )?;
+                row_order::track_if_ordered(&tx, &next)?;
                 if numbered {
                     tx.execute(
                         "UPDATE entry_registry.entries SET id = ?2 \
@@ -345,6 +363,10 @@ impl Data {
         tx.execute("DELETE FROM _tables WHERE key = ?1", [&key])?;
         tx.execute(
             "DELETE FROM _cydonia_table_columns WHERE table_key = ?1",
+            [&key],
+        )?;
+        tx.execute(
+            "DELETE FROM _cydonia_table_row_order WHERE table_key = ?1",
             [&key],
         )?;
         if numbered {
@@ -382,9 +404,9 @@ impl Data {
         };
         self.reader
             .query_row(
-                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?1 AND name NOT LIKE 'sqlite_%' AND name NOT IN ('_tables', '_cydonia_table_columns') \
-                 UNION ALL SELECT key FROM _tables WHERE name = ?1 COLLATE NOCASE AND key NOT IN ('_tables', '_cydonia_table_columns') AND key NOT LIKE 'sqlite_%'",
-                [ident],
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?1 AND name NOT LIKE 'sqlite_%' AND name NOT IN (?2, ?3, ?4) \
+                 UNION ALL SELECT key FROM _tables WHERE name = ?1 COLLATE NOCASE AND key NOT IN (?2, ?3, ?4) AND key NOT LIKE 'sqlite_%'",
+                [ident, INTERNAL_TABLES[0], INTERNAL_TABLES[1], INTERNAL_TABLES[2]],
                 |row| row.get(0),
             )
             .map_err(|_| anyhow!("no table {ident}"))

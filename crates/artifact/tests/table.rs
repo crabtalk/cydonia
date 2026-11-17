@@ -7,6 +7,39 @@ use cydonia_artifact::table::{
 };
 
 #[test]
+fn manual_order_survives_schema_changes_and_does_not_follow_reused_row_ids() {
+    let path = std::env::temp_dir().join(format!("cydonia-row-order-{}", std::process::id()));
+    let mut data = Data::open(&Home::App(path.clone())).unwrap();
+    let column = Column {
+        name: "Name".into(),
+        kind: ColType::Text,
+    };
+    let key = data.create("Tasks", None, &[column], None).unwrap().key;
+    let ids = data.add_rows(&key, 3).unwrap();
+    let revision = data.read(&key, None, false, 3, 0).unwrap().revision;
+    data.move_row(&key, ids[2], None, Some(ids[0]), revision)
+        .unwrap();
+    let key = data.update(&key, None, Some("Moved")).unwrap().key;
+    data.write_column(&key, "rowid", Some(ColType::Text), None)
+        .unwrap();
+    data.write_column(&key, "Name", Some(ColType::Number), None)
+        .unwrap();
+    let order = |data: &Data| {
+        data.read(&key, None, false, 3, 0)
+            .unwrap()
+            .rows
+            .into_iter()
+            .map(|row| row.rowid)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(order(&data), [ids[2], ids[0], ids[1]]);
+    data.write("DELETE FROM moved WHERE _rowid_ = 3; INSERT INTO moved DEFAULT VALUES")
+        .unwrap();
+    assert_eq!(order(&data), ids);
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
 fn an_external_table_can_be_archived_without_metadata() {
     let path = std::env::temp_dir().join(format!(
         "cydonia-external-table-{}-{}",

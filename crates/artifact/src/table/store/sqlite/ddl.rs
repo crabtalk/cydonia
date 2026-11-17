@@ -1,6 +1,6 @@
 use crate::table::{
     self, ColType, Column,
-    store::sqlite::{self as data, Data, columns, identity::Identity, schema::Schema},
+    store::sqlite::{self as data, Data, columns, identity::Identity, row_order, schema::Schema},
 };
 use anyhow::{Result, bail};
 
@@ -39,12 +39,16 @@ impl Data {
             if rename.is_some() {
                 bail!("no column {column} on {key} to rename");
             }
-            self.writer.execute_batch(&format!(
+            let tx = self.writer.savepoint()?;
+            row_order::drop_tracking(&tx, &key)?;
+            tx.execute_batch(&format!(
                 "ALTER TABLE {} ADD COLUMN {} {}",
                 table::quote(&key),
                 table::quote(column),
                 kind.sql()
             ))?;
+            row_order::track_if_ordered(&tx, &key)?;
+            tx.commit()?;
             return data::columns_of(&self.writer, &key);
         };
 
@@ -64,6 +68,7 @@ impl Data {
             {
                 bail!("{key} already has a column {new}");
             }
+            row_order::drop_tracking(&tx, &key)?;
             tx.execute_batch(&format!(
                 "ALTER TABLE {} RENAME COLUMN {} TO {}",
                 table::quote(&key),
@@ -71,6 +76,7 @@ impl Data {
                 table::quote(new)
             ))?;
             columns::rename_display(&tx, &key, &existing[at].name, new)?;
+            row_order::track_if_ordered(&tx, &key)?;
         }
         tx.commit()?;
         data::columns_of(&self.writer, &key)
@@ -99,8 +105,6 @@ impl Data {
         if primary {
             bail!("a primary key column cannot be retyped");
         }
-        let objects = self.writer.prepare("SELECT sql FROM sqlite_schema WHERE tbl_name = ?1 AND type IN ('index', 'trigger') AND sql IS NOT NULL")?
-            .query_map([key], |row| row.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
         let names = data::columns_of(&self.writer, key)?
             .iter()
             .map(|col| table::quote(&col.name))
@@ -112,6 +116,9 @@ impl Data {
         self.writer.pragma_update(None, "foreign_keys", false)?;
         let result = (|| -> Result<()> {
             let tx = self.writer.transaction()?;
+            row_order::drop_tracking(&tx, key)?;
+            let objects = tx.prepare("SELECT sql FROM sqlite_schema WHERE tbl_name = ?1 AND type IN ('index', 'trigger') AND sql IS NOT NULL")?
+                .query_map([key], |row| row.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
             tx.execute_batch(&create)?;
             tx.execute_batch(&format!(
                 "INSERT INTO {} ({rowid}, {names}) SELECT {rowid}, {names} FROM {}",
@@ -139,6 +146,7 @@ impl Data {
                 ))?;
                 columns::rename_display(&tx, key, column, new.trim())?;
             }
+            row_order::track_if_ordered(&tx, key)?;
             let violations: i64 =
                 tx.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |row| {
                     row.get(0)

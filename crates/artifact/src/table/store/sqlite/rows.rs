@@ -1,10 +1,10 @@
 use crate::table::{
     self, Column,
     rows::{Edit, Page, Revision, Row},
-    store::sqlite::{self as data, Data, identity::Identity},
+    store::sqlite::{self as data, Data, identity::Identity, row_order},
 };
 use anyhow::{Result, bail};
-use rusqlite::{Transaction, TransactionBehavior, params_from_iter};
+use rusqlite::{ToSql, Transaction, TransactionBehavior, params_from_iter};
 use serde_json::{Map, Value};
 
 impl Data {
@@ -45,7 +45,9 @@ impl Data {
         // Empty sorts with null: a blank cell is absent, whichever direction
         // you are reading in, and burying it under the values is what makes a
         // column of a few filled rows readable at all.
-        let order = match sort.and_then(|s| columns.iter().find(|col| col.name == s)) {
+        let sorted = sort.and_then(|s| columns.iter().find(|col| col.name == s));
+        let manual = sorted.is_none() && row_order::ordered(&self.reader, &key)?;
+        let order = match sorted {
             Some(col) => {
                 let column = table::quote(&col.name);
                 let direction = if desc { "DESC" } else { "ASC" };
@@ -54,16 +56,18 @@ impl Data {
                     " ORDER BY ({blank}), CASE WHEN {blank} THEN {rowid} END, {column} {direction}, {rowid}"
                 )
             }
+            None if manual => row_order::order_by(rowid, "?3"),
             None => format!(" ORDER BY {rowid}"),
         };
 
         let count = columns.len();
         let mut stmt = self.reader.prepare(&format!(
-            "SELECT {projection} FROM {}{order} LIMIT ?1 OFFSET ?2",
+            "SELECT {projection} FROM {} AS _rows{order} LIMIT ?1 OFFSET ?2",
             table::quote(&key)
         ))?;
+        let bindings: [&dyn ToSql; 3] = [&limit, &offset, &key];
         let rows = stmt
-            .query_map([limit, offset], |row| {
+            .query_map(&bindings[..if manual { 3 } else { 2 }], |row| {
                 Ok(Row {
                     rowid: row.get(0)?,
                     cells: (1..=count).map(|i| data::value(row, i)).collect(),
@@ -87,7 +91,7 @@ impl Data {
         })
     }
 
-    fn revision(&self) -> Result<Revision> {
+    pub(super) fn revision(&self) -> Result<Revision> {
         Ok(Revision {
             connection: self.identity,
             changes: self.writer.total_changes(),

@@ -205,6 +205,47 @@ fn dragging_a_column_persists_order_and_keeps_its_cells_together(cx: &mut TestAp
 }
 
 #[gpui::test]
+fn dragging_a_row_persists_manual_order_and_sort_clears_back_to_it(cx: &mut TestAppContext) {
+    let (directory, view, mut cx) = open(cx, 2, 700.);
+    let first = cx.debug_bounds("table-move-row-1").unwrap().center();
+    let third = cx.debug_bounds("table-move-row-3").unwrap().center();
+    let end = third + point(px(0.), px(5.));
+    cx.simulate_mouse_down(first, MouseButton::Left, Modifiers::default());
+    cx.simulate_mouse_move(
+        first + point(px(0.), px(10.)),
+        Some(MouseButton::Left),
+        Modifiers::default(),
+    );
+    assert!(cx.update(|_, cx| cx.has_active_drag()));
+    settle(&mut cx);
+    cx.simulate_mouse_move(end, Some(MouseButton::Left), Modifiers::default());
+    settle(&mut cx);
+    cx.simulate_mouse_up(end, MouseButton::Left, Modifiers::default());
+    settle(&mut cx);
+
+    let data = Data::open(&Home::Project(directory.0.clone())).unwrap();
+    let page = data.read("stories", None, false, 3, 0).unwrap();
+    assert_eq!(
+        page.rows.iter().map(|row| row.rowid).collect::<Vec<_>>(),
+        [2, 3, 1]
+    );
+    cx.update(|_, cx| {
+        view.update(cx, |view, cx| {
+            view.sort_rows(
+                Some(table::model::Sort {
+                    column: "Field 0".into(),
+                    descending: false,
+                }),
+                cx,
+            );
+            assert_eq!(view.page(cx).unwrap().rows[0].rowid, 1);
+            view.sort_rows(None, cx);
+            assert_eq!(view.page(cx).unwrap().rows[0].rowid, 2);
+        });
+    });
+}
+
+#[gpui::test]
 fn table_sort_runs_before_paging_and_can_be_cleared(cx: &mut TestAppContext) {
     let (directory, view, mut cx) = open(cx, 1, 650.);
     let mut data = Data::open(&Home::Project(directory.0.clone())).unwrap();

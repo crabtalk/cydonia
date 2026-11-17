@@ -87,6 +87,17 @@ impl Data {
         match *self {}
     }
 
+    pub fn move_row(
+        &mut self,
+        _: &str,
+        _: i64,
+        _: Option<i64>,
+        _: Option<i64>,
+        _: Revision,
+    ) -> Result<()> {
+        match *self {}
+    }
+
     pub fn write_cells(&mut self, _: &str, _: &[Edit]) -> Result<()> {
         match *self {}
     }
