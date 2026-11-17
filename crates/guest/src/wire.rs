@@ -388,6 +388,7 @@ pub enum ColType {
     Date,
     /// 0 or 1.
     Check,
+    Url,
 }
 
 /// A query's answer: the column names once, then the rows.

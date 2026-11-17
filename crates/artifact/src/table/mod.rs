@@ -8,8 +8,7 @@ use serde::{Deserialize, Serialize};
 pub mod rows;
 pub mod store;
 
-/// What a column holds. Four, closed, and every one a word SQLite keeps
-/// verbatim in its catalog — which is what lets a declaration be the registry.
+/// The declared type is stored in the SQLite catalog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ColType {
@@ -17,12 +16,11 @@ pub enum ColType {
     Number,
     Date,
     Check,
+    Url,
 }
 
 impl ColType {
-    /// Every type, for the prompt that has to name the menu. Interpolated
-    /// rather than retyped in prose, so adding one here reaches the model.
-    pub const ALL: [Self; 4] = [Self::Text, Self::Number, Self::Date, Self::Check];
+    pub const ALL: [Self; 5] = [Self::Text, Self::Number, Self::Date, Self::Check, Self::Url];
 
     /// The wire name — what the tools take and hand back.
     pub fn name(self) -> &'static str {
@@ -31,6 +29,7 @@ impl ColType {
             Self::Number => "number",
             Self::Date => "date",
             Self::Check => "check",
+            Self::Url => "url",
         }
     }
 
@@ -43,6 +42,7 @@ impl ColType {
             Self::Number => "NUMERIC",
             Self::Date => "DATE",
             Self::Check => "BOOLEAN",
+            Self::Url => "URL TEXT",
         }
     }
 }
@@ -52,12 +52,10 @@ impl ColType {
 /// column we cannot name is still a column the person can read.
 impl From<&str> for ColType {
     fn from(declared: &str) -> Self {
-        match declared.to_ascii_uppercase().as_str() {
-            "NUMERIC" => Self::Number,
-            "DATE" => Self::Date,
-            "BOOLEAN" => Self::Check,
-            _ => Self::Text,
-        }
+        Self::ALL
+            .into_iter()
+            .find(|kind| declared.eq_ignore_ascii_case(kind.sql()))
+            .unwrap_or(Self::Text)
     }
 }
 

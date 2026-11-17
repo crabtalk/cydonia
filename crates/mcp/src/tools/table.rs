@@ -31,7 +31,7 @@ const KEY: Arg = Arg {
 };
 const COLUMNS: Arg = Arg {
     name: "columns",
-    about: "Columns as objects with name and type (text, number, date, check). Date values are Unix seconds; check values are booleans.",
+    about: "Columns as objects with name and type. Date values are Unix seconds, check values are booleans, and URL values are text.",
 };
 const COLUMN: Arg = Arg {
     name: "column",
@@ -39,7 +39,7 @@ const COLUMN: Arg = Arg {
 };
 const TYPE: Arg = Arg {
     name: "type",
-    about: "The column type: text, number, date, or check.",
+    about: "The column type.",
 };
 const RENAME: Arg = Arg {
     name: "rename",
@@ -171,8 +171,12 @@ pub static TOOLS: [Tool; 11] = [
 
 fn schema(bound: bool, required: &[Arg], optional: &[Arg]) -> Value {
     let mut schema = tools::fields(bound, required);
+    let types = ColType::ALL.map(ColType::name);
     for arg in optional {
         schema["properties"][arg.name] = json!({"type": "string", "description": arg.about});
+        if arg.name == TYPE.name {
+            schema["properties"][arg.name]["enum"] = json!(types);
+        }
     }
     for arg in required.iter().chain(optional) {
         let kind = match arg.name {
@@ -185,7 +189,7 @@ fn schema(bound: bool, required: &[Arg], optional: &[Arg]) -> Value {
         if kind == "array" {
             schema["properties"][arg.name]["items"] = match arg.name {
                 "columns" => {
-                    json!({"type":"object","properties":{"name":{"type":"string"},"type":{"type":"string","enum":["text","number","date","check"]}},"required":["name","type"]})
+                    json!({"type":"object","properties":{"name":{"type":"string"},"type":{"type":"string","enum":types}},"required":["name","type"]})
                 }
                 "edits" => {
                     json!({"type":"object","properties":{"rowid":{"type":"integer"},"column":{"type":"string"},"value":{}},"required":["rowid","column","value"]})

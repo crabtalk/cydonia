@@ -9,6 +9,7 @@ use crate::{
     view::{
         kit::{
             add,
+            link,
             menu::{self, MenuHost},
         },
         window::root::{Cydonia, NewTable},
@@ -27,9 +28,11 @@ use bezel::{
         input::{Shape, TextField},
         menu::Item,
         scroll as scrollbars, table,
+        tooltip::Tooltip,
         widgets::{Buttons, Layout as _, SplitStyle},
     },
 };
+use markdown::{Link, Links as _};
 use serde_json::Value;
 use std::{cell::Cell as ValueCell, collections::HashMap, rc::Rc};
 
@@ -773,7 +776,7 @@ impl TableView {
     fn value(
         &self,
         rowid: i64,
-        column: &str,
+        column: &Column,
         held: Option<&Value>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -781,12 +784,17 @@ impl TableView {
         if self.cell
             == Some(Cell::Value {
                 rowid,
-                column: column.to_owned(),
+                column: column.name.clone(),
             })
         {
             return self.cell_editor(cx).into_any_element();
         }
-        let column = column.to_owned();
+        let contents = held.map(text).unwrap_or_default();
+        let url = (column.kind == ColType::Url)
+            .then(|| url::Url::parse(&contents).ok())
+            .flatten()
+            .filter(|url| matches!(url.scheme(), "http" | "https"));
+        let column = column.name.clone();
         div()
             .id(SharedString::from(format!("cell-{rowid}-{column}")))
             .debug_selector({
@@ -800,7 +808,22 @@ impl TableView {
             .text_style(TextStyle::Body)
             .line_height(px(LINE))
             .text_color(theme.text)
-            .child(held.map(text).unwrap_or_default())
+            .flex()
+            .items_center()
+            .child(div().min_w_0().flex_1().truncate().child(contents))
+            .when_some(url, |cell, url| {
+                cell.child(
+                    theme
+                        .ghost("table-open-url")
+                        .flex_none()
+                        .child(icons::icon(icons::arrows::ExternalLink).size(px(12.)))
+                        .tooltip(|window, cx| Tooltip::text("Open link", window, cx))
+                        .on_click(move |_, window, cx| {
+                            cx.stop_propagation();
+                            link::Links::open(Link::new(url.as_str(), None), window, cx);
+                        }),
+                )
+            })
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.edit_cell(
                     Cell::Value {
@@ -959,7 +982,7 @@ impl Render for TableView {
         for (n, (rowid, held)) in rows.iter().enumerate() {
             let mut cells: Vec<AnyElement> = Vec::with_capacity(count + 1);
             for (ix, column) in columns.iter().enumerate() {
-                cells.push(self.value(*rowid, &column.name, held.get(ix), cx));
+                cells.push(self.value(*rowid, column, held.get(ix), cx));
             }
             cells.push(self.row_actions(*rowid, &theme, cx));
             body = body.child(
@@ -1092,6 +1115,7 @@ fn glyph(kind: ColType) -> &'static [u8] {
         ColType::Number => icons::text::Hash,
         ColType::Date => icons::time::Calendar,
         ColType::Check => icons::text::ListChecks,
+        ColType::Url => icons::arrows::ExternalLink,
     }
 }
 

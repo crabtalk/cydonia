@@ -85,6 +85,7 @@ impl Wire for ColType {
             ColType::Number => wire::ColType::Number,
             ColType::Date => wire::ColType::Date,
             ColType::Check => wire::ColType::Check,
+            ColType::Url => wire::ColType::Url,
         }
     }
 }
@@ -98,6 +99,7 @@ impl Wire for wire::ColType {
             wire::ColType::Number => ColType::Number,
             wire::ColType::Date => ColType::Date,
             wire::ColType::Check => ColType::Check,
+            wire::ColType::Url => ColType::Url,
         }
     }
 }

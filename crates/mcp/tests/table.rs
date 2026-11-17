@@ -124,6 +124,30 @@ fn agents_create_edit_query_and_delete_tables() {
 }
 
 #[test]
+fn url_columns_keep_their_type_and_text_values() {
+    let scratch = Scratch::new("table-url");
+    let server = scratch.server();
+    call(
+        &server,
+        &scratch,
+        "table_create",
+        json!({"name":"Sources", "key":"sources", "columns":[{"name":"Website","type":"url"}]}),
+    );
+    call(
+        &server,
+        &scratch,
+        "table_insert",
+        json!({"table":"sources", "rows":[{"Website":"https://example.com/a?x=1"},{"Website":"001"}]}),
+    );
+    let page = call(&server, &scratch, "table_read", json!({"table":"sources"}))
+        .data
+        .unwrap();
+    assert_eq!(page["columns"][0]["type"], "url");
+    assert_eq!(page["rows"][0]["cells"][0], "https://example.com/a?x=1");
+    assert_eq!(page["rows"][1]["cells"][0], "001");
+}
+
+#[test]
 fn table_tools_respect_write_and_delete_switches() {
     let scratch = Scratch::new("table-permissions");
     let server = Server::new()
