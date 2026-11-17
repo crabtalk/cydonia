@@ -246,6 +246,73 @@ fn dragging_a_row_persists_manual_order_and_sort_clears_back_to_it(cx: &mut Test
 }
 
 #[gpui::test]
+fn select_options_are_shared_and_rename_existing_choices(cx: &mut TestAppContext) {
+    let (directory, view, mut cx) = open(cx, 1, 600.);
+    let home = Home::Project(directory.0.clone());
+    let mut data = Data::open(&home).unwrap();
+    data.write(r#"UPDATE stories SET "Field 0" = 'Open' WHERE rowid IN (1, 2)"#)
+        .unwrap();
+    data.write_column("stories", "Field 0", Some(ColType::Select), None)
+        .unwrap();
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            view.source.update(cx, |source, cx| {
+                source.adopt(data.table("stories").unwrap(), cx)
+            });
+            view.start_edit(
+                Cell::Option {
+                    column: "Field 0".into(),
+                    previous: Some("Open".into()),
+                },
+                window,
+                cx,
+            );
+            view.cell_field
+                .update(cx, |field, cx| field.set_content("Ready", cx));
+            assert!(view.commit_cell(cx));
+            view.start_edit(
+                Cell::Option {
+                    column: "Field 0".into(),
+                    previous: None,
+                },
+                window,
+                cx,
+            );
+            view.cell_field
+                .update(cx, |field, cx| field.set_content("Done", cx));
+            assert!(view.commit_cell(cx));
+        });
+    });
+    settle(&mut cx);
+    let cell = cx.debug_bounds("table-cell-1-Field 0").unwrap().center();
+    cx.simulate_mouse_down(cell, MouseButton::Left, Modifiers::default());
+    cx.simulate_mouse_up(cell, MouseButton::Left, Modifiers::default());
+    settle(&mut cx);
+    cx.update(|_, cx| {
+        view.update(cx, |view, cx| {
+            assert!(matches!(
+                view.menu.key(),
+                Some(table::TableMenu::Select { rowid: 1, .. })
+            ));
+            let revision = view.page(cx).unwrap().revision;
+            view.choose_option(1, "Field 0", "Done", revision, cx);
+            let revision = view.page(cx).unwrap().revision;
+            view.choose_option(3, "Field 0", "", revision, cx);
+        });
+    });
+    let reopened = Data::open(&home).unwrap();
+    let table = reopened.table("stories").unwrap();
+    assert_eq!(
+        table.column_layout.settings["Field 0"].select_options,
+        ["Ready", "Done"]
+    );
+    let page = reopened.read("stories", None, false, 3, 0).unwrap();
+    assert_eq!(page.rows[0].cells[0], "Done");
+    assert_eq!(page.rows[1].cells[0], "Ready");
+    assert!(page.rows[2].cells[0].is_null());
+}
+
+#[gpui::test]
 fn table_sort_runs_before_paging_and_can_be_cleared(cx: &mut TestAppContext) {
     let (directory, view, mut cx) = open(cx, 1, 650.);
     let mut data = Data::open(&Home::Project(directory.0.clone())).unwrap();

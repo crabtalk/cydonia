@@ -18,10 +18,18 @@ pub enum ColType {
     Date,
     Check,
     Url,
+    Select,
 }
 
 impl ColType {
-    pub const ALL: [Self; 5] = [Self::Text, Self::Number, Self::Date, Self::Check, Self::Url];
+    pub const ALL: [Self; 6] = [
+        Self::Text,
+        Self::Number,
+        Self::Date,
+        Self::Check,
+        Self::Url,
+        Self::Select,
+    ];
 
     /// The wire name — what the tools take and hand back.
     pub fn name(self) -> &'static str {
@@ -31,6 +39,7 @@ impl ColType {
             Self::Date => "date",
             Self::Check => "check",
             Self::Url => "url",
+            Self::Select => "select",
         }
     }
 
@@ -44,6 +53,7 @@ impl ColType {
             Self::Date => "DATE",
             Self::Check => "BOOLEAN",
             Self::Url => "URL TEXT",
+            Self::Select => "CHOICE TEXT",
         }
     }
 }
@@ -75,6 +85,7 @@ pub struct Column {
 pub struct ColumnDisplay {
     pub position: Option<usize>,
     pub width: Option<u32>,
+    pub select_options: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

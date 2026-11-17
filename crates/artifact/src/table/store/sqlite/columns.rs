@@ -1,5 +1,5 @@
 use crate::table::{
-    ColumnDisplay, ColumnLayout,
+    self, ColType, ColumnDisplay, ColumnLayout,
     store::sqlite::{self as data, Data},
 };
 use anyhow::{Result, bail};
@@ -28,7 +28,79 @@ pub(crate) fn rename_display(db: &Connection, key: &str, before: &str, after: &s
     Ok(())
 }
 
+pub(super) fn seed_select_options(db: &Connection, key: &str, column: &str) -> Result<()> {
+    let mut display = layout(db, key)?.settings.remove(column).unwrap_or_default();
+    let field = table::quote(column);
+    let mut query = db.prepare(&format!(
+        "SELECT DISTINCT {field} COLLATE BINARY FROM {} WHERE {field} IS NOT NULL AND {field} != '' ORDER BY 1",
+        table::quote(key),
+    ))?;
+    for value in query.query_map([], |row| row.get::<_, String>(0))? {
+        let value = value?;
+        if !display.select_options.contains(&value) {
+            display.select_options.push(value);
+        }
+    }
+    write_display(db, key, column, &display)
+}
+
 impl Data {
+    pub fn write_option(
+        &mut self,
+        table: &str,
+        column: &str,
+        previous: Option<&str>,
+        name: &str,
+    ) -> Result<()> {
+        let name = name.trim();
+        if name.is_empty() {
+            bail!("an option needs a name");
+        }
+        let key = self.resolve(table)?;
+        let tx = self
+            .writer
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if !data::columns_of(&tx, &key)?
+            .iter()
+            .any(|held| held.name == column && held.kind == ColType::Select)
+        {
+            bail!("no select column {column} on {key}");
+        }
+        let mut display = layout(&tx, &key)?
+            .settings
+            .remove(column)
+            .unwrap_or_default();
+        if previous == Some(name) {
+            return Ok(());
+        }
+        if display.select_options.iter().any(|held| held == name) {
+            bail!("the option {name} already exists");
+        }
+        if let Some(previous) = previous {
+            let Some(held) = display
+                .select_options
+                .iter_mut()
+                .find(|held| held.as_str() == previous)
+            else {
+                bail!("the option {previous} no longer exists");
+            };
+            *held = name.to_owned();
+            let field = table::quote(column);
+            tx.execute(
+                &format!(
+                    "UPDATE {} SET {field} = ?1 WHERE {field} = ?2 COLLATE BINARY",
+                    table::quote(&key)
+                ),
+                [name, previous],
+            )?;
+        } else {
+            display.select_options.push(name.to_owned());
+        }
+        write_display(&tx, &key, column, &display)?;
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn set_column_width(&mut self, table: &str, column: &str, width: u32) -> Result<()> {
         let key = self.resolve(table)?;
         let tx = self

@@ -102,6 +102,10 @@ impl Data {
         match *self {}
     }
 
+    pub fn write_option(&mut self, _: &str, _: &str, _: Option<&str>, _: &str) -> Result<()> {
+        match *self {}
+    }
+
     pub fn write_cells_at(&mut self, _: &str, _: &[Edit], _: Option<Revision>) -> Result<()> {
         match *self {}
     }

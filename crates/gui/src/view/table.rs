@@ -164,6 +164,16 @@ pub enum Cell {
     Value { rowid: i64, column: String },
     /// A column being renamed.
     Head(String),
+    Option {
+        column: String,
+        previous: Option<String>,
+    },
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) enum TableMenu {
+    Column(String),
+    Select { rowid: i64, column: String },
 }
 
 impl Cydonia {
@@ -386,17 +396,17 @@ pub(crate) struct TableView {
     revision: Option<Revision>,
     original: Option<String>,
     pub(crate) cell_field: Entity<TextField>,
-    menu: ContextMenu<Self, String>,
+    menu: ContextMenu<Self, TableMenu>,
 }
 
 impl MenuHost for TableView {
-    type Key = String;
+    type Key = TableMenu;
 
-    fn menu(&self) -> &ContextMenu<Self, String> {
+    fn menu(&self) -> &ContextMenu<Self, TableMenu> {
         &self.menu
     }
 
-    fn menu_mut(&mut self) -> &mut ContextMenu<Self, String> {
+    fn menu_mut(&mut self) -> &mut ContextMenu<Self, TableMenu> {
         &mut self.menu
     }
 }
@@ -480,6 +490,18 @@ impl TableView {
     }
 
     fn start_edit(&mut self, at: Cell, window: &mut Window, cx: &mut Context<Self>) {
+        if let Cell::Value { rowid, column } = &at
+            && self
+                .source
+                .read(cx)
+                .record
+                .columns
+                .iter()
+                .any(|held| held.name == *column && held.kind == ColType::Select)
+        {
+            self.open_select(*rowid, column, window, cx);
+            return;
+        }
         let text = match &at {
             Cell::Value { rowid, column } => self
                 .page(cx)
@@ -494,6 +516,7 @@ impl TableView {
                 .map(text)
                 .unwrap_or_default(),
             Cell::Head(name) => name.clone(),
+            Cell::Option { previous, .. } => previous.clone().unwrap_or_default(),
         };
         self.original = Some(text.clone());
         self.cell_field
@@ -527,6 +550,9 @@ impl TableView {
                 Cell::Head(column) if !text.is_empty() => {
                     table.write_column(&column, None, Some(&text), cx)
                 }
+                Cell::Option { column, previous } if !text.is_empty() => {
+                    table.write_option(&column, previous.as_deref(), &text, cx)
+                }
                 _ => Ok(()),
             })
         });
@@ -544,6 +570,80 @@ impl TableView {
         self.revision = None;
         self.cell_field.update(cx, |field, cx| field.clear(cx));
         cx.notify();
+    }
+
+    fn open_select(
+        &mut self,
+        rowid: i64,
+        column: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(page) = self.page(cx) else { return };
+        let Some(column_index) = page.columns.iter().position(|held| held.name == column) else {
+            return;
+        };
+        let Some(row) = page.rows.iter().find(|held| held.rowid == rowid) else {
+            return;
+        };
+        let revision = page.revision;
+        let current = row.cells.get(column_index).and_then(Value::as_str);
+        let options = self
+            .source
+            .read(cx)
+            .record
+            .column_layout
+            .settings
+            .get(column)
+            .map(|display| display.select_options.as_slice())
+            .unwrap_or_default();
+        let mut rows = vec![menu::row::<Self>(
+            Item::action("Clear selection").disabled(current.is_none()),
+            {
+                let column = column.to_owned();
+                move |this, _, cx| this.choose_option(rowid, &column, "", revision, cx)
+            },
+        )];
+        rows.extend(options.iter().map(|option| {
+            let column = column.to_owned();
+            let option = option.clone();
+            menu::row::<Self>(
+                Item::action(option.clone()).checked(current == Some(option.as_str())),
+                move |this, _, cx| this.choose_option(rowid, &column, &option, revision, cx),
+            )
+        }));
+        self.toggle_menu(
+            TableMenu::Select {
+                rowid,
+                column: column.to_owned(),
+            },
+            Place::Below,
+            move |_, _, _| rows,
+            window,
+            cx,
+        );
+    }
+
+    fn choose_option(
+        &mut self,
+        rowid: i64,
+        column: &str,
+        option: &str,
+        revision: Revision,
+        cx: &mut Context<Self>,
+    ) {
+        let entry = self.table.clone();
+        let _ = self.workspace.update(cx, |workspace, cx| {
+            workspace.edit_table(&entry, cx, |table, cx| {
+                table.write_cell(
+                    rowid,
+                    column.to_owned(),
+                    option.to_owned(),
+                    Some(revision),
+                    cx,
+                )
+            })
+        });
     }
 
     fn commit_cell_action(&mut self, _: &CommitCell, _: &mut Window, cx: &mut Context<Self>) {
@@ -760,7 +860,8 @@ impl TableView {
             .on_drag(ColumnResize(cx.entity().entity_id()), |_, _, _, cx| {
                 cx.new(|_| Empty)
             });
-        if self.cell == Some(Cell::Head(shape.label.to_string())) {
+        if matches!(&self.cell, Some(Cell::Head(column) | Cell::Option { column, .. }) if column == shape.label.as_ref())
+        {
             // `header_cell` paints the label itself, so the shape handed to it
             // while editing carries none — otherwise the old name sits beside
             // the field that is rewriting it.
@@ -773,13 +874,15 @@ impl TableView {
                 .child(grip);
         }
         let name = shape.label.to_string();
+        let key = TableMenu::Column(name.clone());
+        let menu_key = key.clone();
         let menu_name = name.clone();
         let id = SharedString::from(format!("column-menu-{ix}"));
         let button = menu::button(
             id.clone(),
             icons::layout::Ellipsis,
             menu::Reveal::Group("grid-head"),
-            self.menu.key() == Some(&name),
+            self.menu.key() == Some(&key),
             cx,
         )
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -787,16 +890,16 @@ impl TableView {
             cx.stop_propagation();
             let menu_name = menu_name.clone();
             this.toggle_menu(
-                menu_name.clone(),
+                menu_key.clone(),
                 Place::Below,
-                move |_, _, _| Self::column_rows(menu_name.clone(), kind, sorted),
+                move |this, _, cx| this.column_rows(menu_name, kind, sorted, cx),
                 window,
                 cx,
             );
         }));
         let button = self
-            .menu_trigger(button, name.clone(), cx)
-            .children(self.menu_here(&name, id, window, cx));
+            .menu_trigger(button, key.clone(), cx)
+            .children(self.menu_here(&key, id, window, cx));
         table::header_cell(&theme, shape, sorted)
             .relative()
             .debug_selector(move || format!("table-heading-{ix}"))
@@ -812,9 +915,11 @@ impl TableView {
 
     /// What the `···` does to a column: what it holds, and whether it stays.
     fn column_rows(
+        &self,
         column: String,
         kind: ColType,
         sorted: Option<bool>,
+        cx: &App,
     ) -> Vec<(Item, menu::Act<Self>)> {
         let mut rows = Vec::new();
         for (label, ascending, icon) in [
@@ -853,6 +958,49 @@ impl TableView {
                 move |this, _, cx| this.retype_column(&column, declared, cx),
             )
         }));
+        if kind == ColType::Select {
+            let add_column = column.clone();
+            let mut options = vec![menu::row::<Self>(
+                Item::action("Add option").with_icon(icons::math::Plus),
+                move |this, window, cx| {
+                    this.edit_cell(
+                        Cell::Option {
+                            column: add_column.clone(),
+                            previous: None,
+                        },
+                        window,
+                        cx,
+                    )
+                },
+            )];
+            if let Some(display) = self
+                .source
+                .read(cx)
+                .record
+                .column_layout
+                .settings
+                .get(&column)
+            {
+                options.extend(display.select_options.iter().map(|option| {
+                    let column = column.clone();
+                    let option = option.clone();
+                    menu::row::<Self>(
+                        Item::action(option.clone()).with_icon(icons::text::SquarePen),
+                        move |this, window, cx| {
+                            this.edit_cell(
+                                Cell::Option {
+                                    column: column.clone(),
+                                    previous: Some(option.clone()),
+                                },
+                                window,
+                                cx,
+                            )
+                        },
+                    )
+                }));
+            }
+            rows.push(menu::submenu("Edit options", glyph(kind), options));
+        }
         rows.push(menu::row::<Self>(
             Item::action("Delete column").with_icon(icons::files::Trash),
             move |this, _, cx| this.delete_column(&column, cx),
@@ -866,6 +1014,7 @@ impl TableView {
         rowid: i64,
         column: &Column,
         held: Option<&Value>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = Theme::of(cx).clone();
@@ -878,13 +1027,19 @@ impl TableView {
             return self.cell_editor(cx).into_any_element();
         }
         let contents = held.map(text).unwrap_or_default();
+        let select = column.kind == ColType::Select;
         let url = (column.kind == ColType::Url)
             .then(|| url::Url::parse(&contents).ok())
             .flatten()
             .filter(|url| matches!(url.scheme(), "http" | "https"));
         let column = column.name.clone();
-        div()
-            .id(SharedString::from(format!("cell-{rowid}-{column}")))
+        let id = SharedString::from(format!("cell-{rowid}-{column}"));
+        let key = TableMenu::Select {
+            rowid,
+            column: column.clone(),
+        };
+        let cell = div()
+            .id(id.clone())
             .debug_selector({
                 let column = column.clone();
                 move || format!("table-cell-{rowid}-{column}")
@@ -899,6 +1054,14 @@ impl TableView {
             .flex()
             .items_center()
             .child(div().min_w_0().flex_1().truncate().child(contents))
+            .when(select, |cell| {
+                cell.child(
+                    icons::icon(icons::arrows::ChevronDown)
+                        .size(px(12.))
+                        .flex_none()
+                        .text_color(theme.text_muted),
+                )
+            })
             .when_some(url, |cell, url| {
                 cell.child(
                     theme
@@ -921,8 +1084,14 @@ impl TableView {
                     window,
                     cx,
                 );
-            }))
-            .into_any_element()
+            }));
+        if select {
+            self.menu_trigger(cell, key.clone(), cx)
+                .children(self.menu_here(&key, id, window, cx))
+                .into_any_element()
+        } else {
+            cell.into_any_element()
+        }
     }
 
     fn row_actions(
@@ -1011,7 +1180,9 @@ impl Render for TableView {
                 !rows.iter().any(|(id, _)| id == rowid)
                     || !columns.iter().any(|held| held.name == *column)
             }
-            Some(Cell::Head(column)) => !columns.iter().any(|held| held.name == *column),
+            Some(Cell::Head(column) | Cell::Option { column, .. }) => {
+                !columns.iter().any(|held| held.name == *column)
+            }
             _ => false,
         };
 
@@ -1117,7 +1288,7 @@ impl Render for TableView {
         for (n, (rowid, held)) in rows.iter().enumerate() {
             let mut cells: Vec<AnyElement> = Vec::with_capacity(count + 1);
             for &ix in &order {
-                cells.push(self.value(*rowid, &columns[ix], held.get(ix), cx));
+                cells.push(self.value(*rowid, &columns[ix], held.get(ix), window, cx));
             }
             cells.push(self.row_actions(*rowid, revision, manual, &theme, cx));
             body = body.child(
@@ -1265,6 +1436,7 @@ fn glyph(kind: ColType) -> &'static [u8] {
         ColType::Date => icons::time::Calendar,
         ColType::Check => icons::text::ListChecks,
         ColType::Url => icons::arrows::ExternalLink,
+        ColType::Select => icons::text::ListFilter,
     }
 }
 

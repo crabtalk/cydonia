@@ -146,6 +146,9 @@ impl Data {
                 ))?;
                 columns::rename_display(&tx, key, column, new.trim())?;
             }
+            if kind == ColType::Select {
+                columns::seed_select_options(&tx, key, rename.map(str::trim).unwrap_or(column))?;
+            }
             row_order::track_if_ordered(&tx, key)?;
             let violations: i64 =
                 tx.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |row| {

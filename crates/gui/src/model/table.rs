@@ -201,6 +201,18 @@ impl Table {
         self.edit(cx, |data, key| data.drop_column(key, column).map(|_| ()))
     }
 
+    pub fn write_option(
+        &mut self,
+        column: &str,
+        previous: Option<&str>,
+        name: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        self.edit(cx, |data, key| {
+            data.write_option(key, column, previous, name)
+        })
+    }
+
     pub fn set_column_width(
         &mut self,
         column: &str,
