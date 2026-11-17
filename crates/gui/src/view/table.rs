@@ -165,6 +165,9 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.commit(cx) {
+            return;
+        }
         self.select_project(project, cx);
         let ix = self
             .workspace
@@ -182,7 +185,9 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.commit(cx);
+        if !self.commit(cx) {
+            return;
+        }
         let Some(member) = self.workspace.read(cx).table_member(project, ix) else {
             return;
         };
@@ -205,10 +210,10 @@ impl Cydonia {
 
     /// File every table view's open field. Called from [`Cydonia::commit`],
     /// so every way out of a pane goes through it.
-    pub(crate) fn commit_cell(&mut self, cx: &mut Context<Self>) {
-        for view in self.table_views(cx) {
-            view.update(cx, |view, cx| view.commit_cell(cx));
-        }
+    pub(crate) fn commit_cell(&mut self, cx: &mut Context<Self>) -> bool {
+        self.table_views(cx)
+            .into_iter()
+            .all(|view| view.update(cx, |view, cx| view.commit_cell(cx)))
     }
 
     // ── chrome ───────────────────────────────────────────────────
@@ -395,7 +400,12 @@ impl TableView {
     fn edit_cell(&mut self, at: Cell, window: &mut Window, cx: &mut Context<Self>) {
         let (root, view) = (self.root.clone(), cx.entity());
         window.defer(cx, move |window, cx| {
-            let _ = root.update(cx, |root, cx| root.commit(cx));
+            if root
+                .update(cx, |root, cx| root.commit(cx))
+                .is_ok_and(|saved| !saved)
+            {
+                return;
+            }
             view.update(cx, |view, cx| {
                 if view.cell.is_none() {
                     view.start_edit(at, window, cx);

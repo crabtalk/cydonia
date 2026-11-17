@@ -62,7 +62,9 @@ impl Tab {
     /// Open the panel on the board the tab is showing, seeded from what it is
     /// called now.
     pub(crate) fn open_info(&mut self, board: &str, window: &mut Window, cx: &mut Context<Self>) {
-        self.defer_window(window, cx, |root, _, cx| root.commit(cx));
+        self.defer_window(window, cx, |root, _, cx| {
+            root.commit(cx);
+        });
         // One editor at a time, and before the lookup: a rename left in flight
         // would otherwise outlive a board that has gone.
         ContextMenu::close(self, |this| &mut this.menu, cx);

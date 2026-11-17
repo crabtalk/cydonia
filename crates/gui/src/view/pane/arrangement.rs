@@ -733,6 +733,9 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.commit(cx) {
+            return;
+        }
         // The entry left when this close took the space with it, which opened
         // in the window's strip — see [`Workspace::close_pane`].
         let alone = self
@@ -799,6 +802,9 @@ impl Cydonia {
     /// Open a space: the window is arranged by it until an entry no space
     /// holds is opened.
     pub(crate) fn open_space(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.commit(cx) {
+            return;
+        }
         self.workspace.update(cx, |workspace, cx| {
             workspace.open_space(ix, cx);
         });

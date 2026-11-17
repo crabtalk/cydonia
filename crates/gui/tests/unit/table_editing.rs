@@ -76,6 +76,14 @@ fn failed_table_edits_keep_the_draft_and_failed_archives_keep_the_tab(
                         .contains("edit refused")
                 );
             });
+            root.close_project(0, cx);
+            root.sync_leaves(window, cx);
+            assert_eq!(root.workspace.read(cx).projects.len(), 1);
+            assert!(root.table_view_of(Some(&member), cx).is_some());
+            assert!(view.read(cx).cell.is_some());
+            root.close_pane(&member, window, cx);
+            assert!(root.table_view_of(Some(&member), cx).is_some());
+            assert!(view.read(cx).cell.is_some());
             let row = Row::Entry {
                 project: entry.project,
                 showing: crate::model::workspace::Showing::Table(key.clone()),
@@ -156,6 +164,8 @@ fn failed_table_edits_keep_the_draft_and_failed_archives_keep_the_tab(
                     .iter()
                     .all(|held| held.table.read(cx).record.archived)
             );
+            root.close_project(0, cx);
+            assert!(root.workspace.read(cx).projects.is_empty());
         })
         .unwrap();
     std::fs::remove_dir_all(path).unwrap();

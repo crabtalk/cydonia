@@ -88,6 +88,9 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.commit(cx) {
+            return;
+        }
         self.select_project(project, cx);
         let made = self
             .workspace
@@ -106,7 +109,9 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.commit(cx);
+        if !self.commit(cx) {
+            return;
+        }
         let Some(open) = self.workspace.read(cx).projects.get(project) else {
             return;
         };

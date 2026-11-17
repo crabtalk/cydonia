@@ -469,7 +469,9 @@ impl Cydonia {
 
     /// Close the library's tab, and bring up the tab it hands the front to.
     pub(crate) fn close_library(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.commit(cx);
+        if !self.commit(cx) {
+            return;
+        }
         self.library = None;
         self.workspace
             .update(cx, |workspace, cx| workspace.close_library_tab(cx));
@@ -512,7 +514,9 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.commit(cx);
+        if !self.commit(cx) {
+            return;
+        }
         // The panes under it are not drawn, and a focus left in one reaches
         // none of the window's commands.
         let focus = library.read(cx).focus.clone();

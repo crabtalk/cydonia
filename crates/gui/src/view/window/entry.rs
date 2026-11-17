@@ -420,6 +420,9 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.commit(cx) {
+            return;
+        }
         let located = entry.located(self.workspace.read(cx));
         let landing_project = match (entry, located) {
             (
@@ -434,7 +437,6 @@ impl Cydonia {
         let member = entry.member(self.workspace.read(cx), cx);
         let arranged = self.put_away_arranged(member.as_ref(), window, cx);
         let landing_project = landing_project.filter(|_| !arranged);
-        self.commit(cx);
         self.workspace.update(cx, |workspace, cx| {
             if let Some(member) = &member {
                 workspace.drop_from_spaces(member, cx);

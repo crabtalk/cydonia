@@ -1072,7 +1072,9 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.commit(cx);
+        if !self.commit(cx) {
+            return;
+        }
         let Some(member) = self.workspace.read(cx).board_member(project, ix) else {
             return;
         };
@@ -1137,7 +1139,9 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.commit(cx);
+        if !self.commit(cx) {
+            return;
+        }
         if let Some(on) = on {
             self.focus_pane(&on.clone(), window, cx);
         }
@@ -1151,8 +1155,10 @@ impl Cydonia {
     ///
     /// An empty card is not a card — committing nothing drops it rather than
     /// leaving a blank on the board.
-    pub(crate) fn commit(&mut self, cx: &mut Context<Self>) {
-        self.commit_cell(cx);
+    pub(crate) fn commit(&mut self, cx: &mut Context<Self>) -> bool {
+        if !self.commit_cell(cx) {
+            return false;
+        }
         self.rest_ribbon(cx);
         // Every pane with a field open, not only the focused one: the press
         // that leaves a card behind is often a press into another pane, and by
@@ -1160,6 +1166,7 @@ impl Cydonia {
         for view in self.board_views(cx) {
             view.update(cx, |view, cx| view.commit_edit(cx));
         }
+        true
     }
 
     /// Let go of an edit a re-read made meaningless, and keep one it did not.
@@ -1183,7 +1190,9 @@ impl Cydonia {
     }
 
     pub(crate) fn delete_card(&mut self, board: &str, card: &str, cx: &mut Context<Self>) {
-        self.commit(cx);
+        if !self.commit(cx) {
+            return;
+        }
         let (board, card) = (board.to_owned(), card.to_owned());
         self.workspace.update(cx, |workspace, cx| {
             workspace.remove_card(&board, &card, cx);
@@ -1195,7 +1204,9 @@ impl Cydonia {
     /// [`artifact::board::Board::remove_column`] — and asked about first, in
     /// [`crate::view::modals::confirm`].
     pub(crate) fn drop_column(&mut self, board: &str, id: &str, cx: &mut Context<Self>) {
-        self.commit(cx);
+        if !self.commit(cx) {
+            return;
+        }
         let (board, id) = (board.to_owned(), id.to_owned());
         self.workspace
             .update(cx, |workspace, cx| workspace.remove_column(&board, &id, cx));
@@ -1213,7 +1224,9 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.commit(cx);
+        if !self.commit(cx) {
+            return;
+        }
         if let Some(on) = on {
             self.focus_pane(on, window, cx);
         }

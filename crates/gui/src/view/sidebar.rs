@@ -1058,7 +1058,9 @@ impl Sidebar {
         if self.search.read(cx).query().is_some() {
             return;
         }
-        self.defer_window(window, cx, |root, _, cx| root.commit(cx));
+        self.defer_window(window, cx, |root, _, cx| {
+            root.commit(cx);
+        });
         self.workspace.update(cx, |workspace, cx| match group {
             Group::Project(path) => {
                 if let Some(ix) = workspace.project_ix(*path) {

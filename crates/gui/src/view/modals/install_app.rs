@@ -50,7 +50,9 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.commit(cx);
+        if !self.commit(cx) {
+            return;
+        }
         self.close_menu(cx);
         let root = cx.entity().downgrade();
         self.toggle_modal(window, cx, |_, cx| InstallApp::new(root, cx));
