@@ -19,6 +19,7 @@ anyhow.workspace = true
 canvas = { workspace = true, default-features = true }
 base64.workspace = true
 bezel.workspace = true
+browser.workspace = true
 guest.workspace = true
 cydonia-acp = { workspace = true, features = ["agents"] }
 cydonia-acp-events = { workspace = true, optional = true }
@@ -50,9 +51,6 @@ ureq = { workspace = true, optional = true }
 url.workspace = true
 uuid.workspace = true
 web-time.workspace = true
-
-[target.'cfg(not(target_os = "linux"))'.dependencies]
-browser.workspace = true
 
 [features]
 default = ["desktop"]
