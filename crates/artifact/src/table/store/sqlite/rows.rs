@@ -46,12 +46,15 @@ impl Data {
         // you are reading in, and burying it under the values is what makes a
         // column of a few filled rows readable at all.
         let order = match sort.and_then(|s| columns.iter().find(|col| col.name == s)) {
-            Some(col) => format!(
-                " ORDER BY ({0} IS NULL OR {0} = '') , {0} {1}",
-                table::quote(&col.name),
-                if desc { "DESC" } else { "ASC" }
-            ),
-            None => String::new(),
+            Some(col) => {
+                let column = table::quote(&col.name);
+                let direction = if desc { "DESC" } else { "ASC" };
+                let blank = format!("{column} IS NULL OR {column} = ''");
+                format!(
+                    " ORDER BY ({blank}), CASE WHEN {blank} THEN {rowid} END, {column} {direction}, {rowid}"
+                )
+            }
+            None => format!(" ORDER BY {rowid}"),
         };
 
         let count = columns.len();

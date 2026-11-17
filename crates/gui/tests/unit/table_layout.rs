@@ -179,6 +179,46 @@ fn dragging_a_header_resizes_its_cells_without_starting_an_edit(cx: &mut TestApp
 }
 
 #[gpui::test]
+fn table_sort_runs_before_paging_and_can_be_cleared(cx: &mut TestAppContext) {
+    let (directory, view, mut cx) = open(cx, 1, 650.);
+    let mut data = Data::open(&Home::Project(directory.0.clone())).unwrap();
+    data.add_rows("stories", 182).unwrap();
+    data.write(r#"UPDATE stories SET "Field 0" = 'a' WHERE rowid IN (201, 202); UPDATE stories SET "Field 0" = 'z' WHERE rowid = 1"#)
+        .unwrap();
+    cx.update(|_, cx| {
+        view.update(cx, |view, cx| {
+            view.source.update(cx, |source, cx| {
+                source.adopt(data.table("stories").unwrap(), cx);
+            });
+            view.show_page(200, cx);
+            let sort = |descending| {
+                Some(table::model::Sort {
+                    column: "Field 0".into(),
+                    descending,
+                })
+            };
+            view.sort_rows(sort(false), cx);
+            assert_eq!(view.offset, 0);
+            let ids: Vec<_> = view
+                .page(cx)
+                .unwrap()
+                .rows
+                .iter()
+                .take(3)
+                .map(|row| row.rowid)
+                .collect();
+            assert_eq!(ids, [201, 202, 1]);
+            view.sort_rows(sort(true), cx);
+            assert_eq!(view.page(cx).unwrap().rows[0].rowid, 1);
+            view.show_page(200, cx);
+            assert_eq!(view.page(cx).unwrap().rows[0].rowid, 199);
+            view.sort_rows(None, cx);
+            assert_eq!(view.page(cx).unwrap().rows[1].rowid, 2);
+        });
+    });
+}
+
+#[gpui::test]
 fn table_previews_scroll_instead_of_compressing_columns(cx: &mut TestAppContext) {
     let (_directory, view, mut visual) = open(cx, 11, 600.);
     let source = view.read_with(&visual, |view, _| view.source.clone());

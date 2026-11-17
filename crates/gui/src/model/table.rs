@@ -6,8 +6,15 @@ use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 pub const PAGE: i64 = 200;
 const COLUMN: &str = "Column";
 
+#[derive(Clone, PartialEq, Eq)]
+pub struct Sort {
+    pub column: String,
+    pub descending: bool,
+}
+
 pub struct Table {
     pub record: Record,
+    pub sort: Option<Sort>,
     pages: BTreeMap<i64, Page>,
     pub error: Option<String>,
     data: Rc<RefCell<Data>>,
@@ -17,6 +24,7 @@ impl Table {
     pub fn new(record: Record, data: Rc<RefCell<Data>>) -> Self {
         Self {
             record,
+            sort: None,
             pages: BTreeMap::new(),
             error: None,
             data,
@@ -41,6 +49,14 @@ impl Table {
         }
     }
 
+    pub fn set_sort(&mut self, sort: Option<Sort>, cx: &mut Context<Self>) {
+        if self.sort != sort {
+            self.sort = sort;
+            self.reload_pages();
+            cx.notify();
+        }
+    }
+
     pub fn adopt(&mut self, record: Record, cx: &mut Context<Self>) {
         let mut changed = self.record != record;
         self.record = record;
@@ -51,6 +67,15 @@ impl Table {
     }
 
     fn reload_pages(&mut self) -> bool {
+        if let Some(sort) = &self.sort
+            && !self
+                .record
+                .columns
+                .iter()
+                .any(|column| column.name == sort.column)
+        {
+            self.sort = None;
+        }
         if self.pages.is_empty() {
             return false;
         }
@@ -73,10 +98,12 @@ impl Table {
     }
 
     fn read_page(&mut self, offset: i64) -> bool {
+        let column = self.sort.as_ref().map(|sort| sort.column.as_str());
+        let descending = self.sort.as_ref().is_some_and(|sort| sort.descending);
         match self
             .data
             .borrow()
-            .read(&self.record.key, None, false, PAGE, offset)
+            .read(&self.record.key, column, descending, PAGE, offset)
         {
             Ok(page) => {
                 let changed = self.pages.get(&offset) != Some(&page);

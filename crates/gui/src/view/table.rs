@@ -415,6 +415,13 @@ impl TableView {
         }
     }
 
+    fn sort_rows(&mut self, sort: Option<model::Sort>, cx: &mut Context<Self>) {
+        if self.commit_cell(cx) {
+            self.source.update(cx, |table, cx| table.set_sort(sort, cx));
+            self.show_page(0, cx);
+        }
+    }
+
     /// Point the field at `at`, filing whatever any pane had open first — so
     /// clicking straight from one cell to another never drops an edit.
     fn edit_cell(&mut self, at: Cell, window: &mut Window, cx: &mut Context<Self>) {
@@ -618,6 +625,13 @@ impl TableView {
             unreachable!("table columns have measured widths");
         };
         let column = shape.label.to_string();
+        let sorted = self
+            .source
+            .read(cx)
+            .sort
+            .as_ref()
+            .filter(|sort| sort.column == column)
+            .map(|sort| !sort.descending);
         let dragging = self
             .resizing
             .as_ref()
@@ -683,7 +697,7 @@ impl TableView {
             this.toggle_menu(
                 ix,
                 Place::Below,
-                move |_, _, _| Self::column_rows(menu_name.clone(), kind),
+                move |_, _, _| Self::column_rows(menu_name.clone(), kind, sorted),
                 window,
                 cx,
             );
@@ -691,7 +705,7 @@ impl TableView {
         let button = self
             .menu_trigger(button, ix, cx)
             .children(self.menu_here(&ix, id, window, cx));
-        table::header_cell(&theme, shape, None)
+        table::header_cell(&theme, shape, sorted)
             .relative()
             .debug_selector(move || format!("table-heading-{ix}"))
             .child(grip)
@@ -706,20 +720,48 @@ impl TableView {
     }
 
     /// What the `···` does to a column: what it holds, and whether it stays.
-    fn column_rows(column: String, kind: ColType) -> Vec<(Item, menu::Act<Self>)> {
-        let mut rows: Vec<_> = ColType::ALL
-            .iter()
-            .map(|declared| {
-                let declared = *declared;
-                let column = column.clone();
-                menu::row::<Self>(
-                    Item::action(declared.name())
-                        .with_icon(glyph(declared))
-                        .checked(declared == kind),
-                    move |this, _, cx| this.retype_column(&column, declared, cx),
-                )
-            })
-            .collect();
+    fn column_rows(
+        column: String,
+        kind: ColType,
+        sorted: Option<bool>,
+    ) -> Vec<(Item, menu::Act<Self>)> {
+        let mut rows = Vec::new();
+        for (label, ascending, icon) in [
+            ("Sort ascending", true, icons::arrows::ArrowUp),
+            ("Sort descending", false, icons::arrows::ArrowDown),
+        ] {
+            let column = column.clone();
+            rows.push(menu::row::<Self>(
+                Item::action(label)
+                    .with_icon(icon)
+                    .checked(sorted == Some(ascending)),
+                move |this, _, cx| {
+                    this.sort_rows(
+                        Some(model::Sort {
+                            column: column.clone(),
+                            descending: !ascending,
+                        }),
+                        cx,
+                    );
+                },
+            ));
+        }
+        if sorted.is_some() {
+            rows.push(menu::row::<Self>(
+                Item::action("Clear sort"),
+                |this, _, cx| this.sort_rows(None, cx),
+            ));
+        }
+        rows.extend(ColType::ALL.iter().map(|declared| {
+            let declared = *declared;
+            let column = column.clone();
+            menu::row::<Self>(
+                Item::action(declared.name())
+                    .with_icon(glyph(declared))
+                    .checked(declared == kind),
+                move |this, _, cx| this.retype_column(&column, declared, cx),
+            )
+        }));
         rows.push(menu::row::<Self>(
             Item::action("Delete column").with_icon(icons::files::Trash),
             move |this, _, cx| this.delete_column(&column, cx),
