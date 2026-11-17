@@ -121,8 +121,7 @@ pub fn bindings() -> Vec<KeyBinding> {
     ]
 }
 
-/// The pane's one text field — whichever cell, heading or title is being
-/// written.
+/// The pane's field for cells and column headings.
 pub fn field(cx: &mut App) -> Entity<TextField> {
     cx.new(|cx| {
         TextField::new(cx)
@@ -139,8 +138,6 @@ pub enum Cell {
     Value { rowid: i64, column: String },
     /// A column being renamed.
     Head(String),
-    /// The table being renamed.
-    Name,
 }
 
 impl Cydonia {
@@ -451,7 +448,6 @@ impl TableView {
                 .map(text)
                 .unwrap_or_default(),
             Cell::Head(name) => name.clone(),
-            Cell::Name => self.source.read(cx).record.name.clone(),
         };
         self.original = Some(text.clone());
         self.cell_field
@@ -489,7 +485,6 @@ impl TableView {
                 Cell::Head(column) if !text.is_empty() => {
                     table.write_column(&column, None, Some(&text), cx)
                 }
-                Cell::Name if !text.is_empty() => table.rename(&text, cx),
                 _ => Ok(()),
             })
         });
@@ -800,9 +795,8 @@ impl Render for TableView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::of(cx).clone();
         self.offset = self.offset.min(self.source.read(cx).last_page());
-        let Some((name, columns, rows, total)) = self.page(cx).map(|page| {
+        let Some((columns, rows, total)) = self.page(cx).map(|page| {
             (
-                page.name.clone(),
                 page.columns.clone(),
                 page.rows
                     .iter()
@@ -847,22 +841,6 @@ impl Render for TableView {
             .flex_row()
             .items_baseline()
             .gap(px(8.))
-            .child(match self.cell == Some(Cell::Name) {
-                true => div()
-                    .w(px(240.))
-                    .child(self.cell_editor(cx))
-                    .into_any_element(),
-                false => div()
-                    .id("table-name")
-                    .cursor_pointer()
-                    .text_style(TextStyle::Title3)
-                    .text_color(theme.text)
-                    .child(name)
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.edit_cell(Cell::Name, window, cx);
-                    }))
-                    .into_any_element(),
-            })
             .child(
                 div()
                     .text_style(TextStyle::Subheadline)
