@@ -155,8 +155,9 @@ pub(crate) enum Shape {
     /// One line: every heading, and every entry while the rows are not
     /// extended.
     Line,
-    /// An entry's name over its preview and its labels.
-    Extended,
+    Extended {
+        detail: bool,
+    },
 }
 
 impl Shape {
@@ -168,8 +169,8 @@ impl Shape {
     /// The height of the wash the row paints.
     pub(crate) fn pill(self) -> f32 {
         match self {
-            Shape::Line => ROW_PILL,
-            Shape::Extended => EXTENDED_PILL,
+            Shape::Line | Shape::Extended { detail: false } => ROW_PILL,
+            Shape::Extended { detail: true } => EXTENDED_PILL,
         }
     }
 }
@@ -850,18 +851,34 @@ impl Sidebar {
 
     /// How `row` is drawn.
     fn shape(&self, row: &Row, cx: &App) -> Shape {
-        match matches!(row, Row::Entry { .. }) && self.extended(cx) {
-            true => Shape::Extended,
-            false => Shape::Line,
+        let Row::Entry { showing, .. } = row else {
+            return Shape::Line;
+        };
+        if !self.extended(cx) {
+            return Shape::Line;
         }
+        let workspace = self.workspace.read(cx);
+        let Some((project, ix)) = row.located(workspace) else {
+            return Shape::Line;
+        };
+        let project = &workspace.projects[project];
+        let kind = showing.kind();
+        let detail = !project.facts_at(kind, ix, cx).labels.is_empty()
+            || !project.preview_at(kind, ix, cx).trim().is_empty();
+        Shape::Extended { detail }
     }
 
     fn shapes(&self, rows: &[Row], cx: &App) -> Vec<Shape> {
         rows.iter().map(|row| self.shape(row, cx)).collect()
     }
 
+    fn reshape(&mut self, cx: &mut Context<Self>) {
+        self.listing.shapes = Rc::new(self.shapes(&self.listing.rows, cx));
+        cx.notify();
+    }
+
     /// Observe every board, whose description an extended row previews.
-    fn watch_boards(&mut self, cx: &mut Context<Self>) {
+    fn watch_boards(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let boards: Vec<Entity<artifact::board::Board>> = self
             .workspace
             .read(cx)
@@ -871,7 +888,7 @@ impl Sidebar {
             .map(|held| held.board.clone())
             .collect();
         let mut watch = std::mem::take(&mut self.boards);
-        watch.set(&boards, cx);
+        watch.set_in(&boards, window, cx, |this, _, _, cx| this.reshape(cx));
         self.boards = watch;
     }
 
@@ -882,7 +899,7 @@ impl Sidebar {
                 self.tick = Some(cx.spawn(async move |this, cx| {
                     loop {
                         cx.background_executor().timer(TICK).await;
-                        if this.update(cx, |_, cx| cx.notify()).is_err() {
+                        if this.update(cx, Self::reshape).is_err() {
                             return;
                         }
                     }
@@ -1091,7 +1108,7 @@ impl Sidebar {
             view.update(cx, |this, cx| {
                 let item = Dragged::Row(row.clone());
                 let lifted = this.sort.carried().as_ref() == Some(&item);
-                let el = this.sidebar_row(&row, lifted, window, cx);
+                let el = this.sidebar_row(&row, shapes[ix], lifted, window, cx);
                 match row {
                     Row::Heading(_) => this.sort.fixed(item, el).into_any_element(),
                     _ if narrowed[ix] => this.sort.fixed(item, el).into_any_element(),
@@ -1177,16 +1194,17 @@ impl Sidebar {
         let sidebar = cx.entity();
         drag::ghost("sidebar-row-ghost", move |_, window, cx| {
             sidebar.update(cx, |this, cx| {
+                let shape = this.shape(&row, cx);
                 let width = this
                     .root
                     .upgrade()
                     .map_or(root::SIDEBAR_WIDTH, |root| root.read(cx).sidebar_width);
                 div()
                     .w(px(width - root::SIDEBAR_GUTTER - this.trail(cx)))
-                    .h(px(this.shape(&row, cx).pill()))
+                    .h(px(shape.pill()))
                     .rounded(px(Theme::control_radius()))
                     .overflow_hidden()
-                    .child(this.sidebar_row(&row, true, window, cx))
+                    .child(this.sidebar_row(&row, shape, true, window, cx))
             })
         })
         .into_any_element()
@@ -1358,7 +1376,7 @@ impl Render for Sidebar {
         self.apps = apps;
         let extended = self.extended(cx);
         if extended {
-            self.watch_boards(cx);
+            self.watch_boards(window, cx);
         }
         self.keep_time(extended, cx);
         let drawn = self.drawn();
