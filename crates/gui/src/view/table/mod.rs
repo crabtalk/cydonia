@@ -16,9 +16,9 @@ use crate::{
 };
 use bezel::{
     gpui::{
-        self, AnyElement, App, Axis, Context, Div, DragMoveEvent, Empty, Entity, EntityId,
-        Focusable as _, KeyBinding, MouseButton, Pixels, ScrollHandle, SharedString, Stateful,
-        WeakEntity, Window, actions, div, prelude::*, px,
+        self, AnyElement, App, Axis, ClickEvent, Context, Div, DragMoveEvent, Empty, Entity,
+        EntityId, Focusable as _, KeyBinding, MouseButton, Pixels, ScrollHandle, SharedString,
+        Stateful, WeakEntity, Window, actions, div, prelude::*, px,
     },
     theme::{Selection, TextStyle, Theme, Typeset},
     ui::{
@@ -34,6 +34,9 @@ use bezel::{
 use markdown::{Link, Links as _};
 use serde_json::Value;
 use std::{cell::Cell as ValueCell, rc::Rc};
+
+mod clipboard;
+mod grid;
 
 /// Claimed on top of `TextField`, so `enter` files the cell here and stays a
 /// newline in every other field.
@@ -141,10 +144,12 @@ actions!(cydonia_table, [CommitCell, DismissCell]);
 
 pub fn bindings() -> Vec<KeyBinding> {
     let ctx = Some(KEY_CONTEXT);
-    vec![
+    let mut keys = vec![
         KeyBinding::new("enter", CommitCell, ctx),
         KeyBinding::new("escape", DismissCell, ctx),
-    ]
+    ];
+    keys.extend(grid::bindings());
+    keys
 }
 
 /// The pane's field for cells and column headings.
@@ -390,6 +395,8 @@ pub(crate) struct TableView {
     resizing: Option<Resizing>,
     column_drag: drag::Domain<(), String>,
     row_drag: drag::Domain<(), RowDrag>,
+    grid: grid::Grid,
+    clipboard: clipboard::Clipboard,
     root: WeakEntity<Cydonia>,
     /// What the field is attached to, and the field itself.
     pub(crate) cell: Option<Cell>,
@@ -436,6 +443,12 @@ impl TableView {
             row_drag: drag::Domain::with_ghost(|_, _, _| {
                 drag::ghost_label("table-row-ghost", "Move row").into_any_element()
             }),
+            grid: grid::Grid {
+                focus: cx.focus_handle(),
+                range: None,
+                reveal: None,
+            },
+            clipboard: clipboard::Clipboard::default(),
             root,
             cell: None,
             revision: None,
@@ -458,6 +471,7 @@ impl TableView {
             .update(cx, |source, cx| source.load_page(offset, cx));
         if self.source.read(cx).page(offset).is_some() {
             self.offset = offset;
+            self.grid.range = None;
             self.vertical.set_offset(gpui::point(px(0.), px(0.)));
             cx.notify();
         }
@@ -557,6 +571,7 @@ impl TableView {
             })
         });
         if saved.is_ok() {
+            self.refresh_grid_after_edit(cx);
             self.drop_cell(cx);
         }
         cx.notify();
@@ -633,7 +648,7 @@ impl TableView {
         cx: &mut Context<Self>,
     ) {
         let entry = self.table.clone();
-        let _ = self.workspace.update(cx, |workspace, cx| {
+        let saved = self.workspace.update(cx, |workspace, cx| {
             workspace.edit_table(&entry, cx, |table, cx| {
                 table.write_cell(
                     rowid,
@@ -644,15 +659,23 @@ impl TableView {
                 )
             })
         });
+        if saved.is_ok() {
+            self.refresh_grid_after_edit(cx);
+        }
     }
 
-    fn commit_cell_action(&mut self, _: &CommitCell, _: &mut Window, cx: &mut Context<Self>) {
-        self.commit_cell(cx);
+    fn commit_cell_action(&mut self, _: &CommitCell, window: &mut Window, cx: &mut Context<Self>) {
+        if self.commit_cell(cx) && self.grid.range.is_some() {
+            window.focus(&self.grid.focus, cx);
+        }
     }
 
     /// Drop the edit and leave what was there.
-    fn dismiss_cell(&mut self, _: &DismissCell, _: &mut Window, cx: &mut Context<Self>) {
+    fn dismiss_cell(&mut self, _: &DismissCell, window: &mut Window, cx: &mut Context<Self>) {
         self.drop_cell(cx);
+        if self.grid.range.is_some() {
+            window.focus(&self.grid.focus, cx);
+        }
     }
 
     fn add_row(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1011,13 +1034,15 @@ impl TableView {
     /// One value: what is stored, or the field when it is being written.
     fn value(
         &self,
-        rowid: i64,
+        address: grid::Address,
         column: &Column,
         held: Option<&Value>,
+        paint: grid::Paint,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = Theme::of(cx).clone();
+        let rowid = address.rowid;
         if self.cell
             == Some(Cell::Value {
                 rowid,
@@ -1038,6 +1063,9 @@ impl TableView {
             rowid,
             column: column.clone(),
         };
+        let dragging = address.clone();
+        let target = address.clone();
+        let view = cx.weak_entity();
         let cell = div()
             .id(id.clone())
             .debug_selector({
@@ -1045,12 +1073,23 @@ impl TableView {
                 move || format!("table-cell-{rowid}-{column}")
             })
             .w_full()
+            .relative()
             .min_h(px(LINE))
             .truncate()
             .cursor_pointer()
             .text_style(TextStyle::Body)
             .line_height(px(LINE))
             .text_color(theme.text)
+            .when(matches!(paint, grid::Paint::Selected), |cell| {
+                cell.bg(theme.accent.opacity(0.13))
+            })
+            .when(matches!(paint, grid::Paint::Active { .. }), |cell| {
+                cell.bg(theme.accent.opacity(0.22))
+            })
+            .when(
+                matches!(paint, grid::Paint::Active { reveal: true }),
+                |cell| cell.child(self.reveal_cell(cx)),
+            )
             .flex()
             .items_center()
             .child(div().min_w_0().flex_1().truncate().child(contents))
@@ -1069,22 +1108,60 @@ impl TableView {
                         .flex_none()
                         .child(icons::icon(icons::arrows::ExternalLink).size(px(12.)))
                         .tooltip(|window, cx| Tooltip::text("Open link", window, cx))
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_click(move |_, window, cx| {
                             cx.stop_propagation();
                             link::Links::open(Link::new(url.as_str(), None), window, cx);
                         }),
                 )
             })
-            .on_click(cx.listener(move |this, _, window, cx| {
-                this.edit_cell(
-                    Cell::Value {
-                        rowid,
-                        column: column.clone(),
-                    },
-                    window,
-                    cx,
-                );
-            }));
+            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                if !this.commit_cell(cx) {
+                    return;
+                }
+                let extend = event.modifiers().shift;
+                this.select_cell(address.clone(), extend, window, cx);
+                if !extend && (event.click_count() > 1 || select) {
+                    this.edit_cell(
+                        Cell::Value {
+                            rowid,
+                            column: column.clone(),
+                        },
+                        window,
+                        cx,
+                    );
+                }
+            }))
+            .on_drag(
+                grid::GridDrag(cx.entity().entity_id()),
+                move |_, _, window, cx| {
+                    view.update(cx, |this, cx| {
+                        if this.commit_cell(cx) {
+                            this.select_cell(dragging.clone(), false, window, cx);
+                        }
+                    })
+                    .ok();
+                    cx.new(|_| Empty)
+                },
+            )
+            .on_drag_move(cx.listener(
+                move |this, event: &DragMoveEvent<grid::GridDrag>, window, cx| {
+                    let position = event.event.position;
+                    if event.drag(cx).0 == cx.entity().entity_id()
+                        && this.cell.is_none()
+                        && event.bounds.contains(&position)
+                        && this.horizontal.bounds().contains(&position)
+                        && this.vertical.bounds().contains(&position)
+                        && this
+                            .grid
+                            .range
+                            .as_ref()
+                            .is_some_and(|range| range.active != target)
+                    {
+                        this.select_cell(target.clone(), true, window, cx);
+                    }
+                },
+            ));
         if select {
             self.menu_trigger(cell, key.clone(), cx)
                 .children(self.menu_here(&key, id, window, cx))
@@ -1188,6 +1265,13 @@ impl Render for TableView {
 
         let layout = &self.source.read(cx).record.column_layout;
         let order = layout.order(&columns);
+        let selection = self
+            .grid
+            .range
+            .as_ref()
+            .filter(|range| range.current(revision, self.source.read(cx).sort.as_ref()));
+        let limits = selection.and_then(|range| range.limits(&columns, &order));
+        let reveal = self.grid.reveal.take();
         let (mut declared, width) = self.sizing.columns(
             &columns,
             &order,
@@ -1287,8 +1371,26 @@ impl Render for TableView {
         let manual = self.source.read(cx).sort.is_none();
         for (n, (rowid, held)) in rows.iter().enumerate() {
             let mut cells: Vec<AnyElement> = Vec::with_capacity(count + 1);
-            for &ix in &order {
-                cells.push(self.value(*rowid, &columns[ix], held.get(ix), window, cx));
+            let row = self.offset + n as i64;
+            for (display_ix, &ix) in order.iter().enumerate() {
+                let column = &columns[ix];
+                let address = grid::Address {
+                    rowid: *rowid,
+                    row,
+                    column: column.name.clone(),
+                };
+                let paint = if selection.is_some_and(|range| range.active == address) {
+                    grid::Paint::Active {
+                        reveal: reveal.as_ref() == Some(&address),
+                    }
+                } else if limits.as_ref().is_some_and(|(rows, columns)| {
+                    rows.contains(&row) && columns.contains(&display_ix)
+                }) {
+                    grid::Paint::Selected
+                } else {
+                    grid::Paint::Plain
+                };
+                cells.push(self.value(address, column, held.get(ix), paint, window, cx));
             }
             cells.push(self.row_actions(*rowid, revision, manual, &theme, cx));
             body = body.child(
@@ -1360,6 +1462,8 @@ impl Render for TableView {
 
         div()
             .id("table-view")
+            .key_context(grid::CONTEXT)
+            .track_focus(&self.grid.focus)
             .flex_1()
             .min_w_0()
             .min_h_0()
@@ -1384,13 +1488,18 @@ impl Render for TableView {
             }))
             .on_action(cx.listener(Self::commit_cell_action))
             .on_action(cx.listener(Self::dismiss_cell))
+            .on_action(cx.listener(Self::step_grid))
+            .on_action(cx.listener(Self::edit_grid_cell))
+            .on_action(cx.listener(Self::copy_cells))
+            .on_action(cx.listener(Self::paste_cells))
+            .on_action(cx.listener(Self::undo_paste))
             .child(head)
             .when(detached, |element| element.child(
                 div().px(px(INSET)).pb(px(12.)).flex().flex_col().gap(px(8.))
                     .child(div().text_style(TextStyle::Callout).text_color(theme.danger).child("This cell is no longer shown. Copy your text or press Escape to discard it."))
                     .child(self.cell_editor(cx))
             ))
-            .when_some(self.source.read(cx).error.clone(), |element, error| {
+            .when_some(self.clipboard.error.clone().or_else(|| self.source.read(cx).error.clone()), |element, error| {
                 element.child(
                     div()
                         .px(px(INSET))
@@ -1451,9 +1560,9 @@ pub(crate) fn text(value: &Value) -> String {
 }
 
 #[cfg(all(test, feature = "desktop"))]
-#[path = "../../tests/unit/table_editing.rs"]
+#[path = "../../../tests/unit/table_editing.rs"]
 mod editing_tests;
 
 #[cfg(all(test, feature = "desktop"))]
-#[path = "../../tests/unit/table_layout.rs"]
+#[path = "../../../tests/unit/table_layout.rs"]
 mod layout_tests;

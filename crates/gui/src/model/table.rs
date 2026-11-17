@@ -97,21 +97,23 @@ impl Table {
         changed
     }
 
-    fn read_page(&mut self, offset: i64) -> bool {
+    pub fn read_rows(&self, offset: i64, limit: i64) -> Result<Page, String> {
         let column = self.sort.as_ref().map(|sort| sort.column.as_str());
         let descending = self.sort.as_ref().is_some_and(|sort| sort.descending);
-        match self
-            .data
+        self.data
             .borrow()
-            .read(&self.record.key, column, descending, PAGE, offset)
-        {
+            .read(&self.record.key, column, descending, limit, offset)
+            .map_err(|error| error.to_string())
+    }
+
+    fn read_page(&mut self, offset: i64) -> bool {
+        match self.read_rows(offset, PAGE) {
             Ok(page) => {
                 let changed = self.pages.get(&offset) != Some(&page);
                 self.pages.insert(offset, page);
                 changed
             }
             Err(error) => {
-                let error = error.to_string();
                 let changed = self.error.as_ref() != Some(&error);
                 self.error = Some(error);
                 changed
@@ -132,17 +134,24 @@ impl Table {
         } else {
             Value::String(text)
         };
-        self.edit(cx, |data, key| {
-            data.write_cells_at(
-                key,
-                &[Edit {
-                    rowid,
-                    column,
-                    value,
-                }],
-                revision,
-            )
-        })
+        self.write_cells(
+            &[Edit {
+                rowid,
+                column,
+                value,
+            }],
+            revision,
+            cx,
+        )
+    }
+
+    pub fn write_cells(
+        &mut self,
+        edits: &[Edit],
+        revision: Option<Revision>,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        self.edit(cx, |data, key| data.write_cells_at(key, edits, revision))
     }
 
     pub fn add_row(&mut self, cx: &mut Context<Self>) -> Result<i64, String> {

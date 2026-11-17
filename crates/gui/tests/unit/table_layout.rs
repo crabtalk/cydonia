@@ -5,8 +5,8 @@ use crate::{
 };
 use bezel::{
     gpui::{
-        self, AppContext as _, Entity, Modifiers, MouseButton, ScrollDelta, ScrollEvent,
-        ScrollSource, TestAppContext, VisualTestContext, WeakEntity, point, px, size,
+        self, AppContext as _, ClipboardItem, Entity, Modifiers, MouseButton, ScrollDelta,
+        ScrollEvent, ScrollSource, TestAppContext, VisualTestContext, WeakEntity, point, px, size,
     },
     theme::{Appearance, Theme},
     ui::input,
@@ -38,6 +38,7 @@ fn open(
     cx.update(|cx| {
         Theme::install(Appearance::Dark, cx);
         input::init(cx);
+        cx.bind_keys(table::bindings());
     });
     let mut settings = Settings::default();
     settings.features.tables = true;
@@ -310,6 +311,102 @@ fn select_options_are_shared_and_rename_existing_choices(cx: &mut TestAppContext
     assert_eq!(page.rows[0].cells[0], "Done");
     assert_eq!(page.rows[1].cells[0], "Ready");
     assert!(page.rows[2].cells[0].is_null());
+}
+
+#[gpui::test]
+fn the_grid_selects_a_rectangle_and_pastes_and_undoes_atomically(cx: &mut TestAppContext) {
+    let (directory, view, mut cx) = open(cx, 3, 600.);
+    let mut data = Data::open(&Home::Project(directory.0.clone())).unwrap();
+    data.write_column("stories", "Field 1", Some(ColType::Number), None)
+        .unwrap();
+    cx.update(|_, cx| {
+        let source = view.read(cx).source.clone();
+        source.update(cx, |source, cx| {
+            source.adopt(data.table("stories").unwrap(), cx)
+        });
+    });
+    settle(&mut cx);
+    let cell = cx.debug_bounds("table-cell-1-Field 0").unwrap().center();
+    cx.simulate_mouse_down(cell, MouseButton::Left, Modifiers::default());
+    cx.simulate_mouse_up(cell, MouseButton::Left, Modifiers::default());
+    settle(&mut cx);
+    cx.update(|_, cx| {
+        cx.write_to_clipboard(ClipboardItem::new_string("alpha\t3\nbeta\tbad".into()))
+    });
+    cx.simulate_keystrokes("cmd-v");
+    assert!(view.read_with(&cx, |view, _| view.clipboard.error.is_some()));
+    let page = data.read("stories", None, false, 2, 0).unwrap();
+    assert!(
+        page.rows
+            .iter()
+            .all(|row| row.cells[0].is_null() && row.cells[1].is_null())
+    );
+
+    cx.update(|_, cx| {
+        cx.write_to_clipboard(ClipboardItem::new_string("\"a\tb\"\t3\nbeta\t2".into()))
+    });
+    cx.simulate_keystrokes("cmd-v shift-right shift-down cmd-c");
+    assert_eq!(
+        cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()))
+            .as_deref(),
+        Some("\"a\tb\"\t3\nbeta\t2\n")
+    );
+    let page = data.read("stories", None, false, 2, 0).unwrap();
+    assert_eq!(
+        page.rows[0].cells[..2],
+        [serde_json::json!("a\tb"), serde_json::json!(3)]
+    );
+    assert_eq!(
+        page.rows[1].cells[..2],
+        [serde_json::json!("beta"), serde_json::json!(2)]
+    );
+    cx.simulate_keystrokes("cmd-z");
+    let page = data.read("stories", None, false, 2, 0).unwrap();
+    assert!(
+        page.rows
+            .iter()
+            .all(|row| row.cells[0].is_null() && row.cells[1].is_null())
+    );
+    cx.simulate_keystrokes("left up");
+    cx.update(|_, cx| {
+        cx.write_to_clipboard(ClipboardItem::new_string("north\r\n\r\nsouth".into()))
+    });
+    cx.simulate_keystrokes("cmd-v");
+    let page = data.read("stories", None, false, 3, 0).unwrap();
+    assert_eq!(page.rows[0].cells[0], "north");
+    assert!(page.rows[1].cells[0].is_null());
+    assert_eq!(page.rows[2].cells[0], "south");
+}
+
+#[gpui::test]
+fn moving_the_grid_selection_reveals_cells_and_drag_can_extend_it(cx: &mut TestAppContext) {
+    let (_directory, view, mut cx) = open(cx, 9, 600.);
+    let first = cx.debug_bounds("table-cell-1-Field 0").unwrap().center();
+    let second = cx.debug_bounds("table-cell-2-Field 1").unwrap().center();
+    cx.simulate_mouse_down(first, MouseButton::Left, Modifiers::default());
+    cx.simulate_mouse_move(
+        first + point(px(10.), px(0.)),
+        Some(MouseButton::Left),
+        Modifiers::default(),
+    );
+    settle(&mut cx);
+    cx.simulate_mouse_move(second, Some(MouseButton::Left), Modifiers::default());
+    cx.simulate_mouse_up(second, MouseButton::Left, Modifiers::default());
+    settle(&mut cx);
+    view.read_with(&cx, |view, _| {
+        let range = view.grid.range.as_ref().unwrap();
+        assert_eq!((range.anchor.rowid, range.active.rowid), (1, 2));
+        assert_eq!(range.active.column, "Field 1");
+    });
+    cx.simulate_keystrokes(
+        "tab right right right down down down down down down down down down down down",
+    );
+    settle(&mut cx);
+    view.read_with(&cx, |view, _| {
+        assert_eq!(view.grid.range.as_ref().unwrap().active.column, "Field 5");
+        assert!(view.horizontal.offset().x < px(0.));
+        assert!(view.vertical.offset().y < px(0.));
+    });
 }
 
 #[gpui::test]

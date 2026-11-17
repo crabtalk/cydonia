@@ -23,6 +23,7 @@ bezel = "0.2.29"
 browser = { version = "0.2.29", package = "bezel-browser", features = ["inspector"] }
 canvas = { version = "0.2.29", package = "bezel-canvas", default-features = false }
 chrono = "0.4"
+csv = "1.4"
 dirs = "6"
 editor = { version = "0.2.29", package = "bezel-editor" }
 futures = "0.3"
