@@ -343,7 +343,8 @@ pub(crate) struct TableView {
     workspace: Entity<Workspace>,
     source: Entity<Table>,
     sizing: Sizing,
-    scroll: ScrollHandle,
+    horizontal: ScrollHandle,
+    vertical: ScrollHandle,
     offset: i64,
     resizing: Option<Resizing>,
     root: WeakEntity<Cydonia>,
@@ -383,7 +384,8 @@ impl TableView {
             workspace,
             source,
             sizing: Sizing::default(),
-            scroll: ScrollHandle::new(),
+            horizontal: ScrollHandle::new(),
+            vertical: ScrollHandle::new(),
             offset: 0,
             resizing: None,
             root,
@@ -408,8 +410,7 @@ impl TableView {
             .update(cx, |source, cx| source.load_page(offset, cx));
         if self.source.read(cx).page(offset).is_some() {
             self.offset = offset;
-            self.scroll
-                .set_offset(gpui::point(self.scroll.offset().x, px(0.)));
+            self.vertical.set_offset(gpui::point(px(0.), px(0.)));
             cx.notify();
         }
     }
@@ -534,8 +535,8 @@ impl TableView {
                 .map(|column| column.name.clone())
         {
             self.show_page(self.source.read(cx).last_page(), cx);
-            self.scroll.set_offset(gpui::point(px(0.), px(0.)));
-            self.scroll.scroll_to_bottom();
+            self.horizontal.set_offset(gpui::point(px(0.), px(0.)));
+            self.vertical.scroll_to_bottom();
             self.edit_cell(
                 Cell::Value {
                     rowid,
@@ -950,8 +951,23 @@ impl Render for TableView {
         let grid = table::table(&theme)
             .w(width)
             .min_w_full()
-            .child(table::header(&theme).children(headings))
-            .child(body);
+            .max_h_full()
+            .child(table::header(&theme).flex_none().children(headings))
+            .child(
+                scrollbars::pane("table-rows", scrollbars::Axes::Vertical)
+                    .min_h_0()
+                    .track_scroll(&self.vertical)
+                    .child(body)
+                    .child(
+                        add::row("add-row", "New row", theme.text_muted, &theme)
+                            .mt(px(6.))
+                            .px(px(10.))
+                            .py(px(7.))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.add_row(window, cx);
+                            })),
+                    ),
+            );
 
         div()
             .id("table-view")
@@ -1008,27 +1024,18 @@ impl Render for TableView {
                     .flex()
                     .flex_col()
                     .child(
-                        scrollbars::pane("table-body", scrollbars::Axes::Both)
+                        scrollbars::pane("table-body", scrollbars::Axes::Horizontal)
                             .debug_selector(|| "table-body".into())
                             .flex_1()
                             .min_w_0()
                             .min_h_0()
-                            .track_scroll(&self.scroll)
+                            .track_scroll(&self.horizontal)
                             .px(px(INSET))
                             .pb(px(20.))
-                            .child(grid)
-                            .child(
-                                add::row("add-row", "New row", theme.text_muted, &theme)
-                                    .mt(px(6.))
-                                    .px(px(10.))
-                                    .py(px(7.))
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.add_row(window, cx);
-                                    })),
-                            ),
+                            .child(grid),
                     )
-                    .child(scrollbars::Overlay::new("table-vertical", &self.scroll, Axis::Vertical))
-                    .child(scrollbars::Overlay::new("table-horizontal", &self.scroll, Axis::Horizontal))
+                    .child(scrollbars::Overlay::new("table-vertical", &self.vertical, Axis::Vertical))
+                    .child(scrollbars::Overlay::new("table-horizontal", &self.horizontal, Axis::Horizontal))
                     .child(self.sizing.measure(INSET, cx)),
             )
             .into_any_element()

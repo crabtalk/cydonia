@@ -73,9 +73,11 @@ fn narrow_tables_keep_readable_columns_and_scroll_to_the_last_one(cx: &mut TestA
     let first = cx.debug_bounds("table-cell-1-Field 0").unwrap();
     let second = cx.debug_bounds("table-cell-1-Field 1").unwrap();
     assert_eq!(second.left() - first.left(), px(table::COLUMN_WIDTH));
-    let scroll = view.read_with(&cx, |view, _| view.scroll.clone());
-    assert!(scroll.max_offset().x > px(0.));
-    assert!(scroll.max_offset().y > px(0.));
+    let (horizontal, vertical) = view.read_with(&cx, |view, _| {
+        (view.horizontal.clone(), view.vertical.clone())
+    });
+    assert!(horizontal.max_offset().x > px(0.));
+    assert!(vertical.max_offset().y > px(0.));
     let viewport = cx.debug_bounds("table-body").unwrap();
     cx.simulate_event(ScrollEvent {
         position: viewport.center(),
@@ -85,10 +87,24 @@ fn narrow_tables_keep_readable_columns_and_scroll_to_the_last_one(cx: &mut TestA
         source: ScrollSource::Pointer,
     });
     settle(&mut cx);
-    assert!(scroll.offset().x < px(0.));
+    assert!(horizontal.offset().x < px(0.));
     let last = cx.debug_bounds("table-heading-10").unwrap();
     assert!(last.right() <= viewport.right());
     assert!(last.left() >= viewport.left());
+    let cell = cx.debug_bounds("table-cell-5-Field 10").unwrap();
+    cx.simulate_event(ScrollEvent {
+        position: viewport.center(),
+        delta: ScrollDelta::Pixels(point(px(0.), px(-80.))),
+        modifiers: Modifiers::default(),
+        touch_phase: gpui::TouchPhase::Moved,
+        source: ScrollSource::Pointer,
+    });
+    settle(&mut cx);
+    assert!(vertical.offset().y < px(0.));
+    assert_eq!(cx.debug_bounds("table-heading-10").unwrap(), last);
+    let moved = cx.debug_bounds("table-cell-5-Field 10").unwrap();
+    assert_eq!(moved.left(), cell.left());
+    assert!(moved.top() < cell.top());
 }
 
 #[gpui::test]
