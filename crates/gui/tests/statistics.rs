@@ -25,6 +25,7 @@ fn activity_comes_from_the_project_files() {
             agent: "Claude Agent".into(),
             agent_id: Some("claude-acp".into()),
             identity: None,
+            mode: Default::default(),
             session: None,
             title: "t".into(),
             name: None,

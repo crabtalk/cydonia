@@ -71,7 +71,7 @@ impl Workspace {
 
     /// An agent's labelling of the session filed under `record`.
     pub fn label_record(&mut self, record: &str, labels: Vec<String>, cx: &mut Context<Self>) {
-        let Some(id) = self.session_by_record(record, cx).map(|chat| chat.id) else {
+        let Some(id) = self.session_by_key(record, cx).map(|chat| chat.id) else {
             return;
         };
         let Some(project) = self.project_of(id) else {

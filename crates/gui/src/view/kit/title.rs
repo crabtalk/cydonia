@@ -9,7 +9,10 @@ use crate::view::{
 use bezel::{
     gpui::{AnyElement, App, Div, FontWeight, Window, div, prelude::*, px},
     theme::{TextStyle, Theme, Typeset},
-    ui::tabs::{self, State},
+    ui::{
+        surface::Control,
+        tabs::{self, State},
+    },
 };
 
 /// The hover group a title row is, which its tools show on — the ones other
@@ -96,10 +99,10 @@ impl Title {
     }
 
     /// `mark` and `name` on the chip, or bare while floating.
-    pub fn label(self, mark: AnyElement, name: impl IntoElement, theme: &Theme) -> Div {
+    pub fn label(self, mark: AnyElement, name: impl IntoElement, theme: &Theme) -> Control {
         match self.chip() {
-            Some(state) => tabs::chip(theme, state).gap_0(),
-            None => div().flex().flex_row().items_center(),
+            Some(state) => tabs::chip(theme, state).id("pane-title-chip").gap_0(),
+            None => Control::new(div().flex().flex_row().items_center(), false),
         }
         .min_w_0()
         .child(mark)

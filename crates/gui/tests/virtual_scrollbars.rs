@@ -62,7 +62,7 @@ fn the_thumb_fades_out_and_hover_or_a_drag_holds_it_up(cx: &mut gpui::TestAppCon
     assert!(thumb(&mut visual).is_none(), "and an idle window hides it");
 
     // A wheel is activity.
-    visual.simulate_event(gpui::ScrollWheelEvent {
+    visual.simulate_event(gpui::ScrollEvent {
         position: point(px(200.), px(100.)),
         delta: gpui::ScrollDelta::Pixels(point(px(0.), px(30.))),
         ..Default::default()
@@ -75,7 +75,7 @@ fn the_thumb_fades_out_and_hover_or_a_drag_holds_it_up(cx: &mut gpui::TestAppCon
 
     // The strip is a hitbox now, and a wheel over it still belongs to the list.
     let before = list.state.scroll_px_offset_for_scrollbar().y;
-    visual.simulate_event(gpui::ScrollWheelEvent {
+    visual.simulate_event(gpui::ScrollEvent {
         position: point(px(396.), px(100.)),
         delta: gpui::ScrollDelta::Pixels(point(px(0.), px(30.))),
         ..Default::default()

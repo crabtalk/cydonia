@@ -9,6 +9,7 @@ use std::{
 };
 
 pub mod bundle;
+pub mod web;
 
 pub const DIR: &str = "canvases";
 pub const FILE: &str = "content.canvas";
@@ -135,6 +136,9 @@ impl Edit {
         }
         let mut ids = std::collections::HashSet::new();
         for node in &next.nodes {
+            if node.kind == web::KIND {
+                web::Frame::try_from(node).map_err(|error| format!("node {}: {error}", node.id))?;
+            }
             if node.id.is_empty() || !ids.insert(&node.id) {
                 return Err(format!("node id must be nonempty and unique: {}", node.id));
             }

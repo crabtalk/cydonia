@@ -16,6 +16,21 @@ cydonia
 Cydonia runs on macOS on Apple silicon. It asks for no account and reaches the
 network only to look for a new release and to install an agent you asked for.
 
+## Linux browser runtime
+
+Linux source builds use system WPE WebKit 2.54 or newer with WPEPlatform enabled.
+Install the runtime through your distribution's package manager (`wpewebkit` on
+Arch, `libwpewebkit-2.0-1` on Debian testing/unstable). A package below 2.54 cannot
+run the browser. Source builds also need the matching development headers.
+
+A missing runtime leaves the rest of Cydonia usable. Install or update WPE, then
+reload the browser tab. Cydonia does not install browser packages or disable the
+WebKit sandbox. Linux platform compatibility is still awaiting verification.
+
+Browser profiles live under `$XDG_DATA_HOME/bezel/browser/default`, falling back
+to `~/.local/share/bezel/browser/default`. **Settings › Browser › Keep signed in**
+controls persistence; **Clear data** closes tabs and removes their browsing data.
+
 ## Open a project
 
 **File › Open Project…** (⌘O) picks a directory — a repository, or anything

@@ -2,7 +2,7 @@
 
 mod common;
 
-use artifact::kind::Kind;
+use artifact::{kind::Kind, session::mode::Mode};
 use common::{Rail, Scratch, refused, said};
 use cydonia_mcp::rail::Change;
 use serde_json::json;
@@ -56,10 +56,14 @@ fn no_session_starts_one_on_the_named_agent() {
         cydonia_mcp::rail::Agent {
             name: "Claude Agent".to_owned(),
             id: Some("claude-acp".to_owned()),
+            workspace: None,
+            mode: Default::default(),
         },
         cydonia_mcp::rail::Agent {
             name: "Codex".to_owned(),
             id: None,
+            workspace: None,
+            mode: Default::default(),
         },
     ]);
 
@@ -344,4 +348,82 @@ fn a_caller_that_is_not_a_session_cannot_rename() {
     ));
 
     assert!(why.contains("not one"), "{why}");
+}
+
+#[test]
+fn a_terminal_session_reports_the_transcript_boundary() {
+    use artifact::{project::Project as _, session::record::Record};
+    let scratch = Scratch::new("terminal-read");
+    let store = scratch.store();
+    let id = store.create_session().unwrap();
+    let record: Record = serde_json::from_value(json!({
+        "id": id, "agent": "Claude", "mode": "terminal", "title": "Native CLI",
+        "name": null, "updated": 0, "items": []
+    }))
+    .unwrap();
+    store.save_session(&record).unwrap();
+    let number = artifact::entry::number(scratch.path(), Kind::Session, &id).unwrap();
+    let text = said(scratch.server().call(
+        "session_read",
+        json!({"session": format!("#{number}")}),
+        Some(scratch.path()),
+    ));
+    assert!(text.contains("native terminal session"), "{text}");
+    assert!(text.contains("structured turns are not recorded"), "{text}");
+}
+
+#[test]
+fn a_named_terminal_agent_requests_a_run_with_the_initial_prompt_in_its_workspace() {
+    let scratch = Scratch::new("native-agent-start");
+    let other = Scratch::new("native-agent-other");
+    let server = scratch.server();
+    let rail = Rail;
+    cydonia_mcp::rail::set_agents(vec![cydonia_mcp::rail::Agent {
+        name: "Native Claude".into(),
+        id: Some("named-agent-id".into()),
+        workspace: Some(scratch.path().into()),
+        mode: Mode::Terminal,
+    }]);
+    let response = said(server.call(
+        "session_send",
+        json!({"agent": "named-agent-id", "message": "fix it"}),
+        Some(scratch.path()),
+    ));
+    assert!(response.contains("requested a terminal run"), "{response}");
+    assert!(response.contains("initial prompt"), "{response}");
+    assert!(rail.was_asked(Change::Start {
+        project: scratch.path().canonicalize().unwrap(),
+        agent: "named-agent-id".into(),
+        message: "fix it".into()
+    }));
+    other.server();
+    let why = refused(server.call(
+        "session_send",
+        json!({"agent": "named-agent-id", "message": "wrong project"}),
+        Some(other.path()),
+    ));
+    assert!(why.contains("no agent named"), "{why}");
+}
+
+#[test]
+fn messages_to_old_terminal_records_are_refused_without_claiming_delivery() {
+    use artifact::{project::Project as _, session::record::Record};
+    let scratch = Scratch::new("native-agent-prompt");
+    let server = scratch.server();
+    let rail = Rail;
+    let store = scratch.store();
+    let id = store.create_session().unwrap();
+    let record: Record = serde_json::from_value(json!({ "id": id, "agent": "Claude", "mode": "terminal", "title": "Native", "name": null, "updated": 0, "items": [] })).unwrap();
+    store.save_session(&record).unwrap();
+    let number = artifact::entry::number(scratch.path(), Kind::Session, &id).unwrap();
+    let response = refused(server.call(
+        "session_send",
+        json!({"session": format!("#{number}"), "message": "fix it"}),
+        Some(scratch.path()),
+    ));
+    assert!(response.contains("native CLI"), "{response}");
+    assert!(!rail.was_asked(Change::Send {
+        session: id,
+        message: "fix it".into()
+    }));
 }

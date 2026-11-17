@@ -6,7 +6,7 @@ pub(super) fn viewport(state: &ListState, content: Div) -> impl IntoElement {
     let drag = state.clone();
     content
         .id("transcript-scroll")
-        .on_scroll_wheel(move |event, _, _| {
+        .on_scroll(move |event, _, _| {
             let delta = event.delta.pixel_delta(px(20.)).y;
             if delta > px(0.) && wheel.max_offset_for_scrollbar().y > px(0.) {
                 wheel.set_follow_mode(FollowMode::Normal);

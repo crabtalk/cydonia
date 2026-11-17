@@ -143,7 +143,7 @@ impl BoardView {
                     .board_at(&on, cx)
                     .and_then(|board| board.card(card))
                     .and_then(|card| card.session.as_deref())
-                    .and_then(|record| workspace.session_by_record(record, cx)),
+                    .and_then(|record| workspace.session_by_key(record, cx)),
                 Sent::Lane(_) => None,
             };
             let row = |chat: &ChatSession| {

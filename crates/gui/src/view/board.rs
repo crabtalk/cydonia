@@ -43,8 +43,7 @@ use bezel::{
     theme::{TextStyle, Theme, Typeset},
     ui::{
         context_menu::{ContextMenu, Place as ContextPlace},
-        drag::{self, Carried},
-        icons,
+        drag, icons,
         input::{self, Shape, TextField},
         menu::Item,
         scroll as scrollbars,
@@ -658,12 +657,7 @@ impl Lanes {
 
 /// What rides under the pointer while a board item is carried: a card as its
 /// lane draws it, or one line for a list row, a lane or a group.
-pub(crate) fn ghost(
-    root: &WeakEntity<Cydonia>,
-    item: &BoardItem,
-    window: &mut Window,
-    cx: &mut App,
-) -> AnyElement {
+pub(crate) fn ghost(root: &WeakEntity<Cydonia>, item: &BoardItem, cx: &mut App) -> AnyElement {
     enum Held {
         Card(String, Option<PathBuf>),
         /// A list row's handle, if it is a card's, and its title.
@@ -692,44 +686,45 @@ pub(crate) fn ghost(
             }
         })
     });
-    let theme = Theme::of(cx).clone();
     let frame = div().rounded(px(Theme::control_radius()));
     match held {
-        Some(Held::Card(text, base)) => frame
-            .w(px(COLUMN_WIDTH))
-            .max_h(px(CARD_MAX_HEIGHT))
-            .overflow_hidden()
-            .p(px(10.))
-            .child(card_body(
-                &markdown::parse(&text),
-                base.as_deref(),
-                None,
-                window,
-                cx,
-            ))
-            .ghost(&theme)
-            .into_any_element(),
-        Some(Held::Row(handle, title)) => frame
-            .w(px(HELD_ROW_WIDTH))
-            .h(px(LIST_ROW_HEIGHT))
-            .flex()
-            .items_center()
-            .px(px(12.))
-            .text_style(TextStyle::Callout)
-            .text_color(theme.text)
-            .gap(px(8.))
-            .children(handle.map(|handle| {
-                div()
-                    .flex_none()
-                    .w(px(LIST_HANDLE_WIDTH))
-                    .text_style(TextStyle::Caption)
-                    .font_family(theme.font_mono.clone())
-                    .text_color(theme.text_faint)
-                    .child(handle)
-            }))
-            .child(div().min_w_0().truncate().child(title))
-            .ghost(&theme)
-            .into_any_element(),
+        Some(Held::Card(text, base)) => drag::ghost("board-card-ghost", move |_, window, cx| {
+            frame
+                .w(px(COLUMN_WIDTH))
+                .max_h(px(CARD_MAX_HEIGHT))
+                .overflow_hidden()
+                .p(px(10.))
+                .child(card_body(
+                    &markdown::parse(&text),
+                    base.as_deref(),
+                    None,
+                    window,
+                    cx,
+                ))
+        })
+        .into_any_element(),
+        Some(Held::Row(handle, title)) => drag::ghost("board-row-ghost", move |theme, _, _| {
+            frame
+                .w(px(HELD_ROW_WIDTH))
+                .h(px(LIST_ROW_HEIGHT))
+                .flex()
+                .items_center()
+                .px(px(12.))
+                .text_style(TextStyle::Callout)
+                .text_color(theme.text)
+                .gap(px(8.))
+                .children(handle.map(|handle| {
+                    div()
+                        .flex_none()
+                        .w(px(LIST_HANDLE_WIDTH))
+                        .text_style(TextStyle::Caption)
+                        .font_family(theme.font_mono.clone())
+                        .text_color(theme.text_faint)
+                        .child(handle)
+                }))
+                .child(div().min_w_0().truncate().child(title))
+        })
+        .into_any_element(),
         None => gpui::Empty.into_any_element(),
     }
 }
@@ -847,7 +842,7 @@ pub(crate) struct BoardView {
 /// The session that last held a card, while it is still open.
 fn card_session<'a>(card: &Card, workspace: &'a Workspace, cx: &'a App) -> Option<&'a ChatSession> {
     let record = card.session.as_deref()?;
-    workspace.session_by_record(record, cx)
+    workspace.session_by_key(record, cx)
 }
 /// A card's mark: the orb while it is busy, the linked session's `#number`
 /// while it is not, and nothing when no session is linked. A session stays
@@ -2477,7 +2472,7 @@ impl BoardView {
                         let gesture = scroll.wheel.clone();
                         let view = window.current_view();
                         window.on_mouse_event(
-                            move |event: &gpui::ScrollWheelEvent, phase, window, cx| {
+                            move |event: &gpui::ScrollEvent, phase, window, cx| {
                                 if phase != gpui::DispatchPhase::Capture
                                     || !hitbox.should_handle_scroll(window)
                                 {

@@ -30,8 +30,8 @@ use artifact::{kind::Kind, search::Query};
 use bezel::{
     gpui::{
         self, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-        FontWeight, KeyBinding, ScrollHandle, SharedString, Task, WeakEntity, Window, actions, div,
-        prelude::*, px,
+        FontWeight, KeyBinding, KeyBindingContextPredicate, ScrollHandle, SharedString, Task,
+        WeakEntity, Window, actions, div, prelude::*, px,
     },
     theme::{TextStyle, Theme, Typeset as _},
     ui::{
@@ -83,7 +83,7 @@ actions!(
     ]
 );
 
-pub fn bindings() -> Vec<KeyBinding> {
+pub fn bindings(cx: &App) -> Vec<KeyBinding> {
     let ctx = Some(CONTEXT);
     vec![
         KeyBinding::new("down", SelectNext, ctx),
@@ -91,7 +91,19 @@ pub fn bindings() -> Vec<KeyBinding> {
         KeyBinding::new("up", SelectPrev, ctx),
         KeyBinding::new("ctrl-p", SelectPrev, ctx),
         KeyBinding::new("enter", OpenHit, ctx),
-        KeyBinding::new("secondary-enter", ApplySearch, ctx),
+        KeyBinding::load(
+            "secondary-enter",
+            Box::new(ApplySearch),
+            ctx.map(|context| {
+                KeyBindingContextPredicate::parse(context)
+                    .expect("valid key context")
+                    .into()
+            }),
+            false,
+            None,
+            cx,
+        )
+        .expect("valid key binding"),
         KeyBinding::new("tab", NextFilter, ctx),
         KeyBinding::new("shift-tab", PrevFilter, ctx),
     ]

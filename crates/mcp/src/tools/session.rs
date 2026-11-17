@@ -5,14 +5,15 @@ use crate::{
     tool::{Answer, Arg, Args, Outcome, Tool, Trouble},
     tools::{HITS, PROJECT, QUERY, fields, project_of, root},
 };
-use artifact::error::{Act, Error};
 use artifact::{
+    error::{Act, Error},
     kind::Kind,
     project::{Project as _, fs},
     reference::{self, Reference, Span, Target, Within},
     search::{self, Block, Query},
     session::{
         chat::{self, ChatItem, ToolStatus},
+        mode::Mode,
         record::Record,
     },
 };
@@ -84,7 +85,9 @@ pub static TOOLS: [Tool; 4] = [
         name: "session_send",
         description: "Send a message to another agent session in the project, named by its entry \
         reference (#43), or start a new session on a named agent with the message as its first \
-        prompt. Fire and forget: nothing is waited for or answered back.",
+        prompt. Terminal agents launch a new CLI run with the initial prompt; existing terminal \
+        runs cannot receive messages through this tool. \
+        Fire and forget: nothing is waited for or answered back.",
         schema: |bound| {
             let mut schema = fields(bound, &[PROJECT, MESSAGE]);
             super::optional(&mut schema, SESSION, "string");
@@ -174,6 +177,12 @@ fn send(args: Args<'_>) -> Outcome {
             entry.kind
         )));
     }
+    if fs::Project::new(project)
+        .session(&entry.id)
+        .is_some_and(|record| record.mode == Mode::Terminal)
+    {
+        return Err(Trouble::Refused("Messages to terminal runs must be entered in the native CLI. Name an agent to start a new run with this message.".into()));
+    }
     rail::ask(Change::Send {
         session: entry.id.clone(),
         message: message.to_owned(),
@@ -243,7 +252,13 @@ pub(crate) fn turn_link(args: &Args<'_>) -> Option<String> {
 fn start(project: &Path, agent: Option<&str>, message: &str) -> Outcome {
     let named = agent
         .ok_or_else(|| Trouble::Invalid("session or agent is required, as a string".to_owned()))?;
-    let agents = rail::agents();
+    let project = project
+        .canonicalize()
+        .unwrap_or_else(|_| project.to_path_buf());
+    let agents: Vec<_> = rail::agents()
+        .into_iter()
+        .filter(|agent| agent.in_project(&project))
+        .collect();
     let agent = agents
         .iter()
         .find(|agent| agent.id.as_deref() == Some(named))
@@ -258,18 +273,18 @@ fn start(project: &Path, agent: Option<&str>, message: &str) -> Outcome {
                 false => format!("no agent named {named} — cydonia has {}", listed(&agents)),
             })
         })?;
-    let project = project
-        .canonicalize()
-        .unwrap_or_else(|_| project.to_path_buf());
     rail::ask(Change::Start {
         project,
         agent: agent.key().to_owned(),
         message: message.to_owned(),
     })?;
-    Ok(Answer::said(format!(
-        "sent to a new session on {}",
-        agent.name
-    )))
+    Ok(Answer::said(match agent.mode {
+        Mode::Gui => format!("sent to a new session on {}", agent.name),
+        Mode::Terminal => format!(
+            "requested a terminal run on {} with the message as its initial prompt; its conversation is managed by the native CLI",
+            agent.name
+        ),
+    }))
 }
 
 /// `Claude Agent (claude-acp), Codex (codex-acp)`.
@@ -341,6 +356,12 @@ fn read(args: Args<'_>) -> Outcome {
     let named = args.text(READ)?;
     let full = args.boolean(FULL, false)?;
     let found = found(&args, named)?;
+    if found.record.mode == Mode::Terminal {
+        return Ok(Answer::said(format!(
+            "#{} {} is a native terminal session; structured turns are not recorded.",
+            found.number, found.title
+        )));
+    }
     let asked = match args.maybe(TURNS) {
         Some(turns) => Some(range(turns)?),
         None => found.turns,

@@ -141,3 +141,57 @@ fn a_queue_is_drawn_only_under_the_session_it_is_waiting_in(cx: &mut gpui::TestA
         })
         .unwrap();
 }
+
+#[gpui::test]
+fn pending_cross_session_markdown_stays_within_its_bubble(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| Theme::install(bezel::theme::Appearance::Light, cx));
+    let window = cx.add_window(|window, cx| {
+        let root =
+            cx.new(|cx| Cydonia::new(Settings::default(), state::State::default(), window, cx));
+        root.update(cx, |root, cx| {
+            root.workspace.update(cx, |workspace, cx| {
+                workspace.settings.features.sessions = true;
+                let cwd = std::path::PathBuf::from("/nonexistent/cydonia-queue-test");
+                let mut project = Project::new(workspace.intern(&cwd), cwd.clone(), cx);
+                let record = serde_json::from_value(serde_json::json!({
+                    "id":"test", "agent":"test", "title":"", "name":null, "updated":1, "items":[]
+                }))
+                .unwrap();
+                let mut chat = ChatSession::restore(
+                    1,
+                    cwd,
+                    Agent {
+                        name: "test".into(),
+                        id: None,
+                        command: String::new(),
+                        args: vec![],
+                        env: Default::default(),
+                    },
+                    record,
+                );
+                chat.queue.push_back(format!(
+                    "from [cydonia://test#2:1](cydonia://test#2:1 \"chip\")\n\n{}\n\n- {}\n- Remove the `../../blueprint/src/lib/StepNode.svelte` import.",
+                    "Please fix the remaining workflow references before continuing. ".repeat(4),
+                    "Rewrite the docs for checkpoints and real graph nodes. ".repeat(3),
+                ));
+                project
+                    .sessions
+                    .push(crate::model::project::HeldSession::new(chat, cx));
+                project.active = Some(1);
+                workspace.projects.push(project);
+                workspace.active = Some(0);
+            });
+            root.select_session(1, crate::model::workspace::Opening::Preview, window, cx);
+        });
+        QueueView(root, 1)
+    });
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.run_until_parked();
+    let bubble = visual
+        .debug_bounds("queued-message-0")
+        .expect("queued bubble");
+    assert!(bubble.size.width <= px(440.), "{bubble:?}");
+    assert!(bubble.size.width > px(300.), "{bubble:?}");
+    assert!(bubble.origin.x >= px(0.), "{bubble:?}");
+    assert!(bubble.size.height < px(600.), "{bubble:?}");
+}

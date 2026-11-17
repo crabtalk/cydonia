@@ -9,8 +9,7 @@
 use bezel::{
     gpui::{
         AnyElement, App, AvailableSpace, Bounds, Element, ElementId, GlobalElementId,
-        InspectorElementId, IntoElement, LayoutId, Pixels, Size, Style, Window, point, px,
-        relative,
+        InspectorElementId, LayoutId, Pixels, Size, Style, Window, point, px, relative,
     },
     motion::{self, LAYOUT},
 };
@@ -183,14 +182,6 @@ pub fn stack(wants: &[Pixels], heights: &[Pixels], pinned: Option<usize>) -> Vec
         }
     }
     tops
-}
-
-impl IntoElement for Margin {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
 }
 
 impl Element for Margin {

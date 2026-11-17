@@ -6,7 +6,7 @@ use crate::{
     view::settings::{SettingsWindow, group, labelled},
 };
 use bezel::{
-    gpui::{AnyElement, Context, Entity, SharedString, div, prelude::*, px},
+    gpui::{AnyElement, App, Context, Entity, SharedString, div, prelude::*, px},
     theme::{TextStyle, Theme, Typeset},
     ui::{
         combobox::{Combobox, ComboboxEvent},
@@ -139,13 +139,13 @@ impl Face {
         }
     }
 
-    fn size_description(self) -> String {
+    fn size_description(self, cx: &App) -> String {
         let zoom = || {
             format!(
                 "{} / {} zooms; {} resets.",
-                bezel::ui::keys::printed("secondary-="),
-                bezel::ui::keys::printed("secondary--"),
-                bezel::ui::keys::printed("secondary-0"),
+                bezel::ui::keys::printed("secondary-=", cx),
+                bezel::ui::keys::printed("secondary--", cx),
+                bezel::ui::keys::printed("secondary-0", cx),
             )
         };
         match self {
@@ -188,7 +188,7 @@ impl SettingsWindow {
                                 .child(labelled(
                                     &theme,
                                     font.size_title(),
-                                    font.size_description(),
+                                    font.size_description(cx),
                                     false,
                                 ))
                                 .child(

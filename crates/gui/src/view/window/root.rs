@@ -31,13 +31,13 @@ use crate::{
     },
 };
 use anyhow::Result;
-use artifact::kind::Kind;
+use artifact::{kind::Kind, session::mode::Mode};
 use bezel::{
     gpui::{
         self, AnyElement, App, Axis, Bounds, Context, Div, DragMoveEvent, Empty, Entity,
-        FocusHandle, Focusable, KeyBinding, PathPromptOptions, Pixels, Point, Render,
-        TitlebarOptions, Window, WindowBounds, WindowHandle, WindowOptions, actions, div, point,
-        prelude::*, px, size,
+        FocusHandle, Focusable, KeyBinding, KeyBindingContextPredicate, PathPromptOptions, Pixels,
+        Point, Render, TitlebarOptions, Window, WindowBounds, WindowHandle, WindowOptions, actions,
+        div, point, prelude::*, px, size,
     },
     motion::{Fade, Painter},
     theme::{TextStyle, Theme, Typeset, appearance},
@@ -248,15 +248,23 @@ pub(crate) fn toolbar_inset(window: &Window, band: f32, cx: &App) -> f32 {
 /// The chords the window keeps whatever the reader says — the commands it also
 /// answers to are bound from [`crate::view::keymap`], which is where they can
 /// be moved.
-pub fn bindings() -> Vec<KeyBinding> {
+pub fn bindings(cx: &App) -> Vec<KeyBinding> {
     let tabs = (1..=9).map(|n| {
-        KeyBinding::new(
+        KeyBinding::load(
             &format!("secondary-{n}"),
-            SwitchTab {
+            Box::new(SwitchTab {
                 index: (n < 9).then(|| n - 1),
-            },
-            Some("Cydonia"),
+            }),
+            Some("Cydonia").map(|context| {
+                KeyBindingContextPredicate::parse(context)
+                    .expect("valid key context")
+                    .into()
+            }),
+            false,
+            None,
+            cx,
         )
+        .expect("valid key binding")
     });
     tabs.chain([
         // What a browser binds its tabs to, and the only chord these answer to:
@@ -283,14 +291,23 @@ pub fn bindings() -> Vec<KeyBinding> {
         KeyBinding::new("ctrl-alt-w", ClosePane, Some("Cydonia")),
         KeyBinding::new("ctrl-alt-z", ZoomPane, Some("Cydonia")),
         // Scope the fallback to the root so focused text surfaces take priority.
-        KeyBinding::new(
+        KeyBinding::load(
             "secondary-c",
-            CopySelection,
+            Box::new(CopySelection),
             Some(crate::view::keymap::platform(
                 "Cydonia",
                 "Cydonia && !CydoniaTerminal",
-            )),
-        ),
+            ))
+            .map(|context| {
+                KeyBindingContextPredicate::parse(context)
+                    .expect("valid key context")
+                    .into()
+            }),
+            false,
+            None,
+            cx,
+        )
+        .expect("valid key binding"),
     ])
     .collect()
 }
@@ -985,7 +1002,7 @@ impl Cydonia {
                 .workspace
                 .read(cx)
                 .session(id, cx)
-                .is_some_and(ChatSession::resumable)
+                .is_some_and(ChatSession::accepts_input)
                 .then(|| self.composer_focus_handle(cx))
                 .flatten(),
             Showing::Article(_) => self.pane_editor(cx).map(|editor| editor.focus_handle(cx)),
@@ -1116,12 +1133,12 @@ impl Cydonia {
                         .upgrade()
                         .map(|this| this.read(cx).label_of_dragged(item, cx))
                         .unwrap_or_default();
-                    crate::view::sidebar::ghost(label.into(), Theme::of(cx))
+                    bezel::ui::drag::ghost_label("pane-entry-ghost", label).into_any_element()
                 }
             }),
             board_sort: drag::Domain::with_ghost({
                 let this = cx.entity().downgrade();
-                move |item, window, cx| board::ghost(&this, item, window, cx)
+                move |item, _, cx| board::ghost(&this, item, cx)
             }),
             zoom_glide: None,
             pane_places: Rc::default(),
@@ -1168,7 +1185,7 @@ impl Cydonia {
             .workspace
             .read(cx)
             .active_session(cx)
-            .is_some_and(ChatSession::resumable)
+            .is_some_and(ChatSession::accepts_input)
             .then(|| this.composer_focus_handle(cx))
             .flatten();
         window.focus(composer.as_ref().unwrap_or(&this.focus), cx);
@@ -1182,18 +1199,19 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.new_session_as(&action.identity, window, cx);
+        self.new_session_as(&action.identity, None, window, cx);
     }
 
     /// Start a session as the identity with this id, and show it.
     pub(crate) fn new_session_as(
         &mut self,
         identity: &str,
+        mode: Option<Mode>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let id = self.workspace.update(cx, |workspace, cx| {
-            workspace.new_session_as(identity, None, cx)
+            workspace.new_session_as(identity, None, mode, true, cx)
         });
         if let Some(id) = id {
             self.land_session(id, window, cx);
@@ -1215,6 +1233,16 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let identity = self
+            .workspace
+            .read(cx)
+            .active_session(cx)
+            .and_then(|chat| chat.identity.clone())
+            .filter(|id| self.workspace.read(cx).identity(id).is_some());
+        if let Some(identity) = identity {
+            self.new_session_as(&identity, None, window, cx);
+            return;
+        }
         let Some(agent) = self.workspace.read(cx).preferred_agent(cx) else {
             // Nothing to open one on: the window says so and offers the
             // install, rather than jumping to Settings on its own.
@@ -1361,7 +1389,7 @@ impl Cydonia {
     ) {
         let member = self.workspace.update(cx, |workspace, cx| {
             workspace.select_session(id, cx);
-            workspace.mint_record(id, cx)?;
+            workspace.mint_record(id, cx);
             workspace.member_of_session(id, cx)
         });
         let Some(member) = member else {
@@ -1384,7 +1412,7 @@ impl Cydonia {
             .workspace
             .read(cx)
             .session(id, cx)
-            .is_some_and(ChatSession::resumable)
+            .is_some_and(ChatSession::accepts_input)
             && let Some(focus) = self.composer_focus_handle(cx)
         {
             window.focus(&focus, cx);

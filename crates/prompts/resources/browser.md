@@ -1,6 +1,6 @@
 ---
 name: browser
-description: Work in the in-app browser through the browser_* tools — opening pages, reading them, clicking and typing. Use before driving a browser tab.
+description: Work in the in-app browser through the browser_* tools — opening pages, reading them, taking screenshots, clicking and typing. Use before driving a browser tab.
 ---
 
 # The in-app browser
@@ -42,6 +42,40 @@ reach text past that limit.
 ## The console
 
 `browser_console` gives what a tab's page has logged since the tab opened:
-console calls, uncaught errors and unhandled rejections, each with the frame
-that logged it. Failed loads and other messages the engine writes itself are
-not in it.
+console calls, uncaught errors and unhandled rejections, each with a message id,
+level and the frame that logged it. Filter with `levels`, a list of `debug`,
+`log`, `info`, `warn` or `error`. Omit it for all levels.
+
+Every reply includes a `cursor`, even when nothing matches. Pass it as `since`
+on the next call to read only newer messages. The last 500 messages are kept;
+a reply reports when older messages have been dropped. IDs belong to the tab
+and continue across navigation. Failed loads and other messages the engine
+writes itself are not in this log.
+
+## Screenshots
+
+`browser_screenshot` returns a PNG image of the tab's current viewport, without
+browser chrome. Use it to inspect layout, images, charts or canvas content.
+Scroll to capture another part of the page. It accepts the same optional tab id
+as `browser_read`.
+
+## Debugging
+
+`browser_evaluate` takes a JavaScript expression in `script`, evaluates it in
+the main frame and returns JSON. Promises are awaited. For statements, use an
+IIFE: `(async () => { const value = await fetch('/api/status'); return await
+value.json(); })()`. Thrown errors include their JavaScript stack when present.
+Results must fit in 16000 characters; return selected fields or a small slice
+of a collection. `undefined` becomes `null`. The timeout is ten seconds; it
+stops waiting but does not cancel running JavaScript.
+
+Evaluation can change the page, access its storage or send requests using its
+signed-in session. It is available with the browser-action tools.
+
+`browser_inspect` takes either an `element` number from the last read or a CSS
+`selector`. A selector returns the first match, including hidden, disabled and
+non-interactive elements. Inspection reports bounds, computed styles,
+visibility, disabled state, ancestors, scroll containers and the hit-test
+stack at the element's center. Ancestors and scroll containers are limited to
+eight each; text, attributes and hit-test entries are also bounded. Inspection
+does not scroll or change the element. Selectors address the main document.

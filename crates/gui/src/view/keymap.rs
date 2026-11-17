@@ -16,8 +16,6 @@
 //! because the menu bar holds its own copy of every equivalent — see
 //! [`menubar::refresh`].
 
-pub mod hotkey;
-
 use crate::{
     model::settings::Shortcuts,
     view::{
@@ -39,9 +37,14 @@ use crate::{
     },
 };
 use bezel::{
-    gpui::{App, DummyKeyboardMapper, KeyBinding, KeybindingKeystroke, Keystroke, SharedString},
+    gpui::{
+        Action, App, DummyKeyboardMapper, KeyBinding, KeyBindingContextPredicate,
+        KeybindingKeystroke, Keystroke, OperatingSystem, SharedString,
+    },
     ui::{combobox, focus, input, keys},
 };
+
+pub mod hotkey;
 
 const NATIVE: bool = cfg!(target_os = "macos");
 
@@ -282,57 +285,68 @@ impl Command {
 
     /// The binding this command answers to, or nothing where it answers to no
     /// chord at all.
-    fn binding(self, chord: Option<&str>) -> Option<KeyBinding> {
+    fn binding(self, chord: Option<&str>, cx: &App) -> Option<KeyBinding> {
         let chord = chord?;
         let context = GLOBAL;
-        Some(match self {
-            Self::OpenSettings => KeyBinding::new(chord, OpenSettings, context),
-            Self::NewSession => KeyBinding::new(chord, NewSession, context),
-            Self::NewSessionNext => KeyBinding::new(chord, NewSessionNext, context),
+        let (action, context): (Box<dyn Action>, _) = match self {
+            Self::OpenSettings => (Box::new(OpenSettings), context),
+            Self::NewSession => (Box::new(NewSession), context),
+            Self::NewSessionNext => (Box::new(NewSessionNext), context),
             // Everywhere but the right and bottom panels, which hold ⌘T for a
             // shell of their own.
-            Self::NewTab => KeyBinding::new(
-                chord,
-                super::modals::palette::NewTab,
+            Self::NewTab => (
+                Box::new(super::modals::palette::NewTab),
                 Some(match NATIVE {
                     true => "!SessionPanel && !BottomTerminalPanel",
                     false => "!SessionPanel && !BottomTerminalPanel && !CydoniaTerminal",
                 }),
             ),
-            Self::NewBoard => KeyBinding::new(chord, NewBoard, context),
-            Self::NewArticle => KeyBinding::new(chord, NewArticle, context),
-            Self::NewTable => KeyBinding::new(chord, NewTable, context),
-            Self::InstallApp => KeyBinding::new(chord, InstallApp, context),
-            Self::LoadApp => KeyBinding::new(chord, LoadApp, context),
-            Self::OpenProject => KeyBinding::new(chord, OpenProject, context),
-            Self::CloseProject => KeyBinding::new(chord, CloseProject, context),
-            Self::ToggleSidebar => KeyBinding::new(chord, ToggleSidebar, context),
-            Self::ToggleTerminal => KeyBinding::new(chord, ToggleTerminal, context),
-            Self::ToggleChanges => KeyBinding::new(chord, ToggleChanges, context),
-            Self::OpenFiles => KeyBinding::new(chord, OpenFiles, context),
-            Self::OpenReview => KeyBinding::new(chord, OpenReview, context),
-            Self::NextEntry => KeyBinding::new(chord, NextEntry, context),
-            Self::PrevEntry => KeyBinding::new(chord, PrevEntry, context),
-            Self::GoBack => KeyBinding::new(chord, GoBack, context),
-            Self::GoForward => KeyBinding::new(chord, GoForward, context),
-            Self::PlainText => KeyBinding::new(chord, TogglePlainText, context),
-            Self::Outline => KeyBinding::new(chord, ToggleOutline, context),
-            Self::FindNext => KeyBinding::new(chord, FindNext, context),
-            Self::FindPrev => KeyBinding::new(chord, FindPrev, context),
+            Self::NewBoard => (Box::new(NewBoard), context),
+            Self::NewArticle => (Box::new(NewArticle), context),
+            Self::NewTable => (Box::new(NewTable), context),
+            Self::InstallApp => (Box::new(InstallApp), context),
+            Self::LoadApp => (Box::new(LoadApp), context),
+            Self::OpenProject => (Box::new(OpenProject), context),
+            Self::CloseProject => (Box::new(CloseProject), context),
+            Self::ToggleSidebar => (Box::new(ToggleSidebar), context),
+            Self::ToggleTerminal => (Box::new(ToggleTerminal), context),
+            Self::ToggleChanges => (Box::new(ToggleChanges), context),
+            Self::OpenFiles => (Box::new(OpenFiles), context),
+            Self::OpenReview => (Box::new(OpenReview), context),
+            Self::NextEntry => (Box::new(NextEntry), context),
+            Self::PrevEntry => (Box::new(PrevEntry), context),
+            Self::GoBack => (Box::new(GoBack), context),
+            Self::GoForward => (Box::new(GoForward), context),
+            Self::PlainText => (Box::new(TogglePlainText), context),
+            Self::Outline => (Box::new(ToggleOutline), context),
+            Self::FindNext => (Box::new(FindNext), context),
+            Self::FindPrev => (Box::new(FindPrev), context),
             // Everywhere but the files panel, which holds ⌘F for its own
             // filter — see [`bind_all`]. Scoped rather than left app-wide
             // because commands are bound last and would take the chord from
             // it.
-            Self::Search => KeyBinding::new(chord, super::modals::palette::ToggleSearch, context),
-            Self::FindCard => KeyBinding::new(
-                chord,
-                FindCard,
+            Self::Search => (Box::new(super::modals::palette::ToggleSearch), context),
+            Self::FindCard => (
+                Box::new(FindCard),
                 Some(match NATIVE {
                     true => "!SessionPanel",
                     false => "!SessionPanel && !CydoniaTerminal",
                 }),
             ),
-        })
+        };
+        KeyBinding::load(
+            chord,
+            action,
+            context.map(|context| {
+                KeyBindingContextPredicate::parse(context)
+                    .expect("valid key context")
+                    .into()
+            }),
+            false,
+            None,
+            cx,
+        )
+        .ok()
     }
 }
 
@@ -355,7 +369,7 @@ pub(crate) const fn platform(mac: &'static str, other: &'static str) -> &'static
 pub fn chord(command: Command, shortcuts: &Shortcuts) -> Option<&str> {
     match shortcuts.get(command.key()) {
         Some("") => None,
-        Some(chord) if Chord::parse(chord).is_some() => Some(chord),
+        Some(chord) if Chord::parse(chord, OperatingSystem::Unknown).is_some() => Some(chord),
         Some(_) | None => command.default(),
     }
 }
@@ -368,11 +382,10 @@ pub struct Chord(Vec<Keystroke>);
 
 impl Chord {
     /// Nothing where any stroke does not parse, or there is none.
-    /// [`KeyBinding::new`] panics on a chord that does not parse.
-    pub fn parse(text: &str) -> Option<Self> {
+    pub fn parse(text: &str, os: OperatingSystem) -> Option<Self> {
         let strokes = text
             .split_whitespace()
-            .map(|stroke| Keystroke::parse(stroke).ok())
+            .map(|stroke| Keystroke::parse_with_os(stroke, os).ok())
             .collect::<Option<Vec<_>>>()?;
         (!strokes.is_empty()).then_some(Self(strokes))
     }
@@ -389,7 +402,7 @@ impl Chord {
     }
 
     /// How the chord is written on screen: `cmd-shift-b` as ⇧⌘B.
-    pub fn glyphs(&self) -> SharedString {
+    pub fn glyphs(&self, cx: &App) -> SharedString {
         let strokes = self
             .0
             .iter()
@@ -397,7 +410,7 @@ impl Chord {
                 KeybindingKeystroke::new_with_mapper(stroke.clone(), false, &DummyKeyboardMapper)
             })
             .collect::<Vec<_>>();
-        keys::format(&strokes)
+        keys::format(&strokes, cx)
     }
 }
 
@@ -407,8 +420,8 @@ impl Chord {
 /// Read off the same table [`bind_all`] is built from, so a label cannot drift
 /// from the chord that fires: a control with its chord typed beside it goes on
 /// saying ⌘B long after ⌘B was moved.
-pub fn label(command: Command, shortcuts: &Shortcuts) -> Option<SharedString> {
-    Some(Chord::parse(chord(command, shortcuts)?)?.glyphs())
+pub fn label(command: Command, shortcuts: &Shortcuts, cx: &App) -> Option<SharedString> {
+    Some(Chord::parse(chord(command, shortcuts)?, cx.platform_info().os)?.glyphs(cx))
 }
 
 /// The commands that already answer to `chord`, minus `mine`.
@@ -416,12 +429,20 @@ pub fn label(command: Command, shortcuts: &Shortcuts) -> Option<SharedString> {
 /// One chord on two commands is not an error the keymap reports — the later
 /// binding simply wins and the earlier one goes quiet — so the section has to
 /// ask before it writes.
-pub fn claimed(wanted: &Chord, mine: Command, shortcuts: &Shortcuts) -> Vec<Command> {
+pub fn claimed(
+    wanted: &Chord,
+    mine: Command,
+    shortcuts: &Shortcuts,
+    os: OperatingSystem,
+) -> Vec<Command> {
     Command::ALL
         .into_iter()
         .filter(|&command| {
             command != mine
-                && chord(command, shortcuts).and_then(Chord::parse).as_ref() == Some(wanted)
+                && chord(command, shortcuts)
+                    .and_then(|text| Chord::parse(text, os))
+                    .as_ref()
+                    == Some(wanted)
         })
         .collect()
 }
@@ -476,19 +497,19 @@ pub fn bind_all(shortcuts: &Shortcuts, cx: &mut App) {
     cx.bind_keys(bezel::ui::multi_select::bindings());
     cx.bind_keys(bezel::ui::menu::bindings());
     cx.bind_keys(focus::bindings());
-    cx.bind_keys(editor::keys::bindings());
+    cx.bind_keys(editor::keys::bindings(cx));
     if shortcuts.emacs {
         cx.bind_keys(emacs_bindings());
     }
-    cx.bind_keys(canvas::keys::bindings());
+    cx.bind_keys(canvas::keys::bindings(cx));
     // The app's own, every one of them scoped to a surface.
     cx.bind_keys(article::bindings());
     cx.bind_keys(board::bindings());
     cx.bind_keys(super::pane::drawer::bindings());
     #[cfg(not(target_os = "linux"))]
-    cx.bind_keys(super::component::browser::bindings());
+    cx.bind_keys(super::component::browser::bindings(cx));
     cx.bind_keys(super::pane::find::bindings());
-    cx.bind_keys(super::modals::palette::bindings());
+    cx.bind_keys(super::modals::palette::bindings(cx));
     cx.bind_keys(entry_picker::bindings());
     cx.bind_keys(composer::bindings());
     cx.bind_keys(super::modals::new_board::bindings());
@@ -500,18 +521,34 @@ pub fn bind_all(shortcuts: &Shortcuts, cx: &mut App) {
     cx.bind_keys(ribbon::bindings());
     cx.bind_keys(table::bindings());
     #[cfg(feature = "desktop")]
-    cx.bind_keys(crate::view::component::terminal::bindings());
+    cx.bind_keys(crate::view::component::terminal::bindings(cx));
     cx.bind_keys([
-        KeyBinding::new(
+        KeyBinding::load(
             "secondary-f",
-            super::component::files::ToggleFilter,
-            Some(platform("SessionPanel", "SessionPanel && !CydoniaTerminal")),
-        ),
-        KeyBinding::new(
+            Box::new(super::component::files::ToggleFilter),
+            Some(platform("SessionPanel", "SessionPanel && !CydoniaTerminal")).map(|context| {
+                KeyBindingContextPredicate::parse(context)
+                    .expect("valid key context")
+                    .into()
+            }),
+            false,
+            None,
+            cx,
+        )
+        .expect("valid key binding"),
+        KeyBinding::load(
             "secondary-p",
-            super::component::panel::OpenFile,
-            Some(platform("SessionPanel", "SessionPanel && !CydoniaTerminal")),
-        ),
+            Box::new(super::component::panel::OpenFile),
+            Some(platform("SessionPanel", "SessionPanel && !CydoniaTerminal")).map(|context| {
+                KeyBindingContextPredicate::parse(context)
+                    .expect("valid key context")
+                    .into()
+            }),
+            false,
+            None,
+            cx,
+        )
+        .expect("valid key binding"),
         KeyBinding::new(
             platform("cmd-w", "ctrl-shift-w"),
             super::component::panel::CloseTab,
@@ -537,46 +574,118 @@ pub fn bind_all(shortcuts: &Shortcuts, cx: &mut App) {
             super::component::panel::PrevTab,
             Some("SessionPanel || BottomTerminalPanel"),
         ),
-        KeyBinding::new(
+        KeyBinding::load(
             "secondary-s",
-            super::component::file::Save,
-            Some("FileEditor"),
-        ),
-        KeyBinding::new("secondary-c", input::Copy, Some("FileEditor")),
-        KeyBinding::new("secondary-a", input::SelectAll, Some("FileEditor")),
-        KeyBinding::new(
+            Box::new(super::component::file::Save),
+            Some("FileEditor").map(|context| {
+                KeyBindingContextPredicate::parse(context)
+                    .expect("valid key context")
+                    .into()
+            }),
+            false,
+            None,
+            cx,
+        )
+        .expect("valid key binding"),
+        KeyBinding::load(
+            "secondary-c",
+            Box::new(input::Copy),
+            Some("FileEditor").map(|context| {
+                KeyBindingContextPredicate::parse(context)
+                    .expect("valid key context")
+                    .into()
+            }),
+            false,
+            None,
+            cx,
+        )
+        .expect("valid key binding"),
+        KeyBinding::load(
+            "secondary-a",
+            Box::new(input::SelectAll),
+            Some("FileEditor").map(|context| {
+                KeyBindingContextPredicate::parse(context)
+                    .expect("valid key context")
+                    .into()
+            }),
+            false,
+            None,
+            cx,
+        )
+        .expect("valid key binding"),
+        KeyBinding::load(
             "secondary-=",
-            super::component::file::IncreaseTextSize,
-            Some("FileEditor"),
-        ),
-        KeyBinding::new(
+            Box::new(super::component::file::IncreaseTextSize),
+            Some("FileEditor").map(|context| {
+                KeyBindingContextPredicate::parse(context)
+                    .expect("valid key context")
+                    .into()
+            }),
+            false,
+            None,
+            cx,
+        )
+        .expect("valid key binding"),
+        KeyBinding::load(
             "secondary-+",
-            super::component::file::IncreaseTextSize,
-            Some("FileEditor"),
-        ),
-        KeyBinding::new(
+            Box::new(super::component::file::IncreaseTextSize),
+            Some("FileEditor").map(|context| {
+                KeyBindingContextPredicate::parse(context)
+                    .expect("valid key context")
+                    .into()
+            }),
+            false,
+            None,
+            cx,
+        )
+        .expect("valid key binding"),
+        KeyBinding::load(
             "secondary-shift-=",
-            super::component::file::IncreaseTextSize,
-            Some("FileEditor"),
-        ),
-        KeyBinding::new(
+            Box::new(super::component::file::IncreaseTextSize),
+            Some("FileEditor").map(|context| {
+                KeyBindingContextPredicate::parse(context)
+                    .expect("valid key context")
+                    .into()
+            }),
+            false,
+            None,
+            cx,
+        )
+        .expect("valid key binding"),
+        KeyBinding::load(
             "secondary--",
-            super::component::file::DecreaseTextSize,
-            Some("FileEditor"),
-        ),
-        KeyBinding::new(
+            Box::new(super::component::file::DecreaseTextSize),
+            Some("FileEditor").map(|context| {
+                KeyBindingContextPredicate::parse(context)
+                    .expect("valid key context")
+                    .into()
+            }),
+            false,
+            None,
+            cx,
+        )
+        .expect("valid key binding"),
+        KeyBinding::load(
             "secondary-0",
-            super::component::file::ResetTextSize,
-            Some("FileEditor"),
-        ),
+            Box::new(super::component::file::ResetTextSize),
+            Some("FileEditor").map(|context| {
+                KeyBindingContextPredicate::parse(context)
+                    .expect("valid key context")
+                    .into()
+            }),
+            false,
+            None,
+            cx,
+        )
+        .expect("valid key binding"),
     ]);
-    cx.bind_keys(root::bindings());
+    cx.bind_keys(root::bindings(cx));
     cx.bind_keys(menubar::bindings());
     // Last, and the only ones the reader can move.
     cx.bind_keys(
         Command::ALL
             .into_iter()
-            .filter_map(|command| command.binding(chord(command, shortcuts)))
+            .filter_map(|command| command.binding(chord(command, shortcuts), cx))
             .collect::<Vec<_>>(),
     );
 }

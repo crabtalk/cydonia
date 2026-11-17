@@ -584,15 +584,12 @@ impl Workspace {
 
     /// The member that names what a pane is on, so an entry opened from the
     /// sidebar can be put into a space or a tab.
-    ///
-    /// Nothing for a session with no record id yet — see
-    /// [`Self::mint_record`].
     pub fn member_of(&self, project: usize, showing: Showing, cx: &App) -> Option<Member> {
         let Showing::Session(id) = showing else {
             return self.filed_member(project, showing).map(Member::from);
         };
         let open = self.projects.get(project)?;
-        let record = open.session(id, cx)?.record.clone()?;
+        let record = open.session(id, cx)?.navigation_key()?.into_owned();
         Some(Member::new(open.id, Kind::Session, record))
     }
 

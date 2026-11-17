@@ -6,7 +6,10 @@ use crate::{
         window::reach::InWindow,
     },
 };
-use artifact::reference;
+use artifact::{
+    canvas::web::{self, Source},
+    reference,
+};
 use bezel::gpui::{Context, PathPromptOptions, Window};
 use canvas::{
     Change, Kinds, kind,
@@ -138,13 +141,15 @@ impl CanvasView {
                         .unwrap_or(&path)
                         .to_string_lossy()
                         .into_owned();
+                    let web = Source::try_from(PathBuf::from(&file)).is_ok();
+                    let kind = if web { web::KIND } else { model::FILE };
                     if let Some(node) = replace
                         .as_ref()
                         .and_then(|id| editor.canvas().node(id))
                         .cloned()
                     {
                         let mut node = node;
-                        node.kind = model::FILE.into();
+                        node.kind = kind.into();
                         node.file = Some(file);
                         node.url = None;
                         node.subpath = None;
@@ -154,11 +159,11 @@ impl CanvasView {
                     changes.push(Change::AddNode {
                         node: Node {
                             id,
-                            kind: model::FILE.into(),
+                            kind: kind.into(),
                             x: at.0 + index as i64 * 24,
                             y: at.1 + index as i64 * 24,
-                            width: 360,
-                            height: 260,
+                            width: if web { 960 } else { 360 },
+                            height: if web { 600 } else { 260 },
                             file: Some(file),
                             ..Default::default()
                         },

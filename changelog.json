@@ -1,5 +1,28 @@
 [
   {
+    "version": "0.2.12",
+    "date": "2026-11-17",
+    "summary": "Run agents in embedded terminals, with automatic commands and MCP attachment for Codex and Claude Code. Add canvas web frames and browser debugging tools.",
+    "new": [
+      "Choose GUI or terminal mode when creating agent runs, with defaults per agent",
+      "Launch popular agents in embedded terminals with automatic commands and optional advanced overrides",
+      "Attach Cydonia MCP automatically to Codex and Claude Code terminal runs",
+      "Embed web frames on canvases",
+      "Let agents capture browser screenshots and use browser debugging tools"
+    ],
+    "changed": [
+      "Keep terminal runs unnumbered, without saved Cydonia conversations or a separate terminal toolbar",
+      "Replace Archive with Terminate for terminal runs, and remove runs from navigation when their processes exit",
+      "Use native material scopes for shared surfaces",
+      "Use Bezel 0.2.28 from crates.io"
+    ],
+    "fixed": [
+      "Keep all sidebar labels at their natural width",
+      "Constrain pending message bubbles to the available width",
+      "Keep process status messages from taking space above embedded terminals"
+    ]
+  },
+  {
     "version": "0.2.11",
     "date": "2026-11-14",
     "summary": "Canvas performance and interaction fixes, with sidebar labels that use the available row width.",

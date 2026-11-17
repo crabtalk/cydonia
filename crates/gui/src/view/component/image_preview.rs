@@ -291,7 +291,7 @@ impl Preview {
                     this.open_menu(event.position, window, cx);
                 }),
             )
-            .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| {
+            .on_scroll(cx.listener(|this, event: &gpui::ScrollEvent, _, cx| {
                 let delta = f32::from(event.delta.pixel_delta(px(16.)).y);
                 this.zoom_to(this.zoom * (delta / 200.).exp(), cx);
                 cx.stop_propagation();

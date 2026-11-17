@@ -520,7 +520,7 @@ pub(crate) fn commands(window: &Window, cx: &App) -> Vec<Command> {
                     out.push(Command {
                         name: name.into(),
                         menu: path.clone().into(),
-                        shortcut: bezel::ui::keys::shortcut(&*action, window),
+                        shortcut: bezel::ui::keys::shortcut(&*action, window, cx),
                         action,
                         keys,
                     });

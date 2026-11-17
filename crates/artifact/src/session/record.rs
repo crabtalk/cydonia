@@ -4,7 +4,7 @@
 //! Written as the session changes rather than when it ends, so a session
 //! survives a crash and not just an orderly quit.
 
-use crate::session::chat::ChatItem;
+use crate::session::{chat::ChatItem, mode::Mode};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, time::Duration};
 use web_time::{SystemTime, UNIX_EPOCH};
@@ -42,6 +42,8 @@ pub struct Record {
     /// owns; an id no identity on this machine holds is an orphaned one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identity: Option<String>,
+    #[serde(default)]
+    pub mode: Mode,
     /// The agent's own id for the session, which is what `session/load`
     /// resumes. Absent when the session never reached an agent.
     #[serde(default)]
@@ -109,6 +111,9 @@ impl Record {
 
     /// Copy history before a user message and leave that message as an editable draft.
     pub fn fork_at(&self, before: usize) -> Option<Self> {
+        if self.mode == Mode::Terminal {
+            return None;
+        }
         let ChatItem::User(draft) = self.items.get(before)? else {
             return None;
         };
@@ -119,6 +124,7 @@ impl Record {
             agent: self.agent.clone(),
             agent_id: self.agent_id.clone(),
             identity: self.identity.clone(),
+            mode: self.mode,
             session: None,
             title: format!(
                 "Fork of {}",

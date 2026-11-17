@@ -1,15 +1,13 @@
 //! A session's persistent Review, terminal, file, and browser tabs.
 
-mod persistence;
-
 #[cfg(not(target_os = "linux"))]
-use super::browser::Browser;
+use crate::view::component::browser::Browser;
 #[cfg(feature = "desktop")]
-use super::terminal::{DirectoryChanged, Exited, Terminal};
-use super::{changes::Changes, file::FileView, files::Files};
+use crate::view::component::terminal::{DirectoryChanged, Exited, Terminal};
 use crate::{
     model::{settings::PanelTabs, workspace::Workspace},
     view::{
+        component::{changes::Changes, file::FileView, files::Files},
         kit::watch::FocusWatch,
         modals::desktop::DesktopOnly,
         window::{
@@ -20,7 +18,7 @@ use crate::{
 };
 use bezel::{
     gpui::{
-        self, AnyElement, Axis, Context, DragMoveEvent, Empty, Entity, Focusable, Render,
+        self, AnyElement, App, Axis, Context, DragMoveEvent, Empty, Entity, Focusable, Render,
         Subscription, WeakEntity, Window, div, prelude::*, px,
     },
     motion::{Fade, Painter},
@@ -35,6 +33,7 @@ use bezel::{
     },
 };
 use std::{collections::HashMap, path::PathBuf};
+mod persistence;
 
 /// Whether the right panel is up for a directory nothing was saved for: up on
 /// the desktop, down in the browser build.
@@ -565,13 +564,13 @@ impl Panel {
     fn launch_menu(
         &mut self,
         window: &mut Window,
-        _: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> (
         Vec<Item>,
         impl Fn(&mut Self, &[usize], &mut Window, &mut Context<Self>) + use<>,
     ) {
         let launchers = self.launchers();
-        let items = Self::items(&launchers, window);
+        let items = Self::items(&launchers, window, cx);
         let choose =
             move |this: &mut Self, path: &[usize], window: &mut Window, cx: &mut Context<Self>| {
                 if let Some(launch) = path.first().and_then(|ix| launchers.get(*ix)) {
@@ -581,20 +580,22 @@ impl Panel {
         (items, choose)
     }
 
-    fn items(launchers: &[Launch], window: &Window) -> Vec<Item> {
+    fn items(launchers: &[Launch], window: &Window, cx: &App) -> Vec<Item> {
         launchers
             .iter()
             .map(|launch| {
                 let item = Item::action(launch.label()).with_icon(launch.icon());
                 match launch {
                     Launch::Review => {
-                        item.with_shortcut(&crate::view::window::root::OpenReview, window)
+                        item.with_shortcut(&crate::view::window::root::OpenReview, window, cx)
                     }
-                    Launch::Terminal => item.with_shortcut_in(&NewTerminal, "SessionPanel", window),
+                    Launch::Terminal => {
+                        item.with_shortcut_in(&NewTerminal, "SessionPanel", window, cx)
+                    }
                     #[cfg(not(target_os = "linux"))]
                     Launch::Browser => item,
                     Launch::Files => {
-                        item.with_shortcut(&crate::view::window::root::OpenFiles, window)
+                        item.with_shortcut(&crate::view::window::root::OpenFiles, window, cx)
                     }
                 }
             })

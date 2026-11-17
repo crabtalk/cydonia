@@ -177,7 +177,9 @@ fn two_sets_on_one_resource_hide_it_only_when_both_are_off() {
     };
     let tools = names("tools/list", "tools");
     assert!(tools.contains(&"browser_read".to_owned()));
+    assert!(tools.contains(&"browser_inspect".to_owned()));
     assert!(!tools.contains(&"browser_click".to_owned()));
+    assert!(!tools.contains(&"browser_evaluate".to_owned()));
     assert!(names("resources/list", "resources").contains(&"browser".to_owned()));
     read.store(false, std::sync::atomic::Ordering::Relaxed);
     assert!(!names("resources/list", "resources").contains(&"browser".to_owned()));

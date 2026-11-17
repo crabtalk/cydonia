@@ -5,9 +5,12 @@
 //! Without the `desktop` feature there is no config directory, and identities
 //! are held in memory for as long as the process runs.
 
-use crate::model::session_preferences::Choices;
 #[cfg(feature = "desktop")]
 use crate::model::settings;
+use crate::model::{
+    identity::launch::{Creation, Interactive},
+    session_preferences::Choices,
+};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -15,6 +18,8 @@ use std::path::PathBuf;
 const FILE: &str = "agent.toml";
 /// The handle of an identity whose name leaves nothing to make one from.
 const FALLBACK_HANDLE: &str = "agent";
+
+pub mod launch;
 
 /// Where this build keeps identities.
 #[cfg(feature = "desktop")]
@@ -39,6 +44,10 @@ pub struct Identity {
     /// `[[agents]]`.
     pub acp: String,
     pub avatar: Avatar,
+    #[serde(default)]
+    pub creation: Creation,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal: Option<Interactive>,
     #[serde(flatten)]
     pub choices: Choices,
 }
@@ -91,6 +100,8 @@ impl Identity {
             acp: acp.to_owned(),
             avatar: Avatar::from(id),
             choices,
+            creation: Creation::default(),
+            terminal: None,
         }
     }
 

@@ -107,7 +107,7 @@ fn virtual_list_releases_tail_on_first_wheel_movement(cx: &mut gpui::TestAppCont
             })
             .unwrap();
         visual.run_until_parked();
-        visual.simulate_event(gpui::ScrollWheelEvent {
+        visual.simulate_event(gpui::ScrollEvent {
             position: point(px(100.), px(100.)),
             delta,
             ..Default::default()
@@ -148,7 +148,7 @@ fn virtual_list_releases_tail_on_first_wheel_movement(cx: &mut gpui::TestAppCont
                 assert!(!view.list.state.is_following_tail());
             })
             .unwrap();
-        visual.simulate_event(gpui::ScrollWheelEvent {
+        visual.simulate_event(gpui::ScrollEvent {
             position: point(px(100.), px(100.)),
             delta: gpui::ScrollDelta::Pixels(point(px(0.), px(-10000.))),
             ..Default::default()
@@ -163,7 +163,7 @@ fn virtual_list_releases_tail_on_first_wheel_movement(cx: &mut gpui::TestAppCont
             })
             .unwrap();
     }
-    visual.simulate_event(gpui::ScrollWheelEvent {
+    visual.simulate_event(gpui::ScrollEvent {
         position: point(px(100.), px(100.)),
         delta: gpui::ScrollDelta::Pixels(point(px(0.), px(0.25))),
         ..Default::default()

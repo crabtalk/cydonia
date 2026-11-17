@@ -7,9 +7,13 @@ use bezel::{
     theme::{TextStyle, appearance::AppearanceMode},
     ui::color::SystemColor,
 };
+use cydonia_acp::agents::{self, program::Program};
 use serde::{Deserialize, Serialize};
 use skills::Harness;
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 /// What the file is called inside [`dir`].
 const FILE: &str = "settings.toml";
@@ -1013,18 +1017,24 @@ fn drawer_composer() -> bool {
 }
 
 impl Agent {
-    /// The agent whose skills it runs with: matched on its registry id, or for
-    /// a hand-written entry on the npm package its arguments name.
-    pub fn harness(&self) -> Option<Harness> {
-        Harness::ALL
+    pub fn program(&self) -> Option<Program> {
+        Program::ALL
             .into_iter()
-            .find(|harness| match self.id.as_deref() {
-                Some(id) => harness.registry_ids().contains(&id),
-                None => self
-                    .args
-                    .iter()
-                    .any(|arg| Some(cydonia_acp::agents::package_name(arg)) == harness.package()),
+            .find(|program| match self.id.as_deref() {
+                Some(id) => program.registry_ids().contains(&id),
+                None => {
+                    program.recognizes_command(Path::new(&self.command))
+                        || self
+                            .args
+                            .iter()
+                            .any(|arg| Some(agents::package_name(arg)) == program.package())
+                }
             })
+    }
+
+    pub fn harness(&self) -> Option<Harness> {
+        self.program()
+            .and_then(|program| Harness::try_from(program).ok())
     }
 
     /// What an agent identity names it by: its registry id, or its name for a
@@ -1044,7 +1054,7 @@ impl Agent {
             .iter()
             .filter(|arg| !arg.starts_with('-'))
             .all(|spec| {
-                let name = cydonia_acp::agents::package_name(spec);
+                let name = agents::package_name(spec);
                 spec.len() > name.len()
                     && spec[name.len() + 1..].starts_with(|c: char| c.is_ascii_digit())
             })
@@ -1704,7 +1714,7 @@ fn claims(table: &toml_edit::Table, agent: &Agent, supersedes: Option<&str>) -> 
         .is_some_and(|args| {
             args.iter()
                 .filter_map(|v| v.as_str())
-                .any(|arg| cydonia_acp::agents::package_name(arg) == package)
+                .any(|arg| agents::package_name(arg) == package)
         })
 }
 

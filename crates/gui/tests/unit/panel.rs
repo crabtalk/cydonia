@@ -316,7 +316,7 @@ fn terminal_menu_and_new_tab_use_cmd_t(cx: &mut gpui::TestAppContext) {
     let window = cx.add_window(|window, cx| Panel::new(std::env::temp_dir(), window, cx));
     window
         .update(cx, |panel, window, cx| {
-            let items = Panel::items(&panel.launchers(), window);
+            let items = Panel::items(&panel.launchers(), window, cx);
             let Item::Action { keystroke, .. } = &items[1] else {
                 panic!("terminal action")
             };

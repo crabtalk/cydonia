@@ -35,6 +35,7 @@ use bezel::{
         context_menu::{ContextMenu, Place},
         icons,
         menu::Item,
+        surface::Control,
         tabs,
     },
 };
@@ -136,7 +137,7 @@ impl Strip {
         theme: &Theme,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> gpui::Stateful<gpui::Div> {
+    ) -> Control {
         let workspace = self.workspace.read(cx);
         let renaming = matches!(
             (slot, &self.rename.what),

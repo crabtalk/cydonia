@@ -44,7 +44,8 @@ impl Outbox {
             return;
         }
         if changed && self.asking {
-            cx.dismiss_system_notification(&chat.notification_tag());
+            cx.dismiss_system_notification(&chat.notification_tag())
+                .detach();
             self.asking = false;
         }
         let notify = references::current(cx)

@@ -33,6 +33,7 @@ pub use registry::{Agent, Distribution, Registry};
 pub use utils::{contained, package_name};
 
 pub mod mcp;
+pub mod program;
 pub mod registry;
 
 #[cfg(feature = "install")]

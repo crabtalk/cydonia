@@ -1,4 +1,5 @@
 use crate::{Frontmatter, Scope, Skill, Switch, plugin::Plugin};
+use cydonia_acp_agents::program::Program;
 use std::{
     collections::HashSet,
     fs,
@@ -17,6 +18,22 @@ pub enum Harness {
     Cursor,
     OpenCode,
     Pi,
+}
+
+impl TryFrom<Program> for Harness {
+    type Error = Program;
+
+    fn try_from(program: Program) -> Result<Self, Self::Error> {
+        match program {
+            Program::Claude => Ok(Self::Claude),
+            Program::Codex => Ok(Self::Codex),
+            Program::Gemini => Ok(Self::Gemini),
+            Program::Cursor => Ok(Self::Cursor),
+            Program::OpenCode => Ok(Self::OpenCode),
+            Program::Pi => Ok(Self::Pi),
+            Program::Antigravity => Err(program),
+        }
+    }
 }
 
 /// How far above a project an agent looks for one of its project skill
@@ -49,30 +66,6 @@ impl Harness {
         Self::OpenCode,
         Self::Pi,
     ];
-
-    /// Its ids in the ACP registry.
-    pub fn registry_ids(self) -> &'static [&'static str] {
-        match self {
-            Self::Claude => &["claude-acp"],
-            Self::Codex => &["codex-acp"],
-            Self::Gemini => &["gemini"],
-            Self::Cursor => &["cursor"],
-            Self::OpenCode => &["opencode", "opencode-v2"],
-            Self::Pi => &["pi-acp"],
-        }
-    }
-
-    /// The npm package its ACP adapter ships as, without a version. `None`
-    /// for an agent the registry ships as a binary.
-    pub fn package(self) -> Option<&'static str> {
-        match self {
-            Self::Claude => Some("@agentclientprotocol/claude-agent-acp"),
-            Self::Codex => Some("@agentclientprotocol/codex-acp"),
-            Self::Gemini => Some("@google/gemini-cli"),
-            Self::Pi => Some("pi-acp"),
-            Self::Cursor | Self::OpenCode => None,
-        }
-    }
 
     /// Where it keeps its own files: `$CLAUDE_CONFIG_DIR` or `~/.claude`,
     /// `$CODEX_HOME` or `~/.codex`, `$GEMINI_CLI_HOME/.gemini` or `~/.gemini`,

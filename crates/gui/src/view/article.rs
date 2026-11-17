@@ -38,8 +38,7 @@ use bezel::{
         icons,
         input::TextField,
         menu::Item,
-        popover, scroll as scrollbars,
-        surface::{self, Surfaced as _},
+        popover, scroll as scrollbars, surface,
         tooltip::Tooltip,
         widgets::{ButtonStyle, Buttons as _, Status as _},
     },
@@ -1535,6 +1534,7 @@ impl Render for ArticleView {
 }
 
 /// What the margin builds its notes and marks from.
+#[derive(Clone)]
 struct Note {
     comments: Rc<Vec<artifact::article::comments::Comment>>,
     open: Option<u64>,
@@ -1562,7 +1562,7 @@ impl Note {
                 // Only the closed row is a button. An open card's text takes a
                 // selection, and a press on the page is what closes it.
                 let slot = match self.open == Some(id) {
-                    true => slot.child(self.card(comment, &theme, window, cx)),
+                    true => slot.child(self.card(comment, window, cx)),
                     false => slot
                         .cursor_pointer()
                         .child(self.closed(comment, &theme))
@@ -1579,7 +1579,7 @@ impl Note {
                         .id(("comment-open", id))
                         .occlude()
                         .w_full()
-                        .child(self.card(comment, &theme, window, cx)),
+                        .child(self.card(comment, window, cx)),
                     id,
                 )
                 .into_any_element()
@@ -1671,7 +1671,6 @@ impl Note {
     fn card(
         &self,
         comment: &artifact::article::comments::Comment,
-        theme: &Theme,
         window: &mut Window,
         cx: &mut App,
     ) -> impl IntoElement {
@@ -1686,17 +1685,27 @@ impl Note {
                 move |_, cx| note::NoteText::new(workspace, path, id, cx),
             )
         });
-        // The card is contents only; its fill is the surface's.
-        popover::popover_card_flush(theme)
-            .w_full()
-            .p(px(CARD_PAD))
-            .flex()
-            .flex_col()
-            .gap(px(8.))
-            .children(text)
-            .children(self.follow_up_field(comment, theme))
-            .child(self.actions(comment, theme))
-            .surface(theme, crate::view::component::composer::SURFACE)
+        let note = self.clone();
+        surface::of(
+            ("article-comment", id),
+            crate::view::component::composer::SURFACE,
+            move |theme, _, _| {
+                let comment = note
+                    .comments
+                    .iter()
+                    .find(|comment| comment.id == id)
+                    .expect("retained comment");
+                popover::popover_card_flush(theme)
+                    .w_full()
+                    .p(px(CARD_PAD))
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .children(text)
+                    .children(note.follow_up_field(comment))
+                    .child(note.actions(comment, theme))
+            },
+        )
     }
 
     /// The field that asks a follow-up on `comment`: what is typed goes into
@@ -1704,7 +1713,6 @@ impl Note {
     fn follow_up_field(
         &self,
         comment: &artifact::article::comments::Comment,
-        theme: &Theme,
     ) -> Option<AnyElement> {
         let field = self.follow_up.clone()?;
         let (id, path, root) = (comment.id, self.path.clone(), self.root.clone());
@@ -1737,18 +1745,21 @@ impl Note {
         // shares one draw order, and the pill's glass would not see past the
         // card's fill.
         Some(
-            surface::layered(
-                div()
-                    .rounded_full()
-                    .px(px(12.))
-                    .py(px(6.))
-                    .text_style(TextStyle::Callout)
-                    // The card under it opens and shuts on a press.
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_action(ask)
-                    .child(field)
-                    .surface(theme, crate::view::component::composer::SURFACE),
-            )
+            surface::layered(surface::of(
+                ("comment-follow-up", id),
+                crate::view::component::composer::SURFACE,
+                move |_, _, _| {
+                    div()
+                        .rounded_full()
+                        .px(px(12.))
+                        .py(px(6.))
+                        .text_style(TextStyle::Callout)
+                        // The card under it opens and shuts on a press.
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .on_action(ask)
+                        .child(field)
+                },
+            ))
             .into_any_element(),
         )
     }

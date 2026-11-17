@@ -48,7 +48,7 @@ impl Hotkey for System {
             install(cx);
         }
         let wanted = chord
-            .and_then(Chord::parse)
+            .and_then(|text| Chord::parse(text, cx.platform_info().os))
             .and_then(|chord| chord.hotkey());
         let refused = match (chord, wanted.as_ref()) {
             // Said, and not a chord this platform can hold. A trackpad-era key

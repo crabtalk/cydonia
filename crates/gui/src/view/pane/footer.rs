@@ -4,27 +4,25 @@
 //! over a run picked out of the transcript.
 
 use super::Tab;
-use crate::view::kit::text::ShownPath as _;
-use crate::view::window::reach::InWindow as _;
 use crate::{
     model::workspace::Workspace,
     view::{
         component::{composer, ribbon, transcript},
         detail::{adrift, agent_missing, footer},
-        window::section::Section,
+        kit::{bubble, text::ShownPath as _},
+        window::{reach::InWindow as _, section::Section},
     },
 };
-use artifact::session::chat::PlanStatus;
+use artifact::session::{chat::PlanStatus, mode::Mode};
 use bezel::{
     gpui::{
-        self, AnyElement, App, AppContext as _, Context, Entity, Focusable as _, IntoElement,
-        Pixels, SharedString, Window, div, prelude::*, px,
+        self, AnyElement, App, AppContext as _, Context, Entity, FocusHandle, Focusable as _,
+        IntoElement, Pixels, SharedString, Window, div, prelude::*, px,
     },
     motion::{Fade, Painter},
     theme::{TextStyle, Theme, Typeset},
     ui::{
-        icons, popover,
-        surface::Surfaced as _,
+        icons, popover, surface,
         tooltip::Tooltip,
         widgets::{ButtonStyle, Buttons, Content, Controls},
     },
@@ -75,37 +73,40 @@ impl Band {
 
     /// The agent's plan, while it still has something left to do.
     fn plan(&self, cx: &App) -> Option<impl IntoElement + use<>> {
-        let theme = Theme::of(cx).clone();
         let chat = self.workspace.read(cx).session(self.session?, cx)?;
         if chat.plan.is_empty() || chat.plan.iter().all(|(_, s)| *s == PlanStatus::Done) {
             return None;
         }
-        Some(
-            div()
-                .rounded(px(Theme::surface_radius()))
-                .px(px(12.))
-                .py(px(8.))
-                .flex()
-                .flex_col()
-                .gap(px(4.))
-                .text_style(TextStyle::Callout)
-                .children(chat.plan.iter().map(|(text, status)| {
-                    let (icon, tone) = match status {
-                        PlanStatus::Done => (icons::notifications::Check, theme.success),
-                        PlanStatus::Active => (icons::arrows::ChevronRight, theme.accent),
-                        PlanStatus::Pending => (icons::text::ListChecks, theme.text_faint),
-                    };
-                    div()
-                        .flex()
-                        .flex_row()
-                        .items_start()
-                        .gap(px(8.))
-                        .text_color(theme.text_muted)
-                        .child(icons::icon(icon).size(px(12.)).text_color(tone))
-                        .child(text.clone())
-                }))
-                .surface(&theme, composer::SURFACE),
-        )
+        let plan = chat.plan.clone();
+        Some(surface::of(
+            ("agent-plan", chat.id),
+            composer::SURFACE,
+            move |theme, _, _| {
+                div()
+                    .rounded(px(Theme::surface_radius()))
+                    .px(px(12.))
+                    .py(px(8.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.))
+                    .text_style(TextStyle::Callout)
+                    .children(plan.iter().map(|(text, status)| {
+                        let (icon, tone) = match status {
+                            PlanStatus::Done => (icons::notifications::Check, theme.success),
+                            PlanStatus::Active => (icons::arrows::ChevronRight, theme.accent),
+                            PlanStatus::Pending => (icons::text::ListChecks, theme.text_faint),
+                        };
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_start()
+                            .gap(px(8.))
+                            .text_color(theme.text_muted)
+                            .child(icons::icon(icon).size(px(12.)).text_color(tone))
+                            .child(text.clone())
+                    }))
+            },
+        ))
     }
 
     /// The agent's tool-authorization request.
@@ -115,137 +116,155 @@ impl Band {
     /// [`crate::view::detail::alert`] for why two buttons carry four options,
     /// and for what an agent has to ask to get the stack of rows instead.
     fn permission<V: 'static>(&self, cx: &Context<V>) -> Option<impl IntoElement + use<V>> {
-        let theme = Theme::of(cx).clone();
         let chat = self.workspace.read(cx).session(self.session?, cx)?;
         let prompt = chat.permission.as_ref()?;
+        let (title, options, always_allowed) =
+            (prompt.title.clone(), prompt.options.clone(), prompt.always);
         let id = chat.id;
         let painter = Painter::of(cx);
-        // One button, whichever space it lands in. `key` is the element's and
-        // the hover wash's both — the wash store is one map for the whole app,
-        // so the session is in it too.
-        let answer = |key: &str, option_id: String, label: &str, style| {
-            let fade = Fade::new(painter, format!("permission-{id}-{key}"));
-            let workspace = self.workspace.clone();
-            theme
-                .button(label.to_owned(), style, Some(fade))
-                .id(SharedString::from(key.to_owned()))
-                .on_click(move |_, _, cx| {
-                    let option_id = option_id.clone();
-                    workspace.update(cx, |workspace, cx| {
-                        workspace.with_session(id, cx, |chat| chat.respond_permission(option_id));
-                    });
-                })
-        };
-        let always = self.workspace.clone();
-        let body = match crate::view::detail::alert(&prompt.options) {
-            // How long the answer holds, then the answers — the affirmative
-            // last, where macOS puts the default.
-            Some((deny, allow)) => div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(8.))
-                // An agent offering neither *always* form has no second
-                // question to ask, and the row is just the two buttons.
-                .children((deny.always.is_some() || allow.always.is_some()).then(|| {
-                    div()
-                        .id("permission-always")
+        let workspace = self.workspace.clone();
+        Some(surface::of(
+            ("agent-permission", id),
+            composer::SURFACE,
+            move |theme, _, _| {
+                // One button, whichever space it lands in. `key` is the element's and
+                // the hover wash's both — the wash store is one map for the whole app,
+                // so the session is in it too.
+                let answer = |key: &str, option_id: String, label: &str, style| {
+                    let fade = Fade::new(painter, format!("permission-{id}-{key}"));
+                    let workspace = workspace.clone();
+                    theme
+                        .button(label.to_owned(), style, Some(fade))
+                        .id(SharedString::from(key.to_owned()))
+                        .on_click(move |_, _, cx| {
+                            let option_id = option_id.clone();
+                            workspace.update(cx, |workspace, cx| {
+                                workspace.with_session(id, cx, |chat| {
+                                    chat.respond_permission(option_id)
+                                });
+                            });
+                        })
+                };
+                let always = workspace.clone();
+                let body = match crate::view::detail::alert(&options) {
+                    // How long the answer holds, then the answers — the affirmative
+                    // last, where macOS puts the default.
+                    Some((deny, allow)) => div()
                         .flex()
                         .flex_row()
                         .items_center()
                         .gap(px(8.))
-                        .cursor_pointer()
-                        .child(theme.checkbox(prompt.always))
-                        .child(
+                        // An agent offering neither *always* form has no second
+                        // question to ask, and the row is just the two buttons.
+                        .children((deny.always.is_some() || allow.always.is_some()).then(|| {
                             div()
-                                .text_style(TextStyle::Callout)
-                                .text_color(theme.text_muted)
-                                .child("Always allow"),
-                        )
-                        .on_click(move |_, _, cx| {
-                            always.update(cx, |workspace, cx| {
-                                workspace
-                                    .with_session(id, cx, |chat| chat.toggle_permission_always());
-                            });
-                        })
-                }))
-                // Whatever is on the left is on the left: the answers hold the
-                // trailing edge whether or not the checkbox is there.
-                .child(div().flex_1())
-                .child(answer(
-                    "deny",
-                    deny.id(prompt.always),
-                    deny.label,
-                    ButtonStyle::Ghost,
-                ))
-                .child(answer(
-                    "allow",
-                    allow.id(prompt.always),
-                    allow.label,
-                    ButtonStyle::Prominent,
-                ))
-                .into_any_element(),
-            // Every option the agent sent, one full-width row each. A label of
-            // any length reads here, which is the whole point of stacking them.
-            None => div()
-                .flex()
-                .flex_col()
-                .gap(px(6.))
-                .children(prompt.options.iter().enumerate().map(|(ix, option)| {
-                    let style = match option.kind {
-                        PermissionOptionKind::AllowOnce => ButtonStyle::Prominent,
-                        _ => ButtonStyle::Ghost,
-                    };
-                    answer(
-                        &format!("option-{ix}"),
-                        option.id.clone(),
-                        &option.name,
-                        style,
-                    )
-                    .w_full()
-                    .justify_center()
-                }))
-                .into_any_element(),
-        };
-        Some(
-            div()
-                .rounded(px(Theme::surface_radius()))
-                .px(px(14.))
-                .py(px(12.))
-                .flex()
-                .flex_col()
-                .gap(px(12.))
-                .child(
-                    div()
+                                .id("permission-always")
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap(px(8.))
+                                .cursor_pointer()
+                                .child(theme.checkbox(always_allowed))
+                                .child(
+                                    div()
+                                        .text_style(TextStyle::Callout)
+                                        .text_color(theme.text_muted)
+                                        .child("Always allow"),
+                                )
+                                .on_click(move |_, _, cx| {
+                                    always.update(cx, |workspace, cx| {
+                                        workspace.with_session(id, cx, |chat| {
+                                            chat.toggle_permission_always()
+                                        });
+                                    });
+                                })
+                        }))
+                        // Whatever is on the left is on the left: the answers hold the
+                        // trailing edge whether or not the checkbox is there.
+                        .child(div().flex_1())
+                        .child(answer(
+                            "deny",
+                            deny.id(always_allowed),
+                            deny.label,
+                            ButtonStyle::Ghost,
+                        ))
+                        .child(answer(
+                            "allow",
+                            allow.id(always_allowed),
+                            allow.label,
+                            ButtonStyle::Prominent,
+                        ))
+                        .into_any_element(),
+                    // Every option the agent sent, one full-width row each. A label of
+                    // any length reads here, which is the whole point of stacking them.
+                    None => div()
                         .flex()
-                        .flex_row()
-                        .items_start()
-                        .gap(px(8.))
-                        .child(
-                            icons::icon(icons::security::Key)
-                                .size(px(14.))
-                                .flex_none()
-                                // A glyph's box is its size and the line beside
-                                // it is taller, so it drops to meet the text.
-                                .mt(px(3.))
-                                .text_color(theme.text_muted),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .text_style(TextStyle::Body)
-                                .text_color(theme.text)
-                                .child(prompt.title.clone()),
-                        ),
-                )
-                .child(body)
-                .surface(&theme, composer::SURFACE),
-        )
+                        .flex_col()
+                        .gap(px(6.))
+                        .children(options.iter().enumerate().map(|(ix, option)| {
+                            let style = match option.kind {
+                                PermissionOptionKind::AllowOnce => ButtonStyle::Prominent,
+                                _ => ButtonStyle::Ghost,
+                            };
+                            answer(
+                                &format!("option-{ix}"),
+                                option.id.clone(),
+                                &option.name,
+                                style,
+                            )
+                            .w_full()
+                            .justify_center()
+                        }))
+                        .into_any_element(),
+                };
+                div()
+                    .rounded(px(Theme::surface_radius()))
+                    .px(px(14.))
+                    .py(px(12.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(12.))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_start()
+                            .gap(px(8.))
+                            .child(
+                                icons::icon(icons::security::Key)
+                                    .size(px(14.))
+                                    .flex_none()
+                                    // A glyph's box is its size and the line beside
+                                    // it is taller, so it drops to meet the text.
+                                    .mt(px(3.))
+                                    .text_color(theme.text_muted),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .text_style(TextStyle::Body)
+                                    .text_color(theme.text)
+                                    .child(title),
+                            ),
+                    )
+                    .child(body)
+            },
+        ))
     }
 }
 
 impl Tab {
+    pub(crate) fn input_focus(&self, cx: &App) -> FocusHandle {
+        #[cfg(feature = "desktop")]
+        if let Some(view) = self.session_shown(cx)
+            && let Some(terminal) = &view.read(cx).terminal
+        {
+            return terminal.focus_handle(cx);
+        }
+        self.composer.focus_handle(cx)
+    }
+
     /// A press on the pane's band: the focus comes to the pane.
     fn press(&self) -> Option<Press> {
         let on = self.entry.clone();
@@ -259,6 +278,12 @@ impl Tab {
     /// The band under session `session`'s transcript, over the pane's own
     /// composer.
     pub(crate) fn session_footer(&self, session: Option<u64>, cx: &Context<Self>) -> AnyElement {
+        if session
+            .and_then(|id| self.workspace.read(cx).session(id, cx))
+            .is_some_and(|chat| chat.mode == Mode::Terminal)
+        {
+            return div().into_any_element();
+        }
         let height = self
             .session_shown(cx)
             .map(|view| view.read(cx).state.footer_height.clone());
@@ -522,14 +547,11 @@ impl Tab {
                     .items_end()
                     .gap(px(4.))
                     .child(
-                        div()
+                        bubble::bubble(&theme)
+                            .debug_selector(move || format!("queued-message-{ix}"))
                             .min_w_0()
                             .when(gallery.is_some(), |bubble| bubble.w_full())
-                            .px(px(14.))
-                            .py(px(9.))
-                            .rounded(px(Theme::surface_radius()))
                             .bg(theme.surface_raised.opacity(0.6))
-                            .text_style(TextStyle::Body)
                             .text_color(theme.text_muted)
                             .flex()
                             .flex_col()

@@ -4,12 +4,14 @@
 //! `use super::*`: these methods work on the same struct and reach the same
 //! names as the rest of it.
 use super::*;
+#[cfg(feature = "desktop")]
+use crate::model::terminal::Exited;
 use crate::model::{
     project::HeldSession,
     session_preferences::{self, OfferCache},
     workspace::Member,
 };
-use artifact::{kind::Kind, project::Project as _};
+use artifact::{kind::Kind, project::Project as _, session::mode::Mode};
 use bezel::gpui::Entity;
 
 /// One pick on an article's composer before its session exists, which changes
@@ -76,6 +78,21 @@ impl Workspace {
         self.next_id += 1;
         let cwd = self.projects[ix].path.clone();
         let chat = cx.new(|cx| make(id, cwd, cx));
+        #[cfg(feature = "desktop")]
+        if let Some(buffer) = chat.read(cx).terminal.clone() {
+            cx.subscribe(&buffer, move |_, _, _: &Exited, cx| {
+                let workspace = cx.weak_entity();
+                cx.defer(move |cx| {
+                    let _ = workspace.update(cx, |workspace, cx| {
+                        if let Some(member) = workspace.member_of_session(id, cx) {
+                            workspace.drop_from_spaces(&member, cx);
+                        }
+                        workspace.close_session(id, cx);
+                    });
+                });
+            })
+            .detach();
+        }
         let project = &mut self.projects[ix];
         project.sessions.push(HeldSession { id, chat });
         if front {
@@ -87,7 +104,7 @@ impl Workspace {
     }
 
     /// The member that names a session wherever it is open — what finds the
-    /// tab holding it. Nothing for one with no record id yet.
+    /// tab holding it.
     pub fn member_of_session(&self, id: u64, cx: &App) -> Option<Member> {
         self.member_of(self.project_of(id)?, super::Showing::Session(id), cx)
     }
@@ -519,7 +536,7 @@ impl Workspace {
 
     /// Send to the session filed under `record`, where one is held.
     pub fn send_to_record(&mut self, record: &str, content: String, cx: &mut Context<Self>) {
-        if let Some(id) = self.session_by_record(record, cx).map(|chat| chat.id) {
+        if let Some(id) = self.session_by_key(record, cx).map(|chat| chat.id) {
             self.send(id, content, cx);
         }
     }
@@ -528,6 +545,12 @@ impl Workspace {
     /// seeded with `content`, behind whatever the window shows. Nothing
     /// happens where either is not held.
     pub fn start_in(&mut self, path: &Path, agent: &str, content: String, cx: &mut Context<Self>) {
+        if let Some(identity) = self.identity(agent).cloned() {
+            if self.ids.intern(path) == self.ids.intern(&identity.workspace) {
+                self.new_session_as(&identity.id, Some(content), None, false, cx);
+            }
+            return;
+        }
         let entry = named(&self.settings.agents, Some(agent), agent).cloned();
         let project = self.ids.intern(path);
         if let (Some(ix), Some(entry)) = (self.project_ix(project), entry) {
@@ -571,6 +594,10 @@ impl Workspace {
     /// Put a session away, or bring it back. Closing tears the agent down and
     /// keeps the transcript; opening it again is what reconnects.
     pub fn archive_session(&mut self, id: u64, archived: bool, cx: &mut Context<Self>) {
+        #[cfg(feature = "desktop")]
+        if archived && let Some(chat) = self.session_entity(id).cloned() {
+            chat.update(cx, |chat, cx| chat.stop_terminal(cx));
+        }
         self.with_session(id, cx, |chat| match archived {
             true => chat.close(),
             false => {
@@ -596,7 +623,7 @@ impl Workspace {
     /// An agent's rename of its own session: the user's name where the user
     /// gave one, else the agent's title.
     pub fn retitle_record(&mut self, record: &str, title: String, cx: &mut Context<Self>) {
-        let Some(id) = self.session_by_record(record, cx).map(|chat| chat.id) else {
+        let Some(id) = self.session_by_key(record, cx).map(|chat| chat.id) else {
             return;
         };
         self.with_session(id, cx, |chat| {
@@ -609,6 +636,10 @@ impl Workspace {
     }
 
     pub fn close_session(&mut self, id: u64, cx: &mut Context<Self>) {
+        #[cfg(feature = "desktop")]
+        if let Some(chat) = self.session_entity(id).cloned() {
+            chat.update(cx, |chat, cx| chat.stop_terminal(cx));
+        }
         let Some(project) = self.project_of(id).map(|ix| &mut self.projects[ix]) else {
             return;
         };
@@ -665,13 +696,9 @@ impl Workspace {
             .is_some_and(|chat| chat.update(cx, |chat, _| chat.load_history()))
     }
 
-    /// The session filed under this id, wherever it is — how a card finds the
-    /// agent it was handed to after a launch that renumbered every session.
-    /// [`ChatSession::id`] is minted per launch and means nothing on disk;
-    /// this is the name that keeps.
-    pub fn session_by_record<'a>(&'a self, record: &str, cx: &'a App) -> Option<&'a ChatSession> {
+    pub fn session_by_key<'a>(&'a self, record: &str, cx: &'a App) -> Option<&'a ChatSession> {
         self.chats(cx)
-            .find(|chat| chat.record.as_deref() == Some(record))
+            .find(|chat| chat.navigation_key().as_deref() == Some(record))
     }
 
     /// The id a session is filed under, minted if it has none — what a
@@ -831,6 +858,7 @@ impl Workspace {
 
     /// [`Self::reachable`] for `chat`, in front or not.
     pub fn reachable_session(&self, chat: &ChatSession) -> bool {
-        chat.live() || (chat.resumable() && self.agent_for(&chat.entry).is_some())
+        chat.mode == Mode::Gui
+            && (chat.live() || (chat.resumable() && self.agent_for(&chat.entry).is_some()))
     }
 }

@@ -8,6 +8,7 @@ use super::{
 };
 use crate::{
     model::{
+        identity::launch::Creation,
         project::ProjectId,
         session::Status,
         state,
@@ -30,6 +31,7 @@ use crate::{
         },
     },
 };
+use artifact::session::mode::Mode;
 use bezel::{
     agent::{Face, avatar::Motion, mascot},
     gpui::{
@@ -42,16 +44,12 @@ use bezel::{
         context_menu::Place as MenuPlace,
         icons::{self, Icon},
         menu::Item,
-        multi_select, popover,
-        surface::Surfaced as _,
+        multi_select, popover, surface,
         tooltip::Tooltip,
         widgets::{ButtonStyle, Buttons, Content, Layout},
     },
 };
 use std::{rc::Rc, time::Duration};
-
-/// How many of an extended row's labels it draws before a `+n` for the rest.
-const LABELS_SHOWN: usize = 2;
 
 /// What a busy agent's blob is drawn on, claimed while its row is drawn — see
 /// [`crate::view::kit::orb`].
@@ -143,6 +141,27 @@ impl Sidebar {
     /// glass the floating cluster below it is cut from — a heading with rows
     /// running under it has to be read against whatever is passing.
     pub(super) fn group_head(
+        &self,
+        group: Group,
+        pinned: bool,
+        lifted: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        if pinned {
+            let sidebar = cx.entity();
+            let id = SharedString::from(format!("pinned-{}", key_of(&Row::Group(group.clone()))));
+            return surface::popover(id, 0., move |_, window, cx| {
+                sidebar.update(cx, |this, cx| {
+                    this.group_head_content(group, pinned, lifted, window, cx)
+                })
+            })
+            .into_any_element();
+        }
+        self.group_head_content(group, pinned, lifted, window, cx)
+    }
+
+    fn group_head_content(
         &self,
         group: Group,
         pinned: bool,
@@ -409,30 +428,72 @@ impl Sidebar {
                     )
                     .children(self.add_menu(*project, window, cx)),
                 ),
-                // Nothing to choose between: a session as the identity.
-                Group::Agent(id) => Some(
-                    menu::button(
-                        SharedString::from(format!("group-add-{key}")),
-                        icons::math::Plus,
-                        match reveal {
-                            Some(group) => menu::Reveal::Group(group),
-                            None => menu::Reveal::Always,
-                        },
-                        false,
-                        cx,
-                    )
-                    .tooltip(|window, cx| Tooltip::text("New session", window, cx))
-                    .on_click(cx.listener({
-                        let id = id.clone();
-                        move |this, _, window, cx| {
-                            cx.stop_propagation();
+                Group::Agent(id) => {
+                    let choose = self
+                        .workspace
+                        .read(cx)
+                        .identity(id)
+                        .is_some_and(|agent| agent.creation == Creation::Choose);
+                    let button_id = SharedString::from(format!("group-add-{key}"));
+                    let button = if choose {
+                        self.menu_button(
+                            button_id,
+                            reveal,
+                            icons::math::Plus,
+                            SidebarMenu::Launch(id.clone()),
+                            MenuPlace::Below,
+                            Rc::new({
+                                let id = id.clone();
+                                move |_, _| {
+                                    [("GUI", Mode::Gui), ("Terminal", Mode::Terminal)]
+                                        .into_iter()
+                                        .map(|(label, mode)| {
+                                            let id = id.clone();
+                                            menu::row(
+                                                Item::action(label),
+                                                move |root: &mut Cydonia, window, cx| {
+                                                    root.new_session_as(&id, Some(mode), window, cx)
+                                                },
+                                            )
+                                        })
+                                        .collect()
+                                }
+                            }),
+                            cx,
+                        )
+                    } else {
+                        menu::button(
+                            button_id,
+                            icons::math::Plus,
+                            match reveal {
+                                Some(group) => menu::Reveal::Group(group),
+                                None => menu::Reveal::Always,
+                            },
+                            false,
+                            cx,
+                        )
+                        .on_click(cx.listener({
                             let id = id.clone();
-                            this.defer_window(window, cx, move |root, window, cx| {
-                                root.new_session_as(&id, window, cx)
-                            });
-                        }
-                    })),
-                ),
+                            move |this, _, window, cx| {
+                                cx.stop_propagation();
+                                let id = id.clone();
+                                this.defer_window(window, cx, move |root, window, cx| {
+                                    root.new_session_as(&id, None, window, cx)
+                                });
+                            }
+                        }))
+                    };
+                    Some(
+                        button
+                            .tooltip(|window, cx| Tooltip::text("New session", window, cx))
+                            .children(self.menu_here(
+                                &SidebarMenu::Launch(id.clone()),
+                                SharedString::from(format!("agent-launch-{id}")),
+                                window,
+                                cx,
+                            )),
+                    )
+                }
                 Group::Space(_) => None,
             })
             // A press on the copy is a press on where it came from: the list
@@ -487,14 +548,7 @@ impl Sidebar {
                 ),
             Group::Space(_) => head,
         };
-        match pinned {
-            // The same token the cluster at the foot of the column mounts on,
-            // so the two glasses in the sidebar move together.
-            true => head
-                .surface(&theme, theme.popover_surface)
-                .into_any_element(),
-            false => head.into_any_element(),
-        }
+        head.into_any_element()
     }
 
     /// What the sidebar needs of a session, read when its row comes on screen.
@@ -604,7 +658,7 @@ impl Sidebar {
                 false => row_label(facts.label, tint),
             };
         let open = entry.clone();
-        let button = self.archive_button(group, entry, archived, preview.is_some(), window, cx);
+        let button = self.trailing_button(group, entry, archived, preview.is_some(), window, cx);
         let frame = row(
             id,
             group,
@@ -662,8 +716,6 @@ impl Sidebar {
                             .items_center()
                             .child(button),
                     );
-                let shown = facts.labels.len().min(LABELS_SHOWN);
-                let more = facts.labels.len() - shown;
                 let chip = |text: String, tone| {
                     theme
                         .chip(text, tone)
@@ -705,15 +757,11 @@ impl Sidebar {
                                         .flex()
                                         .flex_row()
                                         .items_center()
-                                        .justify_end()
                                         .gap(px(4.))
                                         .overflow_hidden()
-                                        .children(facts.labels[..shown].iter().map(|label| {
+                                        .children(facts.labels.iter().map(|label| {
                                             chip(label.clone(), multi_select::tint(&theme, label))
-                                        }))
-                                        .when(more > 0, |el| {
-                                            el.child(chip(format!("+{more}"), theme.text_muted))
-                                        }),
+                                        })),
                                 )
                             }),
                     )
@@ -768,14 +816,11 @@ impl Sidebar {
         .into_any_element()
     }
 
-    /// The button at the end of a row: archive, or — for a pinned row — the
-    /// pin it is marked with, which opens the row's menu.
-    ///
     /// A pin is the one state a row carries that nothing else on it shows, so
     /// it is drawn at rest rather than on hover. Under the pointer the same
     /// button becomes the `···`, and what a pinned row can have done to it is
     /// in the menu rather than behind a press that has to mean one of them.
-    fn archive_button(
+    fn trailing_button(
         &self,
         group: &'static str,
         entry: &Row,
@@ -819,10 +864,12 @@ impl Sidebar {
                 .children(self.entry_menu(&at, window, cx));
         }
         let held = matches!(self.menu.key(), Some(SidebarMenu::Entry(at)) if at == entry);
+        let terminal = entry.terminal_run(self.workspace.read(cx), cx);
         let entry = entry.clone();
-        let mark = match archived {
-            true => icons::files::ArchiveRestore,
-            false => icons::files::Archive,
+        let (mark, label) = match (terminal, archived) {
+            (true, _) => (icons::multimedia::CircleStop, "Terminate"),
+            (false, true) => (icons::files::ArchiveRestore, "Unarchive"),
+            (false, false) => (icons::files::Archive, "Archive"),
         };
         theme
             .icon_button(
@@ -858,21 +905,16 @@ impl Sidebar {
             // still falls either side of a child with no width, so the margin
             // that cancels it comes back with the width.
             .overflow_hidden()
-            .tooltip(move |window, cx| {
-                Tooltip::text(
-                    match archived {
-                        true => "Unarchive",
-                        false => "Archive",
-                    },
-                    window,
-                    cx,
-                )
-            })
+            .tooltip(move |window, cx| Tooltip::text(label, window, cx))
             .on_click(cx.listener(move |this, _, window, cx| {
                 cx.stop_propagation();
                 let entry = entry.clone();
                 this.defer_window(window, cx, move |root, window, cx| {
-                    root.archive_entry(&entry, !archived, window, cx)
+                    if terminal {
+                        root.delete_entry(&entry, window, cx);
+                    } else {
+                        root.archive_entry(&entry, !archived, window, cx);
+                    }
                 });
             }))
     }
@@ -916,7 +958,7 @@ impl Sidebar {
         };
         let open = match heading {
             Heading::Projects => {
-                let chord = keymap::label(Command::OpenProject, &workspace.settings.shortcuts);
+                let chord = keymap::label(Command::OpenProject, &workspace.settings.shortcuts, cx);
                 Some(
                     plus("open-project")
                         .tooltip(move |window, cx| match chord.clone() {
@@ -1167,7 +1209,11 @@ impl Sidebar {
     pub(super) fn search_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let trail = self.trail(cx);
-        let chord = keymap::label(Command::Search, &self.workspace.read(cx).settings.shortcuts);
+        let chord = keymap::label(
+            Command::Search,
+            &self.workspace.read(cx).settings.shortcuts,
+            cx,
+        );
         let raise = cx.listener(|this, _, window, cx| {
             this.defer_window(window, cx, |root, window, cx| {
                 root.toggle_search(&ToggleSearch, window, cx)
@@ -1310,6 +1356,7 @@ impl Sidebar {
         let chord = keymap::label(
             Command::OpenSettings,
             &self.workspace.read(cx).settings.shortcuts,
+            cx,
         );
         // Inset as a row is, so the button ends where the rows' buttons end.
         div()

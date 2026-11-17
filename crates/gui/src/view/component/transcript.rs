@@ -29,7 +29,10 @@ use crate::{
 };
 use artifact::{
     search::Query,
-    session::chat::{ChatItem, ToolStatus},
+    session::{
+        chat::{ChatItem, ToolStatus},
+        mode::Mode,
+    },
     text::{clip, one_line},
 };
 
@@ -607,6 +610,8 @@ struct Hold<'a> {
 /// are its own.
 pub(crate) struct SessionView {
     pub(crate) session: u64,
+    #[cfg(feature = "desktop")]
+    pub(crate) terminal: Option<Entity<crate::view::component::terminal::Terminal>>,
     /// The pane drawing it, as [`crate::view::pane::leaf::Leaf::entry`] names
     /// it. Only a pane's queue and find answer to it.
     pane: Option<Member>,
@@ -638,6 +643,14 @@ impl SessionView {
             .read(cx)
             .session(session, cx)
             .map_or(0, |chat| chat.epoch);
+        #[cfg(feature = "desktop")]
+        let terminal = workspace
+            .read(cx)
+            .session(session, cx)
+            .and_then(|chat| chat.terminal.clone())
+            .map(|buffer| {
+                cx.new(|cx| crate::view::component::terminal::Terminal::for_buffer(buffer, cx))
+            });
         let state = State::default();
         if drawn != Drawn::Pane {
             state.follow_tail();
@@ -645,6 +658,8 @@ impl SessionView {
         cx.observe(&workspace, |_, _, cx| cx.notify()).detach();
         Self {
             session,
+            #[cfg(feature = "desktop")]
+            terminal,
             pane,
             workspace,
             root,
@@ -655,6 +670,16 @@ impl SessionView {
             epoch,
             watch: Watch::default(),
         }
+    }
+
+    fn terminal_body(&self, cx: &mut Context<Self>) -> AnyElement {
+        #[cfg(feature = "desktop")]
+        if let Some(terminal) = &self.terminal {
+            return div().size_full().child(terminal.clone()).into_any_element();
+        }
+        div().flex_1().p(px(20.)).text_color(Theme::of(cx).text_muted)
+            .child("The terminal process is no longer running. Start a new terminal run to launch the agent.")
+            .into_any_element()
     }
 
     /// The turn the selection is in, from 0.
@@ -736,6 +761,11 @@ impl Render for SessionView {
         let id = self.session;
         let chat = self.workspace.read(cx).session_entity(id).cloned();
         self.watch.set(&chat, cx);
+        if let Some(chat) = &chat
+            && chat.read(cx).mode == Mode::Terminal
+        {
+            return self.terminal_body(cx);
+        }
         // In front of a pane, a turn that ended is seen.
         if let Some(chat) =
             chat.filter(|chat| matches!(self.drawn, Drawn::Pane) && chat.read(cx).review)
@@ -837,7 +867,7 @@ impl Render for SessionView {
                 .min_h_0()
                 // The transcript's wheel stops here, at its ends too, so what
                 // is under it does not scroll with it.
-                .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+                .on_scroll(|_, _, cx| cx.stop_propagation())
                 .flex()
                 .flex_col()
                 .child(body)
@@ -1061,7 +1091,7 @@ fn render(
                     move |_, _, cx| {
                         let _ = workspace.update(cx, |workspace, cx| {
                             if let Some(id) =
-                                workspace.session_by_record(&source, cx).map(|chat| chat.id)
+                                workspace.session_by_key(&source, cx).map(|chat| chat.id)
                             {
                                 workspace.select_session(id, cx);
                             }

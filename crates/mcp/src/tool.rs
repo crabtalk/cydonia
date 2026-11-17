@@ -52,10 +52,11 @@ pub struct Arg {
 pub type Outcome = Result<Answer, Trouble>;
 
 /// What a tool answers with: the lines a model reads, and `data`, the fields
-/// for a caller in the same process. Only the text goes on the wire.
+/// for a caller in the same process. Text and images go on the wire.
 pub struct Answer {
     pub text: String,
     pub data: Option<Value>,
+    pub images: Vec<Image>,
 }
 
 impl Answer {
@@ -63,6 +64,7 @@ impl Answer {
         Self {
             text: text.into(),
             data: None,
+            images: Vec::new(),
         }
     }
 
@@ -70,6 +72,12 @@ impl Answer {
         self.data = Some(data);
         self
     }
+}
+
+pub struct Image {
+    /// Base64-encoded image bytes.
+    pub data: String,
+    pub mime_type: String,
 }
 
 /// The two ways a call does not work, which are not the same thing to whoever

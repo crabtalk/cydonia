@@ -38,5 +38,7 @@ pub mod workspace;
 
 pub mod fonts;
 pub mod palette;
+#[cfg(feature = "desktop")]
+pub mod terminal;
 pub mod themes;
 pub mod typography;

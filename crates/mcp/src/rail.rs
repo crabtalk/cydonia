@@ -16,9 +16,11 @@
 //! nothing installed — the tests, a caller that mounted the tool sets on their
 //! own — refuses rather than pretends.
 
+use crate::tool::Answer;
 #[cfg(feature = "http")]
 use crate::tool::Trouble;
-use artifact::{board::View, kind::Kind};
+use artifact::{board::View, kind::Kind, session::mode::Mode};
+use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
     sync::RwLock,
@@ -78,16 +80,24 @@ pub enum Change {
     },
 }
 
-/// An agent a session can be started on, as `settings.toml` files it.
+/// A named agent or installed ACP program offered for session creation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Agent {
     pub name: String,
-    /// The registry id, absent for an agent added by hand.
+    /// An identity UUID or registry id; absent for a program added by hand.
     pub id: Option<String>,
+    pub workspace: Option<PathBuf>,
+    pub mode: Mode,
 }
 
 impl Agent {
-    /// What a tool names it by: the id where there is one, else the name.
+    pub fn in_project(&self, project: &Path) -> bool {
+        self.workspace
+            .as_deref()
+            .is_none_or(|workspace| workspace == project)
+    }
+
+    /// The identity or registry id, falling back to the program name.
     pub fn key(&self) -> &str {
         self.id.as_deref().unwrap_or(&self.name)
     }
@@ -127,15 +137,21 @@ pub fn open() -> Vec<PathBuf> {
     OPEN.read().map(|held| held.clone()).unwrap_or_default()
 }
 
-/// Say which agents are configured. Pushed by the app whenever it reads
-/// `settings.toml`.
-pub fn set_agents(agents: Vec<Agent>) {
+/// Replace the offered agents and normalize their workspace paths.
+pub fn set_agents(mut agents: Vec<Agent>) {
+    for agent in &mut agents {
+        if let Some(workspace) = &mut agent.workspace {
+            *workspace = workspace
+                .canonicalize()
+                .unwrap_or_else(|_| workspace.clone());
+        }
+    }
     if let Ok(mut held) = AGENTS.write() {
         *held = agents;
     }
 }
 
-/// The agents configured, in the order `settings.toml` lists them.
+/// The offered agents, in snapshot order.
 pub fn agents() -> Vec<Agent> {
     AGENTS.read().map(|held| held.clone()).unwrap_or_default()
 }
@@ -207,6 +223,9 @@ pub enum Act {
     /// Load `url` in the tab named, or in a new one, and read it.
     Open(String),
     Read,
+    Screenshot,
+    Evaluate(String),
+    Inspect(Target),
     Click(usize),
     Type {
         element: usize,
@@ -216,7 +235,42 @@ pub enum Act {
     /// Screenfuls down; negative goes up.
     Scroll(f64),
     /// What the tab's page has logged.
-    Console,
+    Console {
+        levels: Vec<Level>,
+        since: u64,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Target {
+    Element(usize),
+    Selector(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Level {
+    Debug,
+    Log,
+    Info,
+    Warn,
+    Error,
+}
+
+impl Level {
+    pub const ALL: [Self; 5] = [Self::Debug, Self::Log, Self::Info, Self::Warn, Self::Error];
+}
+
+impl std::fmt::Display for Level {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Debug => "debug",
+            Self::Log => "log",
+            Self::Info => "info",
+            Self::Warn => "warn",
+            Self::Error => "error",
+        })
+    }
 }
 
 /// One browser call, with where its answer goes.
@@ -226,8 +280,8 @@ pub struct Browse {
     /// except for [`Act::Open`], where it is a new tab.
     pub tab: Option<u64>,
     pub act: Act,
-    /// The text the model reads, or why there is none.
-    pub reply: std::sync::mpsc::Sender<Result<String, String>>,
+    /// The tool content, or why it is unavailable.
+    pub reply: std::sync::mpsc::Sender<Result<Answer, String>>,
 }
 
 type Browser = Box<dyn Fn(Browse) + Send + Sync>;
@@ -244,7 +298,7 @@ pub fn install_browser(hand: impl Fn(Browse) + Send + Sync + 'static) {
 /// Blocks the calling thread. Never call it from the thread the window is
 /// drawn on: the answer is made there.
 #[cfg(feature = "http")]
-pub(crate) fn browse(project: PathBuf, tab: Option<u64>, act: Act) -> Result<String, Trouble> {
+pub(crate) fn browse(project: PathBuf, tab: Option<u64>, act: Act) -> Result<Answer, Trouble> {
     let (reply, answer) = std::sync::mpsc::channel();
     {
         let held = BROWSER.read().map_err(|_| no_browser())?;

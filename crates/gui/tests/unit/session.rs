@@ -304,3 +304,27 @@ fn minting_a_record_writes_the_session() {
         "the tools list it"
     );
 }
+
+#[gpui::test]
+fn terminal_runs_have_navigation_keys_but_never_mint_or_write_conversations(
+    cx: &mut gpui::TestAppContext,
+) {
+    let scratch = Scratch::new();
+    let identity = Identity::new("Terminal", scratch.0.clone(), "custom", Choices::default());
+    let chat = cx.new(|cx| ChatSession::terminal_as(42, agent("", &[]), &identity, None, cx));
+    chat.update(cx, |chat, _| {
+        let key = chat.navigation_key().unwrap().into_owned();
+        assert!(!key.is_empty());
+        assert!(chat.record.is_none());
+        assert!(chat.number.is_none());
+        assert!(chat.draft.is_empty());
+        chat.draft = "not a stored conversation".into();
+        chat.flush();
+        assert!(chat.mint_record().is_none());
+        assert!(chat.retain_panel().is_none());
+        assert!(chat.filed().is_none());
+        assert!(chat.number.is_none());
+        assert_eq!(chat.navigation_key().as_deref(), Some(key.as_str()));
+    });
+    assert!(!scratch.0.join(".cydonia").exists());
+}

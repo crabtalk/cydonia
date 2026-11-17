@@ -19,6 +19,7 @@ anyhow.workspace = true
 canvas = { workspace = true, default-features = true }
 base64.workspace = true
 bezel.workspace = true
+browser.workspace = true
 guest.workspace = true
 cydonia-acp = { workspace = true, features = ["agents"] }
 cydonia-acp-events = { workspace = true, optional = true }
@@ -28,7 +29,6 @@ editor.workspace = true
 futures.workspace = true
 global-hotkey = { workspace = true, optional = true }
 image.workspace = true
-lru.workspace = true
 markdown.workspace = true
 mcp.workspace = true
 notify = { workspace = true, optional = true }
@@ -51,9 +51,6 @@ ureq = { workspace = true, optional = true }
 url.workspace = true
 uuid.workspace = true
 web-time.workspace = true
-
-[target.'cfg(not(target_os = "linux"))'.dependencies]
-browser.workspace = true
 
 [features]
 default = ["desktop"]
@@ -83,7 +80,7 @@ desktop = [
 developer = []
 
 [dev-dependencies]
-syntax = { workspace = true }
+syntax = { workspace = true, features = ["rust"] }
 gpui = { workspace = true, features = ["test-support"] }
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]

@@ -28,7 +28,7 @@ use crate::{
         },
     },
 };
-use artifact::kind::Kind;
+use artifact::{kind::Kind, session::mode::Mode};
 use bezel::{
     gpui::{
         self, AnyElement, App, Context, Div, Empty, Entity, FocusHandle, Hsla, ListAlignment,
@@ -38,10 +38,11 @@ use bezel::{
     theme::{Selection, TextStyle, Theme, Typeset},
     ui::{
         context_menu::{ContextMenu, Place as MenuPlace},
-        drag::{self, Carried},
+        drag,
         icons::{self, Icon},
         menu::Item,
         scroll as scrollbars,
+        surface::Control,
     },
 };
 use std::{collections::HashMap, path::PathBuf, rc::Rc, time::Duration};
@@ -202,6 +203,15 @@ impl Row {
         }
     }
 
+    pub(crate) fn terminal_run(&self, workspace: &Workspace, cx: &App) -> bool {
+        match self.showing() {
+            Some(Showing::Session(id)) => workspace
+                .session(*id, cx)
+                .is_some_and(|chat| chat.mode == Mode::Terminal),
+            _ => false,
+        }
+    }
+
     /// Where an entry row's project is listed now, and where its entry is
     /// listed among its kind in that project.
     pub(crate) fn located(&self, workspace: &Workspace) -> Option<(usize, usize)> {
@@ -258,7 +268,7 @@ impl Row {
                 ..
             } => *id,
             Row::Group(Group::Agent(identity)) => workspace.update(cx, |workspace, cx| {
-                workspace.new_session_as(identity, None, cx)
+                workspace.new_session_as(identity, None, None, true, cx)
             })?,
             _ => return None,
         };
@@ -548,20 +558,6 @@ fn offset_at(tops: &[f32], y: f32) -> ListOffset {
     }
 }
 
-/// What rides under the pointer while an item is carried to a pane.
-pub(crate) fn ghost(label: SharedString, theme: &Theme) -> AnyElement {
-    div()
-        .rounded(px(Theme::control_radius()))
-        .px(px(10.))
-        .py(px(4.))
-        .text_style(TextStyle::Callout)
-        .text_color(theme.text)
-        .truncate()
-        .child(label)
-        .ghost(theme)
-        .into_any_element()
-}
-
 /// An entry's own name in the element tree: two rows must never share one.
 pub(crate) fn key_of(entry: &Row) -> String {
     match entry {
@@ -591,9 +587,10 @@ pub(crate) fn row(
     indent: u8,
     trail: f32,
     theme: &Theme,
-) -> Stateful<Div> {
+) -> Control {
     let fill = selected.fill(theme).filter(|_| !lifted);
     row_frame(id, group, indent, trail)
+        .material(!lifted && selected.is_selected())
         // A carried row is drawn inside [`Sidebar::sidebar_ghost`]'s frame.
         .when(lifted, |el| el.m_0())
         .when_some(fill, |el, fill| el.bg(fill).shadow(selected.shadows()))
@@ -613,8 +610,8 @@ pub(crate) fn row_frame(
     group: &'static str,
     indent: u8,
     trail: f32,
-) -> Stateful<Div> {
-    div()
+) -> Control {
+    Control::new(div(), false)
         .id(id)
         .group(group)
         .h(px(ROW_PILL))
@@ -666,6 +663,7 @@ pub(crate) enum SidebarMenu {
     Entry(Row),
     /// An agent identity's heading, by its id.
     Agent(String),
+    Launch(String),
 }
 
 /// The column under the window's band: the search and library rows, the list
@@ -1167,25 +1165,29 @@ impl Sidebar {
     fn sidebar_ghost(
         &self,
         item: &Dragged,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let Dragged::Row(row) = item else {
             return Empty.into_any_element();
         };
-        let theme = Theme::of(cx).clone();
-        let width = self
-            .root
-            .upgrade()
-            .map_or(root::SIDEBAR_WIDTH, |root| root.read(cx).sidebar_width);
-        div()
-            .w(px(width - root::SIDEBAR_GUTTER - self.trail(cx)))
-            .h(px(self.shape(row, cx).pill()))
-            .rounded(px(Theme::control_radius()))
-            .overflow_hidden()
-            .child(self.sidebar_row(row, true, window, cx))
-            .ghost(&theme)
-            .into_any_element()
+        let row = row.clone();
+        let sidebar = cx.entity();
+        drag::ghost("sidebar-row-ghost", move |_, window, cx| {
+            sidebar.update(cx, |this, cx| {
+                let width = this
+                    .root
+                    .upgrade()
+                    .map_or(root::SIDEBAR_WIDTH, |root| root.read(cx).sidebar_width);
+                div()
+                    .w(px(width - root::SIDEBAR_GUTTER - this.trail(cx)))
+                    .h(px(this.shape(&row, cx).pill()))
+                    .rounded(px(Theme::control_radius()))
+                    .overflow_hidden()
+                    .child(this.sidebar_row(&row, true, window, cx))
+            })
+        })
+        .into_any_element()
     }
 
     /// A row let go in the list, between the painted rows `after` and

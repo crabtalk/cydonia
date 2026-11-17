@@ -1,14 +1,18 @@
-//! A session's shell: the PTY lives as long as this entity, even while hidden.
+//! Input and rendering for a terminal buffer.
 
 use crate::{
-    model::{fonts, typography},
+    model::{
+        fonts,
+        terminal::{self as runtime, Buffer},
+        typography,
+    },
     view::{keymap, kit::watch::FocusWatch},
 };
 use bezel::{
     gpui::{
         self, App, ClipboardEntry, ClipboardItem, Context, Edges, Entity, EventEmitter,
-        ExternalPaths, FocusHandle, Focusable, KeyBinding, Render, Subscription, Task, Window, div,
-        prelude::*, px,
+        ExternalPaths, FocusHandle, Focusable, KeyBinding, KeyBindingContextPredicate, Render,
+        Subscription, Task, Window, div, prelude::*, px,
     },
     theme::{TextStyle, Theme, Typeset},
     ui::{
@@ -20,16 +24,9 @@ use bezel::{
         tooltip::Tooltip,
     },
 };
-use futures::{SinkExt, StreamExt, channel::mpsc};
-use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
-use std::{
-    io::{Read, Write},
-    path::Path,
-    sync::mpsc as channel,
-    time::Duration,
-};
+use std::{path::Path, time::Duration};
 use terminal::{
-    emulator::{CursorShape, CursorStyle, Emulator, HOLD_TIMEOUT, KeyboardMode, SelectionType},
+    emulator::{CursorShape, CursorStyle, KeyboardMode, SelectionType},
     view::{
         self, GridGeometry, GridSnapshot, Images, KeyEvent, MouseAction, MouseButton,
         SELECTION_DRAG_THRESHOLD, TerminalElement,
@@ -48,9 +45,6 @@ const EDGE_SCROLL_TICK: Duration = Duration::from_millis(50);
 /// Most lines one edge-scroll tick moves, however far past the edge the
 /// pointer is.
 const EDGE_SCROLL_MAX_LINES: i32 = 12;
-
-/// Most PTY output one feed takes from the queue before the grid is drawn.
-const FEED_LIMIT: usize = 256 * 1024;
 
 /// The app's caret as a terminal cursor, when terminals take it.
 fn caret_override(cx: &App) -> Option<CursorStyle> {
@@ -95,7 +89,7 @@ gpui::actions!(
     [IncreaseTextSize, DecreaseTextSize, ResetTextSize]
 );
 
-pub fn bindings() -> Vec<KeyBinding> {
+pub fn bindings(cx: &App) -> Vec<KeyBinding> {
     vec![
         // Off macOS `ctrl-c` and `ctrl-v` are the shell's.
         KeyBinding::new(
@@ -108,11 +102,71 @@ pub fn bindings() -> Vec<KeyBinding> {
             input::Paste,
             Some(CONTEXT),
         ),
-        KeyBinding::new("secondary-=", IncreaseTextSize, Some(CONTEXT)),
-        KeyBinding::new("secondary-+", IncreaseTextSize, Some(CONTEXT)),
-        KeyBinding::new("secondary-shift-=", IncreaseTextSize, Some(CONTEXT)),
-        KeyBinding::new("secondary--", DecreaseTextSize, Some(CONTEXT)),
-        KeyBinding::new("secondary-0", ResetTextSize, Some(CONTEXT)),
+        KeyBinding::load(
+            "secondary-=",
+            Box::new(IncreaseTextSize),
+            Some(CONTEXT).map(|context| {
+                KeyBindingContextPredicate::parse(context)
+                    .expect("valid key context")
+                    .into()
+            }),
+            false,
+            None,
+            cx,
+        )
+        .expect("valid key binding"),
+        KeyBinding::load(
+            "secondary-+",
+            Box::new(IncreaseTextSize),
+            Some(CONTEXT).map(|context| {
+                KeyBindingContextPredicate::parse(context)
+                    .expect("valid key context")
+                    .into()
+            }),
+            false,
+            None,
+            cx,
+        )
+        .expect("valid key binding"),
+        KeyBinding::load(
+            "secondary-shift-=",
+            Box::new(IncreaseTextSize),
+            Some(CONTEXT).map(|context| {
+                KeyBindingContextPredicate::parse(context)
+                    .expect("valid key context")
+                    .into()
+            }),
+            false,
+            None,
+            cx,
+        )
+        .expect("valid key binding"),
+        KeyBinding::load(
+            "secondary--",
+            Box::new(DecreaseTextSize),
+            Some(CONTEXT).map(|context| {
+                KeyBindingContextPredicate::parse(context)
+                    .expect("valid key context")
+                    .into()
+            }),
+            false,
+            None,
+            cx,
+        )
+        .expect("valid key binding"),
+        KeyBinding::load(
+            "secondary-0",
+            Box::new(ResetTextSize),
+            Some(CONTEXT).map(|context| {
+                KeyBindingContextPredicate::parse(context)
+                    .expect("valid key context")
+                    .into()
+            }),
+            false,
+            None,
+            cx,
+        )
+        .expect("valid key binding"),
     ]
 }
 
@@ -142,159 +196,6 @@ pub fn keystroke_bytes(
     )
 }
 
-/// Dropping the panel's owner terminates the shell; a waiter reaps it off-thread.
-struct Shell {
-    pid: Option<u32>,
-    master: Box<dyn MasterPty + Send>,
-    input: channel::Sender<Vec<u8>>,
-    killer: Box<dyn ChildKiller + Send + Sync>,
-}
-
-impl Drop for Shell {
-    fn drop(&mut self) {
-        let _ = self.killer.kill();
-    }
-}
-
-impl Shell {
-    /// Unit tests get no shell: its reader thread would wake the pump from
-    /// outside gpui's test scheduler, which fails the test as nondeterministic.
-    #[cfg(test)]
-    fn open(_: &Path) -> anyhow::Result<(Self, mpsc::Receiver<Vec<u8>>)> {
-        anyhow::bail!("no shell under test")
-    }
-
-    #[cfg(not(test))]
-    fn open(cwd: &Path) -> anyhow::Result<(Self, mpsc::Receiver<Vec<u8>>)> {
-        let shell = std::env::var_os("SHELL").filter(|s| !s.is_empty());
-        // `$SHELL` is unset on Windows unless something like Git Bash put it
-        // there, and `-l` is a unix shell's flag.
-        #[cfg(windows)]
-        let command = CommandBuilder::new(shell.unwrap_or_else(|| "powershell.exe".into()));
-        #[cfg(not(windows))]
-        let command = {
-            let mut command = CommandBuilder::new(shell.unwrap_or_else(|| "/bin/zsh".into()));
-            command.arg("-l");
-            command
-        };
-        Self::open_command(cwd, command)
-    }
-
-    fn open_command(
-        cwd: &Path,
-        mut command: CommandBuilder,
-    ) -> anyhow::Result<(Self, mpsc::Receiver<Vec<u8>>)> {
-        let pair = native_pty_system().openpty(PtySize {
-            rows: 24,
-            cols: 80,
-            pixel_width: 0,
-            pixel_height: 0,
-        })?;
-        let mut reader = pair.master.try_clone_reader()?;
-        let mut writer = pair.master.take_writer()?;
-        command.cwd(cwd);
-        command.env("TERM", "xterm-256color");
-        command.env("COLORTERM", "truecolor");
-        // What a program reads to know which terminal it is talking to.
-        command.env("TERM_PROGRAM", "cydonia");
-        command.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
-        // The grid draws kitty graphics, and this is the variable programs
-        // sniff for them — the emulator also answers the protocol's own `a=q`
-        // query, which the ones that ask get a truthful answer from. TERM stays
-        // `xterm-256color`: `xterm-kitty` is a terminfo entry that only exists
-        // on a machine with kitty installed.
-        command.env("KITTY_WINDOW_ID", "1");
-        let mut child = pair.slave.spawn_command(command)?;
-        let pid = child.process_id();
-        let killer = child.clone_killer();
-        drop(pair.slave);
-        std::thread::spawn(move || {
-            let _ = child.wait();
-        });
-        let (input, pending) = channel::channel::<Vec<u8>>();
-        std::thread::spawn(move || {
-            for bytes in pending {
-                if writer
-                    .write_all(&bytes)
-                    .and_then(|_| writer.flush())
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        });
-        // Bound output so a noisy command cannot outgrow the UI's consumer.
-        let (mut output, receiver) = mpsc::channel(32);
-        std::thread::spawn(move || {
-            let mut bytes = [0; 16384];
-            loop {
-                match reader.read(&mut bytes) {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        if futures::executor::block_on(output.send(bytes[..n].to_vec())).is_err() {
-                            break;
-                        }
-                    }
-                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
-                    Err(_) => break,
-                }
-            }
-        });
-        Ok((
-            Self {
-                pid,
-                master: pair.master,
-                input,
-                killer,
-            },
-            receiver,
-        ))
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn process_directory(pid: u32) -> Option<std::path::PathBuf> {
-    use std::os::unix::ffi::OsStringExt;
-    let mut info = std::mem::MaybeUninit::<libc::proc_vnodepathinfo>::uninit();
-    let size = std::mem::size_of_val(&info) as i32;
-    // The kernel initializes the full structure on a successful, full-size read.
-    let read = unsafe {
-        libc::proc_pidinfo(
-            pid as i32,
-            libc::PROC_PIDVNODEPATHINFO,
-            0,
-            info.as_mut_ptr().cast(),
-            size,
-        )
-    };
-    if read != size {
-        return None;
-    }
-    let info = unsafe { info.assume_init() };
-    let bytes: Vec<u8> = info
-        .pvi_cdir
-        .vip_path
-        .iter()
-        .flatten()
-        .map(|byte| *byte as u8)
-        .take_while(|byte| *byte != 0)
-        .collect();
-    if bytes.is_empty() {
-        return None;
-    }
-    Some(std::ffi::OsString::from_vec(bytes).into())
-}
-
-#[cfg(target_os = "linux")]
-fn process_directory(pid: u32) -> Option<std::path::PathBuf> {
-    std::fs::read_link(format!("/proc/{pid}/cwd")).ok()
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
-fn process_directory(_: u32) -> Option<std::path::PathBuf> {
-    None
-}
-
 fn directory_label(directory: &Path) -> String {
     directory
         .file_name()
@@ -305,11 +206,11 @@ fn directory_label(directory: &Path) -> String {
 
 pub struct Terminal {
     pub(crate) directory: std::path::PathBuf,
-    emulator: Emulator,
+    pub(crate) buffer: Entity<Buffer>,
     /// Decoded kitty images, cached across frames beside the emulator holding
     /// the bytes they came from.
     images: Images,
-    shell: Option<Shell>,
+
     focus: FocusHandle,
     geometry: Option<GridGeometry>,
     /// Where the left button went down, until the pointer has travelled
@@ -321,25 +222,38 @@ pub struct Terminal {
     /// Scrolls the scrollback while the drag is held past the top or bottom edge.
     edge_scroll: Option<Task<()>>,
     scroll_remainder: f32,
-    status: Option<String>,
-    /// Pending release of a render hold, armed while one is on.
-    hold: Option<Task<()>>,
+
     /// Which half of its blink the cursor is in.
     cursor_on: bool,
     /// The blink, alive only while focused on a blinking cursor.
     blink: Option<Task<()>>,
     /// The right-click menu, while the program is not reporting the mouse.
     menu: ContextMenu<Self>,
-    _pump: Option<Task<()>>,
+    _runtime: [Subscription; 3],
 }
 
 impl Terminal {
     pub fn new(cwd: &Path, cx: &mut Context<Self>) -> Self {
-        let mut this = Self {
-            directory: cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf()),
-            emulator: Emulator::new(80, 24),
+        let buffer = cx.new(|cx| Buffer::shell(cwd, cx));
+        Self::for_buffer(buffer, cx)
+    }
+
+    pub fn for_buffer(buffer: Entity<Buffer>, cx: &mut Context<Self>) -> Self {
+        let directory = buffer.read(cx).directory.clone();
+        let observed = cx.observe(&buffer, |_, _, cx| cx.notify());
+        let changed = cx.subscribe(
+            &buffer,
+            |this, buffer, _: &runtime::DirectoryChanged, cx| {
+                this.directory = buffer.read(cx).directory.clone();
+                cx.emit(DirectoryChanged);
+                cx.notify();
+            },
+        );
+        let exited = cx.subscribe(&buffer, |_, _, _: &runtime::Exited, cx| cx.emit(Exited));
+        Self {
+            directory,
+            buffer,
             images: Images::new(),
-            shell: None,
             focus: cx.focus_handle(),
             menu: ContextMenu::default(),
             geometry: None,
@@ -348,61 +262,10 @@ impl Terminal {
             drag: None,
             edge_scroll: None,
             scroll_remainder: 0.,
-            status: None,
-            hold: None,
             cursor_on: true,
             blink: None,
-            _pump: None,
-        };
-        match Shell::open(cwd) {
-            Ok((shell, mut output)) => {
-                this.shell = Some(shell);
-                this._pump = Some(cx.spawn(async move |this, cx| {
-                    while let Some(mut bytes) = output.next().await {
-                        // One frame a program writes can arrive over several
-                        // reads: every read already queued is fed with this one.
-                        while bytes.len() < FEED_LIMIT
-                            && let Ok(more) = output.try_recv()
-                        {
-                            bytes.extend_from_slice(&more);
-                        }
-                        if this.update(cx, |this, cx| this.feed(&bytes, cx)).is_err() {
-                            return;
-                        }
-                    }
-                    let _ = this.update(cx, |this, cx| {
-                        this.shell = None;
-                        cx.emit(Exited);
-                    });
-                }));
-            }
-            Err(error) => this.status = Some(format!("Could not start terminal: {error}")),
+            _runtime: [observed, changed, exited],
         }
-        this
-    }
-
-    fn feed(&mut self, bytes: &[u8], cx: &mut Context<Self>) {
-        let reply = self.emulator.feed(bytes);
-        self.write(reply);
-        self.arm_hold_release(cx);
-        // What the shell reports through `OSC 7` or `OSC 9;9` first:
-        // PowerShell's `cd` does not move its process directory.
-        if let Some(directory) = self
-            .emulator
-            .directory()
-            .map(Path::to_path_buf)
-            .or_else(|| {
-                self.shell
-                    .as_ref()
-                    .and_then(|shell| shell.pid)
-                    .and_then(process_directory)
-            })
-            && directory != self.directory
-        {
-            self.directory = directory;
-            cx.emit(DirectoryChanged);
-        }
-        cx.notify();
     }
 
     fn start_blink(&mut self, cx: &mut Context<Self>) {
@@ -419,14 +282,6 @@ impl Terminal {
                 }
             }
         }));
-    }
-
-    fn write(&self, bytes: Vec<u8>) {
-        if !bytes.is_empty()
-            && let Some(shell) = &self.shell
-        {
-            let _ = shell.input.send(bytes);
-        }
     }
 
     fn key(&mut self, event: &gpui::KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
@@ -460,40 +315,28 @@ impl Terminal {
         event: KeyEvent,
         cx: &mut Context<Self>,
     ) {
-        let Some(bytes) = keystroke_bytes(key, layout, self.emulator.keyboard_mode(), event) else {
+        let Some(bytes) = keystroke_bytes(
+            key,
+            layout,
+            self.buffer.read(cx).emulator.keyboard_mode(),
+            event,
+        ) else {
             return;
         };
         // Letting a key go is not the user typing: it must not drop the
         // selection or pull the view back to the live bottom.
         if !matches!(event, KeyEvent::Release) {
-            self.emulator.clear_selection();
-            self.emulator.scroll_to_bottom();
+            self.buffer.update(cx, |buffer, cx| {
+                buffer.emulator.clear_selection();
+                buffer.emulator.scroll_to_bottom();
+                cx.notify();
+            });
             // The next render starts the blink again, lit first.
             self.blink = None;
         }
-        self.write(bytes);
+        self.buffer.read(cx).write(bytes);
         cx.stop_propagation();
         cx.notify();
-    }
-
-    /// Release a render hold the program never ended. The emulator has no
-    /// clock, so a program that sets mode 2026 and dies would otherwise leave
-    /// the grid on its half-drawn frame for good.
-    ///
-    /// Re-armed on every read: a program still writing inside its frame is
-    /// alive, and this is here for one that is not.
-    fn arm_hold_release(&mut self, cx: &mut Context<Self>) {
-        if !self.emulator.render_hold() {
-            self.hold = None;
-            return;
-        }
-        self.hold = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(HOLD_TIMEOUT).await;
-            let _ = this.update(cx, |this, cx| {
-                this.emulator.release_hold();
-                cx.notify();
-            });
-        }));
     }
 
     fn open_menu(
@@ -504,10 +347,10 @@ impl Terminal {
     ) {
         let items = vec![
             Item::action("Copy")
-                .with_shortcut(&input::Copy, window)
-                .disabled(self.emulator.selection_text().is_none()),
+                .with_shortcut(&input::Copy, window, cx)
+                .disabled(self.buffer.read(cx).emulator.selection_text().is_none()),
             Item::action("Paste")
-                .with_shortcut(&input::Paste, window)
+                .with_shortcut(&input::Paste, window, cx)
                 .disabled(cx.read_from_clipboard().is_none()),
         ];
         self.menu.open(
@@ -525,7 +368,7 @@ impl Terminal {
     }
 
     fn copy(&mut self, _: &input::Copy, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some(text) = self.emulator.selection_text() {
+        if let Some(text) = self.buffer.read(cx).emulator.selection_text() {
             cx.write_to_clipboard(ClipboardItem::new_string(text));
         }
     }
@@ -552,10 +395,13 @@ impl Terminal {
         if text.is_empty() {
             return;
         }
-        self.emulator.scroll_to_bottom();
-        self.write(view::paste_bytes(
+        self.buffer.update(cx, |buffer, cx| {
+            buffer.emulator.scroll_to_bottom();
+            cx.notify();
+        });
+        self.buffer.read(cx).write(view::paste_bytes(
             text,
-            self.emulator.bracketed_paste_mode(),
+            self.buffer.read(cx).emulator.bracketed_paste_mode(),
         ));
         cx.notify();
     }
@@ -591,34 +437,42 @@ impl Terminal {
             hit.row,
             hit.col,
             modifiers,
-            self.emulator.mouse_mode(),
+            self.buffer.read(cx).emulator.mouse_mode(),
         ) else {
             return false;
         };
-        self.write(bytes);
+        self.buffer.read(cx).write(bytes);
         cx.notify();
         true
     }
 
     /// Start a selection at `position` when `start` names its granularity,
     /// otherwise extend the one on to it.
-    fn select(&mut self, position: gpui::Point<gpui::Pixels>, start: Option<SelectionType>) {
+    fn select(
+        &mut self,
+        position: gpui::Point<gpui::Pixels>,
+        start: Option<SelectionType>,
+        cx: &mut Context<Self>,
+    ) {
         let Some(hit) = self.cell(position) else {
             return;
         };
-        let point = self.emulator.grid_point(hit.row, hit.col);
-        if let Some(ty) = start {
-            self.emulator.start_selection(ty, point, hit.side);
-        } else {
-            self.emulator.update_selection(point, hit.side);
-        }
+        self.buffer.update(cx, |buffer, cx| {
+            let point = buffer.emulator.grid_point(hit.row, hit.col);
+            if let Some(ty) = start {
+                buffer.emulator.start_selection(ty, point, hit.side);
+            } else {
+                buffer.emulator.update_selection(point, hit.side);
+            }
+            cx.notify();
+        });
     }
 
     /// Extend the selection to where the drag is, and scroll the scrollback
     /// while it is past the grid's top or bottom edge.
     fn drag_to(&mut self, position: gpui::Point<gpui::Pixels>, cx: &mut Context<Self>) {
         self.drag = Some(position);
-        self.select(position, None);
+        self.select(position, None, cx);
         if self.edge_lines() == 0 {
             self.edge_scroll = None;
         } else if self.edge_scroll.is_none() {
@@ -663,8 +517,11 @@ impl Terminal {
             self.edge_scroll = None;
             return false;
         };
-        self.emulator.scroll(lines);
-        self.select(drag, None);
+        self.buffer.update(cx, |buffer, cx| {
+            buffer.emulator.scroll(lines);
+            cx.notify();
+        });
+        self.select(drag, None, cx);
         cx.notify();
         true
     }
@@ -685,13 +542,15 @@ impl Focusable for Terminal {
 
 impl Render for Terminal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = Theme::of(cx).clone();
         let focused = self.focus.is_focused(window);
-        self.emulator.set_cursor_override(caret_override(cx));
-        let blinking = self
-            .emulator
-            .cursor()
-            .is_some_and(|cursor| cursor.style.blinking);
+        let caret = caret_override(cx);
+        let blinking = self.buffer.update(cx, |buffer, _| {
+            buffer.emulator.set_cursor_override(caret);
+            buffer
+                .emulator
+                .cursor()
+                .is_some_and(|cursor| cursor.style.blinking)
+        });
         if focused && blinking {
             if self.blink.is_none() {
                 self.start_blink(cx);
@@ -703,30 +562,19 @@ impl Render for Terminal {
         let this = cx.weak_entity();
         let grid = TerminalElement::new(
             move |geometry, cx| {
-                this.update(cx, |this, _| {
-                    if this.emulator.cols() != geometry.cols as usize
-                        || this.emulator.rows() != geometry.rows as usize
-                    {
-                        this.emulator.resize(geometry.cols, geometry.rows);
-                        if let Some(shell) = &this.shell {
-                            let _ = shell.master.resize(PtySize {
-                                rows: geometry.rows,
-                                cols: geometry.cols,
-                                pixel_width: 0,
-                                pixel_height: 0,
-                            });
-                        }
-                    }
+                this.update(cx, |this, cx| {
                     this.geometry = Some(geometry);
-                    // Only this callback has the measured cell, which is what
-                    // sizes a kitty image in rows and columns.
-                    this.emulator
-                        .set_cell_size(geometry.cell_w, geometry.line_h);
-                    GridSnapshot {
-                        lines: this.emulator.lines(),
-                        cursor: this.emulator.cursor(),
-                        images: this.images.placed(&this.emulator),
-                    }
+                    this.buffer.update(cx, |buffer, _| {
+                        buffer.resize(geometry.cols, geometry.rows);
+                        buffer
+                            .emulator
+                            .set_cell_size(geometry.cell_w, geometry.line_h);
+                        GridSnapshot {
+                            lines: buffer.emulator.lines(),
+                            cursor: buffer.emulator.cursor(),
+                            images: this.images.placed(&buffer.emulator),
+                        }
+                    })
                 })
                 .ok()
             },
@@ -736,213 +584,212 @@ impl Render for Terminal {
         .with_hollow_inactive(cx.inactive_caret() == bezel::ui::input::InactiveCaret::Hollow)
         .with_text_size(typography::terminal_size(cx))
         .with_content_inset(Edges::all(px(12.0)));
-        div()
-            .size_full()
-            .flex()
-            .flex_col()
-            .when_some(self.status.clone(), |panel, status| {
-                panel.child(div().px(px(12.)).text_color(theme.text_muted).child(status))
-            })
-            .child(
-                div()
-                    .id("session-terminal")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_hidden()
-                    .key_context(CONTEXT)
-                    .track_focus(&self.focus)
-                    .on_key_down(cx.listener(Self::key))
-                    .on_key_up(cx.listener(Self::key_up))
-                    .on_action(|_: &IncreaseTextSize, _, cx| typography::zoom_terminal(1., cx))
-                    .on_action(|_: &DecreaseTextSize, _, cx| typography::zoom_terminal(-1., cx))
-                    .on_action(|_: &ResetTextSize, _, cx| typography::reset_terminal_zoom(cx))
-                    .on_action(cx.listener(Self::copy))
-                    .on_action(cx.listener(Self::paste))
-                    .on_drop(cx.listener(Self::drop_paths))
-                    .children(
-                        self.menu
-                            .render("terminal-menu", |this| &mut this.menu, window, cx),
-                    )
-                    .on_mouse_down(
-                        gpui::MouseButton::Left,
-                        cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
-                            window.focus(&this.focus, cx);
-                            if this.report(
-                                MouseAction::Press(MouseButton::Left),
-                                event.position,
-                                &event.modifiers,
-                                cx,
-                            ) {
-                                return;
-                            }
-                            if event.click_count > 1 {
-                                this.pressed = None;
-                                this.selecting = true;
-                                this.drag = Some(event.position);
-                                this.select(
-                                    event.position,
-                                    Some(view::selection_type(event.click_count)),
-                                );
-                                cx.notify();
-                                return;
-                            }
-                            // The press itself is not yet a selection: the one
-                            // that focuses the panel would otherwise take a
-                            // cell with it.
-                            this.pressed = Some(event.position);
-                            this.emulator.clear_selection();
-                            cx.notify();
-                        }),
-                    )
-                    .on_mouse_down(
-                        gpui::MouseButton::Right,
-                        cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
-                            if !this.report(
-                                MouseAction::Press(MouseButton::Right),
-                                event.position,
-                                &event.modifiers,
-                                cx,
-                            ) {
-                                this.open_menu(event.position, window, cx);
-                            }
-                        }),
-                    )
-                    .on_mouse_down(
-                        gpui::MouseButton::Middle,
-                        cx.listener(|this, event: &gpui::MouseDownEvent, _, cx| {
-                            this.report(
-                                MouseAction::Press(MouseButton::Middle),
-                                event.position,
-                                &event.modifiers,
-                                cx,
-                            );
-                        }),
-                    )
-                    .on_mouse_move(cx.listener(|this, event: &gpui::MouseMoveEvent, _, cx| {
-                        // A selection drag is followed window-wide by the canvas below.
-                        if this.selecting {
-                            return;
-                        }
-                        let held = match event.pressed_button {
-                            Some(gpui::MouseButton::Left) => Some(MouseButton::Left),
-                            Some(gpui::MouseButton::Right) => Some(MouseButton::Right),
-                            Some(gpui::MouseButton::Middle) => Some(MouseButton::Middle),
-                            _ => None,
-                        };
+        div().size_full().flex().flex_col().child(
+            div()
+                .id("session-terminal")
+                .flex_1()
+                .min_h_0()
+                .overflow_hidden()
+                .key_context(CONTEXT)
+                .track_focus(&self.focus)
+                .on_key_down(cx.listener(Self::key))
+                .on_key_up(cx.listener(Self::key_up))
+                .on_action(|_: &IncreaseTextSize, _, cx| typography::zoom_terminal(1., cx))
+                .on_action(|_: &DecreaseTextSize, _, cx| typography::zoom_terminal(-1., cx))
+                .on_action(|_: &ResetTextSize, _, cx| typography::reset_terminal_zoom(cx))
+                .on_action(cx.listener(Self::copy))
+                .on_action(cx.listener(Self::paste))
+                .on_drop(cx.listener(Self::drop_paths))
+                .children(
+                    self.menu
+                        .render("terminal-menu", |this| &mut this.menu, window, cx),
+                )
+                .on_mouse_down(
+                    gpui::MouseButton::Left,
+                    cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
+                        window.focus(&this.focus, cx);
                         if this.report(
-                            MouseAction::Motion(held),
+                            MouseAction::Press(MouseButton::Left),
                             event.position,
                             &event.modifiers,
                             cx,
                         ) {
                             return;
                         }
-                        if let Some(origin) = this.pressed {
-                            let travel = event.position - origin;
-                            if f32::from(travel.x).abs().max(f32::from(travel.y).abs())
-                                < SELECTION_DRAG_THRESHOLD
-                            {
-                                return;
-                            }
+                        if event.click_count > 1 {
                             this.pressed = None;
                             this.selecting = true;
-                            this.select(origin, Some(SelectionType::Simple));
-                            this.drag_to(event.position, cx);
-                        }
-                    }))
-                    .on_mouse_up(
-                        gpui::MouseButton::Left,
-                        cx.listener(|this, event: &gpui::MouseUpEvent, _, cx| {
-                            if !this.selecting {
-                                this.report(
-                                    MouseAction::Release(MouseButton::Left),
-                                    event.position,
-                                    &event.modifiers,
-                                    cx,
-                                );
-                            }
-                            this.end_drag();
-                        }),
-                    )
-                    .on_mouse_up(
-                        gpui::MouseButton::Right,
-                        cx.listener(|this, event: &gpui::MouseUpEvent, _, cx| {
-                            this.report(
-                                MouseAction::Release(MouseButton::Right),
+                            this.drag = Some(event.position);
+                            this.select(
                                 event.position,
-                                &event.modifiers,
+                                Some(view::selection_type(event.click_count)),
                                 cx,
                             );
-                        }),
-                    )
-                    .on_mouse_up(
-                        gpui::MouseButton::Middle,
-                        cx.listener(|this, event: &gpui::MouseUpEvent, _, cx| {
-                            this.report(
-                                MouseAction::Release(MouseButton::Middle),
-                                event.position,
-                                &event.modifiers,
-                                cx,
-                            );
-                        }),
-                    )
-                    .on_mouse_up_out(
-                        gpui::MouseButton::Left,
-                        cx.listener(|this, _, _, _| this.end_drag()),
-                    )
-                    .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| {
-                        let line_h = this.geometry.map_or(20., |grid| grid.line_h);
-                        let delta = f32::from(event.delta.pixel_delta(px(line_h)).y) / line_h;
-                        this.scroll_remainder += delta;
-                        let lines = this.scroll_remainder.trunc() as i32;
-                        this.scroll_remainder -= lines as f32;
-                        if lines != 0
-                            && this.report(
-                                MouseAction::Scroll {
-                                    up: lines > 0,
-                                    lines: lines.unsigned_abs() as usize,
-                                },
-                                event.position,
-                                &event.modifiers,
-                                cx,
-                            )
-                        {
-                            cx.stop_propagation();
+                            cx.notify();
                             return;
                         }
-                        this.emulator.scroll(lines);
-                        cx.stop_propagation();
+                        // The press itself is not yet a selection: the one
+                        // that focuses the panel would otherwise take a
+                        // cell with it.
+                        this.pressed = Some(event.position);
+                        this.buffer.update(cx, |buffer, cx| {
+                            buffer.emulator.clear_selection();
+                            cx.notify();
+                        });
                         cx.notify();
-                    }))
-                    .child(grid)
-                    .when(self.selecting, |panel| {
-                        let owner = cx.entity().downgrade();
-                        panel.child(
-                            gpui::canvas(
-                                |_, _, _| {},
-                                move |_, _, window, _| {
-                                    window.on_mouse_event(
-                                        move |event: &gpui::MouseMoveEvent, phase, _, cx| {
-                                            if phase != gpui::DispatchPhase::Capture
-                                                || event.pressed_button
-                                                    != Some(gpui::MouseButton::Left)
-                                            {
-                                                return;
-                                            }
-                                            let _ = owner.update(cx, |this, cx| {
-                                                if this.selecting {
-                                                    this.drag_to(event.position, cx);
-                                                }
-                                            });
-                                        },
-                                    );
-                                },
-                            )
-                            .absolute()
-                            .size_full(),
-                        )
                     }),
-            )
+                )
+                .on_mouse_down(
+                    gpui::MouseButton::Right,
+                    cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
+                        if !this.report(
+                            MouseAction::Press(MouseButton::Right),
+                            event.position,
+                            &event.modifiers,
+                            cx,
+                        ) {
+                            this.open_menu(event.position, window, cx);
+                        }
+                    }),
+                )
+                .on_mouse_down(
+                    gpui::MouseButton::Middle,
+                    cx.listener(|this, event: &gpui::MouseDownEvent, _, cx| {
+                        this.report(
+                            MouseAction::Press(MouseButton::Middle),
+                            event.position,
+                            &event.modifiers,
+                            cx,
+                        );
+                    }),
+                )
+                .on_mouse_move(cx.listener(|this, event: &gpui::MouseMoveEvent, _, cx| {
+                    // A selection drag is followed window-wide by the canvas below.
+                    if this.selecting {
+                        return;
+                    }
+                    let held = match event.pressed_button {
+                        Some(gpui::MouseButton::Left) => Some(MouseButton::Left),
+                        Some(gpui::MouseButton::Right) => Some(MouseButton::Right),
+                        Some(gpui::MouseButton::Middle) => Some(MouseButton::Middle),
+                        _ => None,
+                    };
+                    if this.report(
+                        MouseAction::Motion(held),
+                        event.position,
+                        &event.modifiers,
+                        cx,
+                    ) {
+                        return;
+                    }
+                    if let Some(origin) = this.pressed {
+                        let travel = event.position - origin;
+                        if f32::from(travel.x).abs().max(f32::from(travel.y).abs())
+                            < SELECTION_DRAG_THRESHOLD
+                        {
+                            return;
+                        }
+                        this.pressed = None;
+                        this.selecting = true;
+                        this.select(origin, Some(SelectionType::Simple), cx);
+                        this.drag_to(event.position, cx);
+                    }
+                }))
+                .on_mouse_up(
+                    gpui::MouseButton::Left,
+                    cx.listener(|this, event: &gpui::MouseUpEvent, _, cx| {
+                        if !this.selecting {
+                            this.report(
+                                MouseAction::Release(MouseButton::Left),
+                                event.position,
+                                &event.modifiers,
+                                cx,
+                            );
+                        }
+                        this.end_drag();
+                    }),
+                )
+                .on_mouse_up(
+                    gpui::MouseButton::Right,
+                    cx.listener(|this, event: &gpui::MouseUpEvent, _, cx| {
+                        this.report(
+                            MouseAction::Release(MouseButton::Right),
+                            event.position,
+                            &event.modifiers,
+                            cx,
+                        );
+                    }),
+                )
+                .on_mouse_up(
+                    gpui::MouseButton::Middle,
+                    cx.listener(|this, event: &gpui::MouseUpEvent, _, cx| {
+                        this.report(
+                            MouseAction::Release(MouseButton::Middle),
+                            event.position,
+                            &event.modifiers,
+                            cx,
+                        );
+                    }),
+                )
+                .on_mouse_up_out(
+                    gpui::MouseButton::Left,
+                    cx.listener(|this, _, _, _| this.end_drag()),
+                )
+                .on_scroll(cx.listener(|this, event: &gpui::ScrollEvent, _, cx| {
+                    let line_h = this.geometry.map_or(20., |grid| grid.line_h);
+                    let delta = f32::from(event.delta.pixel_delta(px(line_h)).y) / line_h;
+                    this.scroll_remainder += delta;
+                    let lines = this.scroll_remainder.trunc() as i32;
+                    this.scroll_remainder -= lines as f32;
+                    if lines != 0
+                        && this.report(
+                            MouseAction::Scroll {
+                                up: lines > 0,
+                                lines: lines.unsigned_abs() as usize,
+                            },
+                            event.position,
+                            &event.modifiers,
+                            cx,
+                        )
+                    {
+                        cx.stop_propagation();
+                        return;
+                    }
+                    this.buffer.update(cx, |buffer, cx| {
+                        buffer.emulator.scroll(lines);
+                        cx.notify();
+                    });
+                    cx.stop_propagation();
+                    cx.notify();
+                }))
+                .child(grid)
+                .when(self.selecting, |panel| {
+                    let owner = cx.entity().downgrade();
+                    panel.child(
+                        gpui::canvas(
+                            |_, _, _| {},
+                            move |_, _, window, _| {
+                                window.on_mouse_event(
+                                    move |event: &gpui::MouseMoveEvent, phase, _, cx| {
+                                        if phase != gpui::DispatchPhase::Capture
+                                            || event.pressed_button != Some(gpui::MouseButton::Left)
+                                        {
+                                            return;
+                                        }
+                                        let _ = owner.update(cx, |this, cx| {
+                                            if this.selecting {
+                                                this.drag_to(event.position, cx);
+                                            }
+                                        });
+                                    },
+                                );
+                            },
+                        )
+                        .absolute()
+                        .size_full(),
+                    )
+                }),
+        )
     }
 }
 
