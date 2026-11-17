@@ -73,6 +73,20 @@ impl Data {
         match *self {}
     }
 
+    pub fn set_column_width(&mut self, _: &str, _: &str, _: u32) -> Result<()> {
+        match *self {}
+    }
+
+    pub fn move_column(
+        &mut self,
+        _: &str,
+        _: &str,
+        _: Option<&str>,
+        _: Option<&str>,
+    ) -> Result<()> {
+        match *self {}
+    }
+
     pub fn write_cells(&mut self, _: &str, _: &[Edit]) -> Result<()> {
         match *self {}
     }

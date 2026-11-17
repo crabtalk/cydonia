@@ -1,6 +1,6 @@
 use crate::table::{
     self, ColType, Column,
-    store::sqlite::{self as data, Data, identity::Identity, schema::Schema},
+    store::sqlite::{self as data, Data, columns, identity::Identity, schema::Schema},
 };
 use anyhow::{Result, bail};
 
@@ -70,6 +70,7 @@ impl Data {
                 table::quote(&existing[at].name),
                 table::quote(new)
             ))?;
+            columns::rename_display(&tx, &key, &existing[at].name, new)?;
         }
         tx.commit()?;
         data::columns_of(&self.writer, &key)
@@ -136,6 +137,7 @@ impl Data {
                     table::quote(column),
                     table::quote(new.trim())
                 ))?;
+                columns::rename_display(&tx, key, column, new.trim())?;
             }
             let violations: i64 =
                 tx.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |row| {

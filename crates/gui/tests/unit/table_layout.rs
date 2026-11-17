@@ -179,6 +179,32 @@ fn dragging_a_header_resizes_its_cells_without_starting_an_edit(cx: &mut TestApp
 }
 
 #[gpui::test]
+fn dragging_a_column_persists_order_and_keeps_its_cells_together(cx: &mut TestAppContext) {
+    let (directory, _, mut cx) = open(cx, 3, 700.);
+    let first = cx.debug_bounds("table-heading-0").unwrap().center();
+    let last = cx.debug_bounds("table-heading-2").unwrap();
+    let end = point(last.right() - px(20.), first.y);
+    cx.simulate_mouse_down(first, MouseButton::Left, Modifiers::default());
+    cx.simulate_mouse_move(
+        first + point(px(12.), px(0.)),
+        Some(MouseButton::Left),
+        Modifiers::default(),
+    );
+    assert!(cx.update(|_, cx| cx.has_active_drag()));
+    settle(&mut cx);
+    cx.simulate_mouse_move(end, Some(MouseButton::Left), Modifiers::default());
+    settle(&mut cx);
+    cx.simulate_mouse_up(end, MouseButton::Left, Modifiers::default());
+    settle(&mut cx);
+    let data = Data::open(&Home::Project(directory.0.clone())).unwrap();
+    let table = data.table("stories").unwrap();
+    assert_eq!(table.column_layout.order(&table.columns), [1, 2, 0]);
+    let moved = cx.debug_bounds("table-cell-1-Field 0").unwrap();
+    let left = cx.debug_bounds("table-cell-1-Field 2").unwrap();
+    assert!(moved.left() > left.left());
+}
+
+#[gpui::test]
 fn table_sort_runs_before_paging_and_can_be_cleared(cx: &mut TestAppContext) {
     let (directory, view, mut cx) = open(cx, 1, 650.);
     let mut data = Data::open(&Home::Project(directory.0.clone())).unwrap();

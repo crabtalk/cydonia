@@ -246,11 +246,17 @@ impl Data {
         if columns.len() == 1 {
             bail!("a table keeps at least one column");
         }
-        self.writer.execute_batch(&format!(
+        let tx = self.writer.transaction()?;
+        tx.execute_batch(&format!(
             "ALTER TABLE {} DROP COLUMN {}",
             table::quote(&key),
             table::quote(&col.name)
         ))?;
+        tx.execute(
+            "DELETE FROM _cydonia_table_columns WHERE table_key = ?1 AND column_name = ?2",
+            rusqlite::params![key, col.name],
+        )?;
+        tx.commit()?;
         data::columns_of(&self.writer, &key)
     }
 }

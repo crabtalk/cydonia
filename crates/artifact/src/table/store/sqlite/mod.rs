@@ -17,6 +17,7 @@ use std::{
     time::Duration,
 };
 
+mod columns;
 mod ddl;
 mod identity;
 mod rows;
@@ -27,8 +28,6 @@ static CONNECTION: AtomicU64 = AtomicU64::new(1);
 
 const BUSY: Duration = Duration::from_secs(5);
 
-/// The one thing stored beside the data: a table's display name, which SQL has
-/// nowhere to keep. Losing a row here costs a table its name, never its rows.
 const DDL: &str = "CREATE TABLE IF NOT EXISTS _tables (
     key        TEXT PRIMARY KEY,
     name       TEXT NOT NULL,
@@ -36,6 +35,12 @@ const DDL: &str = "CREATE TABLE IF NOT EXISTS _tables (
     updated_at INTEGER,
     archived   INTEGER,
     author     TEXT
+);
+CREATE TABLE IF NOT EXISTS _cydonia_table_columns (
+    table_key TEXT NOT NULL,
+    column_name TEXT NOT NULL,
+    display TEXT NOT NULL,
+    PRIMARY KEY (table_key, column_name)
 )";
 
 pub struct Data {
@@ -190,6 +195,7 @@ impl Data {
                 .project()
                 .and_then(|project| entry::number(project, Kind::Table, key).ok()),
             columns: columns_of(&self.reader, key)?,
+            column_layout: columns::layout(&self.reader, key)?,
             rows: self.reader.query_row(
                 &format!("SELECT count(*) FROM {}", table::quote(key)),
                 [],
@@ -213,7 +219,7 @@ impl Data {
         let mut stmt = self.reader.prepare(
             "SELECT m.name FROM sqlite_master m \
              LEFT JOIN _tables t ON t.key = m.name \
-             WHERE m.type = 'table' AND m.name NOT LIKE 'sqlite_%' AND m.name <> '_tables' \
+             WHERE m.type = 'table' AND m.name NOT LIKE 'sqlite_%' AND m.name NOT IN ('_tables', '_cydonia_table_columns') \
              ORDER BY COALESCE(t.updated_at, t.created_at, 0) DESC, m.name",
         )?;
         let keys = stmt
@@ -301,6 +307,10 @@ impl Data {
                     "UPDATE _tables SET key = ?2 WHERE key = ?1",
                     [&current, &next],
                 )?;
+                tx.execute(
+                    "UPDATE _cydonia_table_columns SET table_key = ?2 WHERE table_key = ?1",
+                    [&current, &next],
+                )?;
                 if numbered {
                     tx.execute(
                         "UPDATE entry_registry.entries SET id = ?2 \
@@ -333,6 +343,10 @@ impl Data {
         let tx = self.writer.transaction()?;
         tx.execute_batch(&format!("DROP TABLE {}", table::quote(&key)))?;
         tx.execute("DELETE FROM _tables WHERE key = ?1", [&key])?;
+        tx.execute(
+            "DELETE FROM _cydonia_table_columns WHERE table_key = ?1",
+            [&key],
+        )?;
         if numbered {
             tx.execute(
                 "UPDATE entry_registry.entries SET id = NULL WHERE kind = 'table' AND id = ?1",
@@ -368,8 +382,8 @@ impl Data {
         };
         self.reader
             .query_row(
-                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?1 AND name NOT LIKE 'sqlite_%' AND name <> '_tables' \
-                 UNION ALL SELECT key FROM _tables WHERE name = ?1 COLLATE NOCASE AND key <> '_tables' AND key NOT LIKE 'sqlite_%'",
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?1 AND name NOT LIKE 'sqlite_%' AND name NOT IN ('_tables', '_cydonia_table_columns') \
+                 UNION ALL SELECT key FROM _tables WHERE name = ?1 COLLATE NOCASE AND key NOT IN ('_tables', '_cydonia_table_columns') AND key NOT LIKE 'sqlite_%'",
                 [ident],
                 |row| row.get(0),
             )

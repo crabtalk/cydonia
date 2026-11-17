@@ -4,6 +4,7 @@
 //! A table's `key` is its SQL identifier; its `name` is display text.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 pub mod rows;
 pub mod store;
@@ -69,6 +70,31 @@ pub struct Column {
     pub kind: ColType,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ColumnDisplay {
+    pub position: Option<usize>,
+    pub width: Option<u32>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ColumnLayout {
+    pub settings: BTreeMap<String, ColumnDisplay>,
+}
+
+impl ColumnLayout {
+    pub fn order(&self, columns: &[Column]) -> Vec<usize> {
+        let mut order: Vec<_> = (0..columns.len()).collect();
+        order.sort_by_key(|&ix| {
+            self.settings
+                .get(&columns[ix].name)
+                .and_then(|display| display.position)
+                .unwrap_or(usize::MAX)
+        });
+        order
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Table {
     pub number: Option<u64>,
@@ -76,6 +102,8 @@ pub struct Table {
     pub key: String,
     pub name: String,
     pub columns: Vec<Column>,
+    #[serde(skip)]
+    pub column_layout: ColumnLayout,
     pub rows: i64,
     pub created_at: i64,
     /// When it was last written in, once it has been — what the list is

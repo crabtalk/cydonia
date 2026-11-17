@@ -188,6 +188,25 @@ impl Table {
         self.edit(cx, |data, key| data.drop_column(key, column).map(|_| ()))
     }
 
+    pub fn set_column_width(
+        &mut self,
+        column: &str,
+        width: u32,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        self.edit(cx, |data, key| data.set_column_width(key, column, width))
+    }
+
+    pub fn move_column(
+        &mut self,
+        column: &str,
+        after: Option<&str>,
+        before: Option<&str>,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        self.edit(cx, |data, key| data.move_column(key, column, after, before))
+    }
+
     pub fn rename(&mut self, name: &str, cx: &mut Context<Self>) -> Result<(), String> {
         self.edit(cx, |data, key| {
             data.update(key, Some(name.trim()), None).map(|_| ())

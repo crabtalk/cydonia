@@ -1,15 +1,14 @@
 //! The table pane: one table's rows, and the sidebar row that opens it.
 //!
 use crate::{
-    data::{ColType, Column, Revision},
+    data::{ColType, Column, ColumnLayout, Revision},
     model::{
         table::{self as model, Table},
         workspace::{Entry, Member, Opening, Workspace},
     },
     view::{
         kit::{
-            add,
-            link,
+            add, link,
             menu::{self, MenuHost},
         },
         window::root::{Cydonia, NewTable},
@@ -18,13 +17,13 @@ use crate::{
 use bezel::{
     gpui::{
         self, AnyElement, App, Axis, Context, Div, DragMoveEvent, Empty, Entity, EntityId,
-        Focusable as _, KeyBinding, MouseButton, Pixels, ScrollHandle, SharedString, WeakEntity,
-        Window, actions, div, prelude::*, px,
+        Focusable as _, KeyBinding, MouseButton, Pixels, ScrollHandle, SharedString, Stateful,
+        WeakEntity, Window, actions, div, prelude::*, px,
     },
     theme::{Selection, TextStyle, Theme, Typeset},
     ui::{
         context_menu::{ContextMenu, Place},
-        icons,
+        drag, icons,
         input::{Shape, TextField},
         menu::Item,
         scroll as scrollbars, table,
@@ -34,7 +33,7 @@ use bezel::{
 };
 use markdown::{Link, Links as _};
 use serde_json::Value;
-use std::{cell::Cell as ValueCell, collections::HashMap, rc::Rc};
+use std::{cell::Cell as ValueCell, rc::Rc};
 
 /// Claimed on top of `TextField`, so `enter` files the cell here and stays a
 /// newline in every other field.
@@ -58,18 +57,35 @@ const PREVIEW_INSET: f32 = 16.;
 #[derive(Default)]
 struct Sizing {
     available: Rc<ValueCell<Pixels>>,
-    widths: HashMap<String, Pixels>,
 }
 
 impl Sizing {
-    fn columns(&self, columns: &[Column], tail: Pixels) -> (Vec<table::Column>, Pixels) {
+    fn columns(
+        &self,
+        columns: &[Column],
+        order: &[usize],
+        layout: &ColumnLayout,
+        resizing: Option<&Resizing>,
+        tail: Pixels,
+    ) -> (Vec<table::Column>, Pixels) {
         let default = ((self.available.get() - tail - px(2.)) / columns.len().max(1) as f32)
             .max(px(COLUMN_WIDTH));
         let mut width = tail + px(2.);
-        let declared = columns
+        let declared = order
             .iter()
-            .map(|column| {
-                let measure = self.widths.get(&column.name).copied().unwrap_or(default);
+            .map(|&ix| {
+                let column = &columns[ix];
+                let measure = resizing
+                    .filter(|resize| resize.column == column.name)
+                    .map(|resize| resize.current)
+                    .or_else(|| {
+                        layout
+                            .settings
+                            .get(&column.name)?
+                            .width
+                            .map(|width| px(width as f32).max(px(MIN_COLUMN_WIDTH)))
+                    })
+                    .unwrap_or(default);
                 width += measure;
                 let declared =
                     table::Column::new(column.name.clone(), table::Width::Fixed(measure));
@@ -80,12 +96,6 @@ impl Sizing {
             })
             .collect();
         (declared, width)
-    }
-
-    fn rename(&mut self, before: &str, after: String) {
-        if let Some(width) = self.widths.remove(before) {
-            self.widths.insert(after, width);
-        }
     }
 
     fn measure<V: 'static>(&self, inset: f32, cx: &Context<V>) -> AnyElement {
@@ -110,6 +120,7 @@ struct Resizing {
     column: String,
     start: Pixels,
     width: Pixels,
+    current: Pixels,
 }
 
 struct ColumnResize(EntityId);
@@ -270,7 +281,11 @@ impl Render for TablePreview {
                 .child(source.error.clone().unwrap_or_default())
                 .into_any_element();
         };
-        let (declared, width) = self.sizing.columns(&page.columns, px(0.));
+        let layout = &source.record.column_layout;
+        let order = layout.order(&page.columns);
+        let (declared, width) = self
+            .sizing
+            .columns(&page.columns, &order, layout, None, px(0.));
         let headings = declared
             .iter()
             .map(|column| table::header_cell(&theme, column, None).cursor_default());
@@ -279,8 +294,9 @@ impl Render for TablePreview {
             .min_w_full()
             .child(table::header(&theme).children(headings));
         for (n, record) in page.rows.iter().enumerate() {
-            let cells = (0..declared.len())
-                .map(|ix| {
+            let cells = order
+                .iter()
+                .map(|&ix| {
                     div()
                         .line_height(px(LINE))
                         .child(record.cells.get(ix).map(text).unwrap_or_default())
@@ -350,24 +366,24 @@ pub(crate) struct TableView {
     vertical: ScrollHandle,
     offset: i64,
     resizing: Option<Resizing>,
+    column_drag: drag::Domain<(), String>,
     root: WeakEntity<Cydonia>,
     /// What the field is attached to, and the field itself.
     pub(crate) cell: Option<Cell>,
     revision: Option<Revision>,
     original: Option<String>,
     pub(crate) cell_field: Entity<TextField>,
-    /// The column menu that is up, by column.
-    menu: ContextMenu<Self, usize>,
+    menu: ContextMenu<Self, String>,
 }
 
 impl MenuHost for TableView {
-    type Key = usize;
+    type Key = String;
 
-    fn menu(&self) -> &ContextMenu<Self, usize> {
+    fn menu(&self) -> &ContextMenu<Self, String> {
         &self.menu
     }
 
-    fn menu_mut(&mut self) -> &mut ContextMenu<Self, usize> {
+    fn menu_mut(&mut self) -> &mut ContextMenu<Self, String> {
         &mut self.menu
     }
 }
@@ -391,6 +407,9 @@ impl TableView {
             vertical: ScrollHandle::new(),
             offset: 0,
             resizing: None,
+            column_drag: drag::Domain::with_ghost(|name: &String, _, _| {
+                drag::ghost_label("table-column-ghost", name.clone()).into_any_element()
+            }),
             root,
             cell: None,
             revision: None,
@@ -482,10 +501,6 @@ impl TableView {
             Cell::Value { .. } => text,
             _ => text.trim().to_owned(),
         };
-        let renamed = match &at {
-            Cell::Head(column) if !text.is_empty() => Some((column.clone(), text.clone())),
-            _ => None,
-        };
         let entry = self.table.clone();
         let revision = self.revision;
         let saved = self.workspace.update(cx, |workspace, cx| {
@@ -500,9 +515,6 @@ impl TableView {
             })
         });
         if saved.is_ok() {
-            if let Some((before, after)) = renamed {
-                self.sizing.rename(&before, after);
-            }
             self.drop_cell(cx);
         }
         cx.notify();
@@ -614,6 +626,43 @@ impl TableView {
             }))
     }
 
+    fn finish_resize(&mut self, cx: &mut Context<Self>) {
+        let Some(resize) = self.resizing.take() else {
+            return;
+        };
+        if resize.current != resize.width {
+            let entry = self.table.clone();
+            let width = f32::from(resize.current).round() as u32;
+            let _ = self.workspace.update(cx, |workspace, cx| {
+                workspace.edit_table(&entry, cx, |table, cx| {
+                    table.set_column_width(&resize.column, width, cx)
+                })
+            });
+        }
+        cx.notify();
+    }
+
+    fn move_column(
+        &mut self,
+        event: &drag::Drop<(), String>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.commit_cell(cx) {
+            let entry = self.table.clone();
+            let _ = self.workspace.update(cx, |workspace, cx| {
+                workspace.edit_table(&entry, cx, |table, cx| {
+                    table.move_column(
+                        &event.item,
+                        event.after.as_deref(),
+                        event.before.as_deref(),
+                        cx,
+                    )
+                })
+            });
+        }
+    }
+
     /// One heading: the column's name, and the menu that changes what it is.
     fn heading(
         &self,
@@ -622,7 +671,7 @@ impl TableView {
         shape: &table::Column,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> AnyElement {
+    ) -> Stateful<Div> {
         let theme = Theme::of(cx).clone();
         let table::Width::Fixed(width) = shape.width else {
             unreachable!("table columns have measured widths");
@@ -664,6 +713,7 @@ impl TableView {
                         column: column.clone(),
                         start: event.position.x,
                         width,
+                        current: width,
                     });
                     cx.stop_propagation();
                 }),
@@ -680,9 +730,9 @@ impl TableView {
             blank.label = SharedString::default();
             return table::header_cell(&theme, &blank, None)
                 .relative()
+                .id(shape.label.clone())
                 .child(self.cell_editor(cx))
-                .child(grip)
-                .into_any_element();
+                .child(grip);
         }
         let name = shape.label.to_string();
         let menu_name = name.clone();
@@ -691,14 +741,15 @@ impl TableView {
             id.clone(),
             icons::layout::Ellipsis,
             menu::Reveal::Group("grid-head"),
-            self.menu.key() == Some(&ix),
+            self.menu.key() == Some(&name),
             cx,
         )
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(move |this, _, window, cx| {
             cx.stop_propagation();
             let menu_name = menu_name.clone();
             this.toggle_menu(
-                ix,
+                menu_name.clone(),
                 Place::Below,
                 move |_, _, _| Self::column_rows(menu_name.clone(), kind, sorted),
                 window,
@@ -706,20 +757,19 @@ impl TableView {
             );
         }));
         let button = self
-            .menu_trigger(button, ix, cx)
-            .children(self.menu_here(&ix, id, window, cx));
+            .menu_trigger(button, name.clone(), cx)
+            .children(self.menu_here(&name, id, window, cx));
         table::header_cell(&theme, shape, sorted)
             .relative()
             .debug_selector(move || format!("table-heading-{ix}"))
             .child(grip)
             .line_height(px(LINE))
-            .id(("heading", ix))
+            .id(shape.label.clone())
             .group("grid-head")
             .child(button)
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.edit_cell(Cell::Head(name.clone()), window, cx);
             }))
-            .into_any_element()
     }
 
     /// What the `···` does to a column: what it holds, and whether it stays.
@@ -895,7 +945,15 @@ impl Render for TableView {
             _ => false,
         };
 
-        let (mut declared, width) = self.sizing.columns(&columns, px(ACTIONS));
+        let layout = &self.source.read(cx).record.column_layout;
+        let order = layout.order(&columns);
+        let (mut declared, width) = self.sizing.columns(
+            &columns,
+            &order,
+            layout,
+            self.resizing.as_ref(),
+            px(ACTIONS),
+        );
         declared.push(table::Column::new("", table::Width::Flex(1.)).align_end());
 
         let head = div()
@@ -959,8 +1017,14 @@ impl Render for TableView {
 
         let count = columns.len();
         let mut headings: Vec<AnyElement> = Vec::with_capacity(count + 1);
-        for (ix, column) in columns.iter().enumerate() {
-            headings.push(self.heading(ix, column.kind, &declared[ix], window, cx));
+        for (ix, &index) in order.iter().enumerate() {
+            let column = &columns[index];
+            let heading = self.heading(ix, column.kind, &declared[ix], window, cx);
+            headings.push(
+                self.column_drag
+                    .handle(column.name.clone(), heading)
+                    .into_any_element(),
+            );
         }
         headings.push(
             table::header_cell(&theme, &declared[count], None)
@@ -981,8 +1045,8 @@ impl Render for TableView {
         let mut body = div().relative().flex().flex_col();
         for (n, (rowid, held)) in rows.iter().enumerate() {
             let mut cells: Vec<AnyElement> = Vec::with_capacity(count + 1);
-            for (ix, column) in columns.iter().enumerate() {
-                cells.push(self.value(*rowid, column, held.get(ix), cx));
+            for &ix in &order {
+                cells.push(self.value(*rowid, &columns[ix], held.get(ix), cx));
             }
             cells.push(self.row_actions(*rowid, &theme, cx));
             body = body.child(
@@ -1017,7 +1081,19 @@ impl Render for TableView {
             .w(width)
             .min_w_full()
             .max_h_full()
-            .child(table::header(&theme).flex_none().children(headings))
+            .child(
+                self.column_drag
+                    .region(
+                        "table-columns",
+                        (),
+                        Axis::Horizontal,
+                        table::header(&theme).children(headings),
+                    )
+                    .flex_none()
+                    .feedback(drag::Feedback::Indicator)
+                    .track_scroll(&self.horizontal)
+                    .on_drop(cx.listener(Self::move_column)),
+            )
             .child(
                 scrollbars::pane("table-rows", scrollbars::Axes::Vertical)
                     .min_h_0()
@@ -1045,22 +1121,18 @@ impl Render for TableView {
                 if event.drag(cx).0 != cx.entity().entity_id() {
                     return;
                 }
-                if let Some(resizing) = &this.resizing {
+                if let Some(resizing) = &mut this.resizing {
                     let width = (resizing.width + event.event.position.x - resizing.start)
                         .max(px(MIN_COLUMN_WIDTH));
-                    this.sizing.widths.insert(resizing.column.clone(), width);
+                    resizing.current = width;
                     cx.notify();
                 }
             }))
             .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                if this.resizing.take().is_some() {
-                    cx.notify();
-                }
+                this.finish_resize(cx);
             }))
             .on_mouse_up_out(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                if this.resizing.take().is_some() {
-                    cx.notify();
-                }
+                this.finish_resize(cx);
             }))
             .on_action(cx.listener(Self::commit_cell_action))
             .on_action(cx.listener(Self::dismiss_cell))

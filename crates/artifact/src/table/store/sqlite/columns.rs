@@ -1,0 +1,101 @@
+use crate::table::{
+    ColumnDisplay, ColumnLayout,
+    store::sqlite::{self as data, Data},
+};
+use anyhow::{Result, bail};
+use rusqlite::{Connection, TransactionBehavior, params};
+
+pub(crate) fn layout(db: &Connection, key: &str) -> Result<ColumnLayout> {
+    let mut query =
+        db.prepare("SELECT column_name, display FROM _cydonia_table_columns WHERE table_key = ?1")?;
+    let rows = query.query_map([key], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    let settings = rows
+        .map(|row| {
+            let (name, settings) = row?;
+            Ok((name, serde_json::from_str(&settings)?))
+        })
+        .collect::<Result<_>>()?;
+    Ok(ColumnLayout { settings })
+}
+
+pub(crate) fn rename_display(db: &Connection, key: &str, before: &str, after: &str) -> Result<()> {
+    db.execute(
+        "UPDATE _cydonia_table_columns SET column_name = ?3 WHERE table_key = ?1 AND column_name = ?2",
+        params![key, before, after],
+    )?;
+    Ok(())
+}
+
+impl Data {
+    pub fn set_column_width(&mut self, table: &str, column: &str, width: u32) -> Result<()> {
+        let key = self.resolve(table)?;
+        let tx = self
+            .writer
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if !data::columns_of(&tx, &key)?
+            .iter()
+            .any(|held| held.name == column)
+        {
+            bail!("no column {column} on {key}");
+        }
+        let mut settings = layout(&tx, &key)?
+            .settings
+            .remove(column)
+            .unwrap_or_default();
+        settings.width = Some(width);
+        write_display(&tx, &key, column, &settings)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn move_column(
+        &mut self,
+        table: &str,
+        column: &str,
+        after: Option<&str>,
+        before: Option<&str>,
+    ) -> Result<()> {
+        let key = self.resolve(table)?;
+        let tx = self
+            .writer
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut layout = layout(&tx, &key)?;
+        let columns = data::columns_of(&tx, &key)?;
+        let mut names: Vec<_> = layout
+            .order(&columns)
+            .into_iter()
+            .map(|ix| columns[ix].name.as_str())
+            .collect();
+        let Some(index) = names.iter().position(|name| *name == column) else {
+            bail!("no column {column} on {key}");
+        };
+        let moving = names.remove(index);
+        let target = before
+            .and_then(|name| names.iter().position(|held| *held == name))
+            .or_else(|| {
+                after.and_then(|name| names.iter().position(|held| *held == name).map(|ix| ix + 1))
+            });
+        let Some(target) = target else {
+            return Ok(());
+        };
+        names.insert(target, moving);
+        for (position, name) in names.into_iter().enumerate() {
+            let display = layout.settings.entry(name.to_owned()).or_default();
+            display.position = Some(position);
+            write_display(&tx, &key, name, display)?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+}
+
+fn write_display(db: &Connection, key: &str, name: &str, display: &ColumnDisplay) -> Result<()> {
+    db.execute(
+        "INSERT INTO _cydonia_table_columns (table_key, column_name, display) VALUES (?1, ?2, ?3)
+         ON CONFLICT(table_key, column_name) DO UPDATE SET display = excluded.display",
+        params![key, name, serde_json::to_string(display)?],
+    )?;
+    Ok(())
+}
