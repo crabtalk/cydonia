@@ -575,6 +575,33 @@ impl Cydonia {
                 return;
             }
         }
+        if let Showing::Table(key) = showing {
+            let table = Entry {
+                project: *project,
+                kind: Kind::Table,
+                id: key.clone(),
+            };
+            if archived
+                && !self.table_views(cx).into_iter().all(|view| {
+                    view.read(cx).table != table || view.update(cx, |view, cx| view.commit_cell(cx))
+                })
+            {
+                let error = self
+                    .workspace
+                    .read(cx)
+                    .table_entity(&table)
+                    .and_then(|source| source.read(cx).error.clone())
+                    .unwrap_or_else(|| "The table has unsaved changes.".into());
+                self.show_error("Cannot archive table".into(), error, window, cx);
+                return;
+            }
+            if let Err(error) = self.workspace.update(cx, |workspace, cx| {
+                workspace.archive_table(&table, archived, cx)
+            }) {
+                self.show_error("Cannot archive table".into(), error, window, cx);
+                return;
+            }
+        }
         // Putting an entry away takes it out of the places that hold it up:
         // the pins at the top of the list, whatever space arranges it, and its
         // tab in the window's strip.
@@ -608,7 +635,7 @@ impl Cydonia {
                     workspace.archive_article(&path, archived, cx);
                 }
             }
-            Showing::Table(key) => workspace.archive_table(key, archived, cx),
+            Showing::Table(_) => {}
             Showing::Canvas(_) => {}
         });
         // A pane closed in a space has already handed the focus on.

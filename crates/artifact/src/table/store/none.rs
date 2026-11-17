@@ -25,6 +25,10 @@ impl Data {
         match *self {}
     }
 
+    pub fn table(&self, _: &str) -> Result<Table> {
+        match *self {}
+    }
+
     pub fn list(&self) -> Result<Vec<Table>> {
         match *self {}
     }

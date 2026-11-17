@@ -215,7 +215,9 @@ impl Workspace {
             }
             Kind::Table => {
                 project.table = at;
-                project.reload_page();
+                if let Some(ix) = at {
+                    project.load_table(ix, cx);
+                }
             }
             Kind::Canvas => project.canvas = at,
             Kind::App => {}
@@ -297,14 +299,6 @@ impl Workspace {
                 if !(active && kind == Some(Kind::Article) && project.article == Some(at)) {
                     article.unload(cx);
                 }
-            }
-            if !(active && kind == Some(Kind::Table))
-                && project
-                    .table
-                    .and_then(|at| project.tables.get(at))
-                    .is_some_and(|table| table.archived)
-            {
-                project.pages.clear();
             }
         }
     }

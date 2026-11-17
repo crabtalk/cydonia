@@ -64,14 +64,14 @@ impl From<&str> for ColType {
 /// A column's name is its SQL identifier — quoted everywhere, so it stays free
 /// text the way a spreadsheet header is. Only tables carry a key, because only
 /// a table is addressed in prose after it is renamed.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Column {
     pub name: String,
     #[serde(rename = "type")]
     pub kind: ColType,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Table {
     pub number: Option<u64>,
     /// What `FROM` takes.

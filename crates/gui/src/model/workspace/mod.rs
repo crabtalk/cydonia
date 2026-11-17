@@ -8,22 +8,19 @@
 //! Everything [`crate::model::state`] persists lives here and nowhere else, which is
 //! why [`Workspace::save`] can take no arguments.
 
+use crate::model::{
+    article::{self, Article},
+    fonts,
+    identity::{self, Identity},
+    project::{Project, ProjectId, ProjectIds},
+    session::ChatSession,
+    settings::{self, Feature, Settings},
+    skills::Skills,
+    state::{self, State},
+    watch::{self, Watch},
+};
 #[cfg(feature = "desktop")]
 use crate::{agent, model::update};
-use crate::{
-    data::{ColType, Column, Data, Edit, Page, Table},
-    model::{
-        article::{self, Article},
-        fonts,
-        identity::{self, Identity},
-        project::{Project, ProjectId, ProjectIds},
-        session::ChatSession,
-        settings::{self, Feature, Settings},
-        skills::Skills,
-        state::{self, State},
-        watch::{self, Watch},
-    },
-};
 use artifact::{board::Board, session::mode::Mode};
 use bezel::{
     gpui::{App, AppContext as _, Context, Entity, EntityId, EventEmitter},
@@ -68,12 +65,6 @@ mod projects;
 pub mod references;
 mod sessions;
 mod tables;
-
-/// What a table is called before it is named.
-const UNTITLED: &str = "Untitled";
-
-/// And a column.
-const COLUMN: &str = "Column";
 
 /// Commands the palette remembers running.
 const RECENT_COMMANDS: usize = 20;

@@ -102,7 +102,7 @@ impl Data {
         }
         let tx = self.writer.transaction()?;
         for edit in edits {
-            tx.execute(
+            let changed = tx.execute(
                 &format!(
                     "UPDATE {} SET {} = ?1 WHERE rowid = ?2",
                     table::quote(&key),
@@ -110,6 +110,9 @@ impl Data {
                 ),
                 rusqlite::params![data::bind(&edit.value), edit.rowid],
             )?;
+            if changed != 1 {
+                bail!("no row {} on {key}", edit.rowid);
+            }
         }
         Ok(tx.commit()?)
     }

@@ -6,10 +6,7 @@
 
 use super::Tab;
 use crate::{
-    model::{
-        project::ProjectId,
-        workspace::{Entry as SpaceEntry, Member, Opening, Showing, references::Part},
-    },
+    model::workspace::{Entry as SpaceEntry, Member, Opening, Showing, references::Part},
     view::{
         board::{BoardView, DrawerAt, PaneState},
         kit::watch::Watch,
@@ -625,27 +622,6 @@ impl Cydonia {
         }
     }
 
-    /// Hold the rows of every table a drawer shows, so its preview has a page
-    /// to draw — see [`crate::model::project::Project::hold_pages`].
-    pub(crate) fn hold_drawn_tables(&mut self, cx: &mut Context<Self>) {
-        let held: Vec<(ProjectId, String)> = {
-            let workspace = self.workspace.read(cx);
-            self.leaves
-                .iter()
-                .filter_map(|pane| pane.read(cx).drawer.as_ref()?.entry().cloned())
-                .filter_map(|entry| {
-                    let resolved = workspace.resolve(&entry.reference, cx).ok()?;
-                    match resolved.showing {
-                        Showing::Table(key) => Some((resolved.project, key)),
-                        _ => None,
-                    }
-                })
-                .collect()
-        };
-        self.workspace
-            .update(cx, |workspace, _| workspace.hold_pages(&held));
-    }
-
     /// Open the entry `reference` names in `on`'s drawer, or put the drawer
     /// away where it already shows it. A card opens as its board opens it.
     pub(crate) fn peek(
@@ -876,7 +852,7 @@ impl Cydonia {
                         Row::Entry {
                             showing: Showing::Table(_),
                             ..
-                        } => self.table_peek(project, at, cx),
+                        } => self.table_peek(project, at, window, cx),
                         _ => self.article_peek(project, at, window, cx),
                     })
                     .unwrap_or_else(|| self.entry_row(named, cx));

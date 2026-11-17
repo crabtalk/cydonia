@@ -29,6 +29,7 @@ pub mod state;
 #[cfg(feature = "desktop")]
 pub mod statistics;
 pub mod store;
+pub mod table;
 #[cfg(feature = "desktop")]
 pub mod update;
 pub mod version;

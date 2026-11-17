@@ -1,11 +1,11 @@
 //! The table pane: one table's rows, and the sidebar row that opens it.
 //!
-//! Every edit runs through the one field, the way the board's cards do — a
-//! field per cell would mint an entity for every value on screen.
-
 use crate::{
     data::ColType,
-    model::workspace::{Entry, Member, Opening, Workspace},
+    model::{
+        table::Table,
+        workspace::{Entry, Member, Opening, Workspace},
+    },
     view::{
         kit::{
             add,
@@ -66,12 +66,12 @@ pub fn field(cx: &mut App) -> Entity<TextField> {
 }
 
 /// What the field is attached to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Cell {
     /// A value being written, in the row with this id.
-    Value { rowid: i64, column: usize },
+    Value { rowid: i64, column: String },
     /// A column being renamed.
-    Head(usize),
+    Head(String),
     /// The table being renamed.
     Name,
 }
@@ -145,26 +145,51 @@ impl Cydonia {
         }
     }
 
-    /// Let go of every table view's open field: a re-read moved what it was
-    /// attached to, which is addressed by where it sits.
-    pub(crate) fn drop_cells(&mut self, cx: &mut Context<Self>) {
-        for view in self.table_views(cx) {
-            view.update(cx, |view, cx| view.drop_cell(cx));
-        }
-    }
-
     // ── chrome ───────────────────────────────────────────────────
 
-    /// A table's rows, read only — what a drawer shows of one. Nothing until
-    /// its page has been read; see [`Cydonia::hold_drawn_tables`].
     pub(crate) fn table_peek(
         &self,
         project: usize,
         at: usize,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
+        let source = self
+            .workspace
+            .read(cx)
+            .projects
+            .get(project)?
+            .tables
+            .get(at)?
+            .table
+            .clone();
+        let view = window.use_keyed_state(
+            SharedString::from(format!("table-peek-{:?}", source.entity_id())),
+            cx,
+            move |_, cx| {
+                cx.observe(&source, |_, _, cx| cx.notify()).detach();
+                source.update(cx, |table, cx| table.load(cx));
+                TablePreview { source }
+            },
+        );
+        Some(view.into_any_element())
+    }
+}
+
+struct TablePreview {
+    source: Entity<Table>,
+}
+
+impl Render for TablePreview {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::of(cx).clone();
-        let page = self.workspace.read(cx).page_in(project, at)?;
+        let source = self.source.read(cx);
+        let Some(page) = source.page.as_ref() else {
+            return div()
+                .text_color(theme.danger)
+                .child(source.error.clone().unwrap_or_default())
+                .into_any_element();
+        };
         let declared: Vec<table::Column> = page
             .columns
             .iter()
@@ -201,26 +226,24 @@ impl Cydonia {
             true => format!("{} rows", page.total),
             false => format!("{} of {} rows", page.rows.len(), page.total),
         };
-        Some(
-            div()
-                .id("table-peek")
-                .flex_1()
-                .min_h_0()
-                .map(|el| scrollbars::scrolls(el, scrollbars::Axes::Vertical))
-                .px(px(16.))
-                .py(px(12.))
-                .flex()
-                .flex_col()
-                .gap(px(8.))
-                .child(body)
-                .child(
-                    div()
-                        .text_style(TextStyle::Subheadline)
-                        .text_color(theme.text_faint)
-                        .child(count),
-                )
-                .into_any_element(),
-        )
+        div()
+            .id("table-peek")
+            .flex_1()
+            .min_h_0()
+            .map(|el| scrollbars::scrolls(el, scrollbars::Axes::Vertical))
+            .px(px(16.))
+            .py(px(12.))
+            .flex()
+            .flex_col()
+            .gap(px(8.))
+            .child(body)
+            .child(
+                div()
+                    .text_style(TextStyle::Subheadline)
+                    .text_color(theme.text_faint)
+                    .child(count),
+            )
+            .into_any_element()
     }
 }
 
@@ -230,6 +253,7 @@ pub(crate) struct TableView {
     /// The table, as the space names it.
     pub(crate) table: Entry,
     workspace: Entity<Workspace>,
+    source: Entity<Table>,
     root: WeakEntity<Cydonia>,
     /// What the field is attached to, and the field itself.
     pub(crate) cell: Option<Cell>,
@@ -255,11 +279,15 @@ impl TableView {
         table: Entry,
         workspace: Entity<Workspace>,
         root: WeakEntity<Cydonia>,
+        source: Entity<Table>,
         cx: &mut Context<Self>,
     ) -> Self {
+        cx.observe(&source, |_, _, cx| cx.notify()).detach();
+        source.update(cx, |table, cx| table.load(cx));
         Self {
             table,
             workspace,
+            source,
             root,
             cell: None,
             cell_field: field(cx),
@@ -267,18 +295,8 @@ impl TableView {
         }
     }
 
-    /// The table's key, while it is open.
-    fn key(&self, cx: &App) -> Option<String> {
-        self.workspace
-            .read(cx)
-            .table_of(Some(&self.table.clone().into()), cx)
-            .map(|table| table.key.clone())
-    }
-
-    /// The rows the view is showing.
     fn page<'a>(&self, cx: &'a App) -> Option<&'a crate::data::Page> {
-        let key = self.key(cx)?;
-        self.workspace.read(cx).page_at(&key)
+        self.source.read(cx).page.as_ref()
     }
 
     /// Point the field at `at`, filing whatever any pane had open first — so
@@ -287,29 +305,30 @@ impl TableView {
         let (root, view) = (self.root.clone(), cx.entity());
         window.defer(cx, move |window, cx| {
             let _ = root.update(cx, |root, cx| root.commit(cx));
-            view.update(cx, |view, cx| view.start_edit(at, window, cx));
+            view.update(cx, |view, cx| {
+                if view.cell.is_none() {
+                    view.start_edit(at, window, cx);
+                }
+            });
         });
     }
 
     fn start_edit(&mut self, at: Cell, window: &mut Window, cx: &mut Context<Self>) {
-        let text = match at {
+        let text = match &at {
             Cell::Value { rowid, column } => self
                 .page(cx)
-                .and_then(|page| page.rows.iter().find(|record| record.rowid == rowid))
-                .and_then(|record| record.cells.get(column))
+                .and_then(|page| {
+                    let ix = page.columns.iter().position(|held| held.name == *column)?;
+                    page.rows
+                        .iter()
+                        .find(|record| record.rowid == *rowid)?
+                        .cells
+                        .get(ix)
+                })
                 .map(text)
                 .unwrap_or_default(),
-            Cell::Head(ix) => self
-                .page(cx)
-                .and_then(|page| page.columns.get(ix))
-                .map(|column| column.name.clone())
-                .unwrap_or_default(),
-            Cell::Name => self
-                .workspace
-                .read(cx)
-                .table_of(Some(&self.table.clone().into()), cx)
-                .map(|table| table.name.clone())
-                .unwrap_or_default(),
+            Cell::Head(name) => name.clone(),
+            Cell::Name => self.source.read(cx).record.name.clone(),
         };
         self.cell_field
             .update(cx, |field, cx| field.set_content(text, cx));
@@ -318,30 +337,28 @@ impl TableView {
         cx.notify();
     }
 
-    /// File whatever the field is attached to.
-    ///
-    /// A heading and a title cannot be emptied — a column with no name is not
-    /// addressable and a table with none has nothing to show in the sidebar — so
-    /// an empty one is a cancel. A *cell* may be emptied: that is how a value
-    /// is cleared.
-    pub(crate) fn commit_cell(&mut self, cx: &mut Context<Self>) {
-        let Some(at) = self.cell.take() else {
-            return;
+    pub(crate) fn commit_cell(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(at) = self.cell.clone() else {
+            return true;
         };
         let text = self.cell_field.read(cx).content().trim().to_owned();
-        self.cell_field.update(cx, |field, cx| field.clear(cx));
-        let Some(key) = self.key(cx) else {
-            return;
-        };
-        self.workspace.update(cx, |workspace, cx| match at {
-            Cell::Value { rowid, column } => workspace.write_cell(&key, rowid, column, text, cx),
-            Cell::Head(ix) if !text.is_empty() => {
-                workspace.write_column(&key, ix, None, Some(text), cx);
-            }
-            Cell::Name if !text.is_empty() => workspace.rename_table(&key, text, cx),
-            _ => {}
+        let entry = self.table.clone();
+        let saved = self.workspace.update(cx, |workspace, cx| {
+            workspace.edit_table(&entry, cx, |table, cx| match at {
+                Cell::Value { rowid, column } => table.write_cell(rowid, column, text, cx),
+                Cell::Head(column) if !text.is_empty() => {
+                    table.write_column(&column, None, Some(&text), cx)
+                }
+                Cell::Name if !text.is_empty() => table.rename(&text, cx),
+                _ => Ok(()),
+            })
         });
+        if saved.is_ok() {
+            self.cell = None;
+            self.cell_field.update(cx, |field, cx| field.clear(cx));
+        }
         cx.notify();
+        saved.is_ok()
     }
 
     /// Let go of the field without filing it.
@@ -360,54 +377,74 @@ impl TableView {
         self.drop_cell(cx);
     }
 
-    /// A row, and the caret in the first cell of it — an empty row you have to
-    /// go and click is two actions for one intent.
     fn add_row(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.commit_cell(cx);
-        let Some(key) = self.key(cx) else {
+        if !self.commit_cell(cx) {
             return;
-        };
-        let rowid = self
-            .workspace
-            .update(cx, |workspace, cx| workspace.add_row(&key, cx));
-        if let Some(rowid) = rowid {
-            self.edit_cell(Cell::Value { rowid, column: 0 }, window, cx);
+        }
+        let entry = self.table.clone();
+        let rowid = self.workspace.update(cx, |workspace, cx| {
+            workspace.edit_table(&entry, cx, |table, cx| table.add_row(cx))
+        });
+        if let Ok(rowid) = rowid
+            && let Some(column) = self
+                .source
+                .read(cx)
+                .record
+                .columns
+                .first()
+                .map(|column| column.name.clone())
+        {
+            self.edit_cell(
+                Cell::Value {
+                    rowid,
+                    column: column.clone(),
+                },
+                window,
+                cx,
+            );
         }
     }
 
     fn delete_row(&mut self, rowid: i64, cx: &mut Context<Self>) {
-        self.commit_cell(cx);
-        let Some(key) = self.key(cx) else {
+        if !self.commit_cell(cx) {
             return;
-        };
-        self.workspace
-            .update(cx, |workspace, cx| workspace.delete_row(&key, rowid, cx));
-    }
-
-    fn add_column(&mut self, cx: &mut Context<Self>) {
-        self.commit_cell(cx);
-        let Some(key) = self.key(cx) else {
-            return;
-        };
-        self.workspace
-            .update(cx, |workspace, cx| workspace.add_column(&key, cx));
-    }
-
-    fn retype_column(&mut self, at: usize, kind: ColType, cx: &mut Context<Self>) {
-        let Some(key) = self.key(cx) else {
-            return;
-        };
-        self.workspace.update(cx, |workspace, cx| {
-            workspace.write_column(&key, at, Some(kind), None, cx)
+        }
+        let entry = self.table.clone();
+        let _ = self.workspace.update(cx, |workspace, cx| {
+            workspace.edit_table(&entry, cx, |table, cx| table.delete_row(rowid, cx))
         });
     }
 
-    fn delete_column(&mut self, at: usize, cx: &mut Context<Self>) {
-        let Some(key) = self.key(cx) else {
+    fn add_column(&mut self, cx: &mut Context<Self>) {
+        if !self.commit_cell(cx) {
             return;
-        };
-        self.workspace
-            .update(cx, |workspace, cx| workspace.delete_column(&key, at, cx));
+        }
+        let entry = self.table.clone();
+        let _ = self.workspace.update(cx, |workspace, cx| {
+            workspace.edit_table(&entry, cx, |table, cx| table.add_column(cx))
+        });
+    }
+
+    fn retype_column(&mut self, column: &str, kind: ColType, cx: &mut Context<Self>) {
+        if !self.commit_cell(cx) {
+            return;
+        }
+        let entry = self.table.clone();
+        let _ = self.workspace.update(cx, |workspace, cx| {
+            workspace.edit_table(&entry, cx, |table, cx| {
+                table.write_column(column, Some(kind), None, cx)
+            })
+        });
+    }
+
+    fn delete_column(&mut self, column: &str, cx: &mut Context<Self>) {
+        if !self.commit_cell(cx) {
+            return;
+        }
+        let entry = self.table.clone();
+        let _ = self.workspace.update(cx, |workspace, cx| {
+            workspace.edit_table(&entry, cx, |table, cx| table.delete_column(column, cx))
+        });
     }
 
     /// The field, wired so a click anywhere else files it.
@@ -419,7 +456,9 @@ impl TableView {
         div()
             .w_full()
             .child(self.cell_field.clone())
-            .on_mouse_down_out(cx.listener(|this, _, _, cx| this.commit_cell(cx)))
+            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                this.commit_cell(cx);
+            }))
     }
 
     /// One heading: the column's name, and the menu that changes what it is.
@@ -432,7 +471,7 @@ impl TableView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        if self.cell == Some(Cell::Head(ix)) {
+        if self.cell == Some(Cell::Head(shape.label.to_string())) {
             // `header_cell` paints the label itself, so the shape handed to it
             // while editing carries none — otherwise the old name sits beside
             // the field that is rewriting it.
@@ -442,6 +481,8 @@ impl TableView {
                 .child(self.cell_editor(cx))
                 .into_any_element();
         }
+        let name = shape.label.to_string();
+        let menu_name = name.clone();
         let id = SharedString::from(format!("column-menu-{ix}"));
         let button = menu::button(
             id.clone(),
@@ -452,10 +493,11 @@ impl TableView {
         )
         .on_click(cx.listener(move |this, _, window, cx| {
             cx.stop_propagation();
+            let menu_name = menu_name.clone();
             this.toggle_menu(
                 ix,
                 Place::Below,
-                move |_, _, _| Self::column_rows(ix, kind),
+                move |_, _, _| Self::column_rows(menu_name.clone(), kind),
                 window,
                 cx,
             );
@@ -469,28 +511,29 @@ impl TableView {
             .group("grid-head")
             .child(button)
             .on_click(cx.listener(move |this, _, window, cx| {
-                this.edit_cell(Cell::Head(ix), window, cx);
+                this.edit_cell(Cell::Head(name.clone()), window, cx);
             }))
             .into_any_element()
     }
 
     /// What the `···` does to a column: what it holds, and whether it stays.
-    fn column_rows(ix: usize, kind: ColType) -> Vec<(Item, menu::Act<Self>)> {
+    fn column_rows(column: String, kind: ColType) -> Vec<(Item, menu::Act<Self>)> {
         let mut rows: Vec<_> = ColType::ALL
             .iter()
             .map(|declared| {
                 let declared = *declared;
+                let column = column.clone();
                 menu::row::<Self>(
                     Item::action(declared.name())
                         .with_icon(glyph(declared))
                         .checked(declared == kind),
-                    move |this, _, cx| this.retype_column(ix, declared, cx),
+                    move |this, _, cx| this.retype_column(&column, declared, cx),
                 )
             })
             .collect();
         rows.push(menu::row::<Self>(
             Item::action("Delete column").with_icon(icons::files::Trash),
-            move |this, _, cx| this.delete_column(ix, cx),
+            move |this, _, cx| this.delete_column(&column, cx),
         ));
         rows
     }
@@ -499,14 +542,20 @@ impl TableView {
     fn value(
         &self,
         rowid: i64,
-        column: usize,
+        column: &str,
         held: Option<&Value>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        if self.cell == Some(Cell::Value { rowid, column }) {
+        if self.cell
+            == Some(Cell::Value {
+                rowid,
+                column: column.to_owned(),
+            })
+        {
             return self.cell_editor(cx).into_any_element();
         }
+        let column = column.to_owned();
         div()
             .id(SharedString::from(format!("cell-{rowid}-{column}")))
             .w_full()
@@ -518,7 +567,14 @@ impl TableView {
             .text_color(theme.text)
             .child(held.map(text).unwrap_or_default())
             .on_click(cx.listener(move |this, _, window, cx| {
-                this.edit_cell(Cell::Value { rowid, column }, window, cx);
+                this.edit_cell(
+                    Cell::Value {
+                        rowid,
+                        column: column.clone(),
+                    },
+                    window,
+                    cx,
+                );
             }))
             .into_any_element()
     }
@@ -557,7 +613,28 @@ impl Render for TableView {
                 page.total,
             )
         }) else {
-            return div().flex_1().into_any_element();
+            return div()
+                .flex_1()
+                .px(px(24.))
+                .py(px(20.))
+                .text_color(theme.danger)
+                .child(
+                    self.source
+                        .read(cx)
+                        .error
+                        .clone()
+                        .unwrap_or_else(|| "Table could not be loaded".into()),
+                )
+                .into_any_element();
+        };
+
+        let detached = match &self.cell {
+            Some(Cell::Value { rowid, column }) => {
+                !rows.iter().any(|(id, _)| id == rowid)
+                    || !columns.iter().any(|held| held.name == *column)
+            }
+            Some(Cell::Head(column)) => !columns.iter().any(|held| held.name == *column),
+            _ => false,
         };
 
         let mut declared: Vec<table::Column> = columns
@@ -633,8 +710,8 @@ impl Render for TableView {
         let mut body = table::table(&theme).child(table::header(&theme).children(headings));
         for (n, (rowid, held)) in rows.iter().enumerate() {
             let mut cells: Vec<AnyElement> = Vec::with_capacity(count + 1);
-            for ix in 0..count {
-                cells.push(self.value(*rowid, ix, held.get(ix), cx));
+            for (ix, column) in columns.iter().enumerate() {
+                cells.push(self.value(*rowid, &column.name, held.get(ix), cx));
             }
             cells.push(self.row_actions(*rowid, &theme, cx));
             body = body.child(
@@ -650,6 +727,21 @@ impl Render for TableView {
             .on_action(cx.listener(Self::commit_cell_action))
             .on_action(cx.listener(Self::dismiss_cell))
             .child(head)
+            .when(detached, |element| element.child(
+                div().px(px(24.)).pb(px(12.)).flex().flex_col().gap(px(8.))
+                    .child(div().text_style(TextStyle::Callout).text_color(theme.danger).child("This cell is no longer shown. Copy your text or press Escape to discard it."))
+                    .child(self.cell_editor(cx))
+            ))
+            .when_some(self.source.read(cx).error.clone(), |element, error| {
+                element.child(
+                    div()
+                        .px(px(24.))
+                        .pb(px(12.))
+                        .text_style(TextStyle::Callout)
+                        .text_color(theme.danger)
+                        .child(error),
+                )
+            })
             .child(
                 div()
                     .id("table-body")
@@ -695,3 +787,7 @@ pub(crate) fn text(value: &Value) -> String {
         other => other.to_string(),
     }
 }
+
+#[cfg(all(test, feature = "desktop"))]
+#[path = "../../tests/unit/table_editing.rs"]
+mod editing_tests;

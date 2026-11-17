@@ -17,7 +17,7 @@ pub struct Rows {
 }
 
 /// One window of a table, with everything a grid needs to draw it.
-#[derive(Debug, Serialize)]
+#[derive(Debug, PartialEq, Serialize)]
 pub struct Page {
     pub key: String,
     pub name: String,
@@ -30,7 +30,7 @@ pub struct Page {
     pub rows: Vec<Row>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, PartialEq, Serialize)]
 pub struct Row {
     pub rowid: i64,
     /// In `columns` order.

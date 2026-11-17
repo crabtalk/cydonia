@@ -700,37 +700,8 @@ impl Workspace {
         self.article_in(project, ix)
     }
 
-    /// The table one pane is showing, the way [`Self::board_of`] answers for a
-    /// board.
-    pub fn table_of(&self, member: Option<&Member>, cx: &App) -> Option<&Table> {
-        let Some(member) = member else {
-            return self.active_table();
-        };
-        if member.kind() != Kind::Table {
-            return None;
-        }
-        let (project, ix) = self.located_member(member, cx)?;
-        self.table_in(project, ix)
-    }
-
     pub fn article_in(&self, project: usize, ix: usize) -> Option<&Article> {
         self.projects.get(project)?.articles.get(ix)
-    }
-
-    pub fn table_in(&self, project: usize, ix: usize) -> Option<&Table> {
-        if !self.settings.features.tables {
-            return None;
-        }
-        self.projects.get(project)?.tables.get(ix)
-    }
-
-    /// The rows a table pane is on.
-    pub fn page_in(&self, project: usize, ix: usize) -> Option<&Page> {
-        if !self.settings.features.tables {
-            return None;
-        }
-        let open = self.projects.get(project)?;
-        open.pages.get(&open.tables.get(ix)?.key)
     }
 
     /// Put the project's selection on what a pane is showing.
@@ -757,7 +728,7 @@ impl Workspace {
             Showing::Table(key) => {
                 if let Some(ix) = open.table_ix(key) {
                     open.table = Some(ix);
-                    open.reload_page();
+                    open.load_table(ix, cx);
                 }
             }
         }

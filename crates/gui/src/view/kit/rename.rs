@@ -15,6 +15,7 @@ use bezel::{
         self, App, Context, Entity, EventEmitter, FocusHandle, Focusable, KeyBinding, MouseButton,
         Subscription, Window, actions, div, prelude::*,
     },
+    theme::{TextStyle, Theme, Typeset},
     ui::input::{Case, TextField},
 };
 
@@ -51,7 +52,7 @@ pub(crate) enum NameEvent {
 pub(crate) enum Renaming {
     Session(u64),
     Canvas(Entry),
-    Table(String),
+    Table(Entry),
     /// A space, by its id — auto-named `space-1` until someone gives it a
     /// name of their own.
     Space(String),
@@ -68,9 +69,13 @@ impl Renaming {
                 ..
             } => Some(Self::Session(*id)),
             Row::Entry {
+                project,
                 showing: Showing::Table(key),
-                ..
-            } => Some(Self::Table(key.clone())),
+            } => Some(Self::Table(Entry {
+                project: *project,
+                kind: Kind::Table,
+                id: key.clone(),
+            })),
             Row::Entry {
                 project,
                 showing: Showing::Canvas(id),
@@ -102,12 +107,9 @@ impl Renaming {
                 .canvas_entity(entry)
                 .map(|canvas| canvas.read(cx).record.label().to_owned())
                 .unwrap_or_default(),
-            Self::Table(key) => workspace
-                .projects
-                .iter()
-                .flat_map(|open| open.tables.iter())
-                .find(|table| table.key == *key)
-                .map(|table| table.name.clone())
+            Self::Table(entry) => workspace
+                .table_entity(entry)
+                .map(|table| table.read(cx).record.name.clone())
                 .unwrap_or_default(),
             Self::Space(id) => workspace
                 .space_by_id(id)
@@ -126,20 +128,19 @@ impl Renaming {
         name: String,
         workspace: &mut Workspace,
         cx: &mut Context<Workspace>,
-    ) {
+    ) -> Result<(), String> {
         match self {
             Self::Session(id) => workspace.rename_session(id, name, cx),
             Self::Canvas(entry) => workspace.rename_canvas(&entry, name, cx),
-            Self::Table(key) => workspace.rename_table(&key, name, cx),
+            Self::Table(entry) => return workspace.rename_table(&entry, name, cx),
             Self::Space(id) => workspace.rename_space(&id, name, cx),
             Self::Agent(id) => workspace.rename_identity(&id, name, cx),
         }
+        Ok(())
     }
 }
 
-/// A view's name field and what it renames while it is up. A name kept is
-/// committed to the workspace; kept or dropped, the field goes and the view
-/// is notified.
+/// A view's name field and what it renames while it is up.
 pub(crate) struct Rename {
     pub(crate) field: Entity<NameField>,
     pub(crate) what: Option<Renaming>,
@@ -157,15 +158,24 @@ impl Rename {
         let field = cx.new(NameField::new);
         let named = cx.subscribe(&field, move |this, _, event: &NameEvent, cx| {
             let rename = held(this);
-            let Some(what) = rename.what.take() else {
+            let Some(what) = rename.what.clone() else {
                 return;
             };
-            if let NameEvent::Named(name) = event {
-                let name = name.clone();
-                rename
-                    .workspace
-                    .clone()
-                    .update(cx, |workspace, cx| what.commit(name, workspace, cx));
+            match event {
+                NameEvent::Named(name) => {
+                    let result = rename
+                        .workspace
+                        .clone()
+                        .update(cx, |workspace, cx| what.commit(name.clone(), workspace, cx));
+                    match result {
+                        Ok(()) => rename.what = None,
+                        Err(error) => rename.field.update(cx, |field, cx| {
+                            field.error = Some(error);
+                            cx.notify();
+                        }),
+                    }
+                }
+                NameEvent::Dismissed => rename.what = None,
             }
             cx.notify();
         });
@@ -188,6 +198,7 @@ impl Rename {
 
 /// The field a name is typed in.
 pub(crate) struct NameField {
+    error: Option<String>,
     field: Entity<TextField>,
 }
 
@@ -202,6 +213,7 @@ impl Focusable for NameField {
 impl NameField {
     pub(crate) fn new(cx: &mut Context<Self>) -> Self {
         Self {
+            error: None,
             field: cx.new(|cx| {
                 TextField::new(cx)
                     .with_frame(false)
@@ -219,6 +231,7 @@ impl NameField {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.error = None;
         self.field.update(cx, |field, cx| {
             field.set_case(case);
             field.set_content(label, cx);
@@ -251,5 +264,13 @@ impl Render for NameField {
             .on_action(cx.listener(|this, _: &CommitName, _, cx| this.named(cx)))
             .on_action(cx.listener(|_, _: &DismissName, _, cx| cx.emit(NameEvent::Dismissed)))
             .child(self.field.clone())
+            .when_some(self.error.clone(), |element, error| {
+                element.child(
+                    div()
+                        .text_style(TextStyle::Caption)
+                        .text_color(Theme::of(cx).danger)
+                        .child(error),
+                )
+            })
     }
 }

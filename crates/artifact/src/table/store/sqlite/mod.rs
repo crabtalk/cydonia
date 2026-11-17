@@ -124,9 +124,11 @@ impl Data {
     /// Put a table away, or bring it back. The rows stay exactly where they
     /// are — this is the sidebar's business and nothing else's.
     pub fn archive(&mut self, key: &str, archived: bool) -> Result<()> {
+        let key = self.resolve(key)?;
         self.writer.execute(
-            "UPDATE _tables SET archived = ?2 WHERE key = ?1",
-            rusqlite::params![key, archived],
+            "INSERT INTO _tables (key, name, created_at, archived) VALUES (?1, ?1, ?3, ?2) \
+             ON CONFLICT(key) DO UPDATE SET archived = ?2",
+            rusqlite::params![key, archived, now()],
         )?;
         Ok(())
     }
@@ -145,7 +147,7 @@ impl Data {
     /// `_tables`: the data is what exists, and a table whose name row went
     /// missing must still list — under its key — instead of vanishing from a
     /// surface that is supposed to show everything in the file.
-    fn table(&self, key: &str) -> Result<Table> {
+    pub fn table(&self, key: &str) -> Result<Table> {
         let meta = self
             .reader
             .query_row(

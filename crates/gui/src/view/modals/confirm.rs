@@ -447,7 +447,9 @@ impl Cydonia {
                 showing: Showing::Table(_),
                 ..
             } => {
-                let table = open.and_then(|open| open.tables.get(ix));
+                let table = open
+                    .and_then(|open| open.tables.get(ix))
+                    .map(|held| &held.table.read(cx).record);
                 let rows = table.map_or(0, |table| table.rows);
                 (
                     table.map(|table| format!("{} in .cydonia/{}", table.key, fs::DATA)),

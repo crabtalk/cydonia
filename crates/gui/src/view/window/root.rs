@@ -1064,15 +1064,9 @@ impl Cydonia {
             this.model_changed(window, cx)
         })
         .detach();
-        // A re-read replaced what a pane is showing — see
-        // [`Workspace::reload_project`]. The card is held by id, so it comes
-        // through unless what it names is gone; the cell is still addressed by
-        // where it sits, so filing it now would file it into whatever slid
-        // under the index, and it is dropped.
         cx.subscribe_in(&workspace, window, |this, _, _: &Reloaded, _, cx| {
             this.drop_stale_edit(cx);
             this.rest_ribbon(cx);
-            this.drop_cells(cx);
             cx.notify();
         })
         .detach();
@@ -1561,7 +1555,6 @@ impl Render for Cydonia {
         self.sync_strip(cx);
         self.sync_edges(cx);
         self.publish_shown(cx);
-        self.hold_drawn_tables(cx);
         let theme = Theme::of(cx).clone();
         let floating = self.workspace.read(cx).settings.appearance.floating;
         let root = div()
