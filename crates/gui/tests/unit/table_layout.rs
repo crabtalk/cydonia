@@ -183,3 +183,40 @@ fn table_previews_scroll_instead_of_compressing_columns(cx: &mut TestAppContext)
         assert!(view.scroll.max_offset().y > px(0.));
     });
 }
+
+#[gpui::test]
+fn a_reloaded_table_does_not_apply_a_draft_to_a_replacement_row(cx: &mut TestAppContext) {
+    let (directory, view, mut cx) = open(cx, 1, 600.);
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            view.start_edit(
+                Cell::Value {
+                    rowid: 1,
+                    column: "Field 0".into(),
+                },
+                window,
+                cx,
+            );
+            view.cell_field
+                .update(cx, |field, cx| field.set_content("Draft", cx));
+        })
+    });
+    let mut data = Data::open(&Home::Project(directory.0.clone())).unwrap();
+    data.write(r#"DELETE FROM stories; INSERT INTO stories("Field 0") VALUES('Replacement')"#)
+        .unwrap();
+    cx.update(|_, cx| {
+        view.update(cx, |view, cx| {
+            view.source.update(cx, |source, cx| {
+                source.adopt(data.table("stories").unwrap(), cx)
+            });
+            assert!(!view.commit_cell(cx));
+            assert!(view.cell.is_some());
+            assert_eq!(view.cell_field.read(cx).content(), "Draft");
+            assert!(view.source.read(cx).error.is_some());
+        })
+    });
+    assert_eq!(
+        data.read("stories", None, false, 10, 0).unwrap().rows[0].cells[0],
+        "Replacement"
+    );
+}

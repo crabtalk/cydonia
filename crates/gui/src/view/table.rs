@@ -1,7 +1,7 @@
 //! The table pane: one table's rows, and the sidebar row that opens it.
 //!
 use crate::{
-    data::{ColType, Column},
+    data::{ColType, Column, Revision},
     model::{
         table::Table,
         workspace::{Entry, Member, Opening, Workspace},
@@ -343,6 +343,7 @@ pub(crate) struct TableView {
     root: WeakEntity<Cydonia>,
     /// What the field is attached to, and the field itself.
     pub(crate) cell: Option<Cell>,
+    revision: Option<Revision>,
     pub(crate) cell_field: Entity<TextField>,
     /// The column menu that is up, by column.
     menu: ContextMenu<Self, usize>,
@@ -379,6 +380,7 @@ impl TableView {
             resizing: None,
             root,
             cell: None,
+            revision: None,
             cell_field: field(cx),
             menu: ContextMenu::default(),
         }
@@ -421,6 +423,7 @@ impl TableView {
         };
         self.cell_field
             .update(cx, |field, cx| field.set_content(text, cx));
+        self.revision = self.page(cx).map(|page| page.revision);
         self.cell = Some(at);
         window.focus(&self.cell_field.read(cx).focus_handle(cx), cx);
         cx.notify();
@@ -436,9 +439,12 @@ impl TableView {
             _ => None,
         };
         let entry = self.table.clone();
+        let revision = self.revision;
         let saved = self.workspace.update(cx, |workspace, cx| {
             workspace.edit_table(&entry, cx, |table, cx| match at {
-                Cell::Value { rowid, column } => table.write_cell(rowid, column, text, cx),
+                Cell::Value { rowid, column } => {
+                    table.write_cell(rowid, column, text, revision, cx)
+                }
                 Cell::Head(column) if !text.is_empty() => {
                     table.write_column(&column, None, Some(&text), cx)
                 }

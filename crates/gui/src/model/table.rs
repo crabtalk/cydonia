@@ -1,4 +1,4 @@
-use crate::data::{ColType, Data, Edit, Page, Table as Record};
+use crate::data::{ColType, Data, Edit, Page, Revision, Table as Record};
 use bezel::gpui::Context;
 use serde_json::Value;
 use std::{cell::RefCell, rc::Rc};
@@ -65,6 +65,7 @@ impl Table {
         rowid: i64,
         column: String,
         text: String,
+        revision: Option<Revision>,
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
         let value = if text.is_empty() {
@@ -73,13 +74,14 @@ impl Table {
             Value::String(text)
         };
         self.edit(cx, |data, key| {
-            data.write_cells(
+            data.write_cells_at(
                 key,
                 &[Edit {
                     rowid,
                     column,
                     value,
                 }],
+                revision,
             )
         })
     }

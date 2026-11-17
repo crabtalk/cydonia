@@ -10,12 +10,19 @@ use crate::{
 use anyhow::{Result, anyhow, bail};
 use rusqlite::{Connection, OpenFlags, Row as SqlRow, types::ValueRef};
 use serde_json::Value;
-use std::{collections::HashSet, path::PathBuf, time::Duration};
+use std::{
+    collections::HashSet,
+    path::PathBuf,
+    sync::atomic::{AtomicU64, Ordering},
+    time::Duration,
+};
 
 mod ddl;
 mod rows;
 mod schema;
 mod sql;
+
+static CONNECTION: AtomicU64 = AtomicU64::new(1);
 
 const BUSY: Duration = Duration::from_secs(5);
 
@@ -31,6 +38,7 @@ const DDL: &str = "CREATE TABLE IF NOT EXISTS _tables (
 )";
 
 pub struct Data {
+    identity: u64,
     home: Home,
     writer: Connection,
     /// Opened `SQLITE_OPEN_READ_ONLY`, and that is the point: a `SELECT` an
@@ -90,6 +98,7 @@ impl Data {
         )?;
         reader.busy_timeout(BUSY)?;
         Ok(Self {
+            identity: CONNECTION.fetch_add(1, Ordering::Relaxed),
             home: home.clone(),
             writer,
             reader,

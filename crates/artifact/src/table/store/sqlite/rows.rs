@@ -1,17 +1,10 @@
-//! Rows and cells — what a reader reads and a writer edits.
-//!
-//! Everything here addresses a row by its `rowid`, SQLite's own identity for
-//! it: a handle that survives a sort, an insert above it and a neighbour's
-//! deletion, with no surrogate key column to hide from the person and no
-//! position index that means something different the moment the order changes.
-
 use crate::table::{
     self, Column,
-    rows::{Edit, Page, Row},
+    rows::{Edit, Page, Revision, Row},
     store::sqlite::{self as data, Data},
 };
 use anyhow::{Result, bail};
-use rusqlite::params_from_iter;
+use rusqlite::{Transaction, TransactionBehavior, params_from_iter};
 use serde_json::{Map, Value};
 
 impl Data {
@@ -28,6 +21,8 @@ impl Data {
         limit: i64,
         offset: i64,
     ) -> Result<Page> {
+        let guard = Transaction::new_unchecked(&self.writer, TransactionBehavior::Immediate)?;
+        let revision = self.revision()?;
         let key = self.resolve(table)?;
         let columns = data::columns_of(&self.reader, &key)?;
         let name = self
@@ -72,7 +67,9 @@ impl Data {
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
+        guard.commit()?;
         Ok(Page {
+            revision,
             total: self.reader.query_row(
                 &format!("SELECT count(*) FROM {}", table::quote(&key)),
                 [],
@@ -86,10 +83,30 @@ impl Data {
         })
     }
 
-    /// Write cells. One transaction, so a pasted block lands whole or not at
-    /// all — a half-applied paste is worse than a rejected one, because there
-    /// is nothing on screen saying which half.
+    fn revision(&self) -> Result<Revision> {
+        Ok(Revision {
+            connection: self.identity,
+            changes: self.writer.total_changes(),
+            external: self
+                .writer
+                .pragma_query_value(None, "data_version", |row| row.get(0))?,
+            schema: self
+                .writer
+                .pragma_query_value(None, "schema_version", |row| row.get(0))?,
+        })
+    }
+
     pub fn write_cells(&mut self, table: &str, edits: &[Edit]) -> Result<()> {
+        self.write_cells_at(table, edits, None)
+    }
+
+    /// A revision mismatch rejects the whole batch without writing any cells.
+    pub fn write_cells_at(
+        &mut self,
+        table: &str,
+        edits: &[Edit],
+        revision: Option<Revision>,
+    ) -> Result<()> {
         if edits.is_empty() {
             return Ok(());
         }
@@ -100,7 +117,12 @@ impl Data {
                 bail!("no column {} on {key}", edit.column);
             }
         }
-        let tx = self.writer.transaction()?;
+        let tx = Transaction::new_unchecked(&self.writer, TransactionBehavior::Immediate)?;
+        if let Some(revision) = revision
+            && revision != self.revision()?
+        {
+            bail!("table data changed while editing; copy your draft, press Escape, and reopen the cell to retry");
+        }
         for edit in edits {
             let changed = tx.execute(
                 &format!(

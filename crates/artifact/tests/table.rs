@@ -202,3 +202,62 @@ fn failed_retyping_preserves_schema_data_and_column_name() {
     );
     std::fs::remove_dir_all(path).unwrap();
 }
+
+#[test]
+fn checked_edits_reject_reused_ids_after_raw_writes_and_reopening() {
+    let path = std::env::temp_dir().join(format!("cydonia-row-conflict-{}", std::process::id()));
+    let home = Home::App(path.clone());
+    let mut data = Data::open(&home).unwrap();
+    data.create(
+        "Tasks",
+        None,
+        &[Column {
+            name: "Name".into(),
+            kind: ColType::Text,
+        }],
+        None,
+    )
+    .unwrap();
+    let id = data.add_rows("tasks", 1).unwrap()[0];
+    for external in [false, true] {
+        let page = data.read("tasks", None, false, 10, 0).unwrap();
+        let sql = "DELETE FROM tasks; INSERT INTO tasks(Name) VALUES('replacement')";
+        if external {
+            Data::open(&home).unwrap().write(sql).unwrap();
+        } else {
+            data.write(sql).unwrap();
+        }
+        assert_eq!(
+            data.read("tasks", None, false, 10, 0).unwrap().rows[0].rowid,
+            id
+        );
+        assert!(
+            data.write_cells_at(
+                "tasks",
+                &[Edit {
+                    rowid: id,
+                    column: "Name".into(),
+                    value: "stale".into()
+                }],
+                Some(page.revision)
+            )
+            .is_err()
+        );
+        assert_eq!(
+            data.read("tasks", None, false, 10, 0).unwrap().rows[0].cells[0],
+            "replacement"
+        );
+    }
+    let page = data.read("tasks", None, false, 10, 0).unwrap();
+    data.write_cells_at(
+        "tasks",
+        &[Edit {
+            rowid: id,
+            column: "Name".into(),
+            value: "fresh".into(),
+        }],
+        Some(page.revision),
+    )
+    .unwrap();
+    std::fs::remove_dir_all(path).unwrap();
+}

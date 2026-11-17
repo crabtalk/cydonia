@@ -127,7 +127,7 @@ fn editing_a_table_keeps_other_projects_and_loaded_pages_intact(cx: &mut gpui::T
         let source = workspace.table_entity(&entry).unwrap().clone();
         workspace
             .edit_table(&entry, cx, |table, cx| {
-                table.write_cell(1, "Name".into(), "Second project".into(), cx)
+                table.write_cell(1, "Name".into(), "Second project".into(), None, cx)
             })
             .unwrap();
         assert_eq!(
