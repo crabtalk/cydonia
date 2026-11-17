@@ -301,3 +301,70 @@ fn table_paging_reaches_later_rows_and_opens_new_rows_on_their_page(cx: &mut Tes
         assert_eq!(view.page(cx).unwrap().rows.len(), 200);
     });
 }
+
+#[gpui::test]
+fn unchanged_cells_preserve_spaces_empty_strings_nulls_and_storage_types(cx: &mut TestAppContext) {
+    let (directory, view, mut cx) = open(cx, 1, 600.);
+    let mut data = Data::open(&Home::Project(directory.0.clone())).unwrap();
+    data.write_column("stories", "Field 0", Some(ColType::Number), None)
+        .unwrap();
+    let connection = rusqlite::Connection::open(directory.0.join(".cydonia/data.db")).unwrap();
+    connection.execute_batch(r#"DELETE FROM stories; INSERT INTO stories("Field 0") VALUES('  keep  '), (''), (NULL), (44); CREATE TRIGGER reject_unchanged BEFORE UPDATE ON stories BEGIN SELECT RAISE(ABORT, 'unchanged cells must not write'); END;"#).unwrap();
+    cx.update(|_, cx| {
+        view.update(cx, |view, cx| {
+            view.source.update(cx, |source, cx| {
+                source.adopt(data.table("stories").unwrap(), cx)
+            });
+        })
+    });
+    for id in 1..=4 {
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.start_edit(
+                    Cell::Value {
+                        rowid: id,
+                        column: "Field 0".into(),
+                    },
+                    window,
+                    cx,
+                );
+                assert!(view.commit_cell(cx));
+                assert!(view.cell.is_none());
+            })
+        });
+    }
+    let rows = data.read("stories", None, false, 10, 0).unwrap().rows;
+    assert_eq!(rows[0].cells[0], "  keep  ");
+    assert_eq!(rows[1].cells[0], "");
+    assert!(rows[2].cells[0].is_null());
+    assert_eq!(rows[3].cells[0], 44);
+    connection
+        .execute_batch("DROP TRIGGER reject_unchanged")
+        .unwrap();
+    cx.update(|_, cx| {
+        view.update(cx, |view, cx| {
+            view.source.update(cx, |source, cx| {
+                source.adopt(data.table("stories").unwrap(), cx)
+            });
+        })
+    });
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            view.start_edit(
+                Cell::Value {
+                    rowid: 1,
+                    column: "Field 0".into(),
+                },
+                window,
+                cx,
+            );
+            view.cell_field
+                .update(cx, |field, cx| field.set_content("  changed  ", cx));
+            assert!(view.commit_cell(cx));
+        })
+    });
+    assert_eq!(
+        data.read("stories", None, false, 10, 0).unwrap().rows[0].cells[0],
+        "  changed  "
+    );
+}

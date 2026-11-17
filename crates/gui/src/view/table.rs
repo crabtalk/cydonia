@@ -350,6 +350,7 @@ pub(crate) struct TableView {
     /// What the field is attached to, and the field itself.
     pub(crate) cell: Option<Cell>,
     revision: Option<Revision>,
+    original: Option<String>,
     pub(crate) cell_field: Entity<TextField>,
     /// The column menu that is up, by column.
     menu: ContextMenu<Self, usize>,
@@ -388,6 +389,7 @@ impl TableView {
             root,
             cell: None,
             revision: None,
+            original: None,
             cell_field: field(cx),
             menu: ContextMenu::default(),
         }
@@ -448,6 +450,7 @@ impl TableView {
             Cell::Head(name) => name.clone(),
             Cell::Name => self.source.read(cx).record.name.clone(),
         };
+        self.original = Some(text.clone());
         self.cell_field
             .update(cx, |field, cx| field.set_content(text, cx));
         self.revision = self.page(cx).map(|page| page.revision);
@@ -460,7 +463,15 @@ impl TableView {
         let Some(at) = self.cell.clone() else {
             return true;
         };
-        let text = self.cell_field.read(cx).content().trim().to_owned();
+        let text = self.cell_field.read(cx).content().to_string();
+        if self.original.as_deref() == Some(&text) {
+            self.drop_cell(cx);
+            return true;
+        }
+        let text = match at {
+            Cell::Value { .. } => text,
+            _ => text.trim().to_owned(),
+        };
         let renamed = match &at {
             Cell::Head(column) if !text.is_empty() => Some((column.clone(), text.clone())),
             _ => None,
@@ -483,8 +494,7 @@ impl TableView {
             if let Some((before, after)) = renamed {
                 self.sizing.rename(&before, after);
             }
-            self.cell = None;
-            self.cell_field.update(cx, |field, cx| field.clear(cx));
+            self.drop_cell(cx);
         }
         cx.notify();
         saved.is_ok()
@@ -493,6 +503,8 @@ impl TableView {
     /// Let go of the field without filing it.
     fn drop_cell(&mut self, cx: &mut Context<Self>) {
         self.cell = None;
+        self.original = None;
+        self.revision = None;
         self.cell_field.update(cx, |field, cx| field.clear(cx));
         cx.notify();
     }
