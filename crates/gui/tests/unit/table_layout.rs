@@ -9,7 +9,7 @@ use bezel::{
         ScrollEvent, ScrollSource, TestAppContext, VisualTestContext, WeakEntity, point, px, size,
     },
     theme::{Appearance, Theme},
-    ui::input,
+    ui::{focus, input, menu},
 };
 use std::path::PathBuf;
 
@@ -38,6 +38,8 @@ fn open(
     cx.update(|cx| {
         Theme::install(Appearance::Dark, cx);
         input::init(cx);
+        focus::init(cx);
+        menu::init(cx);
         cx.bind_keys(table::bindings());
     });
     let mut settings = Settings::default();
@@ -65,6 +67,37 @@ fn settle(cx: &mut VisualTestContext) {
         cx.update(|window, _| window.refresh());
         cx.run_until_parked();
     }
+}
+
+#[gpui::test]
+fn a_column_header_opens_its_menu_by_click_or_keyboard(cx: &mut TestAppContext) {
+    let (_directory, view, mut cx) = open(cx, 2, 600.);
+    let header = cx.debug_bounds("table-heading-0").unwrap().center();
+    let assert_open = |cx: &VisualTestContext, column: &str| {
+        view.read_with(cx, |view, _| {
+            assert!(matches!(
+                view.menu.key(),
+                Some(table::TableMenu::Column(name)) if name == column
+            ));
+            assert!(view.cell.is_none());
+        });
+    };
+    cx.simulate_mouse_down(header, MouseButton::Left, Modifiers::default());
+    cx.simulate_mouse_up(header, MouseButton::Left, Modifiers::default());
+    settle(&mut cx);
+    assert_open(&cx, "Field 0");
+    cx.simulate_keystrokes("escape enter");
+    settle(&mut cx);
+    assert_open(&cx, "Field 0");
+    cx.simulate_keystrokes("escape");
+    settle(&mut cx);
+    cx.simulate_mouse_down(header, MouseButton::Right, Modifiers::default());
+    cx.simulate_mouse_up(header, MouseButton::Right, Modifiers::default());
+    settle(&mut cx);
+    assert_open(&cx, "Field 0");
+    cx.simulate_keystrokes("escape tab enter");
+    settle(&mut cx);
+    assert_open(&cx, "Field 1");
 }
 
 #[gpui::test]

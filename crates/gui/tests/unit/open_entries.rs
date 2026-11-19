@@ -46,6 +46,52 @@ impl Drop for Scratch {
 }
 
 #[gpui::test]
+fn a_selected_light_sidebar_row_paints_its_fill_inside_the_row(cx: &mut gpui::TestAppContext) {
+    struct SelectedRow;
+    impl gpui::Render for SelectedRow {
+        fn render(
+            &mut self,
+            window: &mut gpui::Window,
+            cx: &mut gpui::Context<Self>,
+        ) -> impl gpui::IntoElement {
+            window.native_surfaces.materials = true;
+            sidebar::row(
+                "selected-row",
+                "test-row",
+                bezel::theme::Selection::Emphasized,
+                false,
+                0,
+                8.,
+                Theme::of(cx),
+            )
+        }
+    }
+
+    cx.update(|cx| {
+        Theme::install_custom(
+            Theme {
+                glass: true,
+                ..Theme::light()
+            },
+            cx,
+        )
+    });
+    let window = cx.add_window(|_, _| SelectedRow);
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.simulate_resize(gpui::size(gpui::px(300.), gpui::px(80.)));
+    visual.run_until_parked();
+    visual.update(|window, cx| {
+        let fill = Theme::of(cx).card_selected_bg().into();
+        assert!(
+            window
+                .painted_quads()
+                .iter()
+                .any(|quad| quad.background == fill)
+        );
+    });
+}
+
+#[gpui::test]
 fn expanded_sidebar_grows_only_when_an_entry_has_details(cx: &mut gpui::TestAppContext) {
     let scratch = Scratch::new("sidebar-details");
     cx.update(|cx| Theme::install(bezel::theme::Appearance::Light, cx));

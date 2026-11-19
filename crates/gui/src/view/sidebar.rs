@@ -42,7 +42,7 @@ use bezel::{
         icons::{self, Icon},
         menu::Item,
         scroll as scrollbars,
-        surface::Control,
+        surface::{self, Control},
     },
 };
 use std::{collections::HashMap, path::PathBuf, rc::Rc, time::Duration};
@@ -591,7 +591,7 @@ pub(crate) fn row(
 ) -> Control {
     let fill = selected.fill(theme).filter(|_| !lifted);
     row_frame(id, group, indent, trail)
-        .material(!lifted && selected.is_selected())
+        .material(!lifted && selected.is_selected() && surface::native_selection_on_chrome(theme))
         // A carried row is drawn inside [`Sidebar::sidebar_ghost`]'s frame.
         .when(lifted, |el| el.m_0())
         .when_some(fill, |el, fill| el.bg(fill).shadow(selected.shadows()))

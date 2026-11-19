@@ -24,7 +24,7 @@ use bezel::{
     theme::{Selection, TextStyle, Theme, Typeset},
     ui::{
         context_menu::{ContextMenu, Place},
-        drag, icons,
+        drag, focus, icons,
         input::{Shape, TextField},
         menu::Item,
         scroll as scrollbars, table,
@@ -918,47 +918,44 @@ impl TableView {
                 .child(self.cell_editor(cx))
                 .child(grip);
         }
-        let name = shape.label.to_string();
-        let key = TableMenu::Column(name.clone());
+        let key = TableMenu::Column(shape.label.to_string());
         let menu_key = key.clone();
-        let menu_name = name.clone();
-        let id = SharedString::from(format!("column-menu-{ix}"));
-        let button = menu::button(
-            id.clone(),
-            icons::layout::Ellipsis,
-            menu::Reveal::Group("grid-head"),
-            self.menu.key() == Some(&key),
-            cx,
-        )
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_click(cx.listener(move |this, _, window, cx| {
+        let name = shape.label.clone();
+        let open = Rc::new(cx.listener(move |this, _: &(), window, cx| {
             cx.stop_propagation();
-            let menu_name = menu_name.clone();
+            let name = name.to_string();
             this.toggle_menu(
                 menu_key.clone(),
                 Place::Below,
-                move |this, _, cx| this.column_rows(menu_name, kind, sorted, cx),
+                move |this, _, cx| this.column_rows(name, kind, sorted, cx),
                 window,
                 cx,
             );
         }));
-        let button = self
-            .menu_trigger(button, key.clone(), cx)
-            .children(self.menu_here(&key, id, window, cx));
-        table::header_cell(&theme, shape, sorted)
+        let id = SharedString::from(format!("column-menu-{}", shape.label));
+        let focus = window
+            .use_keyed_state(id.clone(), cx, |_, cx| cx.focus_handle())
+            .read(cx)
+            .clone();
+        let header = table::header_cell(&theme, shape, sorted)
             .relative()
             .debug_selector(move || format!("table-heading-{ix}"))
             .child(grip)
-            .line_height(px(LINE))
+            .line_height(px(LINE));
+        let header = focus::traversal(header)
             .id(shape.label.clone())
-            .group("grid-head")
-            .child(button)
-            .on_click(cx.listener(move |this, _, window, cx| {
-                this.edit_cell(Cell::Head(name.clone()), window, cx);
-            }))
+            .on_mouse_up(MouseButton::Right, {
+                let open = open.clone();
+                move |_, window, cx| open(&(), window, cx)
+            });
+        let header = focus::pressable(&theme, &focus, header, true, move |_, window, cx| {
+            open(&(), window, cx)
+        })
+        .focus_visible(|style| style.bg(theme.element_hover));
+        self.menu_trigger(header, key.clone(), cx)
+            .children(self.menu_here(&key, id, window, cx))
     }
 
-    /// What the `···` does to a column: what it holds, and whether it stays.
     fn column_rows(
         &self,
         column: String,
