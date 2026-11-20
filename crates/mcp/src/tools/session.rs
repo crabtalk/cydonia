@@ -287,13 +287,18 @@ fn start(project: &Path, agent: Option<&str>, message: &str) -> Outcome {
     }))
 }
 
-/// `Claude Agent (claude-acp), Codex (codex-acp)`.
 fn listed(agents: &[rail::Agent]) -> String {
     agents
         .iter()
-        .map(|agent| match &agent.id {
-            Some(id) => format!("{} ({id})", agent.name),
-            None => agent.name.clone(),
+        .map(|agent| {
+            let kind = match agent.workspace {
+                Some(_) => "agent identity",
+                None => "installed program",
+            };
+            match &agent.id {
+                Some(id) => format!("{} ({id}, {kind})", agent.name),
+                None => format!("{} ({kind})", agent.name),
+            }
         })
         .collect::<Vec<_>>()
         .join(", ")

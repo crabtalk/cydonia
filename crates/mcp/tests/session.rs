@@ -54,6 +54,12 @@ fn no_session_starts_one_on_the_named_agent() {
     let rail = Rail;
     cydonia_mcp::rail::set_agents(vec![
         cydonia_mcp::rail::Agent {
+            name: "Reviewer".to_owned(),
+            id: Some("reviewer-id".to_owned()),
+            workspace: Some(scratch.path().canonicalize().unwrap()),
+            mode: Default::default(),
+        },
+        cydonia_mcp::rail::Agent {
             name: "Claude Agent".to_owned(),
             id: Some("claude-acp".to_owned()),
             workspace: None,
@@ -83,10 +89,7 @@ fn no_session_starts_one_on_the_named_agent() {
         json!({"agent": "Claude", "message": "foo"}),
         Some(scratch.path()),
     ));
-    assert!(
-        why.contains("cydonia has Claude Agent (claude-acp), Codex"),
-        "{why}"
-    );
+    assert!(why.contains("no agent named Claude"), "{why}");
     let listing = server
         .handle(
             &serde_json::from_value(json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}))
@@ -102,10 +105,12 @@ fn no_session_starts_one_on_the_named_agent() {
         .find(|tool| tool["name"] == "session_send")
         .unwrap()
         .clone();
-    assert_eq!(
-        send["inputSchema"]["properties"]["agent"]["enum"],
-        json!(["claude-acp", "Codex"])
-    );
+    let agent = &send["inputSchema"]["properties"]["agent"];
+    assert_eq!(agent["enum"], json!(["reviewer-id", "claude-acp", "Codex"]));
+    let choices = agent["description"].as_str().unwrap();
+    assert!(choices.contains("Reviewer (reviewer-id, agent identity)"));
+    assert!(choices.contains("Claude Agent (claude-acp, installed program)"));
+    assert!(choices.contains("Codex (installed program)"));
 }
 
 /// A session filed in `scratch` holding `said`, a question and its answer
