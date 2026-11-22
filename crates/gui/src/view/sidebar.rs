@@ -5,6 +5,10 @@
 mod list;
 mod rows;
 
+#[cfg(test)]
+#[path = "../../tests/unit/sidebar_agent_order.rs"]
+mod agent_order_tests;
+
 pub(crate) use list::List;
 
 use crate::{
@@ -510,10 +514,11 @@ pub(crate) enum Dragged {
 pub(crate) struct Place {
     kind: SharedString,
     section: Heading,
+    section_above: Option<Heading>,
 }
 
 /// Whether `item` may land between the painted rows `after` and `before`.
-/// An entry lands beside one of its kind. A project's or a space's heading
+/// An entry lands beside one of its kind. A group heading
 /// lands in front of one of its kind, or at the end of its section.
 fn lands(
     places: &HashMap<Row, Place>,
@@ -531,8 +536,13 @@ fn lands(
     match item {
         Dragged::Row(Row::Group(_)) => {
             place(before).is_some_and(|place| place.kind == own.kind)
-                || (place(after).is_some_and(|place| place.section == own.section)
-                    && place(before).is_none_or(|place| place.section != own.section))
+                || match before {
+                    Some(Dragged::Row(Row::Heading(_))) => {
+                        place(before).is_some_and(|place| place.section_above == Some(own.section))
+                    }
+                    None => place(after).is_some_and(|place| place.section == own.section),
+                    _ => false,
+                }
         }
         _ => [after, before]
             .into_iter()
@@ -795,7 +805,7 @@ impl Sidebar {
         List::new(&self.workspace, &self.search, cx)
     }
 
-    /// The listing drawn: the list's, less the rows of a project or a space
+    /// The listing drawn: the list's, less the rows of a group
     /// whose heading is being carried, down to the next heading.
     fn drawn(&self) -> Listing {
         let listing = &self.listing;
@@ -1090,7 +1100,7 @@ impl Sidebar {
     }
 
     /// The rows as one drag region over the list: an entry moves within the
-    /// region of its project it is in, a project's or a space's heading among
+    /// region of its project it is in, a group heading among
     /// the headings of its kind, and either can be carried out onto a pane.
     fn sidebar_list(&mut self, drawn: Listing, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let Listing {
@@ -1221,10 +1231,13 @@ impl Sidebar {
             Some(Dragged::Row(row)) => rows.iter().position(|at| at == row),
             _ => None,
         };
-        let gap = at(&event.after)
-            .map(|ix| ix + 1)
-            .or_else(|| at(&event.before))
-            .unwrap_or(0);
+        let after = || at(&event.after).map(|ix| ix + 1);
+        let before = || at(&event.before);
+        let gap = match carried {
+            Row::Group(_) => before().or_else(after),
+            _ => after().or_else(before),
+        }
+        .unwrap_or(0);
         let above = rows[..gap].iter().filter(|row| *row != carried);
         match carried {
             // Among the groups of its kind, by how many of them are above it.
@@ -1241,6 +1254,13 @@ impl Sidebar {
                     .count();
                 self.workspace
                     .update(cx, |workspace, cx| workspace.move_space(id, to, cx));
+            }
+            Row::Group(Group::Agent(id)) => {
+                let to = above
+                    .filter(|row| matches!(row, Row::Group(Group::Agent(_))))
+                    .count();
+                self.workspace
+                    .update(cx, |workspace, cx| workspace.move_agent(id, to, cx));
             }
             _ => {
                 let places = self.list(cx).row_places(&rows);

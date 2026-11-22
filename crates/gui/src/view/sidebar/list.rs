@@ -180,23 +180,6 @@ impl<'a> List<'a> {
         self.ungrouped(rows)
     }
 
-    /// The identities listed, by name, for the Agents heading.
-    fn agents(&self) -> Vec<Group> {
-        let mut identities: Vec<(String, Group)> = self
-            .workspace
-            .identities
-            .iter()
-            .map(|identity| {
-                (
-                    identity.name.to_lowercase(),
-                    Group::Agent(identity.id.clone()),
-                )
-            })
-            .collect();
-        identities.sort_by(|a, b| a.0.cmp(&b.0));
-        identities.into_iter().map(|(_, group)| group).collect()
-    }
-
     /// The apps listed, by name, for the Apps heading.
     fn apps(&self) -> Vec<Row> {
         let mut apps: Vec<(String, Row)> = self
@@ -299,9 +282,11 @@ impl<'a> List<'a> {
             .is_some_and(|labels| labels.contains(label))
     }
 
-    /// Whether `row` is an entry of a project listed by a label. Such a list
-    /// leaves rows out, so its rows are not dragged.
+    /// Whether a filter hides rows from the order this row would be dragged in.
     pub(super) fn narrowed(&self, row: &Row) -> bool {
+        if matches!(row, Row::Group(Group::Agent(_))) {
+            return self.search.query().is_some();
+        }
         let Row::Entry { project, .. } = row else {
             return false;
         };
@@ -367,7 +352,12 @@ impl<'a> List<'a> {
         // The agents' heading whether or not there is one: it holds the way to
         // make one.
         if workspace.settings.features.sessions {
-            sections.push((Heading::Agents, self.agents()));
+            let agents = workspace
+                .listed_identities()
+                .into_iter()
+                .map(|identity| Group::Agent(identity.id.clone()))
+                .collect();
+            sections.push((Heading::Agents, agents));
         }
         if self.lists_spaces() {
             sections.push((Heading::Spaces, spaces.collect()));
@@ -462,7 +452,9 @@ impl<'a> List<'a> {
         let mut group: Option<&Group> = None;
         let mut section = Heading::Projects;
         rows.iter()
-            .map(|row| {
+            .enumerate()
+            .map(|(ix, row)| {
+                let section_above = (ix != 0).then_some(section);
                 let kind = match row {
                     Row::Heading(heading) => {
                         section = *heading;
@@ -487,7 +479,7 @@ impl<'a> List<'a> {
                 if let Row::Group(at) = row {
                     group = Some(at);
                 }
-                (row.clone(), Place { kind, section })
+                (row.clone(), Place { kind, section, section_above })
             })
             .collect()
     }

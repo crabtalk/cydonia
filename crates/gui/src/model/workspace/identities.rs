@@ -11,6 +11,36 @@ impl Workspace {
         self.identities.iter().find(|identity| identity.id == id)
     }
 
+    /// Saved identities first, then unranked identities by name.
+    pub fn listed_identities(&self) -> Vec<&Identity> {
+        let mut identities: Vec<_> = self.identities.iter().collect();
+        identities.sort_by_cached_key(|identity| {
+            match self.agent_order.iter().position(|id| *id == identity.id) {
+                Some(rank) => (rank, String::new()),
+                None => (usize::MAX, identity.name.to_lowercase()),
+            }
+        });
+        identities
+    }
+
+    pub fn move_agent(&mut self, id: &str, to: usize, cx: &mut Context<Self>) {
+        let mut order = self.listed_identities();
+        let Some(from) = order.iter().position(|identity| identity.id == id) else {
+            return;
+        };
+        if from == to || to >= order.len() {
+            return;
+        }
+        let moving = order.remove(from);
+        order.insert(to, moving);
+        self.agent_order = order
+            .into_iter()
+            .map(|identity| identity.id.clone())
+            .collect();
+        self.save();
+        cx.notify();
+    }
+
     /// Start a session as the identity with this id, in front of its
     /// workspace's project, opening the project where it is shut. Nothing
     /// where the identity is gone, its program is not installed, or sessions
@@ -80,6 +110,10 @@ impl Workspace {
         };
         let identity = self.identities.remove(at);
         identity::Shelf::remove(&identity.handle);
+        if let Some(rank) = self.agent_order.iter().position(|at| at == id) {
+            self.agent_order.remove(rank);
+            self.save();
+        }
         rail::set_agents(self.rail_agents());
         cx.notify();
     }
