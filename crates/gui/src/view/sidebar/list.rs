@@ -479,7 +479,14 @@ impl<'a> List<'a> {
                 if let Row::Group(at) = row {
                     group = Some(at);
                 }
-                (row.clone(), Place { kind, section, section_above })
+                (
+                    row.clone(),
+                    Place {
+                        kind,
+                        section,
+                        section_above,
+                    },
+                )
             })
             .collect()
     }
