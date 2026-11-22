@@ -165,6 +165,7 @@ pub struct Workspace {
     folded_spaces: std::collections::HashSet<String>,
     /// Agent identities whose sessions the sidebar hides, by id.
     folded_agents: std::collections::HashSet<String>,
+    agent_order: Vec<String>,
     /// The order the sidebar lists each space's members in, by space id.
     space_order: std::collections::BTreeMap<String, Vec<Member>>,
     /// The sidebar's sections whose rows are hidden, by name.
@@ -271,6 +272,7 @@ impl Workspace {
             preview: None,
             folded_spaces: state.folded_spaces.iter().cloned().collect(),
             folded_agents: state.folded_agents.iter().cloned().collect(),
+            agent_order: state.agent_order,
             space_order,
             folded_sections: state.folded_sections.iter().cloned().collect(),
             recent_commands: state.commands,
@@ -341,6 +343,7 @@ impl Workspace {
                 .filter(|identity| self.folded_agents.contains(&identity.id))
                 .map(|identity| identity.id.clone())
                 .collect(),
+            agent_order: self.agent_order.clone(),
             space_order: self
                 .space_order
                 .iter()

@@ -7,7 +7,7 @@
 use artifact::project;
 use cydonia_mcp::{
     Server,
-    rail::{self, Change},
+    rail::{self, Change, Request},
     tool::{Outcome, Trouble},
     tools,
 };
@@ -91,14 +91,14 @@ static ASKED: Mutex<Vec<Change>> = Mutex::new(Vec::new());
 impl Rail {
     /// Install the recorder, and say what the app is holding.
     pub fn holding(open: &[&Path]) -> Self {
-        rail::install(|change| ASKED.lock().unwrap().push(change));
+        rail::install(Self::record);
         rail::set_open(open.iter().map(PathBuf::from).collect());
         Self
     }
 
     /// Put one more project on the rail, leaving what is already there.
     pub fn also(path: &Path) {
-        rail::install(|change| ASKED.lock().unwrap().push(change));
+        rail::install(Self::record);
         let mut open = rail::open();
         if !open.iter().any(|held| held == path) {
             open.push(path.to_path_buf());
@@ -108,6 +108,12 @@ impl Rail {
 
     pub fn asked(&self) -> Vec<Change> {
         ASKED.lock().unwrap().clone()
+    }
+
+    fn record(request: Request) {
+        if let Request::Change(change) = request {
+            ASKED.lock().unwrap().push(change);
+        }
     }
 
     pub fn was_asked(&self, change: Change) -> bool {

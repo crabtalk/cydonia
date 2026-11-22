@@ -1,4 +1,4 @@
-use crate::data::{ColType, Data, Edit, Page, Revision, Table as Record};
+use crate::data::{ColType, ColumnFormat, Data, Edit, Page, Revision, Table as Record};
 use bezel::gpui::Context;
 use serde_json::Value;
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
@@ -6,8 +6,15 @@ use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 pub const PAGE: i64 = 200;
 const COLUMN: &str = "Column";
 
+#[derive(Clone, PartialEq, Eq)]
+pub struct Sort {
+    pub column: String,
+    pub descending: bool,
+}
+
 pub struct Table {
     pub record: Record,
+    pub sort: Option<Sort>,
     pages: BTreeMap<i64, Page>,
     pub error: Option<String>,
     data: Rc<RefCell<Data>>,
@@ -17,6 +24,7 @@ impl Table {
     pub fn new(record: Record, data: Rc<RefCell<Data>>) -> Self {
         Self {
             record,
+            sort: None,
             pages: BTreeMap::new(),
             error: None,
             data,
@@ -41,6 +49,14 @@ impl Table {
         }
     }
 
+    pub fn set_sort(&mut self, sort: Option<Sort>, cx: &mut Context<Self>) {
+        if self.sort != sort {
+            self.sort = sort;
+            self.reload_pages();
+            cx.notify();
+        }
+    }
+
     pub fn adopt(&mut self, record: Record, cx: &mut Context<Self>) {
         let mut changed = self.record != record;
         self.record = record;
@@ -51,6 +67,15 @@ impl Table {
     }
 
     fn reload_pages(&mut self) -> bool {
+        if let Some(sort) = &self.sort
+            && !self
+                .record
+                .columns
+                .iter()
+                .any(|column| column.name == sort.column)
+        {
+            self.sort = None;
+        }
         if self.pages.is_empty() {
             return false;
         }
@@ -72,19 +97,23 @@ impl Table {
         changed
     }
 
-    fn read_page(&mut self, offset: i64) -> bool {
-        match self
-            .data
+    pub fn read_rows(&self, offset: i64, limit: i64) -> Result<Page, String> {
+        let column = self.sort.as_ref().map(|sort| sort.column.as_str());
+        let descending = self.sort.as_ref().is_some_and(|sort| sort.descending);
+        self.data
             .borrow()
-            .read(&self.record.key, None, false, PAGE, offset)
-        {
+            .read(&self.record.key, column, descending, limit, offset)
+            .map_err(|error| error.to_string())
+    }
+
+    fn read_page(&mut self, offset: i64) -> bool {
+        match self.read_rows(offset, PAGE) {
             Ok(page) => {
                 let changed = self.pages.get(&offset) != Some(&page);
                 self.pages.insert(offset, page);
                 changed
             }
             Err(error) => {
-                let error = error.to_string();
                 let changed = self.error.as_ref() != Some(&error);
                 self.error = Some(error);
                 changed
@@ -105,17 +134,24 @@ impl Table {
         } else {
             Value::String(text)
         };
-        self.edit(cx, |data, key| {
-            data.write_cells_at(
-                key,
-                &[Edit {
-                    rowid,
-                    column,
-                    value,
-                }],
-                revision,
-            )
-        })
+        self.write_cells(
+            &[Edit {
+                rowid,
+                column,
+                value,
+            }],
+            revision,
+            cx,
+        )
+    }
+
+    pub fn write_cells(
+        &mut self,
+        edits: &[Edit],
+        revision: Option<Revision>,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        self.edit(cx, |data, key| data.write_cells_at(key, edits, revision))
     }
 
     pub fn add_row(&mut self, cx: &mut Context<Self>) -> Result<i64, String> {
@@ -124,6 +160,19 @@ impl Table {
 
     pub fn delete_row(&mut self, rowid: i64, cx: &mut Context<Self>) -> Result<(), String> {
         self.edit(cx, |data, key| data.delete_rows(key, &[rowid]))
+    }
+
+    pub fn move_row(
+        &mut self,
+        row: i64,
+        after: Option<i64>,
+        before: Option<i64>,
+        revision: Revision,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        self.edit(cx, |data, key| {
+            data.move_row(key, row, after, before, revision)
+        })
     }
 
     pub fn add_column(&mut self, cx: &mut Context<Self>) -> Result<(), String> {
@@ -159,6 +208,46 @@ impl Table {
 
     pub fn delete_column(&mut self, column: &str, cx: &mut Context<Self>) -> Result<(), String> {
         self.edit(cx, |data, key| data.drop_column(key, column).map(|_| ()))
+    }
+
+    pub fn write_option(
+        &mut self,
+        column: &str,
+        previous: Option<&str>,
+        name: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        self.edit(cx, |data, key| {
+            data.write_option(key, column, previous, name)
+        })
+    }
+
+    pub fn set_column_width(
+        &mut self,
+        column: &str,
+        width: u32,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        self.edit(cx, |data, key| data.set_column_width(key, column, width))
+    }
+
+    pub fn set_column_format(
+        &mut self,
+        column: &str,
+        format: ColumnFormat,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        self.edit(cx, |data, key| data.set_column_format(key, column, format))
+    }
+
+    pub fn move_column(
+        &mut self,
+        column: &str,
+        after: Option<&str>,
+        before: Option<&str>,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        self.edit(cx, |data, key| data.move_column(key, column, after, before))
     }
 
     pub fn rename(&mut self, name: &str, cx: &mut Context<Self>) -> Result<(), String> {

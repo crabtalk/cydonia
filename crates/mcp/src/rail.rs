@@ -6,11 +6,9 @@
 //! it is the app's own list, in memory, rewritten whole every time it moves —
 //! so this is the one place the two have to meet.
 //!
-//! The app installs what to do about a change and pushes what it is holding; a
-//! tool asks, and reads. **Asked rather than done**: a call arrives on whichever
-//! thread the door is serving from, and the rail can only be moved on the one
-//! the window is drawn on. So a tool hands its change over and answers for the
-//! part it did itself — the directory — which is the part that can fail.
+//! The rail hands tool requests across to the window's thread. Changes are
+//! queued. Session creation waits for the workspace to return the new
+//! session's identity.
 //!
 //! Installed once at launch, like a highlighter or a link preview. A build with
 //! nothing installed — the tests, a caller that mounted the tool sets on their
@@ -23,7 +21,7 @@ use artifact::{board::View, kind::Kind, session::mode::Mode};
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
-    sync::RwLock,
+    sync::{RwLock, mpsc},
 };
 
 /// What the app does about a change.
@@ -46,6 +44,9 @@ static BOARD_VIEW: RwLock<View> = RwLock::new(View::Lanes);
 /// How long a browser call waits for the window's answer.
 #[cfg(feature = "http")]
 const BROWSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
+
+#[cfg(feature = "http")]
+const START_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// What a tool asks of the rail. Closing takes a project off it and stops the
 /// agents running in it; nothing on disk is touched either way.
@@ -71,13 +72,24 @@ pub enum Change {
         session: String,
         labels: Vec<String>,
     },
-    /// A new session in `project` on the agent `settings.toml` names `agent`,
-    /// with `message` as its first prompt.
-    Start {
-        project: PathBuf,
-        agent: String,
-        message: String,
-    },
+}
+
+pub enum Request {
+    Change(Change),
+    Start(Start),
+}
+
+pub struct Start {
+    pub project: PathBuf,
+    pub agent: String,
+    pub message: String,
+    pub reply: mpsc::Sender<Result<Started, String>>,
+}
+
+pub struct Started {
+    pub id: String,
+    /// Terminal runs have an in-process id and no project entry number.
+    pub number: Option<u64>,
 }
 
 /// A named agent or installed ACP program offered for session creation.
@@ -114,10 +126,10 @@ pub struct Shown {
     pub focused: bool,
 }
 
-type Hand = Box<dyn Fn(Change) + Send + Sync>;
+type Hand = Box<dyn Fn(Request) + Send + Sync>;
 
 /// Hand the rail over. The app calls this once, at launch.
-pub fn install(hand: impl Fn(Change) + Send + Sync + 'static) {
+pub fn install(hand: impl Fn(Request) + Send + Sync + 'static) {
     if let Ok(mut held) = HAND.write() {
         *held = Some(Box::new(hand));
     }
@@ -202,11 +214,37 @@ pub fn is_open(path: &Path) -> bool {
 /// Ask for the change, which is as far as a tool can take it.
 #[cfg(feature = "http")]
 pub(crate) fn ask(change: Change) -> Result<(), Trouble> {
+    dispatch(Request::Change(change))
+}
+
+/// Blocks the calling thread until the workspace answers. Call off the UI thread.
+#[cfg(feature = "http")]
+pub(crate) fn start(project: PathBuf, agent: String, message: String) -> Result<Started, Trouble> {
+    let (reply, answer) = mpsc::channel();
+    dispatch(Request::Start(Start {
+        project,
+        agent,
+        message,
+        reply,
+    }))?;
+    match answer.recv_timeout(START_TIMEOUT) {
+        Ok(answer) => answer.map_err(Trouble::Refused),
+        Err(mpsc::RecvTimeoutError::Timeout) => Err(Trouble::Refused(
+            "Cydonia did not confirm session creation in time".to_owned(),
+        )),
+        Err(mpsc::RecvTimeoutError::Disconnected) => Err(Trouble::Refused(
+            "Cydonia could not start the session".to_owned(),
+        )),
+    }
+}
+
+#[cfg(feature = "http")]
+fn dispatch(request: Request) -> Result<(), Trouble> {
     let held = HAND.read().map_err(|_| nobody())?;
     let Some(hand) = held.as_ref() else {
         return Err(nobody());
     };
-    hand(change);
+    hand(request);
     Ok(())
 }
 
@@ -281,7 +319,7 @@ pub struct Browse {
     pub tab: Option<u64>,
     pub act: Act,
     /// The tool content, or why it is unavailable.
-    pub reply: std::sync::mpsc::Sender<Result<Answer, String>>,
+    pub reply: mpsc::Sender<Result<Answer, String>>,
 }
 
 type Browser = Box<dyn Fn(Browse) + Send + Sync>;
@@ -299,7 +337,7 @@ pub fn install_browser(hand: impl Fn(Browse) + Send + Sync + 'static) {
 /// drawn on: the answer is made there.
 #[cfg(feature = "http")]
 pub(crate) fn browse(project: PathBuf, tab: Option<u64>, act: Act) -> Result<Answer, Trouble> {
-    let (reply, answer) = std::sync::mpsc::channel();
+    let (reply, answer) = mpsc::channel();
     {
         let held = BROWSER.read().map_err(|_| no_browser())?;
         let Some(hand) = held.as_ref() else {

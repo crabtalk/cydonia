@@ -8,6 +8,7 @@ use super::*;
 use crate::model::terminal::Exited;
 use crate::model::{
     project::HeldSession,
+    session::Connection,
     session_preferences::{self, OfferCache},
     workspace::Member,
 };
@@ -542,20 +543,59 @@ impl Workspace {
     }
 
     /// Open a session on the agent named `agent` in the project at `path`,
-    /// seeded with `content`, behind whatever the window shows. Nothing
-    /// happens where either is not held.
-    pub fn start_in(&mut self, path: &Path, agent: &str, content: String, cx: &mut Context<Self>) {
-        if let Some(identity) = self.identity(agent).cloned() {
-            if self.ids.intern(path) == self.ids.intern(&identity.workspace) {
-                self.new_session_as(&identity.id, Some(content), None, false, cx);
-            }
-            return;
-        }
-        let entry = named(&self.settings.agents, Some(agent), agent).cloned();
+    /// seeded with `content`, behind whatever the window shows.
+    pub(super) fn start_in(
+        &mut self,
+        path: &Path,
+        agent: &str,
+        content: String,
+        cx: &mut Context<Self>,
+    ) -> Result<rail::Started, String> {
         let project = self.ids.intern(path);
-        if let (Some(ix), Some(entry)) = (self.project_ix(project), entry) {
-            self.new_session_in(ix, entry, Some(content), false, cx);
+        let ix = self
+            .project_ix(project)
+            .ok_or_else(|| "the project is no longer open".to_owned())?;
+        if !self.settings.features.sessions {
+            return Err("sessions are disabled".to_owned());
         }
+        let id = if let Some(identity) = self.identity(agent).cloned() {
+            if project != self.ids.intern(&identity.workspace) {
+                return Err("the agent belongs to a different project".to_owned());
+            }
+            self.new_session_as(&identity.id, Some(content), None, false, cx)
+        } else {
+            let entry = named(&self.settings.agents, Some(agent), agent)
+                .cloned()
+                .ok_or_else(|| format!("no agent named {agent}"))?;
+            self.new_session_in(ix, entry, Some(content), false, cx)
+        }
+        .ok_or_else(|| format!("could not start a session on {agent}"))?;
+
+        self.update_session(id, cx, |chat| {
+            if chat.mode == Mode::Terminal {
+                if matches!(chat.connection, Connection::Lost) {
+                    return Err(format!("could not start a terminal run on {agent}"));
+                }
+                return chat
+                    .navigation_key()
+                    .map(|key| rail::Started {
+                        id: key.into_owned(),
+                        number: None,
+                    })
+                    .ok_or_else(|| "the terminal run has no ID".to_owned());
+            }
+            chat.mint_record();
+            match (chat.filed(), chat.number) {
+                (Some(id), Some(number)) => Ok(rail::Started {
+                    id: id.to_owned(),
+                    number: Some(number),
+                }),
+                _ => Err(
+                    "the session opened but its project reference could not be saved".to_owned(),
+                ),
+            }
+        })
+        .ok_or_else(|| "the new session is no longer open".to_owned())?
     }
 
     /// Send a message with pictures. Each is kept in the project's assets and

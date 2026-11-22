@@ -3,8 +3,8 @@
 
 use super::{
     BUTTON_SIZE, DETAIL_LINE, EXTENDED_PAD, Group, Heading, MenuRows, PINNED_BLEED, ROW_GAP,
-    ROW_HEIGHT, ROW_PILL, Row, SessionRow, Sidebar, SidebarMenu, TITLE_LINE, key_of, on_disk, row,
-    row_frame, row_label, tint,
+    ROW_HEIGHT, ROW_PILL, Row, SessionRow, Shape, Sidebar, SidebarMenu, TITLE_LINE, key_of,
+    on_disk, row, row_frame, row_label, tint,
 };
 use crate::{
     model::{
@@ -75,13 +75,14 @@ impl Sidebar {
     pub(super) fn sidebar_row(
         &self,
         row: &Row,
+        shape: Shape,
         lifted: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let inner = match row {
             Row::Group(group) => self.group_head(group.clone(), false, lifted, window, cx),
-            Row::Entry { .. } => self.entry_row(row, lifted, window, cx),
+            Row::Entry { .. } => self.entry_row(row, shape, lifted, window, cx),
             Row::App(id) => self.app_row(row, id, lifted, cx),
             Row::Heading(heading) => self.heading_row(*heading, cx),
         };
@@ -90,9 +91,11 @@ impl Sidebar {
             Row::Group(Group::Project(_) | Group::Agent(_)) | Row::Heading(_)
         );
         let pinned = row.pinned(self.workspace.read(cx), cx);
-        let pitch = self.shape(row, cx).pitch();
+        let pitch = shape.pitch();
+        let key = key_of(row);
         div()
-            .id(SharedString::from(format!("sidebar-hover-{}", key_of(row))))
+            .id(SharedString::from(format!("sidebar-hover-{key}")))
+            .debug_selector(move || format!("sidebar-row-{key}"))
             .when(entry, |el| {
                 el.on_hover(cx.listener({
                     let row = row.clone();
@@ -567,6 +570,7 @@ impl Sidebar {
     fn entry_row(
         &self,
         entry: &Row,
+        shape: Shape,
         lifted: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -583,8 +587,7 @@ impl Sidebar {
         let light = self.lit.light(entry, workspace, cx);
         let selected = light.selected();
         let facts = workspace.projects[project].facts_at(showing.kind(), ix, cx);
-        let preview = self
-            .extended(cx)
+        let preview = matches!(shape, Shape::Extended { detail: true })
             .then(|| workspace.projects[project].preview_at(showing.kind(), ix, cx));
         let archived = facts.archived;
         let tint = light.tint(archived, &theme);
@@ -658,7 +661,7 @@ impl Sidebar {
                 false => row_label(facts.label, tint),
             };
         let open = entry.clone();
-        let button = self.trailing_button(group, entry, archived, preview.is_some(), window, cx);
+        let button = self.trailing_button(group, entry, archived, shape != Shape::Line, window, cx);
         let frame = row(
             id,
             group,
@@ -668,13 +671,12 @@ impl Sidebar {
             trail,
             &theme,
         );
-        let pill = self.shape(entry, cx).pill();
-        let frame = match preview {
-            None => frame.child(mark).child(label).child(button),
+        let frame = match shape {
+            Shape::Line => frame.child(mark).child(label).child(button),
             // The line under the name runs the row's whole width, from under
             // the mark: indented under the name it would be a column too
             // narrow to say anything.
-            Some(preview) => {
+            Shape::Extended { detail: has_detail } => {
                 // The time and the button share one slot at the name line's
                 // end, at least as wide as the button, so the name truncates at
                 // the same place whichever is showing.
@@ -724,10 +726,11 @@ impl Sidebar {
                         .flex_none()
                 };
                 frame
-                    .h(px(pill))
+                    .h(px(shape.pill()))
                     .py(px(EXTENDED_PAD))
                     .flex_col()
                     .items_start()
+                    .when(!has_detail, |el| el.justify_center())
                     .gap_0()
                     .child(
                         div()
@@ -741,30 +744,35 @@ impl Sidebar {
                             .child(label)
                             .child(slot),
                     )
-                    .child(
-                        div()
-                            .w_full()
-                            .h(px(DETAIL_LINE))
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap(px(ROW_GAP))
-                            .child(detail(preview, &theme).flex_1())
-                            .when(!facts.labels.is_empty(), |line| {
-                                line.child(
-                                    div()
-                                        .min_w_0()
-                                        .flex()
-                                        .flex_row()
-                                        .items_center()
-                                        .gap(px(4.))
-                                        .overflow_hidden()
-                                        .children(facts.labels.iter().map(|label| {
-                                            chip(label.clone(), multi_select::tint(&theme, label))
-                                        })),
-                                )
-                            }),
-                    )
+                    .when_some(preview, |frame, preview| {
+                        frame.child(
+                            div()
+                                .w_full()
+                                .h(px(DETAIL_LINE))
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap(px(ROW_GAP))
+                                .child(detail(preview, &theme).flex_1())
+                                .when(!facts.labels.is_empty(), |line| {
+                                    line.child(
+                                        div()
+                                            .min_w_0()
+                                            .flex()
+                                            .flex_row()
+                                            .items_center()
+                                            .gap(px(4.))
+                                            .overflow_hidden()
+                                            .children(facts.labels.iter().map(|label| {
+                                                chip(
+                                                    label.clone(),
+                                                    multi_select::tint(&theme, label),
+                                                )
+                                            })),
+                                    )
+                                }),
+                        )
+                    })
             }
         };
         frame

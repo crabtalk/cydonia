@@ -5,6 +5,10 @@
 mod list;
 mod rows;
 
+#[cfg(test)]
+#[path = "../../tests/unit/sidebar_agent_order.rs"]
+mod agent_order_tests;
+
 pub(crate) use list::List;
 
 use crate::{
@@ -42,7 +46,7 @@ use bezel::{
         icons::{self, Icon},
         menu::Item,
         scroll as scrollbars,
-        surface::Control,
+        surface::{self, Control},
     },
 };
 use std::{collections::HashMap, path::PathBuf, rc::Rc, time::Duration};
@@ -155,8 +159,9 @@ pub(crate) enum Shape {
     /// One line: every heading, and every entry while the rows are not
     /// extended.
     Line,
-    /// An entry's name over its preview and its labels.
-    Extended,
+    Extended {
+        detail: bool,
+    },
 }
 
 impl Shape {
@@ -168,8 +173,8 @@ impl Shape {
     /// The height of the wash the row paints.
     pub(crate) fn pill(self) -> f32 {
         match self {
-            Shape::Line => ROW_PILL,
-            Shape::Extended => EXTENDED_PILL,
+            Shape::Line | Shape::Extended { detail: false } => ROW_PILL,
+            Shape::Extended { detail: true } => EXTENDED_PILL,
         }
     }
 }
@@ -509,10 +514,11 @@ pub(crate) enum Dragged {
 pub(crate) struct Place {
     kind: SharedString,
     section: Heading,
+    section_above: Option<Heading>,
 }
 
 /// Whether `item` may land between the painted rows `after` and `before`.
-/// An entry lands beside one of its kind. A project's or a space's heading
+/// An entry lands beside one of its kind. A group heading
 /// lands in front of one of its kind, or at the end of its section.
 fn lands(
     places: &HashMap<Row, Place>,
@@ -530,8 +536,13 @@ fn lands(
     match item {
         Dragged::Row(Row::Group(_)) => {
             place(before).is_some_and(|place| place.kind == own.kind)
-                || (place(after).is_some_and(|place| place.section == own.section)
-                    && place(before).is_none_or(|place| place.section != own.section))
+                || match before {
+                    Some(Dragged::Row(Row::Heading(_))) => {
+                        place(before).is_some_and(|place| place.section_above == Some(own.section))
+                    }
+                    None => place(after).is_some_and(|place| place.section == own.section),
+                    _ => false,
+                }
         }
         _ => [after, before]
             .into_iter()
@@ -590,7 +601,7 @@ pub(crate) fn row(
 ) -> Control {
     let fill = selected.fill(theme).filter(|_| !lifted);
     row_frame(id, group, indent, trail)
-        .material(!lifted && selected.is_selected())
+        .material(!lifted && selected.is_selected() && surface::native_selection_on_chrome(theme))
         // A carried row is drawn inside [`Sidebar::sidebar_ghost`]'s frame.
         .when(lifted, |el| el.m_0())
         .when_some(fill, |el, fill| el.bg(fill).shadow(selected.shadows()))
@@ -794,7 +805,7 @@ impl Sidebar {
         List::new(&self.workspace, &self.search, cx)
     }
 
-    /// The listing drawn: the list's, less the rows of a project or a space
+    /// The listing drawn: the list's, less the rows of a group
     /// whose heading is being carried, down to the next heading.
     fn drawn(&self) -> Listing {
         let listing = &self.listing;
@@ -850,18 +861,34 @@ impl Sidebar {
 
     /// How `row` is drawn.
     fn shape(&self, row: &Row, cx: &App) -> Shape {
-        match matches!(row, Row::Entry { .. }) && self.extended(cx) {
-            true => Shape::Extended,
-            false => Shape::Line,
+        let Row::Entry { showing, .. } = row else {
+            return Shape::Line;
+        };
+        if !self.extended(cx) {
+            return Shape::Line;
         }
+        let workspace = self.workspace.read(cx);
+        let Some((project, ix)) = row.located(workspace) else {
+            return Shape::Line;
+        };
+        let project = &workspace.projects[project];
+        let kind = showing.kind();
+        let detail = !project.facts_at(kind, ix, cx).labels.is_empty()
+            || !project.preview_at(kind, ix, cx).trim().is_empty();
+        Shape::Extended { detail }
     }
 
     fn shapes(&self, rows: &[Row], cx: &App) -> Vec<Shape> {
         rows.iter().map(|row| self.shape(row, cx)).collect()
     }
 
+    fn reshape(&mut self, cx: &mut Context<Self>) {
+        self.listing.shapes = Rc::new(self.shapes(&self.listing.rows, cx));
+        cx.notify();
+    }
+
     /// Observe every board, whose description an extended row previews.
-    fn watch_boards(&mut self, cx: &mut Context<Self>) {
+    fn watch_boards(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let boards: Vec<Entity<artifact::board::Board>> = self
             .workspace
             .read(cx)
@@ -871,7 +898,7 @@ impl Sidebar {
             .map(|held| held.board.clone())
             .collect();
         let mut watch = std::mem::take(&mut self.boards);
-        watch.set(&boards, cx);
+        watch.set_in(&boards, window, cx, |this, _, _, cx| this.reshape(cx));
         self.boards = watch;
     }
 
@@ -882,7 +909,7 @@ impl Sidebar {
                 self.tick = Some(cx.spawn(async move |this, cx| {
                     loop {
                         cx.background_executor().timer(TICK).await;
-                        if this.update(cx, |_, cx| cx.notify()).is_err() {
+                        if this.update(cx, Self::reshape).is_err() {
                             return;
                         }
                     }
@@ -1073,7 +1100,7 @@ impl Sidebar {
     }
 
     /// The rows as one drag region over the list: an entry moves within the
-    /// region of its project it is in, a project's or a space's heading among
+    /// region of its project it is in, a group heading among
     /// the headings of its kind, and either can be carried out onto a pane.
     fn sidebar_list(&mut self, drawn: Listing, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let Listing {
@@ -1091,7 +1118,7 @@ impl Sidebar {
             view.update(cx, |this, cx| {
                 let item = Dragged::Row(row.clone());
                 let lifted = this.sort.carried().as_ref() == Some(&item);
-                let el = this.sidebar_row(&row, lifted, window, cx);
+                let el = this.sidebar_row(&row, shapes[ix], lifted, window, cx);
                 match row {
                     Row::Heading(_) => this.sort.fixed(item, el).into_any_element(),
                     _ if narrowed[ix] => this.sort.fixed(item, el).into_any_element(),
@@ -1177,16 +1204,17 @@ impl Sidebar {
         let sidebar = cx.entity();
         drag::ghost("sidebar-row-ghost", move |_, window, cx| {
             sidebar.update(cx, |this, cx| {
+                let shape = this.shape(&row, cx);
                 let width = this
                     .root
                     .upgrade()
                     .map_or(root::SIDEBAR_WIDTH, |root| root.read(cx).sidebar_width);
                 div()
                     .w(px(width - root::SIDEBAR_GUTTER - this.trail(cx)))
-                    .h(px(this.shape(&row, cx).pill()))
+                    .h(px(shape.pill()))
                     .rounded(px(Theme::control_radius()))
                     .overflow_hidden()
-                    .child(this.sidebar_row(&row, true, window, cx))
+                    .child(this.sidebar_row(&row, shape, true, window, cx))
             })
         })
         .into_any_element()
@@ -1203,10 +1231,13 @@ impl Sidebar {
             Some(Dragged::Row(row)) => rows.iter().position(|at| at == row),
             _ => None,
         };
-        let gap = at(&event.after)
-            .map(|ix| ix + 1)
-            .or_else(|| at(&event.before))
-            .unwrap_or(0);
+        let after = || at(&event.after).map(|ix| ix + 1);
+        let before = || at(&event.before);
+        let gap = match carried {
+            Row::Group(_) => before().or_else(after),
+            _ => after().or_else(before),
+        }
+        .unwrap_or(0);
         let above = rows[..gap].iter().filter(|row| *row != carried);
         match carried {
             // Among the groups of its kind, by how many of them are above it.
@@ -1223,6 +1254,13 @@ impl Sidebar {
                     .count();
                 self.workspace
                     .update(cx, |workspace, cx| workspace.move_space(id, to, cx));
+            }
+            Row::Group(Group::Agent(id)) => {
+                let to = above
+                    .filter(|row| matches!(row, Row::Group(Group::Agent(_))))
+                    .count();
+                self.workspace
+                    .update(cx, |workspace, cx| workspace.move_agent(id, to, cx));
             }
             _ => {
                 let places = self.list(cx).row_places(&rows);
@@ -1358,7 +1396,7 @@ impl Render for Sidebar {
         self.apps = apps;
         let extended = self.extended(cx);
         if extended {
-            self.watch_boards(cx);
+            self.watch_boards(window, cx);
         }
         self.keep_time(extended, cx);
         let drawn = self.drawn();

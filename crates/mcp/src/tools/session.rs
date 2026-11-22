@@ -87,7 +87,8 @@ pub static TOOLS: [Tool; 4] = [
         reference (#43), or start a new session on a named agent with the message as its first \
         prompt. Terminal agents launch a new CLI run with the initial prompt; existing terminal \
         runs cannot receive messages through this tool. \
-        Fire and forget: nothing is waited for or answered back.",
+        Returns the new session's ID and its entry reference when available. The call returns \
+        before the agent answers the prompt.",
         schema: |bound| {
             let mut schema = fields(bound, &[PROJECT, MESSAGE]);
             super::optional(&mut schema, SESSION, "string");
@@ -273,27 +274,33 @@ fn start(project: &Path, agent: Option<&str>, message: &str) -> Outcome {
                 false => format!("no agent named {named} — cydonia has {}", listed(&agents)),
             })
         })?;
-    rail::ask(Change::Start {
-        project,
-        agent: agent.key().to_owned(),
-        message: message.to_owned(),
-    })?;
-    Ok(Answer::said(match agent.mode {
-        Mode::Gui => format!("sent to a new session on {}", agent.name),
-        Mode::Terminal => format!(
-            "requested a terminal run on {} with the message as its initial prompt; its conversation is managed by the native CLI",
-            agent.name
+    let started = rail::start(project, agent.key().to_owned(), message.to_owned())?;
+    let reference = started.number.map(|number| format!("#{number}"));
+    let text = match &reference {
+        Some(reference) => format!(
+            "started session {reference} (ID {}) on {}",
+            started.id, agent.name
         ),
-    }))
+        None => format!(
+            "started terminal run {} on {} with the message as its initial prompt; its conversation is managed by the native CLI",
+            started.id, agent.name
+        ),
+    };
+    Ok(Answer::said(text).with(json!({ "id": started.id, "reference": reference })))
 }
 
-/// `Claude Agent (claude-acp), Codex (codex-acp)`.
 fn listed(agents: &[rail::Agent]) -> String {
     agents
         .iter()
-        .map(|agent| match &agent.id {
-            Some(id) => format!("{} ({id})", agent.name),
-            None => agent.name.clone(),
+        .map(|agent| {
+            let kind = match agent.workspace {
+                Some(_) => "agent identity",
+                None => "installed program",
+            };
+            match &agent.id {
+                Some(id) => format!("{} ({id}, {kind})", agent.name),
+                None => format!("{} ({kind})", agent.name),
+            }
         })
         .collect::<Vec<_>>()
         .join(", ")

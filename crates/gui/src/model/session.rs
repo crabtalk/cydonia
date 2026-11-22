@@ -801,8 +801,9 @@ impl ChatSession {
         if self.mode == Mode::Terminal {
             return;
         }
-        let _ = self.store().save_session(&self.to_record());
-        self.written = true;
+        if self.store().save_session(&self.to_record()).is_ok() {
+            self.written = true;
+        }
         self.save_preferences();
     }
 

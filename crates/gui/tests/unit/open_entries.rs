@@ -12,9 +12,9 @@ use crate::{
         identity::Identity,
         settings::Settings,
         state,
-        workspace::{Opening, Slot},
+        workspace::{Opening, Showing, Slot},
     },
-    view::sidebar::{Group, Row},
+    view::sidebar::{self, Group, Row},
 };
 use artifact::{kind::Kind, space::Side};
 use bezel::gpui;
@@ -43,6 +43,112 @@ impl Drop for Scratch {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
     }
+}
+
+#[gpui::test]
+fn a_selected_light_sidebar_row_paints_its_fill_inside_the_row(cx: &mut gpui::TestAppContext) {
+    struct SelectedRow;
+    impl gpui::Render for SelectedRow {
+        fn render(
+            &mut self,
+            window: &mut gpui::Window,
+            cx: &mut gpui::Context<Self>,
+        ) -> impl gpui::IntoElement {
+            window.native_surfaces.materials = true;
+            sidebar::row(
+                "selected-row",
+                "test-row",
+                bezel::theme::Selection::Emphasized,
+                false,
+                0,
+                8.,
+                Theme::of(cx),
+            )
+        }
+    }
+
+    cx.update(|cx| {
+        Theme::install_custom(
+            Theme {
+                glass: true,
+                ..Theme::light()
+            },
+            cx,
+        )
+    });
+    let window = cx.add_window(|_, _| SelectedRow);
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.simulate_resize(gpui::size(gpui::px(300.), gpui::px(80.)));
+    visual.run_until_parked();
+    visual.update(|window, cx| {
+        let fill = Theme::of(cx).card_selected_bg().into();
+        assert!(
+            window
+                .painted_quads()
+                .iter()
+                .any(|quad| quad.background == fill)
+        );
+    });
+}
+
+#[gpui::test]
+fn expanded_sidebar_grows_only_when_an_entry_has_details(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("sidebar-details");
+    cx.update(|cx| Theme::install(bezel::theme::Appearance::Light, cx));
+    let window = cx.add_window(|window, cx| {
+        let mut settings = Settings::default();
+        settings.appearance.extended_sidebar = true;
+        Cydonia::new(settings, state::State::default(), window, cx)
+    });
+    let (board, row) = window
+        .update(cx, |root, _, cx| {
+            root.workspace.update(cx, |workspace, cx| {
+                workspace.open_project(scratch.project("one"), cx);
+                workspace.new_board(0, "Board".into(), "DEV", cx).unwrap();
+                let project = &workspace.projects[0];
+                let held = &project.boards[0];
+                let row = Row::Entry {
+                    project: project.id,
+                    showing: Showing::Board(held.id.clone()),
+                };
+                (held.board.clone(), row)
+            })
+        })
+        .unwrap();
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.simulate_resize(gpui::size(gpui::px(960.), gpui::px(720.)));
+    let row: &'static str = format!("sidebar-row-{}", sidebar::key_of(&row)).leak();
+    visual.run_until_parked();
+    let height =
+        |visual: &mut gpui::VisualTestContext| visual.debug_bounds(row).unwrap().size.height;
+    assert_eq!(height(&mut visual), gpui::px(sidebar::ROW_HEIGHT));
+
+    visual.update(|_, cx| {
+        board.update(cx, |board, cx| {
+            board.description = "A useful preview".into();
+            cx.notify();
+        });
+    });
+    visual.run_until_parked();
+    assert!(height(&mut visual) > gpui::px(sidebar::ROW_HEIGHT));
+
+    visual.update(|_, cx| {
+        board.update(cx, |board, cx| {
+            board.description.clear();
+            cx.notify();
+        });
+    });
+    visual.run_until_parked();
+    assert_eq!(height(&mut visual), gpui::px(sidebar::ROW_HEIGHT));
+
+    visual.update(|_, cx| {
+        board.update(cx, |board, cx| {
+            board.labels.push("Work".into());
+            cx.notify();
+        });
+    });
+    visual.run_until_parked();
+    assert!(height(&mut visual) > gpui::px(sidebar::ROW_HEIGHT));
 }
 
 /// Picking a board no pane is on leaves the arrangement and shows it, from

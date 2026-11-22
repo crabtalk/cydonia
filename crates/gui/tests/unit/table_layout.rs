@@ -5,11 +5,11 @@ use crate::{
 };
 use bezel::{
     gpui::{
-        self, AppContext as _, Entity, Modifiers, MouseButton, ScrollDelta, ScrollEvent,
-        ScrollSource, TestAppContext, VisualTestContext, WeakEntity, point, px, size,
+        self, AppContext as _, ClipboardItem, Entity, Modifiers, MouseButton, ScrollDelta,
+        ScrollEvent, ScrollSource, TestAppContext, VisualTestContext, WeakEntity, point, px, size,
     },
     theme::{Appearance, Theme},
-    ui::input,
+    ui::{focus, input, menu},
 };
 use std::path::PathBuf;
 
@@ -38,6 +38,9 @@ fn open(
     cx.update(|cx| {
         Theme::install(Appearance::Dark, cx);
         input::init(cx);
+        focus::init(cx);
+        menu::init(cx);
+        cx.bind_keys(table::bindings());
     });
     let mut settings = Settings::default();
     settings.features.tables = true;
@@ -67,15 +70,48 @@ fn settle(cx: &mut VisualTestContext) {
 }
 
 #[gpui::test]
+fn a_column_header_opens_its_menu_by_click_or_keyboard(cx: &mut TestAppContext) {
+    let (_directory, view, mut cx) = open(cx, 2, 600.);
+    let header = cx.debug_bounds("table-heading-0").unwrap().center();
+    let assert_open = |cx: &VisualTestContext, column: &str| {
+        view.read_with(cx, |view, _| {
+            assert!(matches!(
+                view.menu.key(),
+                Some(table::TableMenu::Column(name)) if name == column
+            ));
+            assert!(view.cell.is_none());
+        });
+    };
+    cx.simulate_mouse_down(header, MouseButton::Left, Modifiers::default());
+    cx.simulate_mouse_up(header, MouseButton::Left, Modifiers::default());
+    settle(&mut cx);
+    assert_open(&cx, "Field 0");
+    cx.simulate_keystrokes("escape enter");
+    settle(&mut cx);
+    assert_open(&cx, "Field 0");
+    cx.simulate_keystrokes("escape");
+    settle(&mut cx);
+    cx.simulate_mouse_down(header, MouseButton::Right, Modifiers::default());
+    cx.simulate_mouse_up(header, MouseButton::Right, Modifiers::default());
+    settle(&mut cx);
+    assert_open(&cx, "Field 0");
+    cx.simulate_keystrokes("escape tab enter");
+    settle(&mut cx);
+    assert_open(&cx, "Field 1");
+}
+
+#[gpui::test]
 fn narrow_tables_keep_readable_columns_and_scroll_to_the_last_one(cx: &mut TestAppContext) {
     let (_directory, view, mut cx) = open(cx, 11, 600.);
     assert!(cx.debug_bounds("table-heading-0").unwrap().size.width >= px(table::COLUMN_WIDTH));
     let first = cx.debug_bounds("table-cell-1-Field 0").unwrap();
     let second = cx.debug_bounds("table-cell-1-Field 1").unwrap();
     assert_eq!(second.left() - first.left(), px(table::COLUMN_WIDTH));
-    let scroll = view.read_with(&cx, |view, _| view.scroll.clone());
-    assert!(scroll.max_offset().x > px(0.));
-    assert!(scroll.max_offset().y > px(0.));
+    let (horizontal, vertical) = view.read_with(&cx, |view, _| {
+        (view.horizontal.clone(), view.vertical.clone())
+    });
+    assert!(horizontal.max_offset().x > px(0.));
+    assert!(vertical.max_offset().y > px(0.));
     let viewport = cx.debug_bounds("table-body").unwrap();
     cx.simulate_event(ScrollEvent {
         position: viewport.center(),
@@ -85,10 +121,24 @@ fn narrow_tables_keep_readable_columns_and_scroll_to_the_last_one(cx: &mut TestA
         source: ScrollSource::Pointer,
     });
     settle(&mut cx);
-    assert!(scroll.offset().x < px(0.));
+    assert!(horizontal.offset().x < px(0.));
     let last = cx.debug_bounds("table-heading-10").unwrap();
     assert!(last.right() <= viewport.right());
     assert!(last.left() >= viewport.left());
+    let cell = cx.debug_bounds("table-cell-5-Field 10").unwrap();
+    cx.simulate_event(ScrollEvent {
+        position: viewport.center(),
+        delta: ScrollDelta::Pixels(point(px(0.), px(-80.))),
+        modifiers: Modifiers::default(),
+        touch_phase: gpui::TouchPhase::Moved,
+        source: ScrollSource::Pointer,
+    });
+    settle(&mut cx);
+    assert!(vertical.offset().y < px(0.));
+    assert_eq!(cx.debug_bounds("table-heading-10").unwrap(), last);
+    let moved = cx.debug_bounds("table-cell-5-Field 10").unwrap();
+    assert_eq!(moved.left(), cell.left());
+    assert!(moved.top() < cell.top());
 }
 
 #[gpui::test]
@@ -160,6 +210,335 @@ fn dragging_a_header_resizes_its_cells_without_starting_an_edit(cx: &mut TestApp
         cx.debug_bounds("table-heading-0").unwrap().size.width,
         px(table::MIN_COLUMN_WIDTH)
     );
+}
+
+#[gpui::test]
+fn dragging_a_column_persists_order_and_keeps_its_cells_together(cx: &mut TestAppContext) {
+    let (directory, _, mut cx) = open(cx, 3, 700.);
+    let first = cx.debug_bounds("table-heading-0").unwrap().center();
+    let last = cx.debug_bounds("table-heading-2").unwrap();
+    let end = point(last.right() - px(20.), first.y);
+    cx.simulate_mouse_down(first, MouseButton::Left, Modifiers::default());
+    cx.simulate_mouse_move(
+        first + point(px(12.), px(0.)),
+        Some(MouseButton::Left),
+        Modifiers::default(),
+    );
+    assert!(cx.update(|_, cx| cx.has_active_drag()));
+    settle(&mut cx);
+    cx.simulate_mouse_move(end, Some(MouseButton::Left), Modifiers::default());
+    settle(&mut cx);
+    cx.simulate_mouse_up(end, MouseButton::Left, Modifiers::default());
+    settle(&mut cx);
+    let data = Data::open(&Home::Project(directory.0.clone())).unwrap();
+    let table = data.table("stories").unwrap();
+    assert_eq!(table.column_layout.order(&table.columns), [1, 2, 0]);
+    let moved = cx.debug_bounds("table-cell-1-Field 0").unwrap();
+    let left = cx.debug_bounds("table-cell-1-Field 2").unwrap();
+    assert!(moved.left() > left.left());
+}
+
+#[gpui::test]
+fn dragging_a_row_persists_manual_order_and_sort_clears_back_to_it(cx: &mut TestAppContext) {
+    let (directory, view, mut cx) = open(cx, 2, 700.);
+    let first = cx.debug_bounds("table-move-row-1").unwrap().center();
+    let third = cx.debug_bounds("table-move-row-3").unwrap().center();
+    let end = third + point(px(0.), px(5.));
+    cx.simulate_mouse_down(first, MouseButton::Left, Modifiers::default());
+    cx.simulate_mouse_move(
+        first + point(px(0.), px(10.)),
+        Some(MouseButton::Left),
+        Modifiers::default(),
+    );
+    assert!(cx.update(|_, cx| cx.has_active_drag()));
+    settle(&mut cx);
+    cx.simulate_mouse_move(end, Some(MouseButton::Left), Modifiers::default());
+    settle(&mut cx);
+    cx.simulate_mouse_up(end, MouseButton::Left, Modifiers::default());
+    settle(&mut cx);
+
+    let data = Data::open(&Home::Project(directory.0.clone())).unwrap();
+    let page = data.read("stories", None, false, 3, 0).unwrap();
+    assert_eq!(
+        page.rows.iter().map(|row| row.rowid).collect::<Vec<_>>(),
+        [2, 3, 1]
+    );
+    cx.update(|_, cx| {
+        view.update(cx, |view, cx| {
+            view.sort_rows(
+                Some(table::model::Sort {
+                    column: "Field 0".into(),
+                    descending: false,
+                }),
+                cx,
+            );
+            assert_eq!(view.page(cx).unwrap().rows[0].rowid, 1);
+            view.sort_rows(None, cx);
+            assert_eq!(view.page(cx).unwrap().rows[0].rowid, 2);
+        });
+    });
+}
+
+#[gpui::test]
+fn select_options_are_shared_and_rename_existing_choices(cx: &mut TestAppContext) {
+    let (directory, view, mut cx) = open(cx, 1, 600.);
+    let home = Home::Project(directory.0.clone());
+    let mut data = Data::open(&home).unwrap();
+    data.write(r#"UPDATE stories SET "Field 0" = 'Open' WHERE rowid IN (1, 2)"#)
+        .unwrap();
+    data.write_column("stories", "Field 0", Some(ColType::Select), None)
+        .unwrap();
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            view.source.update(cx, |source, cx| {
+                source.adopt(data.table("stories").unwrap(), cx)
+            });
+            view.start_edit(
+                Cell::Option {
+                    column: "Field 0".into(),
+                    previous: Some("Open".into()),
+                },
+                window,
+                cx,
+            );
+            view.cell_field
+                .update(cx, |field, cx| field.set_content("Ready", cx));
+            assert!(view.commit_cell(cx));
+            view.start_edit(
+                Cell::Option {
+                    column: "Field 0".into(),
+                    previous: None,
+                },
+                window,
+                cx,
+            );
+            view.cell_field
+                .update(cx, |field, cx| field.set_content("Done", cx));
+            assert!(view.commit_cell(cx));
+        });
+    });
+    settle(&mut cx);
+    let cell = cx.debug_bounds("table-cell-1-Field 0").unwrap().center();
+    cx.simulate_mouse_down(cell, MouseButton::Left, Modifiers::default());
+    cx.simulate_mouse_up(cell, MouseButton::Left, Modifiers::default());
+    settle(&mut cx);
+    cx.update(|_, cx| {
+        view.update(cx, |view, cx| {
+            assert!(matches!(
+                view.menu.key(),
+                Some(table::TableMenu::Select { rowid: 1, .. })
+            ));
+            let revision = view.page(cx).unwrap().revision;
+            view.choose_option(1, "Field 0", "Done", revision, cx);
+            let revision = view.page(cx).unwrap().revision;
+            view.choose_option(3, "Field 0", "", revision, cx);
+        });
+    });
+    let reopened = Data::open(&home).unwrap();
+    let table = reopened.table("stories").unwrap();
+    assert_eq!(
+        table.column_layout.settings["Field 0"].select_options,
+        ["Ready", "Done"]
+    );
+    let page = reopened.read("stories", None, false, 3, 0).unwrap();
+    assert_eq!(page.rows[0].cells[0], "Done");
+    assert_eq!(page.rows[1].cells[0], "Ready");
+    assert!(page.rows[2].cells[0].is_null());
+}
+
+#[gpui::test]
+fn the_grid_selects_a_rectangle_and_pastes_and_undoes_atomically(cx: &mut TestAppContext) {
+    let (directory, view, mut cx) = open(cx, 3, 600.);
+    let mut data = Data::open(&Home::Project(directory.0.clone())).unwrap();
+    data.write_column("stories", "Field 1", Some(ColType::Number), None)
+        .unwrap();
+    cx.update(|_, cx| {
+        let source = view.read(cx).source.clone();
+        source.update(cx, |source, cx| {
+            source.adopt(data.table("stories").unwrap(), cx)
+        });
+    });
+    settle(&mut cx);
+    let cell = cx.debug_bounds("table-cell-1-Field 0").unwrap().center();
+    cx.simulate_mouse_down(cell, MouseButton::Left, Modifiers::default());
+    cx.simulate_mouse_up(cell, MouseButton::Left, Modifiers::default());
+    settle(&mut cx);
+    cx.update(|_, cx| {
+        cx.write_to_clipboard(ClipboardItem::new_string("alpha\t3\nbeta\tbad".into()))
+    });
+    cx.simulate_keystrokes("cmd-v");
+    assert!(view.read_with(&cx, |view, _| view.clipboard.error.is_some()));
+    let page = data.read("stories", None, false, 2, 0).unwrap();
+    assert!(
+        page.rows
+            .iter()
+            .all(|row| row.cells[0].is_null() && row.cells[1].is_null())
+    );
+
+    cx.update(|_, cx| {
+        cx.write_to_clipboard(ClipboardItem::new_string("\"a\tb\"\t3\nbeta\t2".into()))
+    });
+    cx.simulate_keystrokes("cmd-v shift-right shift-down cmd-c");
+    assert_eq!(
+        cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()))
+            .as_deref(),
+        Some("\"a\tb\"\t3\nbeta\t2\n")
+    );
+    let page = data.read("stories", None, false, 2, 0).unwrap();
+    assert_eq!(
+        page.rows[0].cells[..2],
+        [serde_json::json!("a\tb"), serde_json::json!(3)]
+    );
+    assert_eq!(
+        page.rows[1].cells[..2],
+        [serde_json::json!("beta"), serde_json::json!(2)]
+    );
+    cx.simulate_keystrokes("cmd-z");
+    let page = data.read("stories", None, false, 2, 0).unwrap();
+    assert!(
+        page.rows
+            .iter()
+            .all(|row| row.cells[0].is_null() && row.cells[1].is_null())
+    );
+    cx.simulate_keystrokes("left up");
+    cx.update(|_, cx| {
+        cx.write_to_clipboard(ClipboardItem::new_string("north\r\n\r\nsouth".into()))
+    });
+    cx.simulate_keystrokes("cmd-v");
+    let page = data.read("stories", None, false, 3, 0).unwrap();
+    assert_eq!(page.rows[0].cells[0], "north");
+    assert!(page.rows[1].cells[0].is_null());
+    assert_eq!(page.rows[2].cells[0], "south");
+}
+
+#[gpui::test]
+fn moving_the_grid_selection_reveals_cells_and_drag_can_extend_it(cx: &mut TestAppContext) {
+    let (_directory, view, mut cx) = open(cx, 9, 600.);
+    let first = cx.debug_bounds("table-cell-1-Field 0").unwrap().center();
+    let second = cx.debug_bounds("table-cell-2-Field 1").unwrap().center();
+    cx.simulate_mouse_down(first, MouseButton::Left, Modifiers::default());
+    cx.simulate_mouse_move(
+        first + point(px(10.), px(0.)),
+        Some(MouseButton::Left),
+        Modifiers::default(),
+    );
+    settle(&mut cx);
+    cx.simulate_mouse_move(second, Some(MouseButton::Left), Modifiers::default());
+    cx.simulate_mouse_up(second, MouseButton::Left, Modifiers::default());
+    settle(&mut cx);
+    view.read_with(&cx, |view, _| {
+        let range = view.grid.range.as_ref().unwrap();
+        assert_eq!((range.anchor.rowid, range.active.rowid), (1, 2));
+        assert_eq!(range.active.column, "Field 1");
+    });
+    cx.simulate_keystrokes(
+        "tab right right right down down down down down down down down down down down",
+    );
+    settle(&mut cx);
+    view.read_with(&cx, |view, _| {
+        assert_eq!(view.grid.range.as_ref().unwrap().active.column, "Field 5");
+        assert!(view.horizontal.offset().x < px(0.));
+        assert!(view.vertical.offset().y < px(0.));
+    });
+}
+
+#[gpui::test]
+fn column_formats_persist_and_preserve_cell_values(cx: &mut TestAppContext) {
+    let (directory, view, mut cx) = open(cx, 3, 500.);
+    let home = Home::Project(directory.0.clone());
+    let mut data = Data::open(&home).unwrap();
+    data.write_column("stories", "Field 1", Some(ColType::Number), None)
+        .unwrap();
+    data.write_column("stories", "Field 2", Some(ColType::Date), None)
+        .unwrap();
+    data.write(&format!(
+        "UPDATE stories SET \"Field 0\" = '{}', \"Field 1\" = 12.345, \"Field 2\" = 0 WHERE rowid = 1",
+        "words that should wrap ".repeat(12),
+    ))
+    .unwrap();
+    cx.update(|_, cx| {
+        view.update(cx, |view, cx| {
+            view.source.update(cx, |source, cx| {
+                source.adopt(data.table("stories").unwrap(), cx);
+            });
+        });
+    });
+    settle(&mut cx);
+    let short = cx.debug_bounds("table-cell-1-Field 0").unwrap();
+    cx.update(|_, cx| {
+        view.update(cx, |view, cx| {
+            view.set_column_format("Field 0", table::ColumnFormat::Wrap(true), cx);
+            view.set_column_format("Field 1", table::ColumnFormat::DecimalPlaces(Some(2)), cx);
+            view.set_column_format(
+                "Field 2",
+                table::ColumnFormat::Date(Some(table::DateFormat::Iso)),
+                cx,
+            );
+        });
+    });
+    settle(&mut cx);
+    assert!(cx.debug_bounds("table-cell-1-Field 0").unwrap().size.height > short.size.height);
+    let reopened = Data::open(&home).unwrap();
+    let table = reopened.table("stories").unwrap();
+    let page = reopened.read("stories", None, false, 1, 0).unwrap();
+    assert_eq!(page.rows[0].cells[1], serde_json::json!(12.345));
+    assert_eq!(
+        super::display_text(
+            &page.rows[0].cells[1],
+            ColType::Number,
+            table.column_layout.settings.get("Field 1")
+        ),
+        "12.35"
+    );
+    assert_eq!(page.rows[0].cells[2], serde_json::json!(0));
+    assert_eq!(
+        super::display_text(
+            &page.rows[0].cells[2],
+            ColType::Date,
+            table.column_layout.settings.get("Field 2")
+        ),
+        "1970-01-01"
+    );
+}
+
+#[gpui::test]
+fn table_sort_runs_before_paging_and_can_be_cleared(cx: &mut TestAppContext) {
+    let (directory, view, mut cx) = open(cx, 1, 650.);
+    let mut data = Data::open(&Home::Project(directory.0.clone())).unwrap();
+    data.add_rows("stories", 182).unwrap();
+    data.write(r#"UPDATE stories SET "Field 0" = 'a' WHERE rowid IN (201, 202); UPDATE stories SET "Field 0" = 'z' WHERE rowid = 1"#)
+        .unwrap();
+    cx.update(|_, cx| {
+        view.update(cx, |view, cx| {
+            view.source.update(cx, |source, cx| {
+                source.adopt(data.table("stories").unwrap(), cx);
+            });
+            view.show_page(200, cx);
+            let sort = |descending| {
+                Some(table::model::Sort {
+                    column: "Field 0".into(),
+                    descending,
+                })
+            };
+            view.sort_rows(sort(false), cx);
+            assert_eq!(view.offset, 0);
+            let ids: Vec<_> = view
+                .page(cx)
+                .unwrap()
+                .rows
+                .iter()
+                .take(3)
+                .map(|row| row.rowid)
+                .collect();
+            assert_eq!(ids, [201, 202, 1]);
+            view.sort_rows(sort(true), cx);
+            assert_eq!(view.page(cx).unwrap().rows[0].rowid, 1);
+            view.show_page(200, cx);
+            assert_eq!(view.page(cx).unwrap().rows[0].rowid, 199);
+            view.sort_rows(None, cx);
+            assert_eq!(view.page(cx).unwrap().rows[1].rowid, 2);
+        });
+    });
 }
 
 #[gpui::test]

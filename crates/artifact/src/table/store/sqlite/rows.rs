@@ -1,10 +1,10 @@
 use crate::table::{
     self, Column,
     rows::{Edit, Page, Revision, Row},
-    store::sqlite::{self as data, Data, identity::Identity},
+    store::sqlite::{self as data, Data, identity::Identity, row_order},
 };
 use anyhow::{Result, bail};
-use rusqlite::{Transaction, TransactionBehavior, params_from_iter};
+use rusqlite::{ToSql, Transaction, TransactionBehavior, params_from_iter};
 use serde_json::{Map, Value};
 
 impl Data {
@@ -45,22 +45,29 @@ impl Data {
         // Empty sorts with null: a blank cell is absent, whichever direction
         // you are reading in, and burying it under the values is what makes a
         // column of a few filled rows readable at all.
-        let order = match sort.and_then(|s| columns.iter().find(|col| col.name == s)) {
-            Some(col) => format!(
-                " ORDER BY ({0} IS NULL OR {0} = '') , {0} {1}",
-                table::quote(&col.name),
-                if desc { "DESC" } else { "ASC" }
-            ),
-            None => String::new(),
+        let sorted = sort.and_then(|s| columns.iter().find(|col| col.name == s));
+        let manual = sorted.is_none() && row_order::ordered(&self.reader, &key)?;
+        let order = match sorted {
+            Some(col) => {
+                let column = table::quote(&col.name);
+                let direction = if desc { "DESC" } else { "ASC" };
+                let blank = format!("{column} IS NULL OR {column} = ''");
+                format!(
+                    " ORDER BY ({blank}), CASE WHEN {blank} THEN {rowid} END, {column} {direction}, {rowid}"
+                )
+            }
+            None if manual => row_order::order_by(rowid, "?3"),
+            None => format!(" ORDER BY {rowid}"),
         };
 
         let count = columns.len();
         let mut stmt = self.reader.prepare(&format!(
-            "SELECT {projection} FROM {}{order} LIMIT ?1 OFFSET ?2",
+            "SELECT {projection} FROM {} AS _rows{order} LIMIT ?1 OFFSET ?2",
             table::quote(&key)
         ))?;
+        let bindings: [&dyn ToSql; 3] = [&limit, &offset, &key];
         let rows = stmt
-            .query_map([limit, offset], |row| {
+            .query_map(&bindings[..if manual { 3 } else { 2 }], |row| {
                 Ok(Row {
                     rowid: row.get(0)?,
                     cells: (1..=count).map(|i| data::value(row, i)).collect(),
@@ -84,7 +91,7 @@ impl Data {
         })
     }
 
-    fn revision(&self) -> Result<Revision> {
+    pub(super) fn revision(&self) -> Result<Revision> {
         Ok(Revision {
             connection: self.identity,
             changes: self.writer.total_changes(),
@@ -243,11 +250,17 @@ impl Data {
         if columns.len() == 1 {
             bail!("a table keeps at least one column");
         }
-        self.writer.execute_batch(&format!(
+        let tx = self.writer.transaction()?;
+        tx.execute_batch(&format!(
             "ALTER TABLE {} DROP COLUMN {}",
             table::quote(&key),
             table::quote(&col.name)
         ))?;
+        tx.execute(
+            "DELETE FROM _cydonia_table_columns WHERE table_key = ?1 AND column_name = ?2",
+            rusqlite::params![key, col.name],
+        )?;
+        tx.commit()?;
         data::columns_of(&self.writer, &key)
     }
 }

@@ -4,12 +4,14 @@
 //! A table's `key` is its SQL identifier; its `name` is display text.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 pub mod rows;
 pub mod store;
 
-/// What a column holds. Four, closed, and every one a word SQLite keeps
-/// verbatim in its catalog — which is what lets a declaration be the registry.
+pub const MAX_DECIMAL_PLACES: u8 = 6;
+
+/// The declared type is stored in the SQLite catalog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ColType {
@@ -17,12 +19,19 @@ pub enum ColType {
     Number,
     Date,
     Check,
+    Url,
+    Select,
 }
 
 impl ColType {
-    /// Every type, for the prompt that has to name the menu. Interpolated
-    /// rather than retyped in prose, so adding one here reaches the model.
-    pub const ALL: [Self; 4] = [Self::Text, Self::Number, Self::Date, Self::Check];
+    pub const ALL: [Self; 6] = [
+        Self::Text,
+        Self::Number,
+        Self::Date,
+        Self::Check,
+        Self::Url,
+        Self::Select,
+    ];
 
     /// The wire name — what the tools take and hand back.
     pub fn name(self) -> &'static str {
@@ -31,6 +40,8 @@ impl ColType {
             Self::Number => "number",
             Self::Date => "date",
             Self::Check => "check",
+            Self::Url => "url",
+            Self::Select => "select",
         }
     }
 
@@ -43,6 +54,8 @@ impl ColType {
             Self::Number => "NUMERIC",
             Self::Date => "DATE",
             Self::Check => "BOOLEAN",
+            Self::Url => "URL TEXT",
+            Self::Select => "CHOICE TEXT",
         }
     }
 }
@@ -52,12 +65,10 @@ impl ColType {
 /// column we cannot name is still a column the person can read.
 impl From<&str> for ColType {
     fn from(declared: &str) -> Self {
-        match declared.to_ascii_uppercase().as_str() {
-            "NUMERIC" => Self::Number,
-            "DATE" => Self::Date,
-            "BOOLEAN" => Self::Check,
-            _ => Self::Text,
-        }
+        Self::ALL
+            .into_iter()
+            .find(|kind| declared.eq_ignore_ascii_case(kind.sql()))
+            .unwrap_or(Self::Text)
     }
 }
 
@@ -71,6 +82,65 @@ pub struct Column {
     pub kind: ColType,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ColumnDisplay {
+    pub position: Option<usize>,
+    pub width: Option<u32>,
+    pub select_options: Vec<String>,
+    pub wrap: bool,
+    pub decimal_places: Option<u8>,
+    pub date_format: Option<DateFormat>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DateFormat {
+    Iso,
+    Long,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ColumnFormat {
+    Wrap(bool),
+    DecimalPlaces(Option<u8>),
+    Date(Option<DateFormat>),
+}
+
+impl ColumnFormat {
+    pub fn apply(self, kind: ColType, display: &mut ColumnDisplay) -> anyhow::Result<()> {
+        match (self, kind) {
+            (Self::Wrap(wrap), ColType::Text) => display.wrap = wrap,
+            (Self::DecimalPlaces(places), ColType::Number)
+                if places.is_none_or(|places| places <= MAX_DECIMAL_PLACES) =>
+            {
+                display.decimal_places = places;
+            }
+            (Self::Date(format), ColType::Date) => display.date_format = format,
+            _ => anyhow::bail!("this format is unavailable for the column"),
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ColumnLayout {
+    pub settings: BTreeMap<String, ColumnDisplay>,
+}
+
+impl ColumnLayout {
+    pub fn order(&self, columns: &[Column]) -> Vec<usize> {
+        let mut order: Vec<_> = (0..columns.len()).collect();
+        order.sort_by_key(|&ix| {
+            self.settings
+                .get(&columns[ix].name)
+                .and_then(|display| display.position)
+                .unwrap_or(usize::MAX)
+        });
+        order
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Table {
     pub number: Option<u64>,
@@ -78,6 +148,8 @@ pub struct Table {
     pub key: String,
     pub name: String,
     pub columns: Vec<Column>,
+    #[serde(skip)]
+    pub column_layout: ColumnLayout,
     pub rows: i64,
     pub created_at: i64,
     /// When it was last written in, once it has been — what the list is

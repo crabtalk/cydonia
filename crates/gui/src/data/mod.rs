@@ -1,5 +1,5 @@
 pub use artifact::table::{
-    ColType, Column, Table,
+    ColType, Column, ColumnDisplay, ColumnFormat, ColumnLayout, DateFormat, Table,
     rows::{Edit, Page, Revision, Row, Rows},
     store::{Data, Home},
 };

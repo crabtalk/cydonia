@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.2.13",
+    "date": "2026-11-23",
+    "summary": "Edit tables like spreadsheets, sort and format columns, and reorder agents in the sidebar.",
+    "new": [
+      "Select a range of table cells with the mouse or keyboard, copy and paste blocks, and undo a paste",
+      "Sort rows from the column header menu and remember manual row order, column order and widths",
+      "Add clickable URL columns and single-select columns with configurable choices",
+      "Wrap text cells, set decimal places for numbers, and choose how dates display",
+      "Drag agents to reorder them in the sidebar"
+    ],
+    "changed": [
+      "Open column menus from the headers and rename tables from the pane title bar",
+      "Reduce the space above the table grid and make column boundaries easier to grab",
+      "Manage saved agent identities from the sidebar",
+      "Use Bezel 0.2.30 and GPUI 0.3.30 from crates.io"
+    ],
+    "fixed": [
+      "Keep table column headers visible while scrolling",
+      "Keep sidebar entries without details on one line",
+      "Guide MCP session callers to saved agent identities and return the new session ID and entry reference when available",
+      "Allow canvas pinch zoom over cards and after keyboard input"
+    ]
+  },
+  {
     "version": "0.2.12",
     "date": "2026-11-17",
     "summary": "Run agents in embedded terminals, with automatic commands and MCP attachment for Codex and Claude Code. Add canvas web frames and browser debugging tools. Improve table editing and user-message visibility.",

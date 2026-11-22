@@ -10,6 +10,13 @@
 - Name a board by its key (ROAD), its name or its id; a card by its handle (ROAD-12) or its id, and read its whole text with board_read_card; a column by its name or its id; an article by its title or its id.
 - A board key or handle not in this project: board_search finds the open project it is in.
 
+## Starting sessions
+
+Start new sessions under a saved Cydonia agent in the target project. In
+session_send, set `agent` to that agent identity's ID from the tool's choices,
+leave `session` out, and pass the first prompt as `message`. If the target
+project has no suitable agent identity, tell the user one needs to be set up.
+
 ## Files under .cydonia/
 
 - Read and change managed artifacts under .cydonia/ only through Cydonia tools. Never edit, move or delete their files directly.

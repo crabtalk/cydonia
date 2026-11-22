@@ -25,6 +25,10 @@ fn catalog_delivery_never_embeds_full_resource_content() {
     let tools = prompts::tool_context(true, &[]);
     assert!(session.contains(&prompts::resource_catalog(&[])));
     assert!(tools.contains(&prompts::resource_catalog(&[])));
+    for context in [&session, &tools] {
+        assert!(context.contains("Start new sessions under a saved Cydonia agent"));
+        assert!(context.contains("set `agent` to that agent identity's ID"));
+    }
     let unavailable = prompts::session_context(Path::new("/project"), None, None, false, &[]);
     for skill in resources::list() {
         assert!(!session.contains(skill.content));

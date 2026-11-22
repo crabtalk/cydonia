@@ -3,8 +3,8 @@
 mod common;
 
 use artifact::{kind::Kind, session::mode::Mode};
-use common::{Rail, Scratch, refused, said};
-use cydonia_mcp::rail::Change;
+use common::{Rail, Scratch, refused, said, structured};
+use cydonia_mcp::rail::{self, Change, Request, Started};
 use serde_json::json;
 
 #[test]
@@ -51,8 +51,13 @@ fn an_entry_that_is_not_a_session_is_refused() {
 fn no_session_starts_one_on_the_named_agent() {
     let scratch = Scratch::new("session-start");
     let server = scratch.server();
-    let rail = Rail;
     cydonia_mcp::rail::set_agents(vec![
+        cydonia_mcp::rail::Agent {
+            name: "Reviewer".to_owned(),
+            id: Some("reviewer-id".to_owned()),
+            workspace: Some(scratch.path().canonicalize().unwrap()),
+            mode: Default::default(),
+        },
         cydonia_mcp::rail::Agent {
             name: "Claude Agent".to_owned(),
             id: Some("claude-acp".to_owned()),
@@ -67,26 +72,44 @@ fn no_session_starts_one_on_the_named_agent() {
         },
     ]);
 
-    said(server.call(
-        "session_send",
-        json!({"agent": "claude agent", "message": "foo"}),
-        Some(scratch.path()),
-    ));
-
-    assert!(rail.was_asked(Change::Start {
-        project: scratch.path().canonicalize().unwrap(),
-        agent: "claude-acp".to_owned(),
-        message: "foo".to_owned(),
-    }));
+    let project = scratch.path().canonicalize().unwrap();
+    rail::install(move |request| {
+        let Request::Start(start) = request else {
+            panic!("expected a session start");
+        };
+        assert_eq!(start.project, project);
+        assert_eq!(start.agent, "claude-acp");
+        assert_eq!(start.message, "foo");
+        start
+            .reply
+            .send(Ok(Started {
+                id: "new-record".to_owned(),
+                number: Some(17),
+            }))
+            .unwrap();
+    });
+    let call = serde_json::from_value(json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "session_send",
+            "arguments": {"agent": "claude agent", "message": "foo"}
+        }
+    }))
+    .unwrap();
+    let answer = server.handle(&call, Some(scratch.path())).unwrap();
+    let answer = serde_json::to_value(answer).unwrap();
+    assert_eq!(
+        answer["result"]["content"][0]["text"],
+        "started session #17 (ID new-record) on Claude Agent"
+    );
     let why = refused(server.call(
         "session_send",
         json!({"agent": "Claude", "message": "foo"}),
         Some(scratch.path()),
     ));
-    assert!(
-        why.contains("cydonia has Claude Agent (claude-acp), Codex"),
-        "{why}"
-    );
+    assert!(why.contains("no agent named Claude"), "{why}");
     let listing = server
         .handle(
             &serde_json::from_value(json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}))
@@ -102,10 +125,12 @@ fn no_session_starts_one_on_the_named_agent() {
         .find(|tool| tool["name"] == "session_send")
         .unwrap()
         .clone();
-    assert_eq!(
-        send["inputSchema"]["properties"]["agent"]["enum"],
-        json!(["claude-acp", "Codex"])
-    );
+    let agent = &send["inputSchema"]["properties"]["agent"];
+    assert_eq!(agent["enum"], json!(["reviewer-id", "claude-acp", "Codex"]));
+    let choices = agent["description"].as_str().unwrap();
+    assert!(choices.contains("Reviewer (reviewer-id, agent identity)"));
+    assert!(choices.contains("Claude Agent (claude-acp, installed program)"));
+    assert!(choices.contains("Codex (installed program)"));
 }
 
 /// A session filed in `scratch` holding `said`, a question and its answer
@@ -377,25 +402,34 @@ fn a_named_terminal_agent_requests_a_run_with_the_initial_prompt_in_its_workspac
     let scratch = Scratch::new("native-agent-start");
     let other = Scratch::new("native-agent-other");
     let server = scratch.server();
-    let rail = Rail;
     cydonia_mcp::rail::set_agents(vec![cydonia_mcp::rail::Agent {
         name: "Native Claude".into(),
         id: Some("named-agent-id".into()),
         workspace: Some(scratch.path().into()),
         mode: Mode::Terminal,
     }]);
-    let response = said(server.call(
+    let project = scratch.path().canonicalize().unwrap();
+    rail::install(move |request| {
+        let Request::Start(start) = request else {
+            panic!("expected a terminal run");
+        };
+        assert_eq!(start.project, project);
+        assert_eq!(start.agent, "named-agent-id");
+        assert_eq!(start.message, "fix it");
+        start
+            .reply
+            .send(Ok(Started {
+                id: "terminal-2".to_owned(),
+                number: None,
+            }))
+            .unwrap();
+    });
+    let response = structured(server.call(
         "session_send",
         json!({"agent": "named-agent-id", "message": "fix it"}),
         Some(scratch.path()),
     ));
-    assert!(response.contains("requested a terminal run"), "{response}");
-    assert!(response.contains("initial prompt"), "{response}");
-    assert!(rail.was_asked(Change::Start {
-        project: scratch.path().canonicalize().unwrap(),
-        agent: "named-agent-id".into(),
-        message: "fix it".into()
-    }));
+    assert_eq!(response, json!({"id": "terminal-2", "reference": null}));
     other.server();
     let why = refused(server.call(
         "session_send",
