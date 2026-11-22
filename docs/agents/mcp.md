@@ -63,7 +63,11 @@ Eight tools take a list where they take one thing, so a turn that touches severa
 
 `session_read` and `session_search` take [references](../working/references.md), including a run of turns (`#43:5-7`) and a session in another open project (`cydonia#43`). `session_send` takes a session in the project the call is about (`#43`).
 
-- `session_send` queues a message as another session's next prompt, or starts a new session on a named agent with it. Nothing is waited for or answered back. A message sent from a session starts with `from #42:7`, the sender and the turn it was on.
+- `session_send` queues a message as another session's next prompt, or starts a
+  new session on a named agent with it. The tool returns the new session's ID
+  and project entry reference (such as `#43`) before the agent answers.
+  Terminal runs return an ID for the current app process. A message sent from
+  a session starts with `from #42:7`, the sender and the turn it was on.
 - `session_read` answers turns of a session, the last 3 when none are named. Each tool call is one line unless `full` is asked for.
 - `session_search` finds text case-insensitively in one session or every session in a project, archived ones included, and answers each matching turn as a reference such as `#43:5`, at most 20.
 - `session_rename` retitles the session that calls it, and no other. Where you titled the session yourself it is refused unless the agent sets `replace_user_title`, which it is told to do only when you asked for the rename; the new title then replaces yours.

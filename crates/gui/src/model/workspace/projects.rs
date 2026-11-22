@@ -22,32 +22,42 @@ impl Workspace {
     /// what carries it across.
     pub(super) fn take_rail(&self, cx: &mut Context<Self>) {
         let (asked, mut asks) = mpsc::unbounded();
-        rail::install(move |change| {
-            let _ = asked.unbounded_send(change);
+        rail::install(move |request| {
+            let _ = asked.unbounded_send(request);
         });
         rail::set_open(self.paths());
         rail::set_agents(self.rail_agents());
         rail::set_board_view(self.board_view);
         cx.spawn(async move |workspace, cx| {
-            while let Some(change) = asks.next().await {
+            while let Some(request) = asks.next().await {
                 let held = workspace
-                    .update(cx, |workspace, cx| match change {
-                        Change::Open(path) => workspace.open_project(path, cx),
-                        Change::Close(path) => workspace.close_project_at(&path, cx),
-                        Change::Send { session, message } => {
-                            workspace.send_to_record(&session, message, cx)
+                    .update(cx, |workspace, cx| {
+                        let change = match request {
+                            rail::Request::Change(change) => change,
+                            rail::Request::Start(start) => {
+                                let result = workspace.start_in(
+                                    &start.project,
+                                    &start.agent,
+                                    start.message,
+                                    cx,
+                                );
+                                let _ = start.reply.send(result);
+                                return;
+                            }
+                        };
+                        match change {
+                            Change::Open(path) => workspace.open_project(path, cx),
+                            Change::Close(path) => workspace.close_project_at(&path, cx),
+                            Change::Send { session, message } => {
+                                workspace.send_to_record(&session, message, cx)
+                            }
+                            Change::Rename { session, title } => {
+                                workspace.retitle_record(&session, title, cx)
+                            }
+                            Change::Label { session, labels } => {
+                                workspace.label_record(&session, labels, cx)
+                            }
                         }
-                        Change::Rename { session, title } => {
-                            workspace.retitle_record(&session, title, cx)
-                        }
-                        Change::Label { session, labels } => {
-                            workspace.label_record(&session, labels, cx)
-                        }
-                        Change::Start {
-                            project,
-                            agent,
-                            message,
-                        } => workspace.start_in(&project, &agent, message, cx),
                     })
                     .is_ok();
                 // The workspace has gone, and there is no rail to move.
