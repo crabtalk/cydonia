@@ -1,13 +1,10 @@
-//! What `@` in an article lists: the open projects' sessions, boards and
-//! articles, linked as `cydonia://<project>#<number>` chips, and their boards'
-//! cards, as `cydonia://<project>#<handle>` — and the title a chip of one
-//! paints: cydonia's mark and the title.
+//! The rows of the `@` picker and the previews for entry links.
 
 use crate::{
     model::{
         project::ProjectId,
         workspace::{
-            Showing, Workspace,
+            Workspace,
             references::{self, Part},
         },
     },
@@ -80,104 +77,38 @@ pub(crate) fn read(workspace: &Workspace, cx: &App) -> Linkables {
             continue;
         };
         let active = active == Some(&project.path);
-        let shown = |number: u64| {
-            Reference::entry(Some(&name), number, None)
-                .relative(active)
-                .to_string()
-        };
-        let row = |showing: Showing| Row::Entry {
-            project: project.id,
-            showing,
-        };
-        let linkable =
-            |icon: Icon, title: String, about: String, number: u64, touched: u128, row: Row| {
-                Linkable {
-                    archived: false,
-                    kind: Kind::Session,
-                    icon,
-                    title,
-                    about,
-                    url: Reference::entry(Some(&name), number, None).link(),
-                    touched,
-                    project: name.to_string(),
-                    active,
-                    number,
-                    key: None,
-                    agent: None,
-                    labels: Vec::new(),
-                    row,
-                }
-            };
-        held.extend(project.chats(cx).filter_map(|chat| {
-            let number = chat.number?;
-            Some(Linkable {
-                agent: Some(chat.entry.name.clone()),
-                archived: chat.closed,
-                labels: chat.labels.clone(),
-                ..linkable(
-                    session_icon(chat, workspace),
-                    untitled(&chat.title, Kind::Session.untitled()),
-                    format!("Session · {} · {}", chat.entry.name, shown(number)),
-                    number,
-                    chat.touched(),
-                    row(Showing::Session(chat.id)),
-                )
-            })
-        }));
-        held.extend(project.articles.iter().filter_map(|article| {
-            let number = article.number?;
-            Some(Linkable {
-                archived: article.archived,
-                kind: Kind::Article,
-                labels: article.labels.clone(),
-                ..linkable(
-                    kind_icon(Kind::Article),
-                    untitled(&article.title, Kind::Article.untitled()),
-                    format!("Article · {}", shown(number)),
-                    number,
-                    article.touched,
-                    row(Showing::Article(article.id.clone())),
-                )
-            })
-        }));
-        held.extend(project.canvases.iter().filter_map(|held| {
-            let canvas = &held.canvas.read(cx).record;
-            let number = canvas.number?;
-            Some(Linkable {
-                archived: canvas.archived,
-                kind: Kind::Canvas,
-                labels: canvas.labels.clone(),
-                ..linkable(
-                    kind_icon(Kind::Canvas),
-                    canvas.label().to_owned(),
-                    format!("Canvas · {}", shown(number)),
-                    number,
-                    canvas.touched,
-                    row(Showing::Canvas(canvas.id.clone())),
-                )
-            })
-        }));
-        held.extend(project.boards.iter().filter_map(|held| {
-            let board = held.board.read(cx);
-            let number = board.number?;
-            let key = (!board.key.is_empty()).then(|| board.key.clone());
-            let about = match &key {
-                Some(key) => format!("Board · {key} · {}", shown(number)),
-                None => format!("Board · {}", shown(number)),
+        held.extend(project.entries(cx).filter_map(|entry| {
+            let number = entry.number?;
+            let kind = entry.showing.kind();
+            let reference = Reference::entry(Some(&name), number, None);
+            let url = reference.link();
+            let shown = reference.relative(active);
+            let icon = entry
+                .agent
+                .as_deref()
+                .map_or_else(|| kind_icon(kind), |agent| session_icon(agent, workspace));
+            let about = match entry.agent.as_ref().or(entry.board_key.as_ref()) {
+                Some(detail) => format!("{} · {detail} · {shown}", kind.label()),
+                None => format!("{} · {shown}", kind.label()),
             };
             Some(Linkable {
-                key,
-                archived: board.archived,
-                kind: Kind::Board,
-                labels: board.labels.clone(),
-                ..linkable(
-                    kind_icon(Kind::Board),
-                    untitled(&board.name, Kind::Board.untitled()),
-                    about,
-                    number,
-                    board.touched,
-                    row(Showing::Board(board.id.clone())),
-                )
+                icon,
+                title: untitled(&entry.title, kind.untitled()),
+                about,
+                url,
+                touched: entry.touched,
+                project: name.to_string(),
+                active,
+                number,
+                key: entry.board_key,
+                agent: entry.agent,
+                archived: entry.archived,
+                kind,
+                labels: entry.labels,
+                row: Row::Entry {
+                    project: project.id,
+                    showing: entry.showing,
+                },
             })
         }));
     }

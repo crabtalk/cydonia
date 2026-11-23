@@ -2,7 +2,7 @@
 //! the card a handle names, and the entry a number names.
 
 use crate::{
-    data::{ColType, Column, Data},
+    data::{ColType, Column, Data, Home},
     model::{
         article::Disk,
         project::{Project, ProjectIds},
@@ -10,9 +10,10 @@ use crate::{
         state::State,
         workspace::{
             Showing, Workspace,
-            references::{Part, card, entry, passage},
+            references::{Part, card, passage},
         },
     },
+    view::kit::link::mention,
 };
 use artifact::{
     kind::Kind,
@@ -90,7 +91,7 @@ fn a_handle_names_its_card_on_the_keyed_board(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-fn a_number_names_a_table(cx: &mut gpui::TestAppContext) {
+fn a_table_mention_resolves_to_its_entry(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         let dir =
             std::env::temp_dir().join(format!("cydonia-references-table-{}", std::process::id()));
@@ -100,18 +101,31 @@ fn a_number_names_a_table(cx: &mut gpui::TestAppContext) {
             name: "Name".to_owned(),
             kind: ColType::Text,
         };
-        let key = Data::open(&crate::data::Home::Project(dir.clone()))
+        let table = Data::open(&Home::Project(dir.clone()))
             .unwrap()
             .create("Prices", None, &[column], None)
-            .unwrap()
-            .key;
-        let project = Project::new(ProjectIds::default().intern(&dir), dir.clone(), cx);
-        let number = project.tables[0].table.read(cx).record.number.unwrap();
+            .unwrap();
+        let number = table.number.unwrap();
+        let workspace = cx.new(|cx| Workspace::new(Settings::default(), State::default(), cx));
+        workspace.update(cx, |workspace, cx| {
+            let project = Project::new(workspace.intern(&dir), dir.clone(), cx);
+            let id = project.id;
+            workspace.projects.push(project);
+            workspace.active = Some(0);
+            let entries = mention::read(workspace, cx);
+            cx.set_global(entries);
 
-        let (showing, title) = entry(&project, number, cx).unwrap();
-        assert_eq!(showing, Showing::Table(key));
-        assert_eq!(title, "Prices");
-        assert!(entry(&project, number + 1, cx).is_none());
+            for query in ["Prices".to_owned(), format!("#{number}")] {
+                let matches = mention::source(&query, cx);
+                assert_eq!(matches.len(), 1);
+                assert_eq!(matches[0].label.as_ref(), "Prices");
+                let resolved = workspace.resolve(&matches[0].url, cx).unwrap();
+                assert_eq!(resolved.project, id);
+                assert_eq!(resolved.showing, Showing::Table(table.key.clone()));
+                assert_eq!(resolved.title, "Prices");
+            }
+            assert!(workspace.resolve(&format!("#{}", number + 1), cx).is_err());
+        });
         let _ = std::fs::remove_dir_all(&dir);
     });
 }

@@ -1,9 +1,6 @@
 //! The marks entries wear.
 
-use crate::model::{
-    session::ChatSession,
-    workspace::{Member, Showing, Workspace},
-};
+use crate::model::workspace::{Member, Showing, Workspace};
 use artifact::kind::Kind;
 use bezel::{
     gpui::App,
@@ -24,9 +21,9 @@ pub(crate) fn kind_icon(kind: Kind) -> Icon {
 
 /// The mark a session wears: its agent's, or a session's where the agent has
 /// none.
-pub(crate) fn session_icon(chat: &ChatSession, workspace: &Workspace) -> Icon {
+pub(crate) fn session_icon(agent: &str, workspace: &Workspace) -> Icon {
     workspace
-        .agent_icon(&chat.entry.name)
+        .agent_icon(agent)
         .unwrap_or_else(|| kind_icon(Kind::Session))
 }
 
@@ -34,7 +31,7 @@ pub(crate) fn session_icon(chat: &ChatSession, workspace: &Workspace) -> Icon {
 pub(crate) fn entry_icon(member: &Member, workspace: &Workspace, cx: &App) -> Icon {
     match workspace.showing_of(member, cx) {
         Some((_, Showing::Session(id))) => match workspace.session(id, cx) {
-            Some(chat) => session_icon(chat, workspace),
+            Some(chat) => session_icon(&chat.entry.name, workspace),
             None => kind_icon(Kind::Session),
         },
         _ => kind_icon(member.kind()),

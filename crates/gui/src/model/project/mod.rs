@@ -35,6 +35,7 @@ pub use id::{ProjectId, ProjectIds};
 #[derive(PartialEq)]
 pub struct Facts {
     pub showing: Showing,
+    pub title: String,
     pub label: String,
     pub number: Option<u64>,
     pub touched: u128,
@@ -44,6 +45,8 @@ pub struct Facts {
     pub labels: Vec<String>,
     /// The agent a session runs on; `None` for every other kind.
     pub agent: Option<String>,
+    /// The prefix on a board's card handles.
+    pub board_key: Option<String>,
 }
 
 /// A board a project holds: its id, which never changes, and the board, which
@@ -434,6 +437,7 @@ impl Project {
                 let chat = self.sessions[ix].chat.read(cx);
                 Facts {
                     showing: Showing::Session(chat.id),
+                    title: chat.title.clone(),
                     label: chat.label(),
                     number: chat.number,
                     touched: chat.touched(),
@@ -441,12 +445,14 @@ impl Project {
                     archived: chat.closed,
                     labels: chat.labels.clone(),
                     agent: Some(chat.entry.name.clone()),
+                    board_key: None,
                 }
             }
             Kind::Board => {
                 let board = self.boards[ix].board.read(cx);
                 Facts {
                     showing: Showing::Board(board.id.clone()),
+                    title: board.name.clone(),
                     label: board.label().to_owned(),
                     number: board.number,
                     touched: board.touched,
@@ -454,12 +460,14 @@ impl Project {
                     archived: board.archived,
                     labels: board.labels.clone(),
                     agent: None,
+                    board_key: (!board.key.is_empty()).then(|| board.key.clone()),
                 }
             }
             Kind::Article => {
                 let article = &self.articles[ix];
                 Facts {
                     showing: Showing::Article(article.id.clone()),
+                    title: article.title.clone(),
                     label: article.label().to_owned(),
                     number: article.number,
                     touched: article.touched,
@@ -467,12 +475,14 @@ impl Project {
                     archived: article.archived,
                     labels: article.labels.clone(),
                     agent: None,
+                    board_key: None,
                 }
             }
             Kind::Table => {
                 let table = &self.tables[ix].table.read(cx).record;
                 Facts {
                     showing: Showing::Table(table.key.clone()),
+                    title: table.name.clone(),
                     label: table.name.clone(),
                     number: table.number,
                     touched: table.touched_ms(),
@@ -480,12 +490,14 @@ impl Project {
                     archived: table.archived,
                     labels: Vec::new(),
                     agent: None,
+                    board_key: None,
                 }
             }
             Kind::Canvas => {
                 let canvas = &self.canvases[ix].canvas.read(cx).record;
                 Facts {
                     showing: Showing::Canvas(canvas.id.clone()),
+                    title: canvas.label().to_owned(),
                     label: canvas.label().to_owned(),
                     number: canvas.number,
                     touched: canvas.touched,
@@ -493,6 +505,7 @@ impl Project {
                     archived: canvas.archived,
                     labels: canvas.labels.clone(),
                     agent: None,
+                    board_key: None,
                 }
             }
             Kind::App => unreachable!("an app is no project's entry"),
