@@ -63,3 +63,10 @@ fn a_range_reads_back_as_the_lines_it_covers() {
     let range = lines(text, Span { from: 2, to: 3 }).unwrap();
     assert_eq!(span_of(text, range), Span { from: 2, to: 3 });
 }
+
+#[test]
+fn a_range_can_end_on_a_multibyte_character() {
+    let text = "the first line\ncafé";
+    let range = lines(text, Span { from: 2, to: 2 }).unwrap();
+    assert_eq!(span_of(text, range), Span { from: 2, to: 2 });
+}

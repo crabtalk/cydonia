@@ -2,18 +2,18 @@
 //! everything is gone when it is dropped.
 //!
 //! [`Project::seed`] fills one from the files of a `.cydonia/` in the layout
-//! [`super::fs`] writes, so a fixture directory reads the same through either.
+//! `project::fs` writes, so a fixture directory reads the same through either.
 //! Tables (`data.db`) are not part of it. Article covers are not carried: an
 //! [`Article`] from here has no cover.
 
 use crate::{
     article::{
-        Article,
+        self, Article,
         comments::Comments,
         properties::{self, Properties},
     },
     board::{Board, key},
-    canvas::{self as canvas_artifact, Canvas},
+    canvas::{self as canvas_artifact, Canvas, Document as CanvasDocument},
     error::Error,
     id,
     kind::Kind,
@@ -22,7 +22,6 @@ use crate::{
     stamp,
 };
 use anyhow::anyhow;
-use canvas::model::Canvas as CanvasDocument;
 use std::{
     cmp::Reverse,
     collections::{BTreeMap, HashMap, HashSet},
@@ -137,21 +136,21 @@ impl Project {
                         }
                         state.sessions.insert(record.id.clone(), record);
                     }
-                    ["articles", article, "content.md"] => {
+                    [article::DIR, article, "content.md"] => {
                         state
                             .articles
                             .entry((*article).to_owned())
                             .or_default()
                             .markdown = text();
                     }
-                    ["articles", article, "properties.toml"] => {
+                    [article::DIR, article, "properties.toml"] => {
                         state
                             .articles
                             .entry((*article).to_owned())
                             .or_default()
                             .properties = text();
                     }
-                    ["articles", article, "assets", name] => {
+                    [article::DIR, article, "assets", name] => {
                         state
                             .articles
                             .entry((*article).to_owned())

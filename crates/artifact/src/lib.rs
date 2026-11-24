@@ -17,15 +17,18 @@
 //! Nothing here reaches for gpui, and that is the rule the crate exists to
 //! hold: a shape a client reads must not carry anything about a window.
 
+#[cfg(feature = "fs")]
 pub mod app;
 pub mod archive;
 pub mod article;
+#[cfg(feature = "fs")]
 pub mod backup;
 pub mod board;
 pub mod canvas;
 pub mod document;
 pub mod entry;
 pub mod error;
+#[cfg(feature = "fs")]
 pub mod fs;
 pub mod id;
 pub mod kind;

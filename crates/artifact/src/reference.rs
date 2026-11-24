@@ -1,5 +1,5 @@
-//! The written form that names a thing in a project:
-//! `[project]#ref[:from[-to] | #anchor]`.
+//! Local references use `[project]#target`. Hosted references use
+//! `user/project/target`, where `user` is an account handle or id.
 //!
 //! | Written          | Names                                        |
 //! | ---------------- | -------------------------------------------- |
@@ -10,6 +10,7 @@
 //! | `DEV-12`         | card DEV-12                                  |
 //! | `foo#43:5`       | turn 5 of session #43 in project `foo`       |
 //! | `foo#DEV-12`     | card DEV-12 in project `foo`                 |
+//! | `alice/foo/12#setup` | heading in a project on an account      |
 //!
 //! Each form may be written as a link behind a `cydonia://` scheme:
 //! `cydonia://foo#43:5-7`.
@@ -23,8 +24,8 @@ pub const SCHEME: &str = "cydonia://";
 /// A parsed reference.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reference<'a> {
-    /// The project's name as written, before the `#`. Nothing means the
-    /// project the reference was written in.
+    /// A local project name or the `user/project` scope of a hosted
+    /// reference. Nothing means the project this was written in.
     pub project: Option<&'a str>,
     pub target: Target<'a>,
 }
@@ -76,10 +77,15 @@ impl<'a> Reference<'a> {
         }
     }
 
-    /// This reference as written in a project: without the project's name
-    /// when `home`, the project it names being the one it is written in.
+    /// The account handle or id and project name of a hosted reference.
+    pub fn hosted(&self) -> Option<(&'a str, &'a str)> {
+        self.project?.split_once('/')
+    }
+
+    /// Omit a local project name when `home`. Hosted references keep
+    /// their account and project.
     pub fn relative(mut self, home: bool) -> Self {
-        if home {
+        if home && self.hosted().is_none() {
             self.project = None;
         }
         self
@@ -94,14 +100,20 @@ impl<'a> Reference<'a> {
 /// Written the way [`parse`] reads it.
 impl std::fmt::Display for Reference<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let Some(project) = self.project {
-            write!(f, "{project}#")?;
+        match self.project {
+            Some(scope) if self.hosted().is_some() => write!(f, "{scope}/")?,
+            Some(project) => write!(f, "{project}#")?,
+            None if matches!(self.target, Target::Entry { .. }) => f.write_str("#")?,
+            None => {}
         }
-        match self.target {
+        self.target.fmt(f)
+    }
+}
+
+impl std::fmt::Display for Target<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
             Target::Entry { number, within } => {
-                if self.project.is_none() {
-                    f.write_str("#")?;
-                }
                 write!(f, "{number}")?;
                 match within {
                     Some(Within::Span(span)) => write!(f, ":{span}"),
@@ -151,38 +163,67 @@ pub fn names(path: &std::path::Path, name: &str) -> bool {
 /// whitespace is not trimmed.
 pub fn parse(text: &str) -> Option<Reference<'_>> {
     let text = text.strip_prefix(SCHEME).unwrap_or(text);
-    let Some((project, rest)) = text.split_once('#') else {
-        let (key, handle) = card(text)?;
+    if let Some((scope, rest)) = text.rsplit_once('/') {
+        let (account, project) = scope.split_once('/')?;
+        if !segment(account) || !segment(project) {
+            return None;
+        }
         return Some(Reference {
-            project: None,
-            target: Target::Card { key, handle },
+            project: Some(scope),
+            target: Target::parse(rest)?,
         });
-    };
-    let project = match project {
-        "" => None,
-        name if name.chars().any(|c| c.is_whitespace() || c == ':') => return None,
-        name => Some(name),
-    };
-    let target = if let Some((number, anchor)) = rest.split_once('#') {
-        Target::Entry {
-            number: positive(number)?,
-            within: Some(Within::Heading(heading(anchor)?)),
+    }
+    let (project, rest) = match text.split_once('#') {
+        Some(("", rest)) => (None, rest),
+        Some((name, _)) if name.chars().any(|c| c.is_whitespace() || c == ':') => return None,
+        Some((name, rest)) => (Some(name), rest),
+        None => {
+            let (key, handle) = card(text)?;
+            return Some(Reference {
+                project: None,
+                target: Target::Card { key, handle },
+            });
         }
-    } else if let Some((number, span)) = rest.split_once(':') {
-        Target::Entry {
-            number: positive(number)?,
-            within: Some(Within::Span(range(span)?)),
-        }
-    } else if let Some(number) = positive(rest) {
-        Target::Entry {
-            number,
-            within: None,
-        }
-    } else {
-        let (key, handle) = card(rest)?;
-        Target::Card { key, handle }
     };
-    Some(Reference { project, target })
+    Some(Reference {
+        project,
+        target: Target::parse(rest)?,
+    })
+}
+
+/// Whether a project name or account can occupy a reference segment.
+pub fn segment(text: &str) -> bool {
+    !text.is_empty()
+        && text != "."
+        && text != ".."
+        && !text
+            .chars()
+            .any(|c| c.is_whitespace() || c.is_control() || matches!(c, '/' | '\\' | ':' | '#'))
+}
+
+impl<'a> Target<'a> {
+    /// An entry segment: a positive number with an optional part, or a card handle.
+    pub fn parse(text: &'a str) -> Option<Self> {
+        if let Some((number, anchor)) = text.split_once('#') {
+            Some(Self::Entry {
+                number: positive(number)?,
+                within: Some(Within::Heading(heading(anchor)?)),
+            })
+        } else if let Some((number, span)) = text.split_once(':') {
+            Some(Self::Entry {
+                number: positive(number)?,
+                within: Some(Within::Span(range(span)?)),
+            })
+        } else if let Some(number) = positive(text) {
+            Some(Self::Entry {
+                number,
+                within: None,
+            })
+        } else {
+            let (key, handle) = card(text)?;
+            Some(Self::Card { key, handle })
+        }
+    }
 }
 
 /// A reference still being typed: the project as far as it is written, and

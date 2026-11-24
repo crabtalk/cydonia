@@ -195,3 +195,47 @@ fn a_reference_at_home_drops_its_project() {
     assert_eq!(entry.clone().relative(true).to_string(), "#43");
     assert_eq!(entry.relative(false).to_string(), "foo#43");
 }
+
+#[test]
+fn hosted_references_round_trip() {
+    for written in [
+        "alice/notes/12",
+        "01HF/notes/12:5-7",
+        "alice/notes/12#setup",
+        "alice/notes/ROAD-12",
+    ] {
+        let parsed = parse(written).unwrap();
+        let (account, project) = parsed.hosted().unwrap();
+        assert_eq!(project, "notes");
+        assert_eq!(account, written.split('/').next().unwrap());
+        assert_eq!(parsed.to_string(), written);
+        assert_eq!(parse(&parsed.link()), Some(parsed.clone()));
+        assert_eq!(parsed.relative(true).to_string(), written);
+    }
+    assert_eq!(
+        parse("alice/notes/12#setup").unwrap().target,
+        Target::Entry {
+            number: 12,
+            within: Some(Within::Heading("setup"))
+        }
+    );
+    assert_eq!(
+        parse("alice/notes/ROAD-12").unwrap().target,
+        Target::Card {
+            key: "ROAD",
+            handle: 12
+        }
+    );
+    for written in [
+        "alice//12",
+        "/notes/12",
+        "alice/notes/",
+        "alice/../12",
+        "alice/notes/0",
+        "alice/notes/#12",
+        "alice/notes/sub/12",
+        "alice/my notes/12",
+    ] {
+        assert_eq!(parse(written), None, "{written}");
+    }
+}

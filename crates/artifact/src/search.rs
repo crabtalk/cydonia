@@ -1,18 +1,19 @@
 //! Finding text across project entries.
 //!
 //! No index: a search walks the text it is handed. [`run`] searches what a
-//! caller already holds in memory; [`disk`] reads a project off its
+//! caller already holds in memory; `disk` reads a project off its
 //! `.cydonia/`, open in the app or not.
 //!
 //! Matches stream over a channel as they are found, in no particular order,
 //! and a search stops early once the receiver is dropped.
 
+#[cfg(feature = "fs")]
+use crate::project::fs;
 use crate::{
     article::Article,
     board::Board,
     canvas::Canvas,
     kind::Kind,
-    project::fs,
     session::{chat::ChatItem, record::Record},
 };
 use regex::bytes::{Regex, RegexBuilder};
@@ -249,6 +250,7 @@ pub fn run(sources: &[&(dyn Searchable + Sync)], query: &Query, found: &Sender<M
 ///
 /// Only items of the given kinds are read. Reads only: nothing a read of the
 /// project would write back is written.
+#[cfg(feature = "fs")]
 pub fn disk(project: &fs::Project, kinds: &[Kind], query: &Query, found: &Sender<Match>) {
     // Sessions are JSON, so the query is looked for as JSON writes it.
     let escaped = serde_json::to_string(query.text()).unwrap_or_default();

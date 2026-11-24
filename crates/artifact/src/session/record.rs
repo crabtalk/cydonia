@@ -6,7 +6,10 @@
 
 use crate::session::{chat::ChatItem, mode::Mode};
 use serde::{Deserialize, Serialize};
+#[cfg(not(feature = "fs"))]
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::{collections::BTreeMap, time::Duration};
+#[cfg(feature = "fs")]
 use web_time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -64,7 +67,7 @@ pub struct Record {
     pub fork: Option<ForkOrigin>,
     /// The article this session was opened under, by id. It moves to another
     /// project with the article and is removed with it — see
-    /// [`crate::article::move_to`].
+    /// `article::move_to`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub article: Option<String>,
     /// Items before this index have not reached the agent's session yet, and

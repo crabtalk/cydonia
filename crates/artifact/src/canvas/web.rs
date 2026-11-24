@@ -39,15 +39,16 @@ pub struct Resolved {
 }
 
 impl Source {
-    pub fn resolve(&self, root: &Path) -> Result<Resolved, String> {
+    pub fn resolve(&self, _root: &Path) -> Result<Resolved, String> {
         match self {
             Self::Url(url) => Ok(Resolved {
                 url: url.to_string(),
                 file: None,
             }),
+            #[cfg(all(feature = "fs", not(target_family = "wasm")))]
             Self::File(file) => {
                 let file =
-                    std::path::absolute(root.join(file)).map_err(|error| error.to_string())?;
+                    std::path::absolute(_root.join(file)).map_err(|error| error.to_string())?;
                 let url = Url::from_file_path(&file)
                     .map_err(|_| "cannot make a URL for the HTML file")?;
                 Ok(Resolved {
@@ -55,6 +56,8 @@ impl Source {
                     file: Some(file),
                 })
             }
+            #[cfg(not(all(feature = "fs", not(target_family = "wasm"))))]
+            Self::File(_) => Err("local web frame files require a native filesystem".into()),
         }
     }
 }

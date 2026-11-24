@@ -3,7 +3,7 @@
 //!
 //! A range is byte offsets into `content.md` as it was when the file was last
 //! written, and `content` is a hash of that text. Every write of `content.md`
-//! through [`crate::document::write`] maps the ranges through the change. A
+//! through `document::write` maps the ranges through the change. A
 //! file whose hash does not match the document is re-found by each comment's
 //! quote and the text around it.
 
@@ -234,12 +234,14 @@ pub fn path(content: &Path) -> PathBuf {
 /// The comments beside `content` as they were written, held against whatever
 /// text their hash names. Empty for an article with none, or a file that does
 /// not parse.
+#[cfg(feature = "fs")]
 pub fn read(content: &Path) -> Comments {
     parse(&std::fs::read_to_string(path(content)).unwrap_or_default())
 }
 
 /// Write `comments`, held against `text`, beside `content`. No comments
 /// removes the file.
+#[cfg(feature = "fs")]
 pub fn save(content: &Path, text: &str, comments: &Comments) -> std::io::Result<()> {
     let path = path(content);
     if comments.comments.is_empty() {

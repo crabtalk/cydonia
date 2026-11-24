@@ -9,19 +9,19 @@
 //! the whole lookup, and a board handed back can be written again from its id
 //! alone.
 
+#[cfg(feature = "sqlite")]
+use crate::entry;
 use crate::{
     article::{self, Article, comments::Comments, properties::Properties},
     board::{self, Board, key},
-    canvas::{self as canvas_artifact, Canvas},
-    document, entry, id,
+    canvas::{self as canvas_artifact, Canvas, Document as CanvasDocument},
+    document, id,
     kind::Kind,
     project::{self, Project as _, layout},
     session::record::Record,
     stamp,
 };
 use anyhow::Result;
-#[cfg(feature = "sqlite")]
-use canvas::model::Canvas as CanvasDocument;
 use notify::{RecursiveMode, Watcher as _};
 use std::{
     cmp::Reverse,

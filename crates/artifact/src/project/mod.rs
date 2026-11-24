@@ -1,24 +1,24 @@
 //! A project, as whatever holds it: the boards, sessions and articles in one,
 //! the numbers they are referred to by, and the reads and writes over them.
 //!
-//! [`Project`] is what a backend answers, and [`fs`] is the one cydonia ships
+//! [`Project`] is what a backend answers, and `fs` is the one cydonia ships
 //! — files under the project's own `.cydonia/`. The shapes themselves name no
 //! file and open none, which is what lets a board be the same board whichever
 //! backend handed it over.
 //!
-//! Everything is named by id. A path is a detail of [`fs`] and never crosses
+//! Everything is named by id. A path is a detail of `fs` and never crosses
 //! this trait.
 
 use crate::{
     article::{Article, comments::Comments, properties::Properties},
     board::Board,
-    canvas::Canvas,
+    canvas::{Canvas, Document as CanvasDocument},
     kind::Kind,
     session::record::Record,
 };
-use canvas::model::Canvas as CanvasDocument;
 use sha2::{Digest as _, Sha256};
 
+#[cfg(feature = "fs")]
 pub mod fs;
 pub mod layout;
 pub mod memory;

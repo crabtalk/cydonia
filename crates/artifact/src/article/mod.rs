@@ -19,11 +19,17 @@ pub mod comments;
 pub mod cover;
 pub mod properties;
 
-use crate::project::{Project as _, fs};
+#[cfg(feature = "fs")]
+use crate::{
+    document::{carry, carry_assets, repoint},
+    project::{Project as _, fs},
+};
 #[cfg(feature = "sqlite")]
 use crate::{entry, kind::Kind};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(feature = "fs")]
+use std::path::PathBuf;
 use url::Url;
 
 /// Where a project's articles live, and what the document is called inside the
@@ -61,15 +67,18 @@ pub struct Article {
     pub labels: Vec<String>,
 }
 
-pub use crate::document::{assets, content, touched};
-use crate::document::{carry, carry_assets, repoint};
+#[cfg(feature = "fs")]
+pub use crate::document::touched;
+pub use crate::document::{assets, content};
 
 /// Where this project's articles are, whether or not any have been written.
+#[cfg(feature = "fs")]
 pub fn dir(project: &Path) -> PathBuf {
     fs::Project::new(project).cydonia().join(DIR)
 }
 
 /// The same, made along with the `.cydonia/` it sits in.
+#[cfg(feature = "fs")]
 pub fn init(project: &Path) -> std::io::Result<PathBuf> {
     Ok(fs::Project::new(project).init()?.join(DIR))
 }
@@ -96,6 +105,7 @@ pub fn stored_id(kind: crate::kind::Kind, written: String) -> String {
 
 /// This millisecond's directory, or the first after it that is not taken. Two
 /// articles made inside one millisecond is the only way that happens.
+#[cfg(feature = "fs")]
 pub fn free(dir: &Path, stamp: u128) -> PathBuf {
     dir.join(crate::stamp::free(stamp, |id| dir.join(id).exists()))
 }
@@ -117,6 +127,7 @@ pub fn free(dir: &Path, stamp: u128) -> PathBuf {
 /// destination issues one on the next read. The same for each of its
 /// sessions, which move into the destination's `sessions/` — see
 /// [`crate::session::record::Record::article`].
+#[cfg(feature = "fs")]
 pub fn move_to(content: &Path, to: &Path) -> std::io::Result<PathBuf> {
     let missing =
         |what: &str| std::io::Error::new(std::io::ErrorKind::InvalidInput, what.to_owned());
@@ -143,6 +154,7 @@ pub fn move_to(content: &Path, to: &Path) -> std::io::Result<PathBuf> {
 
 /// Move the sessions of article `id` in `from` to `to`, as sessions of the
 /// article `landed` there. Each keeps its id where `to` has it free.
+#[cfg(feature = "fs")]
 fn carry_sessions(id: &str, from: &Path, landed: &str, to: &Path) -> std::io::Result<()> {
     let (source, target) = (fs::Project::new(from), fs::Project::new(to));
     let failed = |e: crate::error::Error| std::io::Error::other(e.to_string());
@@ -169,6 +181,7 @@ fn carry_sessions(id: &str, from: &Path, landed: &str, to: &Path) -> std::io::Re
 /// it named would be read back as an article nobody can open. Best effort on
 /// the registry alone: the files are gone either way, and a number left behind
 /// is retired by the next read.
+#[cfg(feature = "fs")]
 pub fn remove(content: &Path) -> std::io::Result<()> {
     let dir = content
         .parent()
@@ -195,6 +208,7 @@ pub fn remove(content: &Path) -> std::io::Result<()> {
 }
 
 /// The project a `content.md` is in: `<project>/.cydonia/articles/<id>/content.md`.
+#[cfg(feature = "fs")]
 pub fn project_of(content: &Path) -> Option<&Path> {
     content.ancestors().nth(4)
 }
