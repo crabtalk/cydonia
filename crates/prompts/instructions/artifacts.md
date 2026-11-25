@@ -16,6 +16,8 @@ Start new sessions under a saved Cydonia agent in the target project. In
 session_send, set `agent` to that agent identity's ID from the tool's choices,
 leave `session` out, and pass the first prompt as `message`. If the target
 project has no suitable agent identity, tell the user one needs to be set up.
+To get the answer to a message sent with session_send, call session_wait on
+the session; call it again while it answers that the session is still working.
 
 ## Files under .cydonia/
 

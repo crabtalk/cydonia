@@ -8,7 +8,7 @@
 //!
 //! The rail hands tool requests across to the window's thread. Changes are
 //! queued. Session creation waits for the workspace to return the new
-//! session's identity.
+//! session's identity, and a wait for the session to settle.
 //!
 //! Installed once at launch, like a highlighter or a link preview. A build with
 //! nothing installed — the tests, a caller that mounted the tool sets on their
@@ -77,6 +77,7 @@ pub enum Change {
 pub enum Request {
     Change(Change),
     Start(Start),
+    Wait(Wait),
 }
 
 pub struct Start {
@@ -90,6 +91,26 @@ pub struct Started {
     pub id: String,
     /// Terminal runs have an in-process id and no project entry number.
     pub number: Option<u64>,
+}
+
+/// A wait on the session filed under `session`, answered once it is settled:
+/// no turn in flight and no prompt queued, or its agent gone. Answered at once
+/// when it already is, refused when the session is not open. A session closed
+/// before then drops `reply`.
+pub struct Wait {
+    pub session: String,
+    pub reply: mpsc::Sender<Result<Settled, String>>,
+}
+
+/// The turn a session settled on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Settled {
+    /// Counted from 1, as `session_read` counts. 0 when nothing was said.
+    pub turn: u64,
+    /// The agent's last message in that turn.
+    pub answer: Option<String>,
+    /// The last notice in that turn: why it stopped short, where it did.
+    pub notice: Option<String>,
 }
 
 /// A named agent or installed ACP program offered for session creation.
@@ -234,6 +255,24 @@ pub(crate) fn start(project: PathBuf, agent: String, message: String) -> Result<
         )),
         Err(mpsc::RecvTimeoutError::Disconnected) => Err(Trouble::Refused(
             "Cydonia could not start the session".to_owned(),
+        )),
+    }
+}
+
+/// Blocks the calling thread until the session is settled, or `timeout`
+/// passes (`Ok(None)`). Call off the UI thread.
+#[cfg(feature = "http")]
+pub(crate) fn wait(
+    session: String,
+    timeout: std::time::Duration,
+) -> Result<Option<Settled>, Trouble> {
+    let (reply, answer) = mpsc::channel();
+    dispatch(Request::Wait(Wait { session, reply }))?;
+    match answer.recv_timeout(timeout) {
+        Ok(settled) => settled.map(Some).map_err(Trouble::Refused),
+        Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
+        Err(mpsc::RecvTimeoutError::Disconnected) => Err(Trouble::Refused(
+            "the session closed before its turn ended".to_owned(),
         )),
     }
 }

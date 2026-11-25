@@ -23,7 +23,7 @@ use artifact::{
     kind::Kind,
     project::Project as _,
     session::{
-        chat::{ChatItem, PlanStatus},
+        chat::{self, ChatItem, PlanStatus},
         mode::Mode,
         record::{ForkOrigin, Record},
     },
@@ -42,12 +42,14 @@ use cydonia_acp::proto::{
 };
 #[cfg(feature = "desktop")]
 use cydonia_acp_events::Reply;
+use mcp::rail::Settled;
 use std::{
     borrow::Cow,
     cell::RefCell,
     collections::{BTreeMap, VecDeque},
     path::PathBuf,
     rc::Rc,
+    sync::mpsc,
     time::Duration,
 };
 use web_time::{Instant, SystemTime, UNIX_EPOCH};
@@ -247,6 +249,9 @@ pub struct ChatSession {
     /// Prompts waiting for an agent to send them to: what was typed while a
     /// turn was in flight, and what a card sent to a new session opened it with.
     pub queue: VecDeque<String>,
+    /// Tool calls waiting on this session to settle, answered by
+    /// [`Self::settle`].
+    waiters: Vec<mpsc::Sender<Result<Settled, String>>>,
     /// The geometry of the sidebar's orb for this session, reused tick to
     /// tick. Its own buffer: each orb on screen is filled where it is built
     /// and read back in the paint phase.
@@ -499,6 +504,7 @@ impl ChatSession {
             turn_started: None,
             tool_started: BTreeMap::new(),
             queue: seed.into_iter().collect(),
+            waiters: Vec::new(),
             mark: Rc::default(),
             epoch: 0,
             _pump: pump,
@@ -567,6 +573,7 @@ impl ChatSession {
             turn_started: None,
             tool_started: BTreeMap::new(),
             queue: VecDeque::new(),
+            waiters: Vec::new(),
             mark: Rc::default(),
             epoch: 0,
             _pump: Task::ready(()),
@@ -860,6 +867,7 @@ impl ChatSession {
         self.streaming = false;
         self.closed = true;
         self.queue.clear();
+        self.waiters.clear();
         self.flush();
     }
 
@@ -934,6 +942,52 @@ impl ChatSession {
             self.flush();
         } else {
             self.prompt(content);
+        }
+    }
+
+    /// Answer `reply` when this session settles: at once if it already has.
+    pub fn wait(&mut self, reply: mpsc::Sender<Result<Settled, String>>) {
+        match self.settled() {
+            Some(settled) => {
+                let _ = reply.send(Ok(settled));
+            }
+            None => self.waiters.push(reply),
+        }
+    }
+
+    /// The turn this session ended on, once nothing is in flight or queued, or
+    /// its agent is lost. Nothing while it is still working.
+    fn settled(&self) -> Option<Settled> {
+        let lost = matches!(self.connection, Connection::Lost);
+        if !lost && (self.streaming || !self.queue.is_empty()) {
+            return None;
+        }
+        let turns = chat::turns(&self.items);
+        let items = turns
+            .last()
+            .map_or(&[][..], |last| &self.items[last.clone()]);
+        Some(Settled {
+            turn: turns.len() as u64,
+            answer: items.iter().rev().find_map(|item| match item {
+                ChatItem::Agent(text) if !text.trim().is_empty() => Some(text.clone()),
+                _ => None,
+            }),
+            notice: items.iter().rev().find_map(|item| match item {
+                ChatItem::Notice { text, .. } => Some(text.clone()),
+                _ => None,
+            }),
+        })
+    }
+
+    /// Answer every wait on this session, if it has settled.
+    fn settle(&mut self) {
+        if self.waiters.is_empty() {
+            return;
+        }
+        if let Some(settled) = self.settled() {
+            for reply in self.waiters.drain(..) {
+                let _ = reply.send(Ok(settled.clone()));
+            }
         }
     }
 
@@ -1164,6 +1218,7 @@ impl ChatSession {
                 }
                 self.flush();
                 self.drain();
+                self.settle();
             }
             Event::Closed => {
                 self.connection = Connection::Lost;
@@ -1172,6 +1227,7 @@ impl ChatSession {
                 self.fail_running_tools();
                 self.notice(true, "agent connection lost");
                 self.flush();
+                self.settle();
             }
         }
     }
@@ -1511,6 +1567,7 @@ fn pump(entry: &settings::Agent, launch: Launch, cx: &mut Context<ChatSession>) 
                         chat.stderr(line);
                     }
                     chat.notice(true, &format!("connection failed: {e:#}"));
+                    chat.settle();
                     cx.notify();
                 });
                 return;

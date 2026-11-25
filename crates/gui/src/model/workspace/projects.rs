@@ -44,6 +44,10 @@ impl Workspace {
                                 let _ = start.reply.send(result);
                                 return;
                             }
+                            rail::Request::Wait(wait) => {
+                                workspace.wait_on(wait, cx);
+                                return;
+                            }
                         };
                         match change {
                             Change::Open(path) => workspace.open_project(path, cx),
