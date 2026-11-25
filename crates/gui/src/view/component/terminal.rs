@@ -544,20 +544,23 @@ impl Render for Terminal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let focused = self.focus.is_focused(window);
         let caret = caret_override(cx);
+        // `None` while the program hides the cursor, which leaves the blink
+        // where it is: a redraw hides and shows it many times a second.
         let blinking = self.buffer.update(cx, |buffer, _| {
             buffer.emulator.set_cursor_override(caret);
-            buffer
-                .emulator
-                .cursor()
-                .is_some_and(|cursor| cursor.style.blinking)
+            buffer.emulator.cursor().map(|cursor| cursor.style.blinking)
         });
-        if focused && blinking {
-            if self.blink.is_none() {
-                self.start_blink(cx);
+        match (focused, blinking) {
+            (true, None) => {}
+            (true, Some(true)) => {
+                if self.blink.is_none() {
+                    self.start_blink(cx);
+                }
             }
-        } else {
-            self.blink = None;
-            self.cursor_on = true;
+            _ => {
+                self.blink = None;
+                self.cursor_on = true;
+            }
         }
         let this = cx.weak_entity();
         let grid = TerminalElement::new(

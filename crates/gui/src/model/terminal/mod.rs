@@ -5,10 +5,19 @@ use crate::{
 use bezel::gpui::{Context, EventEmitter, Task};
 use futures::{StreamExt, channel::mpsc};
 use portable_pty::{CommandBuilder, PtySize};
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 use terminal::emulator::{Emulator, HOLD_TIMEOUT};
 
 const FEED_LIMIT: usize = 256 * 1024;
+
+/// How long output that has arrived waits for the rest of its write before it
+/// is fed. A program redrawing a region writes it in several calls, moving and
+/// hiding the cursor across them; a frame drawn between two shows the cursor
+/// mid-redraw.
+const INPUT_DELAY: Duration = Duration::from_millis(3);
 
 pub mod process;
 
@@ -73,6 +82,7 @@ impl Buffer {
                 this.shell = Some(shell);
                 this._pump = Some(cx.spawn(async move |this, cx| {
                     while let Some(mut bytes) = output.next().await {
+                        cx.background_executor().timer(INPUT_DELAY).await;
                         while bytes.len() < FEED_LIMIT
                             && let Ok(more) = output.try_recv()
                         {
