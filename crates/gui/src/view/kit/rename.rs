@@ -52,6 +52,7 @@ pub(crate) enum NameEvent {
 pub(crate) enum Renaming {
     Session(u64),
     Canvas(Entry),
+    Design(Entry),
     Table(Entry),
     /// A space, by its id — auto-named `space-1` until someone gives it a
     /// name of their own.
@@ -84,6 +85,14 @@ impl Renaming {
                 kind: Kind::Canvas,
                 id: id.clone(),
             })),
+            Row::Entry {
+                project,
+                showing: Showing::Design(id),
+            } => Some(Self::Design(Entry {
+                project: *project,
+                kind: Kind::Design,
+                id: id.clone(),
+            })),
             Row::Group(Group::Space(id)) => Some(Self::Space(id.clone())),
             Row::Group(Group::Agent(id)) => Some(Self::Agent(id.clone())),
             Row::Entry {
@@ -106,6 +115,10 @@ impl Renaming {
             Self::Canvas(entry) => workspace
                 .canvas_entity(entry)
                 .map(|canvas| canvas.read(cx).record.label().to_owned())
+                .unwrap_or_default(),
+            Self::Design(entry) => workspace
+                .design_entity(entry)
+                .map(|design| design.read(cx).label().to_owned())
                 .unwrap_or_default(),
             Self::Table(entry) => workspace
                 .table_entity(entry)
@@ -132,6 +145,9 @@ impl Renaming {
         match self {
             Self::Session(id) => workspace.rename_session(id, name, cx),
             Self::Canvas(entry) => workspace.rename_canvas(&entry, name, cx),
+            Self::Design(entry) => {
+                workspace.edit_design(&entry, |design| design.title = name, cx);
+            }
             Self::Table(entry) => return workspace.rename_table(&entry, name, cx),
             Self::Space(id) => workspace.rename_space(&id, name, cx),
             Self::Agent(id) => workspace.rename_identity(&id, name, cx),

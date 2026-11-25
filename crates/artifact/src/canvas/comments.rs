@@ -5,12 +5,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Anchor {
-    pub url: String,
-    pub selector: String,
-    pub quote: String,
-}
+pub use crate::comment::Anchor;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Comment {

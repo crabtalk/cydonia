@@ -262,6 +262,7 @@ impl Tab {
                     .children(self.ribbon_bar(focused, window, cx))
                     .into_any_element()
             }
+            Showing::Design(_) => div().flex_1().into_any_element(),
             Showing::Canvas(_) => match self.canvas_shown(cx) {
                 Some(view) => view.into_any_element(),
                 None => div().flex_1().into_any_element(),

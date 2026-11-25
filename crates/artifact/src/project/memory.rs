@@ -14,6 +14,7 @@ use crate::{
     },
     board::{Board, key},
     canvas::{self as canvas_artifact, Canvas, Document as CanvasDocument},
+    design::Design,
     error::Error,
     id,
     kind::Kind,
@@ -39,6 +40,7 @@ pub struct Project(Mutex<State>);
 struct State {
     boards: BTreeMap<String, Board>,
     canvases: BTreeMap<String, Canvas>,
+    designs: BTreeMap<String, Design>,
     /// How many times each board has been written, which is its version.
     writes: HashMap<String, u64>,
     sessions: BTreeMap<String, Record>,
@@ -423,6 +425,42 @@ impl super::Project for Project {
             .remove(id)
             .ok_or_else(|| not_found("canvas", id))?;
         state.retire(Kind::Canvas, id);
+        Ok(())
+    }
+
+    fn designs(&self) -> Vec<Design> {
+        self.state().designs.values().cloned().collect()
+    }
+
+    fn design(&self, id: &str) -> Option<Design> {
+        self.state().designs.get(id).cloned()
+    }
+
+    fn save_design(&self, design: &mut Design) -> super::Result<()> {
+        let mut state = self.state();
+        if state
+            .designs
+            .get(&design.id)
+            .and_then(|held| held.version.as_ref())
+            != design.version.as_ref()
+        {
+            return Err(Error::Stale);
+        }
+        design.labels = crate::label::normalize_all(&design.labels);
+        design.number = Some(state.number(Kind::Design, &design.id));
+        design.touched = stamp::now();
+        design.version = Some(project::version(format!("{design:?}").as_bytes()));
+        state.designs.insert(design.id.clone(), design.clone());
+        Ok(())
+    }
+
+    fn remove_design(&self, id: &str) -> super::Result<()> {
+        let mut state = self.state();
+        state
+            .designs
+            .remove(id)
+            .ok_or_else(|| not_found("design", id))?;
+        state.retire(Kind::Design, id);
         Ok(())
     }
 

@@ -348,6 +348,7 @@ impl Row {
             Showing::Article(id) => (Kind::Article, id.clone()),
             Showing::Board(id) => (Kind::Board, id.clone()),
             Showing::Canvas(id) => (Kind::Canvas, id.clone()),
+            Showing::Design(id) => (Kind::Design, id.clone()),
             Showing::Session(id) => (Kind::Session, open.session(*id, cx)?.filed()?.to_owned()),
             Showing::Table(_) => return None,
         };
@@ -487,7 +488,7 @@ pub(crate) fn shown(row: &Row, features: &Features) -> bool {
         Some(Showing::Board(_)) => features.boards,
         Some(Showing::Table(_)) => features.tables,
         Some(Showing::Canvas(_)) => features.canvases,
-        Some(Showing::Article(_)) | None => true,
+        Some(Showing::Article(_) | Showing::Design(_)) | None => true,
     }
 }
 
@@ -585,6 +586,7 @@ pub(crate) fn key_of(entry: &Row) -> String {
             Showing::Article(id) => format!("article-{project}-{id}"),
             Showing::Table(key) => format!("table-{project}-{key}"),
             Showing::Canvas(id) => format!("canvas-{project}-{id}"),
+            Showing::Design(id) => format!("design-{project}-{id}"),
         },
         Row::App(id) => format!("app-{id}"),
     }
@@ -705,6 +707,7 @@ pub(crate) struct Sidebar {
     /// Every app's program, whose build names its row.
     apps: Watch,
     canvases: Watch,
+    designs: Watch,
     /// What each session's row showed when it was last drawn.
     listed: HashMap<u64, Listed>,
     sessions: Watch,
@@ -762,6 +765,7 @@ impl Sidebar {
             boards: Watch::default(),
             apps: Watch::default(),
             canvases: Watch::default(),
+            designs: Watch::default(),
             listed: HashMap::new(),
             sessions: Watch::default(),
             focus,
@@ -1389,6 +1393,10 @@ impl Render for Sidebar {
         let mut canvases = std::mem::take(&mut self.canvases);
         canvases.set_in(&sources, window, cx, |this, _, _, cx| this.relisted(cx));
         self.canvases = canvases;
+        let sources = self.workspace.read(cx).design_entities();
+        let mut designs = std::mem::take(&mut self.designs);
+        designs.set_in(&sources, window, cx, |this, _, _, cx| this.relisted(cx));
+        self.designs = designs;
         let programs: Vec<_> = self.workspace.read(cx).programs().cloned().collect();
         let mut apps = std::mem::take(&mut self.apps);
         // A build names an app's row, and the apps are listed by name.

@@ -333,7 +333,7 @@ pub fn disk(project: &fs::Project, kinds: &[Kind], query: &Query, found: &Sender
                 canvas.id = id.clone();
                 one(&canvas, query, found)
             }
-            Kind::Board | Kind::Table | Kind::App => true,
+            Kind::Board | Kind::Table | Kind::App | Kind::Design => true,
         }
     });
 }

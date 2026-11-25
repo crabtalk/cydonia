@@ -61,13 +61,14 @@ const PLACEHOLDER: &str = "Search articles, boards, sessions and commands…";
 const LINK_PLACEHOLDER: &str = "Link an entry…";
 
 /// The filters in the order the chips show and `tab` steps them.
-const FILTERS: [(Option<Filter>, &str); 7] = [
+const FILTERS: [(Option<Filter>, &str); 8] = [
     (None, "All"),
     (Some(Filter::Commands), "Commands"),
     (Some(Filter::Kind(Kind::Session)), "Sessions"),
     (Some(Filter::Kind(Kind::Board)), "Boards"),
     (Some(Filter::Kind(Kind::Article)), "Articles"),
     (Some(Filter::Kind(Kind::Canvas)), "Canvases"),
+    (Some(Filter::Kind(Kind::Design)), "Designs"),
     (Some(Filter::Kind(Kind::Table)), "Tables"),
 ];
 

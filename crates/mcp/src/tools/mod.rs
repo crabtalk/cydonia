@@ -18,6 +18,7 @@ pub mod board;
 pub mod browser;
 pub mod canvas;
 mod comment;
+pub mod design;
 pub mod project;
 pub mod session;
 pub mod table;

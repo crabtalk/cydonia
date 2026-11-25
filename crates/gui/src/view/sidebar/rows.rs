@@ -647,6 +647,11 @@ impl Sidebar {
                 "canvas-row",
                 glyph(icons::layout::PanelsTopLeft.into()),
             ),
+            Showing::Design(_) => (
+                SharedString::from(key_of(entry)).into(),
+                "design-row",
+                glyph(icons::layout::LayoutGrid.into()),
+            ),
             Showing::Table(_) => (
                 SharedString::from(key_of(entry)).into(),
                 "table-row",

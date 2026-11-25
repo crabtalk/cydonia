@@ -441,6 +441,10 @@ impl Cydonia {
                 showing: Showing::Canvas(id),
                 ..
             } => at(Some(format!(".cydonia/canvases/{id}/"))),
+            Row::Entry {
+                showing: Showing::Design(id),
+                ..
+            } => at(Some(format!(".cydonia/designs/{id}/"))),
             // Dropped out of the database rather than unlinked: the file is
             // where to look, not what goes.
             Row::Entry {

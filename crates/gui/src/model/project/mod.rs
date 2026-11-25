@@ -18,7 +18,8 @@ use crate::{
     },
 };
 use artifact::{
-    board::Board, canvas::Canvas as CanvasRecord, kind::Kind, project::Project as _, text,
+    board::Board, canvas::Canvas as CanvasRecord, design::Design, kind::Kind,
+    project::Project as _, text,
 };
 use bezel::gpui::{App, AppContext as _, Context, Entity};
 use std::{
@@ -84,6 +85,20 @@ impl HeldSession {
 }
 
 #[derive(Clone)]
+pub struct HeldDesign {
+    pub id: String,
+    pub design: Entity<Design>,
+}
+
+impl HeldDesign {
+    fn new(record: Design, cx: &mut App) -> Self {
+        Self {
+            id: record.id.clone(),
+            design: cx.new(|_| record),
+        }
+    }
+}
+
 pub struct HeldCanvas {
     pub id: String,
     pub canvas: Entity<Canvas>,
@@ -124,6 +139,8 @@ pub struct Project {
     pub articles: Vec<Article>,
     pub canvases: Vec<HeldCanvas>,
     pub canvas: Option<usize>,
+    pub designs: Vec<HeldDesign>,
+    pub design: Option<usize>,
     /// Which article the article pane shows.
     pub article: Option<usize>,
     pub data: Option<Rc<RefCell<Data>>>,
@@ -156,6 +173,12 @@ impl Project {
                 .map(|record| HeldCanvas::new(record, store.clone(), cx))
                 .collect(),
             canvas: None,
+            designs: store
+                .designs()
+                .into_iter()
+                .map(|record| HeldDesign::new(record, cx))
+                .collect(),
+            design: None,
             data: Data::attach(&Home::Project(path.clone()))
                 .map(|data| Rc::new(RefCell::new(data))),
             path,
@@ -195,6 +218,7 @@ impl Project {
         }
         self.reload_articles(cx);
         self.reload_canvases(cx);
+        self.reload_designs(cx);
         let boards = self.reload_boards(cx);
         let before = self.shape();
         self.reload_tables(cx);
@@ -298,6 +322,36 @@ impl Project {
         self.canvas = open.and_then(|id| self.canvas_ix(&id));
     }
 
+    fn reload_designs(&mut self, cx: &mut App) {
+        let open = self
+            .design
+            .and_then(|ix| self.designs.get(ix))
+            .map(|held| held.id.clone());
+        let mut held: HashMap<String, HeldDesign> = self
+            .designs
+            .drain(..)
+            .map(|held| (held.id.clone(), held))
+            .collect();
+        let store = self.store();
+        self.designs = store
+            .designs()
+            .into_iter()
+            .map(|record| match held.remove(&record.id) {
+                Some(kept) => {
+                    kept.design.update(cx, |held, cx| {
+                        if *held != record {
+                            *held = record;
+                            cx.notify();
+                        }
+                    });
+                    kept
+                }
+                None => HeldDesign::new(record, cx),
+            })
+            .collect();
+        self.design = open.and_then(|id| self.design_ix(&id));
+    }
+
     pub fn reload_tables(&mut self, cx: &mut App) {
         let Some(data) = self.data.clone() else {
             return;
@@ -393,6 +447,7 @@ impl Project {
             Kind::Article => Showing::Article(self.articles[ix].id.clone()),
             Kind::Table => Showing::Table(self.tables[ix].key.clone()),
             Kind::Canvas => Showing::Canvas(self.canvases[ix].id.clone()),
+            Kind::Design => Showing::Design(self.designs[ix].id.clone()),
             Kind::App => return None,
         })
     }
@@ -408,6 +463,7 @@ impl Project {
             Kind::Article => self.article_ix(id),
             Kind::Table => self.table_ix(id),
             Kind::Canvas => self.canvas_ix(id),
+            Kind::Design => self.design_ix(id),
             Kind::App => None,
         }
     }
@@ -425,6 +481,7 @@ impl Project {
             Kind::Article => self.articles.len(),
             Kind::Table => self.tables.len(),
             Kind::Canvas => self.canvases.len(),
+            Kind::Design => self.designs.len(),
             Kind::App => 0,
         };
         (0..len).map(move |ix| self.facts_at(kind, ix, cx))
@@ -508,6 +565,21 @@ impl Project {
                     board_key: None,
                 }
             }
+            Kind::Design => {
+                let design = &self.designs[ix].design.read(cx);
+                Facts {
+                    showing: Showing::Design(design.id.clone()),
+                    title: design.label().to_owned(),
+                    label: design.label().to_owned(),
+                    number: design.number,
+                    touched: design.touched,
+                    created: design.created(),
+                    archived: design.archived,
+                    labels: design.labels.clone(),
+                    agent: None,
+                    board_key: None,
+                }
+            }
             Kind::App => unreachable!("an app is no project's entry"),
         }
     }
@@ -531,6 +603,14 @@ impl Project {
             }
             Kind::Article => self.articles[ix].preview().to_owned(),
             Kind::Table => String::new(),
+            Kind::Design => self.designs[ix]
+                .design
+                .read(cx)
+                .pages
+                .iter()
+                .map(|page| page.title.as_str())
+                .collect::<Vec<_>>()
+                .join(", "),
             Kind::Canvas => self.canvases[ix]
                 .canvas
                 .read(cx)
@@ -554,6 +634,7 @@ impl Project {
             Showing::Article(id) => self.article_ix(id),
             Showing::Table(key) => self.table_ix(key),
             Showing::Canvas(id) => self.canvas_ix(id),
+            Showing::Design(id) => self.design_ix(id),
         }
     }
 
@@ -569,6 +650,10 @@ impl Project {
 
     pub fn canvas_ix(&self, id: &str) -> Option<usize> {
         self.canvases.iter().position(|held| held.id == id)
+    }
+
+    pub fn design_ix(&self, id: &str) -> Option<usize> {
+        self.designs.iter().position(|held| held.id == id)
     }
 
     pub fn entries<'a>(&'a self, cx: &'a App) -> impl Iterator<Item = Facts> + 'a {

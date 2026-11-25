@@ -26,6 +26,7 @@ pub mod backup;
 pub mod board;
 pub mod canvas;
 pub mod comment;
+pub mod design;
 pub mod document;
 pub mod entry;
 pub mod error;

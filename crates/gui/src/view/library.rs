@@ -66,6 +66,7 @@ const ROW_GROUP: &str = "library-row";
 pub(crate) enum Tab {
     Articles,
     Canvases,
+    Designs,
     Boards,
     Tables,
     Sessions,
@@ -74,9 +75,10 @@ pub(crate) enum Tab {
 }
 
 impl Tab {
-    const ALL: [Self; 7] = [
+    const ALL: [Self; 8] = [
         Self::Articles,
         Self::Canvases,
+        Self::Designs,
         Self::Boards,
         Self::Tables,
         Self::Sessions,
@@ -88,6 +90,7 @@ impl Tab {
         match self {
             Self::Articles => "Articles",
             Self::Canvases => "Canvases",
+            Self::Designs => "Designs",
             Self::Boards => "Boards",
             Self::Tables => "Tables",
             Self::Sessions => "Sessions",
@@ -101,6 +104,7 @@ impl Tab {
         match self {
             Self::Articles => Some(Kind::Article),
             Self::Canvases => Some(Kind::Canvas),
+            Self::Designs => Some(Kind::Design),
             Self::Boards => Some(Kind::Board),
             Self::Tables => Some(Kind::Table),
             Self::Sessions => Some(Kind::Session),
@@ -119,7 +123,7 @@ impl Tab {
     /// Whether the kind this tab lists is switched on.
     fn shown(self, features: &Features) -> bool {
         match self {
-            Self::Articles | Self::Apps | Self::Skills => true,
+            Self::Articles | Self::Designs | Self::Apps | Self::Skills => true,
             Self::Canvases => features.canvases,
             Self::Boards => features.boards,
             Self::Tables => features.tables,
@@ -131,7 +135,7 @@ impl Tab {
     fn fields(self) -> &'static [Field] {
         use Field::*;
         match self {
-            Self::Articles | Self::Canvases => &[
+            Self::Articles | Self::Canvases | Self::Designs => &[
                 Check, Name, Ref, Project, Labels, Created, Edited, Status, Actions,
             ],
             Self::Boards => &[Check, Name, Ref, Project, Edited, Status, Actions],
@@ -319,6 +323,7 @@ pub(crate) struct Library {
     /// Every app's program, whose build names its listing.
     apps: Watch,
     canvases: Watch,
+    designs: Watch,
     pub(crate) focus: FocusHandle,
     pub(crate) focus_watch: FocusWatch,
     _subscriptions: Vec<Subscription>,
@@ -411,6 +416,7 @@ impl Library {
             strip: Rc::new(Cell::new(px(0.))),
             apps: Watch::default(),
             canvases: Watch::default(),
+            designs: Watch::default(),
             focus,
             focus_watch,
             _subscriptions: subscriptions,
@@ -1691,6 +1697,10 @@ impl Render for Library {
         let mut canvases = std::mem::take(&mut self.canvases);
         canvases.set(&sources, cx);
         self.canvases = canvases;
+        let sources = self.workspace.read(cx).design_entities();
+        let mut designs = std::mem::take(&mut self.designs);
+        designs.set(&sources, cx);
+        self.designs = designs;
         let programs: Vec<_> = self.workspace.read(cx).programs().cloned().collect();
         let mut apps = std::mem::take(&mut self.apps);
         apps.set(&programs, cx);

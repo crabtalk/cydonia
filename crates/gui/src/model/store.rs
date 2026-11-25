@@ -9,6 +9,7 @@ use artifact::{
     article::{Article, comments::Comments, properties::Properties},
     board::Board,
     canvas::Canvas,
+    design::Design,
     kind::Kind,
     project::{Project, Result, Watching, fs, memory},
     session::record::Record,
@@ -160,6 +161,19 @@ impl Project for Store {
     }
     fn remove_canvas(&self, id: &str) -> Result<()> {
         each!(self, store => store.remove_canvas(id))
+    }
+
+    fn designs(&self) -> Vec<Design> {
+        each!(self, store => store.designs())
+    }
+    fn design(&self, id: &str) -> Option<Design> {
+        each!(self, store => store.design(id))
+    }
+    fn save_design(&self, design: &mut Design) -> Result<()> {
+        each!(self, store => store.save_design(design))
+    }
+    fn remove_design(&self, id: &str) -> Result<()> {
+        each!(self, store => store.remove_design(id))
     }
 
     fn articles(&self) -> Vec<Article> {

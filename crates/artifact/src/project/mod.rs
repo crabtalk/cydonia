@@ -13,6 +13,7 @@ use crate::{
     article::{Article, comments::Comments, properties::Properties},
     board::Board,
     canvas::{Canvas, Document as CanvasDocument},
+    design::Design,
     kind::Kind,
     session::record::Record,
 };
@@ -89,6 +90,11 @@ pub trait Project {
     fn create_canvas(&self, title: &str, document: &CanvasDocument) -> Result<Canvas>;
     fn save_canvas(&self, canvas: &mut Canvas) -> Result<()>;
     fn remove_canvas(&self, id: &str) -> Result<()>;
+
+    fn designs(&self) -> Vec<Design>;
+    fn design(&self, id: &str) -> Option<Design>;
+    fn save_design(&self, design: &mut Design) -> Result<()>;
+    fn remove_design(&self, id: &str) -> Result<()>;
 
     // ── articles ─────────────────────────────────────────────────────
 

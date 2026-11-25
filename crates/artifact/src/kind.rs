@@ -11,16 +11,18 @@ pub enum Kind {
     Board,
     Article,
     Canvas,
+    Design,
     Table,
     App,
 }
 
 impl Kind {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Session,
         Self::Board,
         Self::Article,
         Self::Canvas,
+        Self::Design,
         Self::Table,
         Self::App,
     ];
@@ -33,6 +35,7 @@ impl Kind {
             Self::Board => "board",
             Self::Article => "article",
             Self::Canvas => "canvas",
+            Self::Design => "design",
             Self::Table => "table",
             Self::App => "app",
         }

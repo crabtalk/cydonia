@@ -234,6 +234,7 @@ impl Workspace {
                 }
             }
             Kind::Canvas => project.canvas = at,
+            Kind::Design => project.design = at,
             Kind::App => {}
         }
         // Landing back in a session is being in front of it — see

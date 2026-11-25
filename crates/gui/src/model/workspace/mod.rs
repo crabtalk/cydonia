@@ -53,6 +53,7 @@ mod apps;
 mod articles;
 mod boards;
 mod canvases;
+mod designs;
 mod identities;
 mod labels;
 mod spaces;
