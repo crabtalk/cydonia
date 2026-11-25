@@ -1,4 +1,4 @@
-use crate::{comment::ElementComment, stamp};
+use crate::{comment::ElementComment, stamp, web::Viewport};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -14,6 +14,7 @@ pub struct Design {
     pub title: String,
     pub labels: Vec<String>,
     pub archived: bool,
+    pub viewport: Viewport,
     pub pages: Vec<Page>,
     #[serde(skip)]
     pub number: Option<u64>,
@@ -56,6 +57,13 @@ impl Page {
             .as_ref()
             .filter(|review| Some(&review.revision) == self.revision.as_ref())
             .map_or(Status::New, |review| review.status)
+    }
+
+    pub fn review_at(&mut self, status: Status) {
+        self.review = self
+            .revision
+            .clone()
+            .map(|revision| Review { revision, status });
     }
 
     pub fn path(&self) -> PathBuf {

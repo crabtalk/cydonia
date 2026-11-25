@@ -1,8 +1,11 @@
 use crate::{
     model::{canvas::Canvas, file::File, workspace::references},
-    view::{canvas::CanvasView, component::browse::console::ConsoleLog},
+    view::{canvas::CanvasView, component::browse::console::ConsoleLog, kit::web as presentation},
 };
-use artifact::canvas::web::{self, Frame, Source, Viewport};
+use artifact::{
+    canvas::web::{self, Frame, Source},
+    web::Viewport,
+};
 use bezel::{
     gpui::{
         self, AnyElement, App, AppContext as _, Context, Entity, FocusHandle, Focusable as _,
@@ -17,7 +20,7 @@ use bezel::{
         widgets::{ButtonStyle, Buttons as _},
     },
 };
-use browser::{Presentation, WebView, WebViewEvent};
+use browser::{WebView, WebViewEvent};
 use canvas::{
     Change,
     kind::{self, Card, Chrome},
@@ -26,21 +29,6 @@ use canvas::{
 use std::{cell::RefCell, collections::HashMap, path::PathBuf, rc::Rc};
 
 mod review;
-
-const PRESETS: [Viewport; 3] = [
-    Viewport {
-        width: 1440,
-        height: 900,
-    },
-    Viewport {
-        width: 768,
-        height: 1024,
-    },
-    Viewport {
-        width: 390,
-        height: 844,
-    },
-];
 
 #[derive(Clone)]
 pub(super) struct Frames {
@@ -357,23 +345,8 @@ impl Page {
         let (Some(page), Ok(frame)) = (&self.browser, &self.frame) else {
             return;
         };
-        let viewport = gpui::native_view::Viewport::try_from(size(
-            px(frame.viewport.width as f32),
-            px(frame.viewport.height as f32),
-        ));
-        let result = viewport.and_then(|viewport| {
-            page.update(cx, |page, cx| {
-                page.set_presentation(
-                    Some(Presentation {
-                        viewport,
-                        interactive: self.interactive,
-                    }),
-                    window,
-                    cx,
-                )
-            })
-        });
-        self.presentation_error = result.err().map(|error| error.to_string());
+        self.presentation_error =
+            presentation::present(page, frame.viewport, self.interactive, window, cx).err();
     }
 
     fn toggle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -392,7 +365,7 @@ impl Page {
 
     fn viewport_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let current = self.frame.as_ref().map(|frame| frame.viewport).ok();
-        let items = PRESETS
+        let items = Viewport::PRESETS
             .iter()
             .map(|viewport| {
                 Item::action(format!("{} × {}", viewport.width, viewport.height))
@@ -404,7 +377,10 @@ impl Page {
             Place::At(window.mouse_position()),
             items,
             |this, path, _, cx| {
-                let Some(viewport) = path.first().and_then(|index| PRESETS.get(*index)).copied()
+                let Some(viewport) = path
+                    .first()
+                    .and_then(|index| Viewport::PRESETS.get(*index))
+                    .copied()
                 else {
                     return;
                 };

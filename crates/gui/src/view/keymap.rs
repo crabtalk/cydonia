@@ -508,6 +508,7 @@ pub fn bind_all(shortcuts: &Shortcuts, cx: &mut App) {
     cx.bind_keys(super::pane::drawer::bindings());
     #[cfg(not(target_os = "linux"))]
     cx.bind_keys(super::component::browser::bindings(cx));
+    cx.bind_keys(crate::view::design::bindings());
     cx.bind_keys(super::pane::find::bindings());
     cx.bind_keys(super::modals::palette::bindings(cx));
     cx.bind_keys(entry_picker::bindings());

@@ -22,3 +22,4 @@ pub mod switch;
 pub mod text;
 pub mod title;
 pub mod watch;
+pub(crate) mod web;

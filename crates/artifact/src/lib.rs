@@ -43,3 +43,4 @@ pub mod space;
 pub mod stamp;
 pub mod table;
 pub mod text;
+pub mod web;

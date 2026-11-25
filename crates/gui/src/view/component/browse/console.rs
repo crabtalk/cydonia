@@ -2,7 +2,7 @@ use browser::{ConsoleLevel, ConsoleMessage};
 use mcp::rail::Level;
 use std::{collections::VecDeque, fmt::Write as _};
 
-const LOG_LIMIT: usize = 500;
+pub(crate) const LOG_LIMIT: usize = 500;
 
 #[derive(Default)]
 pub(crate) struct ConsoleLog {
@@ -51,3 +51,7 @@ impl ConsoleLog {
         out
     }
 }
+
+#[cfg(test)]
+#[path = "../../../../tests/unit/browser_console.rs"]
+mod tests;

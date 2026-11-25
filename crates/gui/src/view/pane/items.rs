@@ -11,6 +11,7 @@ use crate::{
         board::BoardView,
         canvas::CanvasView,
         component::transcript::{Drawn, SessionView},
+        design::DesignView,
         table::TableView,
     },
 };
@@ -41,6 +42,11 @@ impl Tab {
 
     /// Make the views for what the pane is about to draw.
     pub(crate) fn sync_items(&mut self, cx: &mut Context<Self>) {
+        for design in &self.designs {
+            if self.entry.entry() != Some(&design.read(cx).entry) {
+                design.update(cx, |design, _| design.park());
+            }
+        }
         if let Some(board) = self.shown_of(Kind::Board) {
             self.board_view(board, cx);
         }
@@ -50,6 +56,18 @@ impl Tab {
         }
         if let Some(canvas) = self.shown_of(Kind::Canvas) {
             self.canvas_view(canvas, cx);
+        }
+        if let Some(design) = self.shown_of(Kind::Design)
+            && self.design_shown(cx).is_none()
+        {
+            let workspace = self.workspace.read(cx);
+            if let Some(source) = workspace.design_entity(&design).cloned()
+                && let Some(project) = workspace.project(design.project)
+            {
+                let store = project.store();
+                let source_view = cx.new(|cx| DesignView::new(design, source, store, cx));
+                self.designs.push(source_view);
+            }
         }
         if let Some(table) = self.shown_of(Kind::Table) {
             self.table_view(table, cx);
@@ -118,6 +136,14 @@ impl Tab {
         self.articles
             .iter()
             .find(|view| view.read(cx).article == article)
+            .cloned()
+    }
+
+    pub(crate) fn design_shown(&self, cx: &App) -> Option<Entity<DesignView>> {
+        let entry = self.shown_of(Kind::Design)?;
+        self.designs
+            .iter()
+            .find(|view| view.read(cx).entry == entry)
             .cloned()
     }
 

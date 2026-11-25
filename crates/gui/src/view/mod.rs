@@ -7,6 +7,7 @@ pub mod article;
 pub mod board;
 pub mod canvas;
 pub mod component;
+pub(crate) mod design;
 pub mod detail;
 pub mod keymap;
 pub mod kit;

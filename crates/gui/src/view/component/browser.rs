@@ -467,7 +467,3 @@ impl Render for Browser {
             .into_any_element()
     }
 }
-
-#[cfg(test)]
-#[path = "../../../tests/unit/browser_console.rs"]
-mod tests;

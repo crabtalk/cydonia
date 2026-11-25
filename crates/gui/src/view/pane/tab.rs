@@ -8,6 +8,7 @@ use crate::{
         board::{self, info::BoardInfo},
         canvas::CanvasView,
         component::{composer::Composer, ribbon::Ribbon, transcript},
+        design::DesignView,
         kit::{
             menu::MenuHost,
             rename::Rename,
@@ -93,6 +94,7 @@ pub(crate) struct Tab {
     /// The same for each table.
     pub(crate) tables: Vec<Entity<table::TableView>>,
     pub(crate) canvases: Vec<Entity<CanvasView>>,
+    pub(crate) designs: Vec<Entity<DesignView>>,
     /// The same for each app.
     pub(crate) apps: Vec<Entity<app::AppView>>,
     /// The board's find field, and whether its bar is up.
@@ -171,6 +173,7 @@ impl Tab {
             sessions: Vec::new(),
             tables: Vec::new(),
             canvases: Vec::new(),
+            designs: Vec::new(),
             apps: Vec::new(),
             find_field,
             finding: false,
@@ -262,7 +265,10 @@ impl Tab {
                     .children(self.ribbon_bar(focused, window, cx))
                     .into_any_element()
             }
-            Showing::Design(_) => div().flex_1().into_any_element(),
+            Showing::Design(_) => match self.design_shown(cx) {
+                Some(view) => view.into_any_element(),
+                None => div().flex_1().into_any_element(),
+            },
             Showing::Canvas(_) => match self.canvas_shown(cx) {
                 Some(view) => view.into_any_element(),
                 None => div().flex_1().into_any_element(),

@@ -1,5 +1,5 @@
 use crate::{model::canvas::Canvas, view::canvas::web::Page};
-use artifact::canvas::{comments::Anchor, web::Viewport};
+use artifact::{canvas::comments::Anchor, web::Viewport};
 use bezel::{
     gpui::{
         self, AnyElement, App, Bounds, Context, Entity, MouseButton, Pixels, Task, Window, div,

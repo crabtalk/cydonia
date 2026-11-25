@@ -1,4 +1,4 @@
-use crate::view::component::browser::{ConsoleLog, LOG_LIMIT};
+use crate::view::component::browse::console::{ConsoleLog, LOG_LIMIT};
 use browser::{ConsoleLevel, ConsoleMessage};
 use mcp::rail::Level;
 

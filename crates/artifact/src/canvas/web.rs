@@ -1,25 +1,10 @@
+use crate::web::Viewport;
 use canvas::model::Node;
-use serde::Deserialize;
 use std::path::{Component, Path, PathBuf};
 use url::Url;
 
 pub const KIND: &str = "web";
 pub const VIEWPORT: &str = "viewport";
-
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
-pub struct Viewport {
-    pub width: u32,
-    pub height: u32,
-}
-
-impl Default for Viewport {
-    fn default() -> Self {
-        Self {
-            width: 1440,
-            height: 900,
-        }
-    }
-}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Source {

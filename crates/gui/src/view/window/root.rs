@@ -1024,7 +1024,10 @@ impl Cydonia {
                 .find(|view| view.board.id == *id)
                 .filter(|view| view.editing.is_some())
                 .map(|view| view.card_field.read(cx).focus_handle(cx)),
-            Showing::Design(_) => None,
+            Showing::Design(_) => leaf
+                .read(cx)
+                .design_shown(cx)
+                .map(|view| view.read(cx).focus_handle(cx)),
             Showing::Canvas(_) => leaf
                 .read(cx)
                 .canvas_shown(cx)
