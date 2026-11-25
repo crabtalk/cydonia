@@ -1,6 +1,10 @@
 use crate::{
     model::{file::File, workspace::references},
-    view::{canvas::CanvasView, component::browse::console::ConsoleLog, kit::web as presentation},
+    view::{
+        canvas::CanvasView,
+        component::browse::console::ConsoleLog,
+        kit::web::{Navigation, WebPresentation, frame_header, viewport_items},
+    },
 };
 use artifact::{
     canvas::web::{self, Frame, Source},
@@ -9,14 +13,13 @@ use artifact::{
 use bezel::{
     gpui::{
         self, AnyElement, App, AppContext as _, Context, Entity, FocusHandle, Focusable as _,
-        MouseButton, ObjectFit, Render, StyledImage as _, Subscription, Task, WeakEntity, Window,
-        div, img, point, prelude::*, px, size,
+        ObjectFit, Render, StyledImage as _, Subscription, Task, WeakEntity, Window, div, img,
+        point, prelude::*, px, size,
     },
     theme::{TextStyle, Theme, Typeset as _},
     ui::{
         context_menu::{ContextMenu, Place},
         icons,
-        menu::Item,
         widgets::{ButtonStyle, Buttons as _},
     },
 };
@@ -108,6 +111,9 @@ impl Frames {
             Ok(browser) => browser,
             Err(error) => return Task::ready(Err(error)),
         };
+        if !page.navigation.ready(browser.read(cx)) {
+            return Task::ready(Err("web frame is still loading".into()));
+        }
         let title = Page::title(node, &page.frame);
         let snapshot = browser.read(cx).snapshot(cx);
         cx.foreground_executor().spawn(async move {
@@ -124,20 +130,7 @@ impl Frames {
                                     .size_full()
                                     .object_fit(ObjectFit::Contain),
                             )
-                            .child(
-                                div()
-                                    .absolute()
-                                    .left_0()
-                                    .right_0()
-                                    .top(px(-32.))
-                                    .h(px(28.))
-                                    .flex()
-                                    .items_center()
-                                    .text_style(TextStyle::Callout)
-                                    .text_color(Theme::of(cx).text_muted)
-                                    .truncate()
-                                    .child(title.clone()),
-                            ),
+                            .child(frame_header(&title, cx)),
                     )
                     .into_any_element()
             });
@@ -178,6 +171,7 @@ pub(crate) struct Page {
     frame: Result<Frame, String>,
     browser: Option<Entity<WebView>>,
     interactive: bool,
+    navigation: Navigation,
     focus: FocusHandle,
     source: Option<Entity<File>>,
     _file: Option<Subscription>,
@@ -201,6 +195,12 @@ impl Page {
             .ok_or_else(|| "web frame is unavailable".into())
     }
 
+    pub(crate) fn ready(&self, cx: &App) -> bool {
+        self.browser
+            .as_ref()
+            .is_some_and(|browser| self.navigation.ready(browser.read(cx)))
+    }
+
     fn new(
         node: Node,
         card: Card,
@@ -218,6 +218,7 @@ impl Page {
             browser: None,
             console: ConsoleLog::default(),
             interactive: false,
+            navigation: Navigation::default(),
             focus: cx.focus_handle(),
             source: None,
             _file: None,
@@ -262,6 +263,7 @@ impl Page {
     }
 
     fn open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.navigation.reset();
         self._file = None;
         self.source = None;
         self.source_error = None;
@@ -288,14 +290,18 @@ impl Page {
                     .with_read_access(root)
                     .with_console()
             });
-            self._page = Some(cx.subscribe(&page, |this, _, event: &WebViewEvent, cx| {
-                if let WebViewEvent::Console(message) = event {
-                    this.console.push(message.clone());
-                }
-                if matches!(event, WebViewEvent::Load(_) | WebViewEvent::Error(_)) {
-                    cx.notify();
-                }
-            }));
+            self._page = Some(cx.subscribe(
+                &page,
+                |this, page, event: &WebViewEvent, cx| match event {
+                    WebViewEvent::Console(message) => this.console.push(message.clone()),
+                    WebViewEvent::Load(state) => {
+                        this.navigation.update(*state, page.read(cx));
+                        cx.notify();
+                    }
+                    WebViewEvent::Error(_) => cx.notify(),
+                    _ => {}
+                },
+            ));
             self.browser = Some(page);
         }
         if let Some(path) = resolved.file
@@ -307,6 +313,7 @@ impl Page {
                     Some(Ok(_)) => {
                         this.source_error = None;
                         if let Some(page) = &this.browser {
+                            this.navigation.reset();
                             page.update(cx, |page, _| page.reload_bypassing_cache());
                         }
                     }
@@ -332,8 +339,9 @@ impl Page {
         let (Some(page), Ok(frame)) = (&self.browser, &self.frame) else {
             return;
         };
-        self.presentation_error =
-            presentation::present(page, frame.viewport, self.interactive, window, cx).err();
+        self.presentation_error = page
+            .present(frame.viewport, self.interactive, window, cx)
+            .err();
     }
 
     fn toggle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -351,17 +359,10 @@ impl Page {
 
     fn viewport_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let current = self.frame.as_ref().map(|frame| frame.viewport).ok();
-        let items = Viewport::PRESETS
-            .iter()
-            .map(|viewport| {
-                Item::action(format!("{} × {}", viewport.width, viewport.height))
-                    .checked(current == Some(*viewport))
-            })
-            .collect();
         self.menu.open(
             (),
             Place::At(window.mouse_position()),
-            items,
+            viewport_items(current),
             |this, path, _, cx| {
                 let Some(viewport) = path
                     .first()
@@ -440,32 +441,10 @@ impl Render for Page {
                     .child(body),
             )
             .child(
-                div()
-                    .absolute()
-                    .left_0()
-                    .right_0()
-                    .top(px(-32.))
-                    .h(px(28.))
-                    .flex()
-                    .items_center()
-                    .gap(px(4.))
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .text_style(TextStyle::Callout)
-                            .text_color(theme.text_muted)
-                            .truncate()
-                            .child(title),
-                    )
+                frame_header(&title, cx)
                     .child(
                         theme
-                            .button(
-                                format!("{} × {}", viewport.width, viewport.height),
-                                ButtonStyle::Ghost,
-                                None,
-                            )
+                            .button(viewport.to_string(), ButtonStyle::Ghost, None)
                             .id("web-viewport")
                             .flex_none()
                             .on_click(
@@ -479,6 +458,7 @@ impl Render for Page {
                             .flex_none()
                             .on_click(cx.listener(|this, _, _, cx| {
                                 if let Some(page) = &this.browser {
+                                    this.navigation.reset();
                                     page.update(cx, |page, _| page.reload_bypassing_cache());
                                     cx.notify();
                                 }

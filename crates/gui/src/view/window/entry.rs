@@ -596,10 +596,23 @@ impl Cydonia {
                 kind: Kind::Design,
                 id: id.clone(),
             };
-            let saved = self.workspace.update(cx, |workspace, cx| {
-                workspace.edit_design(&entry, |design| design.archived = archived, cx)
+            let result = self.workspace.update(cx, |workspace, cx| {
+                workspace.edit_design(
+                    &entry,
+                    |design| {
+                        design.archived = archived;
+                        Ok(())
+                    },
+                    cx,
+                )
             });
-            if !saved {
+            if let Err(error) = result {
+                self.show_error(
+                    "Cannot change design archive status".into(),
+                    error.to_string(),
+                    window,
+                    cx,
+                );
                 return;
             }
         }

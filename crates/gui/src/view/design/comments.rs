@@ -1,5 +1,5 @@
-use crate::view::design::DesignView;
-use artifact::{comment::Anchor, design::Page};
+use crate::view::design::{DesignView, GUTTER};
+use artifact::{comment::Anchor, design::Artboard, error::Error};
 use bezel::{
     gpui::{
         AnyElement, AppContext as _, Context, Entity, Focusable as _, MouseButton, Window, div,
@@ -13,7 +13,7 @@ use bezel::{
     },
 };
 
-pub(super) struct Review {
+pub(super) struct Comments {
     open: bool,
     selected: Option<u64>,
     draft: Option<(String, Anchor)>,
@@ -21,7 +21,7 @@ pub(super) struct Review {
     error: Option<String>,
 }
 
-impl Review {
+impl Comments {
     pub(super) fn close(&mut self) {
         self.open = false;
         self.selected = None;
@@ -73,7 +73,7 @@ impl DesignView {
         window.focus(&self.comments.field.focus_handle(cx), cx);
     }
 
-    fn post_comment(&mut self, cx: &mut Context<Self>) {
+    fn post_comment(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some((node, anchor)) = self.comments.draft.clone() else {
             return;
         };
@@ -83,30 +83,32 @@ impl DesignView {
             cx.notify();
             return;
         }
-        let keep = node.clone();
-        self.write(
-            |design| {
-                if let Some(page) = design.pages.iter_mut().find(|page| page.id == node) {
-                    page.comment(anchor, note);
-                }
-            },
+        self.defer_edit(
+            window,
             cx,
+            move |workspace, entry, cx| {
+                workspace.edit_design(
+                    entry,
+                    |design| {
+                        let artboard = design
+                            .artboards
+                            .iter_mut()
+                            .find(|artboard| artboard.id == node)
+                            .ok_or(Error::Stale)?;
+                        Ok(artboard.comment(anchor, note))
+                    },
+                    cx,
+                )
+            },
+            Self::show_comment,
         );
-        if self.error.is_none()
-            && let Some(id) = self
-                .source
-                .read(cx)
-                .pages
-                .iter()
-                .find(|page| page.id == keep)
-                .and_then(|page| page.comments.last())
-                .map(|comment| comment.thread.id)
-        {
-            self.show_comment(id, cx);
-        }
     }
 
-    pub(super) fn comment_panel(&self, page: &Page, cx: &Context<Self>) -> Option<AnyElement> {
+    pub(super) fn comment_panel(
+        &self,
+        artboard: &Artboard,
+        cx: &Context<Self>,
+    ) -> Option<AnyElement> {
         if !self.comments.open {
             return None;
         }
@@ -115,8 +117,8 @@ impl DesignView {
             theme
                 .group_box()
                 .absolute()
-                .top(px(12.))
-                .right(px(12.))
+                .top(px(GUTTER + Theme::BUTTON_HEIGHT + 8.))
+                .right(px(GUTTER))
                 .w(px(340.))
                 .max_w_full()
                 .p(px(12.))
@@ -153,10 +155,10 @@ impl DesignView {
                 )
                 .child(
                     Button::new("post-design-comment", "Post comment")
-                        .on_press(cx.listener(|this, _, _, cx| this.post_comment(cx))),
+                        .on_press(cx.listener(|this, _, window, cx| this.post_comment(window, cx))),
                 );
         } else {
-            let rows = page
+            let rows = artboard
                 .comments
                 .iter()
                 .filter(|comment| {
@@ -171,7 +173,7 @@ impl DesignView {
                         .gap(px(4.))
                         .py(px(4.))
                         .when(
-                            page.revision.is_none() || self.detached(comment.thread.id),
+                            artboard.revision.is_none() || self.detached(comment.thread.id),
                             |row| {
                                 row.child(
                                     div()

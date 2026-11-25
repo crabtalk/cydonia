@@ -3,6 +3,7 @@
 
 use crate::model::watch;
 use anyhow::{Context, Result};
+use artifact::kind::Kind;
 use bezel::{
     theme::{TextStyle, appearance::AppearanceMode},
     ui::color::SystemColor,
@@ -834,7 +835,7 @@ impl Browsing {
 /// The surfaces a project can hold, minus articles — the one thing the app is
 /// for, and so not something to be able to switch off.
 ///
-/// Sessions, boards and canvases default to on. Tables default to off.
+/// Sessions, boards, canvases and designs default to on. Tables default to off.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Features {
@@ -844,6 +845,7 @@ pub struct Features {
     pub sessions: bool,
     pub boards: bool,
     pub canvases: bool,
+    pub designs: bool,
     pub tables: bool,
     /// A session under each article, asked about its passages. Nothing of it
     /// shows while [`Features::sessions`] is off.
@@ -854,6 +856,17 @@ pub struct Features {
 }
 
 impl Features {
+    pub fn shows_entry(&self, kind: Kind) -> bool {
+        match kind {
+            Kind::Session => self.sessions,
+            Kind::Board => self.boards,
+            Kind::Canvas => self.canvases,
+            Kind::Design => self.designs,
+            Kind::Table => self.tables,
+            Kind::Article | Kind::App => true,
+        }
+    }
+
     /// Whether articles carry a session of their own: on, and sessions on.
     pub fn threads(&self) -> bool {
         self.sessions && self.article_threads
@@ -866,6 +879,7 @@ impl Default for Features {
             sessions: true,
             boards: true,
             canvases: true,
+            designs: true,
             tables: false,
             article_threads: true,
             panel: PanelTabs::default(),
@@ -900,6 +914,7 @@ pub enum Feature {
     Sessions,
     Boards,
     Canvases,
+    Designs,
     Tables,
     ArticleThreads,
     Review,
@@ -910,11 +925,12 @@ pub enum Feature {
 impl Feature {
     /// The order the Features section lists them in. Sessions first: it is the
     /// one that decides whether anything runs on this machine.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Sessions,
         Self::ArticleThreads,
         Self::Boards,
         Self::Canvases,
+        Self::Designs,
         Self::Tables,
     ];
 
@@ -928,6 +944,7 @@ impl Feature {
             Self::Sessions => "sessions",
             Self::Boards => "boards",
             Self::Canvases => "canvases",
+            Self::Designs => "designs",
             Self::Tables => "tables",
             Self::ArticleThreads => "article_threads",
             Self::Review => "review",
@@ -950,6 +967,7 @@ impl Feature {
             Self::Sessions => features.sessions,
             Self::Boards => features.boards,
             Self::Canvases => features.canvases,
+            Self::Designs => features.designs,
             Self::Tables => features.tables,
             Self::ArticleThreads => features.article_threads,
             Self::Review => features.panel.review,
@@ -963,6 +981,7 @@ impl Feature {
             Self::Sessions => features.sessions = on,
             Self::Boards => features.boards = on,
             Self::Canvases => features.canvases = on,
+            Self::Designs => features.designs = on,
             Self::Tables => features.tables = on,
             Self::ArticleThreads => features.article_threads = on,
             Self::Review => features.panel.review = on,

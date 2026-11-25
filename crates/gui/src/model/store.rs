@@ -169,6 +169,12 @@ impl Project for Store {
     fn design(&self, id: &str) -> Option<Design> {
         each!(self, store => store.design(id))
     }
+    fn create_design(&self, title: &str) -> Result<Design> {
+        each!(self, store => store.create_design(title))
+    }
+    fn design_artboard_revision(&self, design: &str, page: &str) -> Option<String> {
+        each!(self, store => store.design_artboard_revision(design, page))
+    }
     fn save_design(&self, design: &mut Design) -> Result<()> {
         each!(self, store => store.save_design(design))
     }
@@ -224,7 +230,7 @@ impl Project for Store {
         each!(self, store => store.put_asset(id, name, bytes))
     }
 
-    fn watch(&self, knock: impl Fn() + Send + Sync + 'static) -> Option<Watching> {
+    fn watch(&self, knock: impl Fn(Vec<PathBuf>) + Send + Sync + 'static) -> Option<Watching> {
         each!(self, store => store.watch(knock))
     }
 

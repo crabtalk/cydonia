@@ -4,7 +4,7 @@ use crate::{
 };
 use artifact::{
     comment::Author,
-    design::{Design, Page},
+    design::{Artboard, Design},
     kind::Kind,
     project::{Project as _, fs},
 };
@@ -15,9 +15,9 @@ pub(super) const DESIGN: Arg = Arg {
     name: "design",
     about: "The design's stable project reference, such as #12.",
 };
-pub(super) const PAGE: Arg = Arg {
-    name: "page",
-    about: "Page id from design_read.",
+pub(super) const ARTBOARD: Arg = Arg {
+    name: "artboard",
+    about: "Artboard id from design_read.",
 };
 const TITLE: Arg = Arg {
     name: "title",
@@ -27,7 +27,7 @@ const TITLE: Arg = Arg {
 pub static TOOLS: [Tool; 6] = [
     Tool {
         name: "design_add",
-        description: "Create a Design entry for pages to review.",
+        description: "Create a Design entry for artboards to review.",
         schema: |bound| tools::fields(bound, &[PROJECT, TITLE]),
         writes: true,
         deletes: false,
@@ -43,34 +43,34 @@ pub static TOOLS: [Tool; 6] = [
     },
     Tool {
         name: "design_read",
-        description: "Read a design's path, pages, review statuses and comment counts.",
+        description: "Read a design's viewport, path, artboards and comment counts.",
         schema: |bound| tools::fields(bound, &[PROJECT, DESIGN]),
         writes: false,
         deletes: false,
         call: read,
     },
     Tool {
-        name: "design_add_page",
-        description: "Add a page and return its project-relative index.html path. Write the page and its assets in that directory.",
+        name: "design_add_artboard",
+        description: "Add an artboard and return its project-relative index.html path. Write the artboard and its assets in that directory.",
         schema: |bound| tools::fields(bound, &[PROJECT, DESIGN, TITLE]),
         writes: true,
         deletes: false,
-        call: add_page,
+        call: add_artboard,
     },
     Tool {
         name: "design_comments",
-        description: "Read an element comment's selector, original text, and thread for each comment on a design page.",
-        schema: |bound| tools::fields(bound, &[PROJECT, DESIGN, PAGE]),
+        description: "Read an element comment's selector, original text, and thread for each comment on a design artboard.",
+        schema: |bound| tools::fields(bound, &[PROJECT, DESIGN, ARTBOARD]),
         writes: false,
         deletes: false,
         call: comments,
     },
     Tool {
         name: "design_comment_reply",
-        description: "Append an agent's reply to an element comment on a design page.",
+        description: "Append an agent's reply to an element comment on a design artboard.",
         schema: |bound| {
             let mut schema = comment::reply_schema(bound, DESIGN);
-            tools::required(&mut schema, PAGE, "string");
+            tools::required(&mut schema, ARTBOARD, "string");
             schema
         },
         writes: true,
@@ -91,8 +91,8 @@ fn list(args: Args<'_>) -> Outcome {
     let store = fs::Project::new(root);
     let designs = store
         .designs()
-        .iter()
-        .map(|design| data(&store, root, design))
+        .into_iter()
+        .map(|design| data(&store, root, &design))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(answer(json!({ "designs": designs })))
 }
@@ -102,13 +102,13 @@ fn read(args: Args<'_>) -> Outcome {
     Ok(answer(data(&store, &root, &design)?))
 }
 
-fn add_page(args: Args<'_>) -> Outcome {
+fn add_artboard(args: Args<'_>) -> Outcome {
     let (root, store, mut design) = find(&args)?;
-    let page = store.add_design_page(&mut design, args.text(TITLE)?)?;
+    let artboard = store.add_design_artboard(&mut design, args.text(TITLE)?)?;
     let dir = relative_dir(&store, &root, &design)?;
     Ok(answer(json!({
-        "design": design.number, "id": page.id, "title": page.title,
-        "path": dir.join(page.path()), "status": page.status(),
+        "design": design.number, "id": artboard.id, "title": artboard.title,
+        "path": dir.join(artboard.path()),
     })))
 }
 
@@ -136,20 +136,21 @@ fn relative_dir(
 
 fn data(store: &fs::Project, root: &Path, design: &Design) -> Result<Value, Trouble> {
     let dir = relative_dir(store, root, design)?;
-    let pages: Vec<_> = design
-        .pages
+    let artboards: Vec<_> = design
+        .artboards
         .iter()
-        .map(|page| {
+        .map(|artboard| {
             json!({
-                "id": page.id, "title": page.title, "path": dir.join(page.path()),
-                "status": page.status(), "comment_count": page.comments.len(),
+                "id": artboard.id, "title": artboard.title, "path": dir.join(artboard.path()),
+                "comment_count": artboard.comments.len(),
             })
         })
         .collect();
     Ok(json!({
         "number": design.number, "id": design.id, "title": design.label(),
         "path": dir, "archived": design.archived, "labels": design.labels,
-        "pages": pages,
+        "viewport": design.viewport,
+        "artboards": artboards,
     }))
 }
 
@@ -157,32 +158,32 @@ fn answer(value: Value) -> Answer {
     Answer::said(serde_json::to_string_pretty(&value).expect("design data serializes")).with(value)
 }
 
-fn comment_page<'a>(id: &str, design: &'a mut Design) -> Result<&'a mut Page, Trouble> {
+fn comment_artboard<'a>(id: &str, design: &'a mut Design) -> Result<&'a mut Artboard, Trouble> {
     design
-        .pages
+        .artboards
         .iter_mut()
-        .find(|page| page.id == id)
-        .ok_or_else(|| Trouble::Refused(format!("no page {id} in this design")))
+        .find(|artboard| artboard.id == id)
+        .ok_or_else(|| Trouble::Refused(format!("no artboard {id} in this design")))
 }
 
 fn comments(args: Args<'_>) -> Outcome {
     let (_, _, mut design) = find(&args)?;
     let number = design.number;
-    let page = comment_page(args.text(PAGE)?, &mut design)?;
+    let artboard = comment_artboard(args.text(ARTBOARD)?, &mut design)?;
     Ok(answer(
-        json!({ "design": number, "page": page.id, "comments": page.comments }),
+        json!({ "design": number, "artboard": artboard.id, "comments": artboard.comments }),
     ))
 }
 
 fn comment_reply(args: Args<'_>) -> Outcome {
     let id = comment::id(&args)?;
     let (_, store, mut design) = find(&args)?;
-    let page = comment_page(args.text(PAGE)?, &mut design)?;
-    let note = page
+    let artboard = comment_artboard(args.text(ARTBOARD)?, &mut design)?;
+    let note = artboard
         .comments
         .iter_mut()
         .find(|note| note.thread.id == id)
-        .ok_or_else(|| Trouble::Refused(format!("this page has no comment {id}")))?;
+        .ok_or_else(|| Trouble::Refused(format!("this artboard has no comment {id}")))?;
     note.thread.reply(
         Author::Agent,
         args.text(comment::ANSWER)?.to_owned(),

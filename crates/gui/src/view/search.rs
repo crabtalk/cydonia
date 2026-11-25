@@ -146,7 +146,13 @@ impl Search {
 /// Every entry in `roots` holding `query`, each once with its best match: the
 /// title where it matched there, else its earliest block.
 pub(crate) fn search_all(roots: &[PathBuf], query: &Query) -> Vec<Found> {
-    let kinds = [Kind::Article, Kind::Board, Kind::Session, Kind::Canvas];
+    let kinds = [
+        Kind::Article,
+        Kind::Board,
+        Kind::Session,
+        Kind::Canvas,
+        Kind::Design,
+    ];
     let mut found = Vec::new();
     for root in roots {
         let (tx, rx) = mpsc::channel();

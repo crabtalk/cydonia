@@ -19,58 +19,31 @@ pub struct Design {
     pub labels: Vec<String>,
     pub archived: bool,
     pub viewport: Viewport,
-    pub pages: Vec<Page>,
+    #[serde(alias = "pages")]
+    pub artboards: Vec<Artboard>,
     #[serde(skip)]
     pub number: Option<u64>,
     #[serde(skip)]
     pub version: Option<String>,
     #[serde(skip)]
     pub touched: u128,
+    #[serde(skip)]
+    pub revisions_loaded: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Page {
+pub struct Artboard {
     pub id: String,
     pub title: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub review: Option<Review>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub comments: Vec<ElementComment>,
+    /// Version of the files used to invalidate a rendered preview.
     #[serde(skip)]
     pub revision: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Review {
-    pub revision: String,
-    pub status: Status,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Status {
-    #[default]
-    New,
-    Approved,
-    Changes,
-}
-
-impl Page {
-    pub fn status(&self) -> Status {
-        self.review
-            .as_ref()
-            .filter(|review| Some(&review.revision) == self.revision.as_ref())
-            .map_or(Status::New, |review| review.status)
-    }
-
-    pub fn review_at(&mut self, status: Status) {
-        self.review = self
-            .revision
-            .clone()
-            .map(|revision| Review { revision, status });
-    }
-
-    pub fn comment(&mut self, anchor: Anchor, note: String) {
+impl Artboard {
+    pub fn comment(&mut self, anchor: Anchor, note: String) -> u64 {
         let id = Thread::fresh_id(
             stamp::now() as u64,
             self.comments.iter().map(|comment| comment.thread.id),
@@ -79,6 +52,7 @@ impl Page {
             anchor,
             thread: Thread::new(id, note, None),
         });
+        id
     }
 
     pub fn path(&self) -> PathBuf {

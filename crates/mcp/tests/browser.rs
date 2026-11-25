@@ -212,8 +212,8 @@ fn page_tools_route_canvas_references_and_keep_tab_targets_exclusive() {
 }
 
 #[test]
-fn design_pages_route_to_browser_commands_and_exclude_other_targets() {
-    let scratch = common::Scratch::new("browser-design-page");
+fn design_artboards_route_to_browser_commands_and_exclude_other_targets() {
+    let scratch = common::Scratch::new("browser-design-artboard");
     let project = scratch.path().to_path_buf();
     rail::set_open(vec![project.clone()]);
     let server = scratch.server().mount(&tools::browser::TOOLS);
@@ -228,7 +228,7 @@ fn design_pages_route_to_browser_commands_and_exclude_other_targets() {
             PageTarget::Design {
                 design: id.clone(),
                 number,
-                page: "preview".into(),
+                artboard: "preview".into(),
             }
         );
         assert_eq!(request.act, Act::Inspect(Target::Selector("#title".into())));
@@ -240,16 +240,16 @@ fn design_pages_route_to_browser_commands_and_exclude_other_targets() {
     assert_eq!(
         common::said(server.call(
             "browser_inspect",
-            json!({"design": named, "page": "preview", "selector": "#title"}),
+            json!({"design": named, "artboard": "preview", "selector": "#title"}),
             Some(&project),
         )),
         "design element"
     );
     for arguments in [
         json!({"design": named}),
-        json!({"page": "preview"}),
-        json!({"design": named, "page": "preview", "tab": 42}),
-        json!({"design": named, "page": "preview", "canvas": "#5", "node": "frame"}),
+        json!({"artboard": "preview"}),
+        json!({"design": named, "artboard": "preview", "tab": 42}),
+        json!({"design": named, "artboard": "preview", "canvas": "#5", "node": "frame"}),
     ] {
         assert!(
             !common::invalid(server.call("browser_read", arguments, Some(&project))).is_empty()

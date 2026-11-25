@@ -1,7 +1,10 @@
 use canvas::model::Node;
-use cydonia_artifact::canvas::{
-    Canvas, Edit,
-    web::{Frame, Source, Viewport},
+use cydonia_artifact::{
+    canvas::{
+        Canvas, Edit,
+        web::{Frame, Source},
+    },
+    web::Viewport,
 };
 use serde_json::json;
 use std::path::{Path, PathBuf};

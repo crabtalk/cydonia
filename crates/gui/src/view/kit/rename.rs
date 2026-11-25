@@ -146,7 +146,14 @@ impl Renaming {
             Self::Session(id) => workspace.rename_session(id, name, cx),
             Self::Canvas(entry) => workspace.rename_canvas(&entry, name, cx),
             Self::Design(entry) => {
-                workspace.edit_design(&entry, |design| design.title = name, cx);
+                let _ = workspace.edit_design(
+                    &entry,
+                    |design| {
+                        design.title = name;
+                        Ok(())
+                    },
+                    cx,
+                );
             }
             Self::Table(entry) => return workspace.rename_table(&entry, name, cx),
             Self::Space(id) => workspace.rename_space(&id, name, cx),

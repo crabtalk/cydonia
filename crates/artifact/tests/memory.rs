@@ -1,10 +1,10 @@
 //! The in-memory backend: seeded from a `.cydonia/` layout, and answering the
 //! trait the way the filesystem backend does.
 
-use cydonia_artifact::kind::Kind;
 use cydonia_artifact::{
     article::properties::Properties,
     entry,
+    kind::Kind,
     project::{Project as _, memory},
 };
 
@@ -135,7 +135,7 @@ fn a_number_resolves_only_under_its_own_kind() {
 #[test]
 fn nothing_is_watched() {
     let store = memory::Project::new();
-    assert!(store.watch(|| {}).is_none());
+    assert!(store.watch(|_| {}).is_none());
 }
 
 #[test]

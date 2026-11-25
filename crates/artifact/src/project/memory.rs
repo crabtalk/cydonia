@@ -210,6 +210,14 @@ impl Project {
 }
 
 impl State {
+    fn put_design(&mut self, design: &mut Design) {
+        design.labels = crate::label::normalize_all(&design.labels);
+        design.number = Some(self.number(Kind::Design, &design.id));
+        design.touched = stamp::now();
+        design.version = Some(project::version(format!("{design:?}").as_bytes()));
+        self.designs.insert(design.id.clone(), design.clone());
+    }
+
     fn number(&mut self, kind: Kind, id: &str) -> u64 {
         let key = (kind, id.to_owned());
         if let Some(number) = self.numbers.get(&key) {
@@ -436,6 +444,29 @@ impl super::Project for Project {
         self.state().designs.get(id).cloned()
     }
 
+    fn create_design(&self, title: &str) -> super::Result<Design> {
+        let mut state = self.state();
+        let id = stamp::free(stamp::now(), |id| state.designs.contains_key(id));
+        let mut design = Design {
+            id,
+            title: title.into(),
+            ..Design::default()
+        };
+        state.put_design(&mut design);
+        Ok(design)
+    }
+
+    fn design_artboard_revision(&self, design: &str, artboard: &str) -> Option<String> {
+        self.state()
+            .designs
+            .get(design)?
+            .artboards
+            .iter()
+            .find(|held| held.id == artboard)?
+            .revision
+            .clone()
+    }
+
     fn save_design(&self, design: &mut Design) -> super::Result<()> {
         let mut state = self.state();
         if state
@@ -446,11 +477,7 @@ impl super::Project for Project {
         {
             return Err(Error::Stale);
         }
-        design.labels = crate::label::normalize_all(&design.labels);
-        design.number = Some(state.number(Kind::Design, &design.id));
-        design.touched = stamp::now();
-        design.version = Some(project::version(format!("{design:?}").as_bytes()));
-        state.designs.insert(design.id.clone(), design.clone());
+        state.put_design(design);
         Ok(())
     }
 

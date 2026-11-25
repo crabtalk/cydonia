@@ -5,7 +5,7 @@ use crate::{
     },
     view::{
         canvas::actions::Scope,
-        kit::menu::MenuHost,
+        kit::{canvas::Navigation, menu::MenuHost},
         window::{
             reach::InWindow,
             root::{Cydonia, NewCanvas},
@@ -279,9 +279,7 @@ impl CanvasView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.surface
-            .update(cx, |surface, cx| surface.update_editor(cx, command));
-        window.focus(&self.surface.read(cx).focus_handle(cx), cx);
+        Navigation::apply(&self.surface, command, window, cx);
     }
 }
 

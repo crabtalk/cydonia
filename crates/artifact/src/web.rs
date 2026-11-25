@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Viewport {
@@ -26,4 +27,19 @@ impl Viewport {
         height: 844,
     };
     pub const PRESETS: [Self; 3] = [Self::DESKTOP, Self::TABLET, Self::PHONE];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::DESKTOP => "Desktop",
+            Self::TABLET => "Tablet",
+            Self::PHONE => "Phone",
+            _ => "Custom",
+        }
+    }
+}
+
+impl fmt::Display for Viewport {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} × {}", self.width, self.height)
+    }
 }

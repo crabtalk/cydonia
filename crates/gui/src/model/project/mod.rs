@@ -14,7 +14,7 @@ use crate::{
         store::{self, Store},
         table::Table,
         watch::Watch,
-        workspace::{Showing, Workspace},
+        workspace::{Entry, Showing, Workspace},
     },
 };
 use artifact::{
@@ -91,7 +91,7 @@ pub struct HeldDesign {
 }
 
 impl HeldDesign {
-    fn new(record: Design, cx: &mut App) -> Self {
+    pub(crate) fn new(record: Design, cx: &mut App) -> Self {
         Self {
             id: record.id.clone(),
             design: cx.new(|_| record),
@@ -209,7 +209,12 @@ impl Project {
         Some(self.boards.get(ix)?.board.read(cx))
     }
 
-    pub fn reload(&mut self, cx: &mut Context<Workspace>) -> bool {
+    pub fn reload(
+        &mut self,
+        paths: Option<&[PathBuf]>,
+        shown: &[Entry],
+        cx: &mut Context<Workspace>,
+    ) -> bool {
         // The store can appear long after the project was opened, and an agent
         // making one is exactly the case this watch is here for.
         if self.data.is_none() {
@@ -218,7 +223,7 @@ impl Project {
         }
         self.reload_articles(cx);
         self.reload_canvases(cx);
-        self.reload_designs(cx);
+        self.reload_designs(paths, shown, cx);
         let boards = self.reload_boards(cx);
         let before = self.shape();
         self.reload_tables(cx);
@@ -322,7 +327,7 @@ impl Project {
         self.canvas = open.and_then(|id| self.canvas_ix(&id));
     }
 
-    fn reload_designs(&mut self, cx: &mut App) {
+    fn reload_designs(&mut self, paths: Option<&[PathBuf]>, shown: &[Entry], cx: &mut App) {
         let open = self
             .design
             .and_then(|ix| self.designs.get(ix))
@@ -336,14 +341,29 @@ impl Project {
         self.designs = store
             .designs()
             .into_iter()
-            .map(|record| match held.remove(&record.id) {
+            .map(|mut record| match held.remove(&record.id) {
                 Some(kept) => {
-                    kept.design.update(cx, |held, cx| {
-                        if *held != record {
-                            *held = record;
-                            cx.notify();
-                        }
+                    let dir = Path::new(artifact::design::DIR).join(&record.id);
+                    let touched = paths.is_none_or(|paths| {
+                        paths
+                            .iter()
+                            .any(|path| path.starts_with(&dir) || dir.starts_with(path))
                     });
+                    let previous = kept.design.read(cx);
+                    if touched || previous.version != record.version {
+                        if shown
+                            .iter()
+                            .any(|entry| entry.project == self.id && entry.id == record.id)
+                        {
+                            store.load_design_revisions(&mut record);
+                        }
+                        kept.design.update(cx, |held, cx| {
+                            if *held != record {
+                                *held = record;
+                                cx.notify();
+                            }
+                        });
+                    }
                     kept
                 }
                 None => HeldDesign::new(record, cx),
@@ -606,7 +626,7 @@ impl Project {
             Kind::Design => self.designs[ix]
                 .design
                 .read(cx)
-                .pages
+                .artboards
                 .iter()
                 .map(|page| page.title.as_str())
                 .collect::<Vec<_>>()
@@ -679,3 +699,7 @@ mod archive_tests;
 #[cfg(all(test, feature = "desktop"))]
 #[path = "../../../tests/unit/tables.rs"]
 mod table_tests;
+
+#[cfg(test)]
+#[path = "../../../tests/unit/design_reload.rs"]
+mod design_reload_tests;

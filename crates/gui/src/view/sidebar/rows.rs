@@ -1052,6 +1052,7 @@ impl Sidebar {
                 New::Board => this.ask_new_board(ix, window, cx),
                 New::Article => this.new_article(ix, window, cx),
                 New::Canvas => this.new_canvas(ix, window, cx),
+                New::Design => this.new_design(ix, window, cx),
                 New::Table => this.new_table(ix, window, cx),
             })
         })

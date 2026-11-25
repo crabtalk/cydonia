@@ -124,6 +124,7 @@ actions!(
         NewBoard,
         NewArticle,
         NewCanvas,
+        NewDesign,
         ImportCanvas,
         NewTable,
         InstallApp,

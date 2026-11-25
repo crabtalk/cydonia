@@ -308,7 +308,7 @@ pub(crate) fn slash_items(workspace: &Workspace) -> Vec<SlashItem> {
             "Session",
         ),
         (workspace.settings.features.canvases, Kind::Canvas, "Canvas"),
-        (true, Kind::Design, "Design"),
+        (workspace.settings.features.designs, Kind::Design, "Design"),
         (
             workspace.settings.features.tables,
             Kind::Table,

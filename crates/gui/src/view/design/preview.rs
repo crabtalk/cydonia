@@ -1,5 +1,8 @@
-use crate::view::{component::browse::console::ConsoleLog, kit::web};
-use artifact::{canvas::web::Source, design::Page, web::Viewport};
+use crate::view::{
+    component::browse::console::ConsoleLog,
+    kit::web::{Navigation, WebPresentation},
+};
+use artifact::{canvas::web::Source, design::Artboard, web::Viewport};
 use bezel::gpui::{
     App, AppContext as _, AsyncApp, Entity, Pixels, RenderImage, Size, Subscription, Window, div,
     prelude::*, px, size,
@@ -8,30 +11,33 @@ use browser::{WebView, WebViewEvent};
 use std::{cell::RefCell, path::Path, rc::Rc, sync::Arc, time::Duration};
 
 const WAIT: Duration = Duration::from_secs(12);
-const THUMBNAIL_EDGE: u32 = 512;
+const PREVIEW_WIDTH: u32 = 960;
+const PREVIEW_HEIGHT: u32 = 8192;
+const EVAL: Duration = Duration::from_secs(2);
 const STEP: Duration = Duration::from_millis(50);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(super) struct Revision {
-    pub(super) page: String,
+    pub(super) artboard: String,
     revision: String,
     viewport: (u32, u32),
 }
 
 impl Revision {
-    pub(super) fn new(page: &Page, viewport: Viewport) -> Option<Self> {
+    pub(super) fn new(artboard: &Artboard, viewport: Viewport) -> Option<Self> {
         Some(Self {
-            page: page.id.clone(),
-            revision: page.revision.clone()?,
+            artboard: artboard.id.clone(),
+            revision: artboard.revision.clone()?,
             viewport: (viewport.width, viewport.height),
         })
     }
 }
 
 #[derive(Clone)]
-pub(crate) struct LivePage {
+pub(crate) struct LiveArtboard {
     pub(crate) browser: Entity<WebView>,
     pub(crate) console: Rc<RefCell<ConsoleLog>>,
+    navigation: Navigation,
     _events: Rc<Subscription>,
 }
 
@@ -47,90 +53,170 @@ pub(crate) fn host(browser: Entity<WebView>) -> impl IntoElement {
 
 pub(crate) fn open(
     folder: &Path,
-    page: &Page,
+    artboard: &Artboard,
     viewport: Viewport,
     interactive: bool,
     window: &mut Window,
     cx: &mut App,
-) -> Result<LivePage, String> {
-    let path = folder.join(page.path());
-    let directory = path.parent().ok_or("Page directory is missing")?;
-    if !directory.starts_with(folder) || page.revision.is_none() {
+) -> Result<LiveArtboard, String> {
+    let path = folder.join(artboard.path());
+    let directory = path.parent().ok_or("Artboard directory is missing")?;
+    if !directory.starts_with(folder) || !path.is_file() {
         return Err("Waiting for index.html".into());
     }
-    let url = Source::try_from(page.path())?.resolve(folder)?.url;
+    let url = Source::try_from(artboard.path())?.resolve(folder)?.url;
     let browser = cx.new(|cx| {
         WebView::new(url, window, cx)
             .with_read_access(directory.to_path_buf())
             .with_console()
     });
-    web::present(&browser, viewport, interactive, window, cx)?;
+    browser.present(viewport, interactive, window, cx)?;
     let console = Rc::new(RefCell::new(ConsoleLog::default()));
     let log = console.clone();
-    let events = cx.subscribe(&browser, move |_, event: &WebViewEvent, _| {
-        if let WebViewEvent::Console(message) = event {
-            log.borrow_mut().push(message.clone());
-        }
-    });
-    Ok(LivePage {
+    let navigation = Navigation::default();
+    let load = navigation.clone();
+    let events = cx.subscribe(
+        &browser,
+        move |browser, event: &WebViewEvent, cx| match event {
+            WebViewEvent::Console(message) => log.borrow_mut().push(message.clone()),
+            WebViewEvent::Load(state) => load.update(*state, browser.read(cx)),
+            _ => {}
+        },
+    );
+    Ok(LiveArtboard {
         browser,
         console,
+        navigation,
         _events: Rc::new(events),
     })
 }
 
-pub(crate) async fn ready(browser: &Entity<WebView>, cx: &mut AsyncApp) -> Result<(), String> {
-    let mut waited = Duration::ZERO;
-    loop {
-        let ready = browser.read_with(cx, |browser, _| {
-            if let Some(error) = &browser.error {
-                return Err(error.clone());
+impl LiveArtboard {
+    pub(super) fn is_ready(&self, cx: &App) -> bool {
+        let browser = self.browser.read(cx);
+        self.navigation.ready(browser)
+    }
+
+    pub(crate) async fn ready(&self, cx: &mut AsyncApp) -> Result<(), String> {
+        let mut waited = Duration::ZERO;
+        loop {
+            let ready = self.browser.read_with(cx, |browser, _| {
+                if let Some(error) = &browser.error {
+                    return Err(error.clone());
+                }
+                Ok(self.navigation.ready(browser))
+            })?;
+            if ready {
+                return Ok(());
             }
-            Ok(browser.can_evaluate() && !browser.is_loading())
-        })?;
-        if ready {
-            return Ok(());
+            if waited >= WAIT {
+                return Err("Artboard preview timed out".into());
+            }
+            cx.background_executor().timer(STEP).await;
+            waited += STEP;
         }
-        if waited >= WAIT {
-            return Err("Page preview timed out".into());
+    }
+
+    pub(super) async fn preview(
+        &self,
+        viewport: Viewport,
+        cx: &mut AsyncApp,
+    ) -> Result<Preview, String> {
+        self.ready(cx).await?;
+        let height = self
+            .browser
+            .read_with(cx, |browser, cx| {
+                browser.eval::<u32>(
+                    "Math.max(document.documentElement.scrollHeight, innerHeight)",
+                    EVAL,
+                    cx,
+                )
+            })
+            .await
+            .map_err(|error| error.to_string())?;
+        let width_for_height =
+            u64::from(PREVIEW_HEIGHT) * u64::from(viewport.width) / u64::from(height.max(1));
+        let width =
+            (u64::from(viewport.width.min(PREVIEW_WIDTH)).min(width_for_height)).max(1) as u32;
+        let scaled = |length| {
+            (u64::from(length) * u64::from(width) / u64::from(viewport.width))
+                .min(u64::from(PREVIEW_HEIGHT)) as u32
+        };
+        let mut assembled = image::RgbaImage::new(width, scaled(height).max(1));
+        let mut top = 0;
+        while top < height {
+            // Keep the configured viewport so height media queries and vh units
+            // resolve the same way here and in the interactive artboard.
+            let scroll = format!(
+                "(() => {{
+                    document.documentElement.style.setProperty('scroll-snap-type', 'none', 'important');
+                    window.scrollTo({{ top: {top}, behavior: 'instant' }});
+                    return Math.round(window.scrollY);
+                }})()",
+            );
+            let offset = self
+                .browser
+                .read_with(cx, |browser, cx| browser.eval::<u32>(&scroll, EVAL, cx))
+                .await
+                .map_err(|error| error.to_string())?;
+            let bottom = offset.saturating_add(viewport.height).min(height);
+            if offset > top || bottom <= top {
+                return Err("Could not scroll to the end of the artboard".into());
+            }
+            let target_y = scaled(top);
+            let target_rows = scaled(bottom).saturating_sub(target_y);
+            if target_rows == 0 {
+                top = bottom;
+                continue;
+            }
+            let screenshot = self
+                .browser
+                .read_with(cx, |browser, cx| browser.snapshot(cx))
+                .await?;
+            let to_px = move |length, rows| {
+                (u64::from(length) * u64::from(rows) / u64::from(viewport.height)) as u32
+            };
+            assembled = cx
+                .background_executor()
+                .spawn(async move {
+                    let size = screenshot.size(0);
+                    let (columns, rows) = (size.width.0 as u32, size.height.0 as u32);
+                    let strip = image::RgbaImage::from_raw(
+                        columns,
+                        rows,
+                        screenshot
+                            .as_bytes(0)
+                            .ok_or("Artboard snapshot is empty")?
+                            .to_vec(),
+                    )
+                    .ok_or("Artboard snapshot has invalid dimensions")?;
+                    let start = to_px(top - offset, rows);
+                    let end = to_px(bottom - offset, rows);
+                    let crop =
+                        image::imageops::crop_imm(&strip, 0, start, columns, (end - start).max(1));
+                    let resized = image::imageops::thumbnail(&*crop, width, target_rows);
+                    image::imageops::replace(&mut assembled, &resized, 0, i64::from(target_y));
+                    Ok::<_, String>(assembled)
+                })
+                .await?;
+            top = bottom;
         }
-        cx.background_executor().timer(STEP).await;
-        waited += STEP;
+        Ok(Preview {
+            height,
+            image: Arc::new(RenderImage::new(vec![image::Frame::new(assembled)])),
+        })
     }
 }
 
-pub(super) async fn snapshot(
-    browser: &Entity<WebView>,
-    cx: &mut AsyncApp,
-) -> Result<Arc<RenderImage>, String> {
-    ready(browser, cx).await?;
-    let image = browser
-        .read_with(cx, |browser, cx| browser.snapshot(cx))
-        .await?;
-    cx.background_executor()
-        .spawn(async move {
-            let size = image.size(0);
-            let buffer = image::RgbaImage::from_raw(
-                size.width.0 as u32,
-                size.height.0 as u32,
-                image.as_bytes(0).ok_or("Page snapshot is empty")?.to_vec(),
-            )
-            .ok_or("Page snapshot has invalid dimensions")?;
-            let thumbnail = image::DynamicImage::ImageRgba8(buffer)
-                .thumbnail(THUMBNAIL_EDGE, THUMBNAIL_EDGE)
-                .into_rgba8();
-            Ok(Arc::new(RenderImage::new(vec![image::Frame::new(
-                thumbnail,
-            )])))
-        })
-        .await
+pub(super) struct Preview {
+    pub(super) height: u32,
+    pub(super) image: Arc<RenderImage>,
 }
 
 pub(super) fn fit(viewport: Viewport, available: Size<Pixels>) -> Size<Pixels> {
     let scale = (available.width.as_f32() / viewport.width as f32)
         .min(available.height.as_f32() / viewport.height as f32)
-        .min(1.)
-        .max(0.);
+        .clamp(0., 1.);
     size(
         px(viewport.width as f32 * scale),
         px(viewport.height as f32 * scale),

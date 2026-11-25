@@ -74,7 +74,14 @@ impl Workspace {
                     kind: Kind::Design,
                     id: id.clone(),
                 };
-                self.edit_design(&entry, |design| design.labels = labels, cx);
+                let _ = self.edit_design(
+                    &entry,
+                    |design| {
+                        design.labels = labels;
+                        Ok(())
+                    },
+                    cx,
+                );
                 return;
             }
             Showing::Table(_) => return,

@@ -15,7 +15,7 @@ use crate::{
     article::{self, Article, comments::Comments, properties::Properties},
     board::{self, Board, key},
     canvas::{self as canvas_artifact, Canvas, Document as CanvasDocument},
-    design::{self, Design, Page},
+    design::{self, Artboard, Design},
     document, id,
     kind::Kind,
     project::{self, Project as _, layout},
@@ -521,40 +521,25 @@ impl Project {
         Ok(self.cydonia().join(design::DIR).join(component(id)?))
     }
 
-    pub fn create_design(&self, title: &str) -> super::Result<Design> {
-        let dir = self.init()?.join(design::DIR);
-        std::fs::create_dir_all(&dir)?;
-        let id = reserve_directory(&dir)?;
-        let mut design = Design {
-            id,
-            title: title.into(),
-            ..Design::default()
-        };
-        design.number = Some(self.number(Kind::Design, &design.id)?);
-        self.save_design(&mut design)?;
-        Ok(design)
-    }
-
-    pub fn add_design_page(&self, design: &mut Design, title: &str) -> super::Result<Page> {
+    pub fn add_design_artboard(&self, design: &mut Design, title: &str) -> super::Result<Artboard> {
         let dir = self.design_dir(&design.id)?;
         if !dir.join(design::FILE).is_file() {
             return Err(crate::error::Error::Stale);
         }
         let id = reserve_directory(&dir)?;
-        let page = Page {
+        let artboard = Artboard {
             id,
             title: title.into(),
-            review: None,
             comments: Vec::new(),
             revision: None,
         };
-        design.pages.push(page.clone());
+        design.artboards.push(artboard.clone());
         if let Err(error) = self.save_design(design) {
-            design.pages.pop();
-            let _ = std::fs::remove_dir(dir.join(&page.id));
+            design.artboards.pop();
+            let _ = std::fs::remove_dir(dir.join(&artboard.id));
             return Err(error);
         }
-        Ok(page)
+        Ok(artboard)
     }
 
     pub fn canvas_file(&self, id: &str) -> Result<PathBuf> {
@@ -565,19 +550,41 @@ impl Project {
             .join(canvas_artifact::FILE))
     }
 
-    pub fn canvas_files(&self) -> Vec<(String, PathBuf)> {
-        let Ok(entries) = std::fs::read_dir(self.cydonia().join(canvas_artifact::DIR)) else {
+    fn entry_files(&self, dir: &str, filename: &str) -> Vec<(String, PathBuf)> {
+        let Ok(entries) = std::fs::read_dir(self.cydonia().join(dir)) else {
             return Vec::new();
         };
         entries
             .flatten()
             .filter_map(|entry| {
-                let content = entry.path().join(canvas_artifact::FILE);
-                content
-                    .is_file()
-                    .then(|| (entry.file_name().to_string_lossy().into_owned(), content))
+                let file = entry.path().join(filename);
+                file.is_file()
+                    .then(|| (entry.file_name().to_string_lossy().into_owned(), file))
             })
             .collect()
+    }
+
+    pub fn canvas_files(&self) -> Vec<(String, PathBuf)> {
+        self.entry_files(canvas_artifact::DIR, canvas_artifact::FILE)
+    }
+
+    pub(crate) fn design_files(&self) -> Vec<(String, PathBuf)> {
+        self.entry_files(design::DIR, design::FILE)
+    }
+
+    fn numbered_design(&self, id: &str, file: &Path) -> Option<Design> {
+        let mut design = self.read_design_file(id, file)?;
+        design.number = self.number(Kind::Design, id).ok();
+        Some(design)
+    }
+
+    pub(crate) fn read_design_file(&self, id: &str, file: &Path) -> Option<Design> {
+        let source = std::fs::read_to_string(file).ok()?;
+        let mut design: Design = toml::from_str(&source).ok()?;
+        design.id = id.to_owned();
+        design.version = Some(project::version(source.as_bytes()));
+        design.touched = stamp::of(file);
+        Some(design)
     }
 
     fn canvas_lock(&self, id: &str) -> Result<std::fs::File> {
@@ -813,39 +820,46 @@ impl super::Project for Project {
         self.retire(Kind::Canvas, id)
     }
 
-    fn designs(&self) -> Vec<Design> {
-        let Ok(entries) = std::fs::read_dir(self.cydonia().join(design::DIR)) else {
-            return Vec::new();
+    fn create_design(&self, title: &str) -> super::Result<Design> {
+        let dir = self.init()?.join(design::DIR);
+        std::fs::create_dir_all(&dir)?;
+        let id = reserve_directory(&dir)?;
+        let mut design = Design {
+            id,
+            title: title.into(),
+            ..Design::default()
         };
-        let mut designs: Vec<_> = entries
-            .flatten()
-            .filter_map(|entry| self.design(entry.file_name().to_str()?))
+        design.number = Some(self.number(Kind::Design, &design.id)?);
+        self.save_design(&mut design)?;
+        Ok(design)
+    }
+
+    fn designs(&self) -> Vec<Design> {
+        let mut designs: Vec<_> = self
+            .design_files()
+            .into_iter()
+            .filter_map(|(id, file)| self.numbered_design(&id, &file))
             .collect();
         designs.sort_by_key(|design| Reverse(design.touched));
         designs
     }
 
     fn design(&self, id: &str) -> Option<Design> {
-        let dir = self.design_dir(id).ok()?;
-        let file = dir.join(design::FILE);
-        let source = std::fs::read_to_string(&file).ok()?;
-        let mut design: Design = toml::from_str(&source).ok()?;
-        design.id = id.to_owned();
-        design.number = self.number(Kind::Design, id).ok();
-        design.version = Some(project::version(source.as_bytes()));
-        design.touched = stamp::of(&file);
-        for page in &mut design.pages {
-            if component(&page.id).is_ok() {
-                let path = dir.join(&page.id);
-                if path.join(design::INDEX).is_file() {
-                    let mut files = Vec::new();
-                    page_files(&path, &path, &mut files);
-                    files.sort_unstable();
-                    page.revision = Some(project::version(format!("{files:?}").as_bytes()));
-                }
-            }
+        self.numbered_design(id, &self.design_dir(id).ok()?.join(design::FILE))
+    }
+
+    fn design_artboard_revision(&self, design: &str, artboard: &str) -> Option<String> {
+        let dir = self
+            .design_dir(design)
+            .ok()?
+            .join(component(artboard).ok()?);
+        if !dir.join(design::INDEX).is_file() {
+            return None;
         }
-        Some(design)
+        let mut files = Vec::new();
+        artboard_files(&dir, &dir, &mut files);
+        files.sort_unstable();
+        Some(project::version(format!("{files:?}").as_bytes()))
     }
 
     fn save_design(&self, design: &mut Design) -> super::Result<()> {
@@ -958,7 +972,10 @@ impl super::Project for Project {
     /// be long after it was opened — so a project without one is watched
     /// shallowly at its own root, unsettled, where the one event that matters
     /// is the directory appearing.
-    fn watch(&self, knock: impl Fn() + Send + Sync + 'static) -> Option<super::Watching> {
+    fn watch(
+        &self,
+        knock: impl Fn(Vec<PathBuf>) + Send + Sync + 'static,
+    ) -> Option<super::Watching> {
         // The prefix every event is matched against, resolved once. FSEvents
         // reports the real path, so a project reached through a symlink would
         // never match the prefix it was armed with.
@@ -967,10 +984,22 @@ impl super::Project for Project {
             .join(DIR);
         let mut watcher =
             notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-                if let Ok(event) = event
-                    && event.paths.iter().any(|path| ours(&dir, path))
-                {
-                    knock();
+                let Ok(event) = event else {
+                    knock(vec![PathBuf::new()]);
+                    return;
+                };
+                if event.need_rescan() || event.paths.is_empty() {
+                    knock(vec![PathBuf::new()]);
+                    return;
+                }
+                let paths: Vec<_> = event
+                    .paths
+                    .iter()
+                    .filter(|path| ours(&dir, path))
+                    .filter_map(|path| path.strip_prefix(&dir).ok().map(Path::to_path_buf))
+                    .collect();
+                if !paths.is_empty() {
+                    knock(paths);
                 }
             })
             .ok()?;
@@ -1074,7 +1103,7 @@ fn reserve_directory(dir: &Path) -> Result<String> {
 }
 
 fn entry_lock(dir: &Path, id: &str) -> Result<std::fs::File> {
-    std::fs::create_dir_all(&dir)?;
+    std::fs::create_dir_all(dir)?;
     let lock = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
@@ -1085,7 +1114,7 @@ fn entry_lock(dir: &Path, id: &str) -> Result<std::fs::File> {
     Ok(lock)
 }
 
-fn page_files(root: &Path, dir: &Path, files: &mut Vec<(PathBuf, u128, u64)>) {
+fn artboard_files(root: &Path, dir: &Path, files: &mut Vec<(PathBuf, u128, u64)>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
@@ -1095,7 +1124,7 @@ fn page_files(root: &Path, dir: &Path, files: &mut Vec<(PathBuf, u128, u64)>) {
         };
         let path = entry.path();
         if kind.is_dir() {
-            page_files(root, &path, files);
+            artboard_files(root, &path, files);
         } else if kind.is_file()
             && let (Ok(relative), Ok(meta)) = (path.strip_prefix(root), entry.metadata())
         {
@@ -1111,6 +1140,8 @@ fn page_files(root: &Path, dir: &Path, files: &mut Vec<(PathBuf, u128, u64)>) {
     }
 }
 
+/// An id or asset name as one path component, refused where it would reach
+/// outside the directory it names something in.
 pub(crate) fn component(name: &str) -> Result<&str> {
     anyhow::ensure!(
         !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\\']),

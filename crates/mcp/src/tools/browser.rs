@@ -91,7 +91,7 @@ pub static TOOLS: [Tool; 10] = [
     },
     Tool {
         name: "browser_read",
-        description: "Read a browser tab, canvas web frame or design page as it stands: its text, and the numbered elements that \
+        description: "Read a browser tab, canvas web frame or design artboard as it stands: its text, and the numbered elements that \
             can be clicked or typed into. The numbers describe this read only; read again after \
             anything changes the page.",
         schema: |bound| with_page(tools::fields(bound, &[tools::PROJECT])),
@@ -101,7 +101,7 @@ pub static TOOLS: [Tool; 10] = [
     },
     Tool {
         name: "browser_screenshot",
-        description: "Capture a browser tab, canvas web frame or design page's current viewport as a PNG image. Scroll to see \
+        description: "Capture a browser tab, canvas web frame or design artboard's current viewport as a PNG image. Scroll to see \
             another part of the page. The image contains the page only, without browser chrome.",
         schema: |bound| with_page(tools::fields(bound, &[tools::PROJECT])),
         writes: false,
@@ -223,7 +223,7 @@ fn with_page(schema: Value) -> Value {
     tools::optional(&mut schema, canvas::CANVAS, "string");
     tools::optional(&mut schema, NODE, "string");
     tools::optional(&mut schema, design::DESIGN, "string");
-    tools::optional(&mut schema, design::PAGE, "string");
+    tools::optional(&mut schema, design::ARTBOARD, "string");
     schema
 }
 
@@ -250,7 +250,7 @@ fn ask(args: &Args<'_>, act: Act) -> Outcome {
         args.value(canvas::CANVAS),
         args.value(NODE),
         args.value(design::DESIGN),
-        args.value(design::PAGE),
+        args.value(design::ARTBOARD),
     ) {
         (None, None, None, None) => (
             tools::root(args)?.to_path_buf(),
@@ -277,22 +277,23 @@ fn ask(args: &Args<'_>, act: Act) -> Outcome {
             if args.value(TAB).is_none() && !matches!(act, Act::Open(_) | Act::Tabs) =>
         {
             let (project, entry) = tools::entry_kind(args, design::DESIGN, Kind::Design)?;
-            let page = args.text(design::PAGE)?;
-            if page.trim().is_empty() {
-                return Err(Trouble::Invalid("page is empty".into()));
+            let artboard = args.text(design::ARTBOARD)?;
+            if artboard.trim().is_empty() {
+                return Err(Trouble::Invalid("artboard is empty".into()));
             }
             (
                 project,
                 PageTarget::Design {
                     design: entry.id,
                     number: entry.number,
-                    page: page.to_owned(),
+                    artboard: artboard.to_owned(),
                 },
             )
         }
         _ => {
             return Err(Trouble::Invalid(
-                "supply tab, canvas and node, or design and page as a single page target".into(),
+                "supply tab, canvas and node, or design and artboard as a single page target"
+                    .into(),
             ));
         }
     };

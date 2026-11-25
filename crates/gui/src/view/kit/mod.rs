@@ -2,6 +2,7 @@
 
 pub mod add;
 pub mod bubble;
+pub(crate) mod canvas;
 pub mod dialog;
 pub mod document;
 pub mod entry_search;

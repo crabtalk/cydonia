@@ -1,8 +1,29 @@
-use crate::model::workspace::{Entry, Workspace};
-use artifact::{design::Design, project::Project as _};
+use crate::model::{
+    project::HeldDesign,
+    workspace::{Entry, Member, Workspace},
+};
+use artifact::{design::Design, error::Error, kind::Kind, project::Project as _};
 use bezel::gpui::{Context, Entity};
 
 impl Workspace {
+    pub fn new_design(&mut self, project: usize, cx: &mut Context<Self>) -> Result<Member, String> {
+        if !self.settings.features.designs {
+            return Err("Designs are switched off.".into());
+        }
+        let open = self
+            .projects
+            .get_mut(project)
+            .ok_or("project is no longer open")?;
+        let design = open
+            .store()
+            .create_design("")
+            .map_err(|error| error.to_string())?;
+        let member = Member::new(open.id, Kind::Design, design.id.clone());
+        open.designs.insert(0, HeldDesign::new(design, cx));
+        cx.notify();
+        Ok(member)
+    }
+
     pub fn design_entities(&self) -> Vec<Entity<Design>> {
         self.projects
             .iter()
@@ -16,23 +37,50 @@ impl Workspace {
         Some(&project.designs.get(project.design_ix(&entry.id)?)?.design)
     }
 
-    pub fn edit_design(
+    pub(super) fn shown_designs(&self) -> Vec<Entry> {
+        self.arranged()
+            .map(|space| space.tree.fronts())
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|member| {
+                member
+                    .entry()
+                    .filter(|entry| entry.kind == Kind::Design)
+                    .cloned()
+            })
+            .collect()
+    }
+
+    pub fn load_design(&self, entry: &Entry, cx: &mut Context<Self>) {
+        let Some(held) = self.design_entity(entry) else {
+            return;
+        };
+        if held.read(cx).revisions_loaded {
+            return;
+        }
+        if let Some(project) = self.project(entry.project) {
+            let store = project.store();
+            held.update(cx, |design, cx| {
+                store.load_design_revisions(design);
+                cx.notify();
+            });
+        }
+    }
+
+    pub fn edit_design<T>(
         &mut self,
         entry: &Entry,
-        edit: impl FnOnce(&mut Design),
+        edit: impl FnOnce(&mut Design) -> Result<T, Error>,
         cx: &mut Context<Self>,
-    ) -> bool {
-        let Some(project) = self.project(entry.project) else {
-            return false;
+    ) -> Result<T, Error> {
+        let gone = || Error::Gone {
+            named: "This design".into(),
         };
-        let Some(held) = self.design_entity(entry).cloned() else {
-            return false;
-        };
+        let project = self.project(entry.project).ok_or_else(gone)?;
+        let held = self.design_entity(entry).cloned().ok_or_else(gone)?;
         let mut next = held.read(cx).clone();
-        edit(&mut next);
-        if project.store().save_design(&mut next).is_err() {
-            return false;
-        }
+        let value = edit(&mut next)?;
+        project.store().save_design(&mut next)?;
         let archive_changed = held.read(cx).archived != next.archived;
         held.update(cx, |held, cx| {
             *held = next;
@@ -42,7 +90,7 @@ impl Workspace {
             self.prune_archived(cx);
         }
         cx.notify();
-        true
+        Ok(value)
     }
 
     pub fn delete_design(&mut self, project: usize, ix: usize, cx: &mut Context<Self>) {

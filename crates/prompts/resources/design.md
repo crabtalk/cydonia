@@ -1,52 +1,45 @@
 ---
 name: design
-description: Create, verify and revise Design pages with the design and browser tools. Read before working on a design.
+description: Create, verify and revise Design artboards.
 ---
 
 # Design entries
 
 Use `design_list` to find existing designs and `design_read` to read one by
-its stable reference, such as `#12`. Its pages appear in a review grid with
-one shared viewport. Use `design_add` when the work calls for a new design.
+its stable reference, such as `#12`. Use `design_add` to create a new design.
+The Design canvas lays out its artboards side by side at a shared viewport
+width. A reviewer can pan, zoom, or expand an artboard to interact with it.
 
-## Write a page
+## Create an artboard
 
-Start with the project's design tokens, typography, components and closest
-finished screen. Reuse its layout and interaction conventions. Use one page
-per screen or variant. Add a variant as its own page so the reviewer can see
-both versions in the grid.
+Start from the project's tokens, typography, components and closest finished
+screen. Use one artboard per screen or variant so the reviewer can compare
+them on the canvas.
 
-Use `design_add_page` with the design's reference and a page title. The tool
-returns the page id and a project-relative path in this format.
+Call `design_add_artboard` with the design reference and an artboard title.
+Use the artboard id and project-relative path returned by the tool.
 
 ```text
-.cydonia/designs/{design}/{page}/index.html
+.cydonia/designs/{design}/{artboard}/index.html
 ```
 
-Write `index.html` and that page's CSS, images and scripts in the returned
-page directory. Reference them with relative paths within that directory.
-Use the design tools for entry metadata. When revising an existing page, use its path from
-`design_read` and edit the existing files so its comments remain with it.
+Write `index.html` and its CSS, images and scripts in that artboard directory.
+Use relative paths for those files. Keep entry metadata in the design tools.
+To revise an existing artboard, edit the files at the path from `design_read`
+so the artboard keeps its id and comment threads.
 
-## Check what the reviewer will see
+## Check each artboard
 
-Use `browser_screenshot` with the design reference in `design` and the page
-id from `design_read` in `page`. Inspect each page's screenshot at the
-design's configured viewport before handing it over. For a Design page
-with a form, menu or other interaction, use `browser_read`,
-`browser_inspect` and `browser_click` with the same target. Read the
-`cydonia://resources/browser` for element numbers and
-the behavior of pages loaded for a single call.
+Call `browser_screenshot` with the design reference in `design` and the id
+from `design_read` in `artboard`. Inspect each screenshot at the design's
+configured viewport before handing the work back. Exercise forms, menus and
+other interactions with `browser_read`, `browser_inspect` and `browser_click`.
+See `cydonia://resources/browser` for target fields and element numbers.
 
-## Respond to review
+## Respond to comments
 
-`design_read` reports `new`, `approved` or `changes` for each page, along
-with its comment count. The reviewer sets the status. Editing a page or
-its assets returns it to `new`.
-
-For a page marked `changes`, call `design_comments` with its design reference
-and page id. Read each thread and the original selector and text. Detached
-threads still carry their original anchors. Revise the page, check the
-result in the browser, and reply in each addressed thread with
-`design_comment_reply`. Pass the same design reference and page id, the
-comment id, and an answer that describes what changed or what remains open.
+Use `design_read` for comment counts, then pass the design reference and
+artboard id to `design_comments`. Read each thread with its element selector
+and quoted text. Revise the artboard and check it again in the browser. Reply
+with `design_comment_reply`, passing the design, artboard, comment id and an
+answer that states what changed or what remains open.

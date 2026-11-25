@@ -35,14 +35,14 @@ Open the canvas and bring the frame into view to start its page. Frames with
 no live page return an error. A screenshot uses the frame's configured page
 viewport, independent of its size or zoom on the canvas.
 
-## Design pages
+## Design artboards
 
-Pass `design` (a stable design reference) and `page` (an id from
-`design_read`) as the page target. Browser page commands use the design's
-configured viewport. If that page is open, commands use its live WebView.
-Otherwise Cydonia loads it for the call and releases it afterward. Scroll
-position, form state and console history persist between calls when the page
-is open in the design view.
+Pass `design` (a stable design reference) and `artboard` (an id from
+`design_read`) as the artboard target. Browser artboard commands use the
+design's configured viewport. If that artboard is open, commands use its live
+WebView. Otherwise Cydonia loads it for the call and releases it afterward.
+Scroll position, form state and console history persist between calls when the
+artboard is open in the design view.
 
 ## Reading and acting
 

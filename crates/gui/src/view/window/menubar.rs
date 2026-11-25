@@ -31,9 +31,9 @@ use crate::{
         keymap,
         window::root::{
             CloseProject, Cydonia, EditAgent, ImportCanvas, InstallApp, LoadApp, NewArticle,
-            NewBoard, NewCanvas, NewSession, NewSessionAs, NewSessionNext, NewSessionWith,
-            NewTable, NextEntry, OpenProject, OpenSettings, PrevEntry, ToggleChanges,
-            ToggleSidebar, ToggleTerminal, WhatsNew,
+            NewBoard, NewCanvas, NewDesign, NewSession, NewSessionAs, NewSessionNext,
+            NewSessionWith, NewTable, NextEntry, OpenProject, OpenSettings, PrevEntry,
+            ToggleChanges, ToggleSidebar, ToggleTerminal, WhatsNew,
         },
     },
 };
@@ -320,6 +320,7 @@ fn file_menu() -> Vec<MenuItem> {
         MenuItem::action("New Article", NewArticle),
         MenuItem::action("New Canvas", NewCanvas),
         MenuItem::action("Import Canvas…", ImportCanvas),
+        MenuItem::action("New Design", NewDesign),
         MenuItem::action("New Table", NewTable),
         MenuItem::action("Install App…", InstallApp),
     ]);
@@ -382,7 +383,7 @@ impl Cydonia {
         let workspace = self.workspace.read(cx);
         let features = &workspace.settings.features;
         let (sessions, boards, tables) = (features.sessions, features.boards, features.tables);
-        let canvases = features.canvases;
+        let (canvases, designs) = (features.canvases, features.designs);
         let developer = workspace.settings.developer_mode;
         let (review, files) = (features.panel.review, features.panel.files);
         let project = workspace.active.is_some();
@@ -411,6 +412,9 @@ impl Cydonia {
                     .when(canvases, |root| {
                         root.on_action(cx.listener(Self::new_canvas_action))
                             .on_action(cx.listener(Self::import_canvas_action))
+                    })
+                    .when(designs, |root| {
+                        root.on_action(cx.listener(Self::new_design_action))
                     })
                     .when(sessions, |root| {
                         root.on_action(cx.listener(Self::new_session_action))

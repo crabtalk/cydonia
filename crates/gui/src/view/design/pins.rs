@@ -1,5 +1,5 @@
 use crate::view::design::DesignView;
-use artifact::{comment::Anchor, design::Page};
+use artifact::{comment::Anchor, design::Artboard};
 use bezel::{
     gpui::{
         self, AnyElement, Bounds, Context, Entity, MouseButton, Pixels, Size, Task, Window, div,
@@ -43,7 +43,7 @@ impl DesignView {
     }
 
     fn pick_element(&mut self, point: [f32; 2], window: &Window, cx: &mut Context<Self>) {
-        let Some(page) = self.open_browser() else {
+        let Some(artboard) = self.open_browser() else {
             return;
         };
         let Some(id) = self.open.clone() else { return };
@@ -51,14 +51,15 @@ impl DesignView {
             return;
         }
         let input = json!({ "point": point, "base": self.comment_base(&id) });
-        let task = page
-            .read(cx)
-            .eval::<Option<Anchor>>(&format!("({ANCHOR})({input})"), EVAL, cx);
+        let task =
+            artboard
+                .read(cx)
+                .eval::<Option<Anchor>>(&format!("({ANCHOR})({input})"), EVAL, cx);
         self.pins.pick = Some(cx.spawn_in(window, async move |this, cx| {
             let anchor = task.await;
             let _ = this.update_in(cx, |this, window, cx| {
                 this.pins.pick = None;
-                if !this.pins.picking || this.open_browser().as_ref() != Some(&page) {
+                if !this.pins.picking || this.open_browser().as_ref() != Some(&artboard) {
                     return;
                 }
                 match anchor {
@@ -76,19 +77,25 @@ impl DesignView {
         }));
     }
 
-    fn review_anchors(page: &Page) -> Vec<(u64, Anchor)> {
-        page.comments
+    fn comment_anchors(artboard: &Artboard) -> Vec<(u64, Anchor)> {
+        artboard
+            .comments
             .iter()
             .filter(|comment| !comment.thread.resolved)
             .map(|comment| (comment.thread.id, comment.anchor.clone()))
             .collect()
     }
 
-    fn refresh_pins(&mut self, page: &Page, browser: &Entity<WebView>, cx: &mut Context<Self>) {
+    fn refresh_pins(
+        &mut self,
+        artboard: &Artboard,
+        browser: &Entity<WebView>,
+        cx: &mut Context<Self>,
+    ) {
         if self.pins.refresh.is_some() {
             return;
         }
-        let anchors = Self::review_anchors(page);
+        let anchors = Self::comment_anchors(artboard);
         if anchors.is_empty() {
             self.pins.positions.clear();
             return;
@@ -98,7 +105,7 @@ impl DesignView {
         let task = if browser.can_evaluate() && !browser.is_loading() {
             let input = json!({
                 "anchors": anchors.iter().map(|(_, anchor)| anchor).collect::<Vec<_>>(),
-                "base": self.comment_base(&page.id),
+                "base": self.comment_base(&artboard.id),
             });
             Some(browser.eval::<Vec<Position>>(&format!("({ANCHOR})({input})"), EVAL, cx))
         } else {
@@ -143,14 +150,14 @@ impl DesignView {
             .is_some_and(|position| !position.attached)
     }
 
-    pub(super) fn review_surface(
+    pub(super) fn interactive_artboard(
         &mut self,
         browser: Entity<WebView>,
-        page: &Page,
+        artboard: &Artboard,
         fit: Size<Pixels>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        self.refresh_pins(page, &browser, cx);
+        self.refresh_pins(artboard, &browser, cx);
         let width = fit.width.as_f32();
         let height = fit.height.as_f32();
         let mut overlay = div().relative().w(fit.width).h(fit.height).child(browser);
@@ -205,7 +212,7 @@ impl DesignView {
                 );
         }
         let mut detached = Vec::new();
-        for (i, (id, _)) in Self::review_anchors(page).into_iter().enumerate() {
+        for (i, (id, _)) in Self::comment_anchors(artboard).into_iter().enumerate() {
             let Some(&position) = self.pins.positions.get(&id) else {
                 continue;
             };

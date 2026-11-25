@@ -65,7 +65,8 @@ impl Tab {
                 && let Some(project) = workspace.project(design.project)
             {
                 let store = project.store();
-                let source_view = cx.new(|cx| DesignView::new(design, source, store, cx));
+                let root = self.root.clone();
+                let source_view = cx.new(|cx| DesignView::new(design, source, store, root, cx));
                 self.designs.push(source_view);
             }
         }

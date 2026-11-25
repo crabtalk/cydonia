@@ -11,7 +11,7 @@ use crate::{
     model::{media::Png as _, settings::Browsing},
     view::{
         component::{browser::Browser, panel::Panel},
-        design::preview::{self, LivePage},
+        design::preview::{self, LiveArtboard},
         pane::Tab,
         window::root::Cydonia,
     },
@@ -236,14 +236,14 @@ impl Cydonia {
             .collect()
     }
 
-    fn design_page(
+    fn design_artboard(
         &mut self,
         project: &Path,
         id: &str,
-        page: &str,
+        artboard: &str,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Result<(LivePage, bool), String> {
+    ) -> Result<(LiveArtboard, bool), String> {
         let project = self
             .workspace
             .update(cx, |workspace, _| workspace.intern(project));
@@ -254,17 +254,17 @@ impl Cydonia {
             .ok_or("design project is closed")?
             .store();
         let design = store.design(id).ok_or("design is no longer available")?;
-        let page = design
-            .pages
+        let artboard = design
+            .artboards
             .iter()
-            .find(|held| held.id == page)
-            .ok_or_else(|| format!("no page {page} in this design"))?;
+            .find(|held| held.id == artboard)
+            .ok_or_else(|| format!("no artboard {artboard} in this design"))?;
         for leaf in self.shown_tabs(cx) {
             if let Some(view) = leaf.read(cx).design_shown(cx) {
                 let view = view.read(cx);
                 if view.entry.id == id
                     && view.entry.project == project
-                    && let Some(live) = view.live_page(page, design.viewport)
+                    && let Some(live) = view.live_artboard(&artboard.id, design.viewport, cx)
                 {
                     return Ok((live, false));
                 }
@@ -273,7 +273,7 @@ impl Cydonia {
         let folder = store
             .place(Kind::Design, id)
             .ok_or("design directory is unavailable")?;
-        let live = preview::open(&folder, page, design.viewport, false, window, cx)?;
+        let live = preview::open(&folder, artboard, design.viewport, false, window, cx)?;
         self.browser_tool_page = Some(live.browser.clone());
         cx.notify();
         Ok((live, true))
@@ -323,7 +323,7 @@ async fn serve(
                 .update(cx, |this, cx| this.shown_frame(project, &canvas, &node, cx))
                 .map_err(|error| error.to_string())??;
             let page = frame.read_with(cx, |frame, _| frame.webview())?;
-            if !page.read_with(cx, |page, _| page.can_evaluate()) {
+            if !frame.read_with(cx, |frame, cx| frame.ready(cx)) {
                 return Err(
                     "web frame has no live page; bring it into view and wait for it to load".into(),
                 );
@@ -342,18 +342,18 @@ async fn serve(
         PageTarget::Design {
             design,
             number,
-            page,
+            artboard,
         } => {
             let (live, temporary) = window
                 .update(cx, |_, window, cx| {
                     this.update(cx, |this, cx| {
-                        this.design_page(project, &design, &page, window, cx)
+                        this.design_artboard(project, &design, &artboard, window, cx)
                     })
                 })
                 .map_err(|error| error.to_string())?
                 .map_err(|error| error.to_string())??;
-            let address = format!("design #{number}, page {page}");
-            let answer = match preview::ready(&live.browser, cx).await {
+            let address = format!("design #{number}, artboard {artboard}");
+            let answer = match live.ready(cx).await {
                 Err(error) => Err(error),
                 Ok(()) => match act {
                     Act::Console { levels, since } => check_page(&live.browser, cx)

@@ -292,10 +292,12 @@ impl Palette {
             .filter(|_| self.kind(cx).is_none() || only_commands)
             .map(|&ix| Pick::Command(&self.commands[ix]));
         let kind = self.kind(cx);
+        let features = &self.workspace.read(cx).settings.features;
         let hits = self
             .hits
             .iter()
             .filter(|_| !only_commands)
+            .filter(|hit| hit.row.kind().is_none_or(|kind| features.shows_entry(kind)))
             .filter(|hit| kind.is_none_or(|kind| hit.row.kind() == Some(kind)))
             .filter(|hit| self.linking.is_none() || self.linked(hit, cx).is_some())
             .take(self.limit)
@@ -618,7 +620,7 @@ impl Palette {
     }
 
     fn step_filter(&mut self, by: isize, cx: &mut Context<Self>) {
-        let filters = self.filters();
+        let filters = self.filters(cx);
         let at = filters
             .iter()
             .position(|(kind, _)| *kind == self.filter)
@@ -628,12 +630,16 @@ impl Palette {
     }
 
     /// Linking keeps the kind chosen by the slash menu.
-    fn filters(&self) -> Vec<(Option<Filter>, &'static str)> {
+    fn filters(&self, cx: &App) -> Vec<(Option<Filter>, &'static str)> {
+        let features = &self.workspace.read(cx).settings.features;
         FILTERS
             .into_iter()
             .filter(|(kind, _)| match self.linking {
                 Some(_) => *kind == self.filter,
-                None => true,
+                None => match kind {
+                    Some(Filter::Kind(kind)) => features.shows_entry(*kind),
+                    _ => true,
+                },
             })
             .collect()
     }
@@ -697,7 +703,7 @@ impl Palette {
             .flex_row()
             .gap(px(4.))
             .children(
-                self.filters()
+                self.filters(cx)
                     .into_iter()
                     .enumerate()
                     .map(|(ix, (kind, label))| {

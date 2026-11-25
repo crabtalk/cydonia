@@ -13,6 +13,7 @@ use crate::{
     article::Article,
     board::Board,
     canvas::Canvas,
+    design::Design,
     kind::Kind,
     session::{chat::ChatItem, record::Record},
 };
@@ -183,6 +184,19 @@ impl Searchable for Canvas {
     }
 }
 
+impl Searchable for Design {
+    fn item(&self) -> Item {
+        Item {
+            kind: Kind::Design,
+            id: self.id.clone(),
+        }
+    }
+
+    fn blocks(&self, each: &mut dyn FnMut(Block, &str)) {
+        each(Block::Title, self.label());
+    }
+}
+
 impl Searchable for Record {
     fn item(&self) -> Item {
         Item {
@@ -280,6 +294,14 @@ pub fn disk(project: &fs::Project, kinds: &[Kind], query: &Query, found: &Sender
             .into_iter()
             .map(|(id, path)| (Kind::Canvas, id, path)),
     );
+    if kinds.contains(&Kind::Design) {
+        files.extend(
+            project
+                .design_files()
+                .into_iter()
+                .map(|(id, path)| (Kind::Design, id, path)),
+        );
+    }
     files.retain(|(kind, ..)| kinds.contains(kind));
     parallel(&files, |(kind, id, path)| {
         if *kind == Kind::Board {
@@ -288,6 +310,11 @@ pub fn disk(project: &fs::Project, kinds: &[Kind], query: &Query, found: &Sender
                 return true;
             };
             return one(&board, query, found);
+        }
+        if *kind == Kind::Design {
+            return project
+                .read_design_file(id, path)
+                .is_none_or(|design| one(&design, query, found));
         }
         let Ok(bytes) = std::fs::read(path) else {
             return true;

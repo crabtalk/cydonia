@@ -58,6 +58,12 @@ fn copy(
             "Arrange text, images, links and entry cards on a canvas.",
             None,
         ),
+        Feature::Designs => (
+            icons::layout::LayoutGrid,
+            "Designs",
+            "Review pages created by agents.",
+            None,
+        ),
         Feature::Tables => (
             icons::files::Table2,
             "Tables",

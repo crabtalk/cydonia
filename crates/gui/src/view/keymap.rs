@@ -30,7 +30,7 @@ use crate::{
             menubar,
             root::{
                 self, CloseProject, GoBack, GoForward, InstallApp, LoadApp, NewArticle, NewBoard,
-                NewSession, NewSessionNext, NewTable, NextEntry, OpenFiles, OpenProject,
+                NewDesign, NewSession, NewSessionNext, NewTable, NextEntry, OpenFiles, OpenProject,
                 OpenReview, OpenSettings, PrevEntry, ToggleChanges, ToggleSidebar, ToggleTerminal,
             },
         },
@@ -75,6 +75,7 @@ pub enum Command {
     NewTab,
     NewBoard,
     NewArticle,
+    NewDesign,
     NewTable,
     InstallApp,
     LoadApp,
@@ -120,13 +121,14 @@ impl Menu {
 }
 
 impl Command {
-    pub const ALL: [Self; 26] = [
+    pub const ALL: [Self; 27] = [
         Self::OpenSettings,
         Self::NewSession,
         Self::NewSessionNext,
         Self::NewTab,
         Self::NewBoard,
         Self::NewArticle,
+        Self::NewDesign,
         Self::NewTable,
         Self::InstallApp,
         Self::LoadApp,
@@ -158,6 +160,7 @@ impl Command {
             Self::NewTab => "new_tab",
             Self::NewBoard => "new_board",
             Self::NewArticle => "new_article",
+            Self::NewDesign => "new_design",
             Self::NewTable => "new_table",
             Self::InstallApp => "install_app",
             Self::LoadApp => "load_app",
@@ -190,6 +193,7 @@ impl Command {
             Self::NewTab => "New Tab",
             Self::NewBoard => "New Board",
             Self::NewArticle => "New Article",
+            Self::NewDesign => "New Design",
             Self::NewTable => "New Table",
             Self::InstallApp => "Install App…",
             Self::LoadApp => "Load App from Folder…",
@@ -221,6 +225,7 @@ impl Command {
             | Self::NewTab
             | Self::NewBoard
             | Self::NewArticle
+            | Self::NewDesign
             | Self::NewTable
             | Self::InstallApp
             | Self::LoadApp
@@ -257,6 +262,7 @@ impl Command {
             Self::NewTab => "secondary-t",
             Self::NewArticle => "secondary-shift-a",
             Self::NewBoard => "secondary-shift-b",
+            Self::NewDesign => "secondary-shift-d",
             Self::NewTable | Self::InstallApp | Self::LoadApp | Self::CloseProject => return None,
             // Nothing: ⌃⇥ and ⇧⌃⇥ are what step between entries, and they are
             // bound where nothing can name them — see [`root::bindings`]. A
@@ -303,6 +309,7 @@ impl Command {
             ),
             Self::NewBoard => (Box::new(NewBoard), context),
             Self::NewArticle => (Box::new(NewArticle), context),
+            Self::NewDesign => (Box::new(NewDesign), context),
             Self::NewTable => (Box::new(NewTable), context),
             Self::InstallApp => (Box::new(InstallApp), context),
             Self::LoadApp => (Box::new(LoadApp), context),

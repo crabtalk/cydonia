@@ -361,7 +361,7 @@ pub enum PageTarget {
     Design {
         design: String,
         number: u64,
-        page: String,
+        artboard: String,
     },
 }
 

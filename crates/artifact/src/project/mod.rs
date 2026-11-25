@@ -18,6 +18,7 @@ use crate::{
     session::record::Record,
 };
 use sha2::{Digest as _, Sha256};
+use std::path::PathBuf;
 
 #[cfg(feature = "fs")]
 pub mod fs;
@@ -91,8 +92,19 @@ pub trait Project {
     fn save_canvas(&self, canvas: &mut Canvas) -> Result<()>;
     fn remove_canvas(&self, id: &str) -> Result<()>;
 
+    /// Lists design metadata without reading artboard files.
     fn designs(&self) -> Vec<Design>;
     fn design(&self, id: &str) -> Option<Design>;
+    fn create_design(&self, title: &str) -> Result<Design>;
+    fn design_artboard_revision(&self, design: &str, artboard: &str) -> Option<String>;
+
+    fn load_design_revisions(&self, design: &mut Design) {
+        for artboard in &mut design.artboards {
+            artboard.revision = self.design_artboard_revision(&design.id, &artboard.id);
+        }
+        design.revisions_loaded = true;
+    }
+
     fn save_design(&self, design: &mut Design) -> Result<()>;
     fn remove_design(&self, id: &str) -> Result<()>;
 
@@ -142,10 +154,9 @@ pub trait Project {
 
     // ── changes ──────────────────────────────────────────────────────
 
-    /// Call `knock` whenever something this backend reads back changes under
-    /// it, from any thread. A knock carries nothing: the answer to one is a
-    /// re-read. `None` for a backend that has nothing to watch or cannot.
-    fn watch(&self, knock: impl Fn() + Send + Sync + 'static) -> Option<Watching> {
+    /// Changed paths are relative to the project store. An empty path requests
+    /// a full re-read. The callback may run on any thread.
+    fn watch(&self, knock: impl Fn(Vec<PathBuf>) + Send + Sync + 'static) -> Option<Watching> {
         let _ = knock;
         None
     }

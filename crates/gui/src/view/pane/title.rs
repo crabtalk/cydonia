@@ -57,6 +57,9 @@ impl Tab {
         let comments = self
             .article_shown(cx)
             .map(|view| view.read(cx).comments.clone());
+        let viewport = self
+            .design_shown(cx)
+            .map(|view| view.read(cx).viewport_button.clone());
         let edge = self.edge;
         let heading = Title {
             edge,
@@ -220,6 +223,7 @@ impl Tab {
             row.child(name)
                 .children(grip)
                 .children(comments)
+                .children(viewport)
                 .children(menu)
                 .children(shift)
                 .children(zoom)

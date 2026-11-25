@@ -128,7 +128,10 @@ fn commands_run_last_lead_and_a_prefix_lists_commands_alone(cx: &mut gpui::TestA
 fn slash_entry_kinds_follow_features_and_keep_their_picker_filter(cx: &mut gpui::TestAppContext) {
     use crate::{
         model::{settings::Settings, state::State},
-        view::kit::link,
+        view::kit::{
+            link,
+            new::{self, New},
+        },
     };
     use bezel::theme::Appearance;
     use editor::SlashItem;
@@ -142,6 +145,7 @@ fn slash_entry_kinds_follow_features_and_keep_their_picker_filter(cx: &mut gpui:
             for enabled in [false, true] {
                 root.workspace.update(cx, |workspace, _| {
                     workspace.settings.features.canvases = enabled;
+                    workspace.settings.features.designs = enabled;
                     workspace.settings.features.tables = enabled;
                 });
                 let labels: Vec<_> = link::slash_items(root.workspace.read(cx))
@@ -152,6 +156,14 @@ fn slash_entry_kinds_follow_features_and_keep_their_picker_filter(cx: &mut gpui:
                     })
                     .collect();
                 assert_eq!(labels.iter().any(|label| label == "Canvas"), enabled);
+                assert_eq!(labels.iter().any(|label| label == "Design"), enabled);
+                assert_eq!(
+                    new::offered(root.workspace.read(cx))
+                        .kinds
+                        .iter()
+                        .any(|kind| matches!(kind, New::Design)),
+                    enabled,
+                );
                 assert_eq!(labels.iter().any(|label| label == "Table entry"), enabled);
             }
             let root_entity = cx.entity().downgrade();
@@ -164,12 +176,12 @@ fn slash_entry_kinds_follow_features_and_keep_their_picker_filter(cx: &mut gpui:
                     cx,
                 )
             });
-            for kind in [Kind::Session, Kind::Canvas, Kind::Table] {
+            for kind in [Kind::Session, Kind::Canvas, Kind::Design, Kind::Table] {
                 palette.update(cx, |palette, cx| {
                     palette.linking = Some(Rc::new(|_, _, _, _| {}));
                     palette.filter = Some(Filter::Kind(kind));
-                    assert_eq!(palette.filters().len(), 1);
-                    assert_eq!(palette.filters()[0].0, Some(Filter::Kind(kind)));
+                    assert_eq!(palette.filters(cx).len(), 1);
+                    assert_eq!(palette.filters(cx)[0].0, Some(Filter::Kind(kind)));
                     palette.step_filter(1, cx);
                     assert_eq!(palette.kind(cx), Some(kind));
                 });

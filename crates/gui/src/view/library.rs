@@ -122,13 +122,7 @@ impl Tab {
 
     /// Whether the kind this tab lists is switched on.
     fn shown(self, features: &Features) -> bool {
-        match self {
-            Self::Articles | Self::Designs | Self::Apps | Self::Skills => true,
-            Self::Canvases => features.canvases,
-            Self::Boards => features.boards,
-            Self::Tables => features.tables,
-            Self::Sessions => features.sessions,
-        }
+        self.kind().is_none_or(|kind| features.shows_entry(kind))
     }
 
     /// The columns, in order. Name, Ref and Project are every entry tab's.
