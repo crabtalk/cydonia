@@ -10,7 +10,6 @@ use std::{
 
 #[cfg(feature = "fs")]
 pub mod bundle;
-pub mod comments;
 pub mod web;
 
 pub const DIR: &str = "canvases";
@@ -25,8 +24,6 @@ pub struct Properties {
     pub archived: bool,
     #[serde(default)]
     pub labels: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub comments: Vec<comments::Comment>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, serde_json::Value>,
 }

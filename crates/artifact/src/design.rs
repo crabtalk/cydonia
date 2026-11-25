@@ -1,4 +1,8 @@
-use crate::{comment::ElementComment, stamp, web::Viewport};
+use crate::{
+    comment::{Anchor, ElementComment, Thread},
+    stamp,
+    web::Viewport,
+};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -64,6 +68,17 @@ impl Page {
             .revision
             .clone()
             .map(|revision| Review { revision, status });
+    }
+
+    pub fn comment(&mut self, anchor: Anchor, note: String) {
+        let id = Thread::fresh_id(
+            stamp::now() as u64,
+            self.comments.iter().map(|comment| comment.thread.id),
+        );
+        self.comments.push(ElementComment {
+            anchor,
+            thread: Thread::new(id, note, None),
+        });
     }
 
     pub fn path(&self) -> PathBuf {

@@ -1,10 +1,11 @@
-use crate::view::kit::web;
+use crate::view::{component::browse::console::ConsoleLog, kit::web};
 use artifact::{canvas::web::Source, design::Page, web::Viewport};
 use bezel::gpui::{
-    App, AppContext as _, AsyncApp, Entity, Pixels, RenderImage, Size, Window, px, size,
+    App, AppContext as _, AsyncApp, Entity, Pixels, RenderImage, Size, Subscription, Window, div,
+    prelude::*, px, size,
 };
-use browser::WebView;
-use std::{path::Path, sync::Arc, time::Duration};
+use browser::{WebView, WebViewEvent};
+use std::{cell::RefCell, path::Path, rc::Rc, sync::Arc, time::Duration};
 
 const WAIT: Duration = Duration::from_secs(12);
 const THUMBNAIL_EDGE: u32 = 512;
@@ -27,14 +28,31 @@ impl Revision {
     }
 }
 
-pub(super) fn open(
+#[derive(Clone)]
+pub(crate) struct LivePage {
+    pub(crate) browser: Entity<WebView>,
+    pub(crate) console: Rc<RefCell<ConsoleLog>>,
+    _events: Rc<Subscription>,
+}
+
+pub(crate) fn host(browser: Entity<WebView>) -> impl IntoElement {
+    div()
+        .absolute()
+        .right_0()
+        .bottom_0()
+        .size(px(1.))
+        .opacity(0.01)
+        .child(browser)
+}
+
+pub(crate) fn open(
     folder: &Path,
     page: &Page,
     viewport: Viewport,
     interactive: bool,
     window: &mut Window,
     cx: &mut App,
-) -> Result<Entity<WebView>, String> {
+) -> Result<LivePage, String> {
     let path = folder.join(page.path());
     let directory = path.parent().ok_or("Page directory is missing")?;
     if !directory.starts_with(folder) || page.revision.is_none() {
@@ -47,13 +65,21 @@ pub(super) fn open(
             .with_console()
     });
     web::present(&browser, viewport, interactive, window, cx)?;
-    Ok(browser)
+    let console = Rc::new(RefCell::new(ConsoleLog::default()));
+    let log = console.clone();
+    let events = cx.subscribe(&browser, move |_, event: &WebViewEvent, _| {
+        if let WebViewEvent::Console(message) = event {
+            log.borrow_mut().push(message.clone());
+        }
+    });
+    Ok(LivePage {
+        browser,
+        console,
+        _events: Rc::new(events),
+    })
 }
 
-pub(super) async fn snapshot(
-    browser: &Entity<WebView>,
-    cx: &mut AsyncApp,
-) -> Result<Arc<RenderImage>, String> {
+pub(crate) async fn ready(browser: &Entity<WebView>, cx: &mut AsyncApp) -> Result<(), String> {
     let mut waited = Duration::ZERO;
     loop {
         let ready = browser.read_with(cx, |browser, _| {
@@ -63,27 +89,7 @@ pub(super) async fn snapshot(
             Ok(browser.can_evaluate() && !browser.is_loading())
         })?;
         if ready {
-            let image = browser
-                .read_with(cx, |browser, cx| browser.snapshot(cx))
-                .await?;
-            return cx
-                .background_executor()
-                .spawn(async move {
-                    let size = image.size(0);
-                    let buffer = image::RgbaImage::from_raw(
-                        size.width.0 as u32,
-                        size.height.0 as u32,
-                        image.as_bytes(0).ok_or("Page snapshot is empty")?.to_vec(),
-                    )
-                    .ok_or("Page snapshot has invalid dimensions")?;
-                    let thumbnail = image::DynamicImage::ImageRgba8(buffer)
-                        .thumbnail(THUMBNAIL_EDGE, THUMBNAIL_EDGE)
-                        .into_rgba8();
-                    Ok(Arc::new(RenderImage::new(vec![image::Frame::new(
-                        thumbnail,
-                    )])))
-                })
-                .await;
+            return Ok(());
         }
         if waited >= WAIT {
             return Err("Page preview timed out".into());
@@ -91,6 +97,33 @@ pub(super) async fn snapshot(
         cx.background_executor().timer(STEP).await;
         waited += STEP;
     }
+}
+
+pub(super) async fn snapshot(
+    browser: &Entity<WebView>,
+    cx: &mut AsyncApp,
+) -> Result<Arc<RenderImage>, String> {
+    ready(browser, cx).await?;
+    let image = browser
+        .read_with(cx, |browser, cx| browser.snapshot(cx))
+        .await?;
+    cx.background_executor()
+        .spawn(async move {
+            let size = image.size(0);
+            let buffer = image::RgbaImage::from_raw(
+                size.width.0 as u32,
+                size.height.0 as u32,
+                image.as_bytes(0).ok_or("Page snapshot is empty")?.to_vec(),
+            )
+            .ok_or("Page snapshot has invalid dimensions")?;
+            let thumbnail = image::DynamicImage::ImageRgba8(buffer)
+                .thumbnail(THUMBNAIL_EDGE, THUMBNAIL_EDGE)
+                .into_rgba8();
+            Ok(Arc::new(RenderImage::new(vec![image::Frame::new(
+                thumbnail,
+            )])))
+        })
+        .await
 }
 
 pub(super) fn fit(viewport: Viewport, available: Size<Pixels>) -> Size<Pixels> {

@@ -17,6 +17,7 @@ use crate::{
             meter,
             terminal::TerminalPanel,
         },
+        design::preview,
         kit::{menu::Menu, watch::Watch},
         pane::{Pane, Tab},
         settings,
@@ -476,6 +477,7 @@ fn stepped(at: Option<usize>, len: usize, step: isize) -> Option<usize> {
 /// [`Tab`]'s.
 pub struct Cydonia {
     pub(crate) workspace: Entity<Workspace>,
+    pub(crate) browser_tool_page: Option<Entity<browser::WebView>>,
     /// A tab for every entry the open space holds and every entry of the
     /// window's strip, and which of them has the focus. Empty where no tab is
     /// open.
@@ -1102,6 +1104,7 @@ impl Cydonia {
             meter: cx.new(Stats::new),
             meter_at: Floating::new(Painter::of(cx)),
             workspace,
+            browser_tool_page: None,
             leaves: Vec::new(),
             panes: Vec::new(),
             session_watches: Watch::default(),
@@ -1651,6 +1654,7 @@ impl Render for Cydonia {
                 root.child(self.sidebar_column(window, cx))
             })
             .child(self.detail(window, cx))
+            .children(self.browser_tool_page.clone().map(preview::host))
             // Rides on the seam between the sidebar and the detail column
             // rather than sitting in flow, so neither gives up a column.
             // Floating, the seam is the chrome between them.

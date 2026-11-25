@@ -1,25 +1,30 @@
 use crate::{
     tool::{Answer, Arg, Args, Outcome, Tool, Trouble},
-    tools::{self, PROJECT},
+    tools::{self, PROJECT, comment, session},
 };
 use artifact::{
-    design::Design,
+    comment::Author,
+    design::{Design, Page},
     kind::Kind,
     project::{Project as _, fs},
 };
 use serde_json::{Value, json};
 use std::path::Path;
 
-const DESIGN: Arg = Arg {
+pub(super) const DESIGN: Arg = Arg {
     name: "design",
     about: "The design's stable project reference, such as #12.",
+};
+pub(super) const PAGE: Arg = Arg {
+    name: "page",
+    about: "Page id from design_read.",
 };
 const TITLE: Arg = Arg {
     name: "title",
     about: "The name to show.",
 };
 
-pub static TOOLS: [Tool; 4] = [
+pub static TOOLS: [Tool; 6] = [
     Tool {
         name: "design_add",
         description: "Create a Design entry for pages to review.",
@@ -51,6 +56,26 @@ pub static TOOLS: [Tool; 4] = [
         writes: true,
         deletes: false,
         call: add_page,
+    },
+    Tool {
+        name: "design_comments",
+        description: "Read an element comment's selector, original text, and thread for each comment on a design page.",
+        schema: |bound| tools::fields(bound, &[PROJECT, DESIGN, PAGE]),
+        writes: false,
+        deletes: false,
+        call: comments,
+    },
+    Tool {
+        name: "design_comment_reply",
+        description: "Append an agent's reply to an element comment on a design page.",
+        schema: |bound| {
+            let mut schema = comment::reply_schema(bound, DESIGN);
+            tools::required(&mut schema, PAGE, "string");
+            schema
+        },
+        writes: true,
+        deletes: false,
+        call: comment_reply,
     },
 ];
 
@@ -88,19 +113,11 @@ fn add_page(args: Args<'_>) -> Outcome {
 }
 
 fn find(args: &Args<'_>) -> Result<(std::path::PathBuf, fs::Project, Design), Trouble> {
-    let named = args.text(DESIGN)?;
-    let (root, number, within) = tools::entry_of(args, named)?;
-    if within.is_some() {
-        return Err(tools::whole(named));
-    }
-    let entry = tools::entry_numbered(&root, number, named)?;
-    if entry.kind != Kind::Design {
-        return Err(Trouble::Refused(format!("{named} is a {}", entry.kind)));
-    }
+    let (root, entry) = tools::entry_kind(args, DESIGN, Kind::Design)?;
     let store = fs::Project::new(&root);
-    let design = store
-        .design(&entry.id)
-        .ok_or_else(|| Trouble::Refused(format!("{named} is no longer available")))?;
+    let design = store.design(&entry.id).ok_or_else(|| {
+        Trouble::Refused(format!("design #{} is no longer available", entry.number))
+    })?;
     Ok((root, store, design))
 }
 
@@ -138,4 +155,39 @@ fn data(store: &fs::Project, root: &Path, design: &Design) -> Result<Value, Trou
 
 fn answer(value: Value) -> Answer {
     Answer::said(serde_json::to_string_pretty(&value).expect("design data serializes")).with(value)
+}
+
+fn comment_page<'a>(id: &str, design: &'a mut Design) -> Result<&'a mut Page, Trouble> {
+    design
+        .pages
+        .iter_mut()
+        .find(|page| page.id == id)
+        .ok_or_else(|| Trouble::Refused(format!("no page {id} in this design")))
+}
+
+fn comments(args: Args<'_>) -> Outcome {
+    let (_, _, mut design) = find(&args)?;
+    let number = design.number;
+    let page = comment_page(args.text(PAGE)?, &mut design)?;
+    Ok(answer(
+        json!({ "design": number, "page": page.id, "comments": page.comments }),
+    ))
+}
+
+fn comment_reply(args: Args<'_>) -> Outcome {
+    let id = comment::id(&args)?;
+    let (_, store, mut design) = find(&args)?;
+    let page = comment_page(args.text(PAGE)?, &mut design)?;
+    let note = page
+        .comments
+        .iter_mut()
+        .find(|note| note.thread.id == id)
+        .ok_or_else(|| Trouble::Refused(format!("this page has no comment {id}")))?;
+    note.thread.reply(
+        Author::Agent,
+        args.text(comment::ANSWER)?.to_owned(),
+        session::turn_link(&args),
+    );
+    store.save_design(&mut design)?;
+    Ok(Answer::said(format!("Design comment {id} answered")).with(json!({"comment": id})))
 }

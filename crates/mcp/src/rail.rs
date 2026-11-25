@@ -358,6 +358,11 @@ pub enum PageTarget {
         number: u64,
         node: String,
     },
+    Design {
+        design: String,
+        number: u64,
+        page: String,
+    },
 }
 
 /// One browser call, with where its answer goes.

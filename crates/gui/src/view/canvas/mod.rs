@@ -35,7 +35,6 @@ use std::path::PathBuf;
 
 mod actions;
 mod chrome;
-mod comments;
 mod embed;
 pub(crate) mod entry_picker;
 mod image;
@@ -69,7 +68,6 @@ pub(crate) struct CanvasView {
     chrome: Entity<chrome::Chrome>,
     error: Option<String>,
     pages: web::Frames,
-    comments: comments::Review,
 }
 
 impl Cydonia {
@@ -150,7 +148,7 @@ impl CanvasView {
             }
             kinds = kinds.with(name, declared);
         }
-        let pages = web::Frames::new(cx.entity().downgrade(), path.clone(), source.clone());
+        let pages = web::Frames::new(cx.entity().downgrade(), path.clone());
         kinds = sources::kinds(kinds, path.clone()).with(artifact::canvas::web::KIND, pages.kind());
         let surface = cx.new(|cx| {
             Surface::for_document(document, layout::FREE, cx)
@@ -171,8 +169,8 @@ impl CanvasView {
             let error = &source.error;
             if &this.error != error {
                 this.error = error.clone();
+                cx.notify();
             }
-            cx.notify();
         })
         .detach();
         let owner = cx.entity().downgrade();
@@ -191,7 +189,6 @@ impl CanvasView {
             chrome,
             error,
             pages,
-            comments: comments::Review::new(cx),
         }
     }
 
@@ -367,7 +364,6 @@ impl Render for CanvasView {
             .min_h_0()
             .relative()
             .child(self.surface.clone())
-            .children(self.comment_panel(cx))
             .children(self.reference_picker(cx))
             .child(
                 div()

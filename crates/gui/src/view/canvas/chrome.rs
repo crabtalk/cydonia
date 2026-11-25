@@ -99,13 +99,7 @@ impl CanvasView {
                         this.add_group(window, cx);
                     })),
             )
-            .child(actions)
-            .when(!self.source.read(cx).record.comments.is_empty(), |tools| {
-                tools.child(
-                    Button::new("canvas-comments", "Comments")
-                        .on_press(cx.listener(|this, _, _, cx| this.open_comments(cx))),
-                )
-            });
+            .child(actions);
         let zoom = theme
             .group_box()
             .flex_row()

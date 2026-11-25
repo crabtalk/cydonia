@@ -1,10 +1,9 @@
 use crate::{
     tool::{Answer, Arg, Args, Outcome, Tool, Trouble},
-    tools::{self, PROJECT, comment, session},
+    tools::{self, PROJECT},
 };
 use artifact::{
     canvas::{Canvas, Edit},
-    comment::Author,
     kind::Kind,
     project::{Project as _, fs},
 };
@@ -27,7 +26,7 @@ const EDIT: Arg = Arg {
     about: "Atomic edits: full nodes and edges to upsert, and remove_nodes/remove_edges id lists. Existing items keep their stacking position; new items append. Removing a node removes its incident edges.",
 };
 
-pub static TOOLS: [Tool; 5] = [
+pub static TOOLS: [Tool; 3] = [
     Tool {
         name: "canvas_add",
         description: "Create an empty canvas entry and return its stable reference and version. Read the canvas format resource before editing it.",
@@ -64,22 +63,6 @@ pub static TOOLS: [Tool; 5] = [
         deletes: false,
         call: edit,
     },
-    Tool {
-        name: "canvas_comments",
-        description: "List a canvas's web frame comments, element anchors and replies. Marks comments whose frame is missing as detached.",
-        schema: |bound| tools::fields(bound, &[PROJECT, CANVAS]),
-        writes: false,
-        deletes: false,
-        call: comments,
-    },
-    Tool {
-        name: "canvas_comment_reply",
-        description: "Answer a web frame comment by its id from canvas_comments.",
-        schema: |bound| comment::reply_schema(bound, CANVAS),
-        writes: true,
-        deletes: false,
-        call: comment_reply,
-    },
 ];
 
 fn add(args: Args<'_>) -> Outcome {
@@ -89,19 +72,8 @@ fn add(args: Args<'_>) -> Outcome {
 }
 
 pub(super) fn reference(args: &Args<'_>) -> Result<(std::path::PathBuf, u64, String), Trouble> {
-    let named = args.text(CANVAS)?;
-    let (project, number, within) = tools::entry_of(args, named)?;
-    if within.is_some() {
-        return Err(tools::whole(named));
-    }
-    let entry = tools::entry_numbered(&project, number, named)?;
-    if entry.kind != Kind::Canvas {
-        return Err(Trouble::Refused(format!(
-            "{named} is a {}, not a canvas",
-            entry.kind
-        )));
-    }
-    Ok((project, number, entry.id))
+    let (project, entry) = tools::entry_kind(args, CANVAS, Kind::Canvas)?;
+    Ok((project, entry.number, entry.id))
 }
 
 fn find(args: &Args<'_>) -> Result<(fs::Project, Canvas), Trouble> {
@@ -137,32 +109,4 @@ fn answer(canvas: &Canvas) -> Answer {
         "version": canvas.version, "document": canvas.document,
     });
     Answer::said(serde_json::to_string_pretty(&data).expect("canvas data serializes")).with(data)
-}
-
-fn comments(args: Args<'_>) -> Outcome {
-    let (_, canvas) = find(&args)?;
-    let data = json!({
-        "canvas": canvas.number,
-        "comments": canvas.comments.iter().map(|comment| json!({
-            "node": comment.node, "anchor": comment.anchor, "thread": comment.thread,
-            "frame_missing": !canvas.has_web_frame(&comment.node),
-        })).collect::<Vec<_>>(),
-    });
-    Ok(Answer::said(serde_json::to_string_pretty(&data).expect("comments serialize")).with(data))
-}
-
-fn comment_reply(args: Args<'_>) -> Outcome {
-    let id = comment::id(&args)?;
-    let answer = args.text(comment::ANSWER)?;
-    let (store, mut canvas) = find(&args)?;
-    let comment = canvas
-        .comments
-        .iter_mut()
-        .find(|comment| comment.thread.id == id)
-        .ok_or_else(|| Trouble::Refused(format!("canvas has no comment {id}")))?;
-    comment
-        .thread
-        .reply(Author::Agent, answer.to_owned(), session::turn_link(&args));
-    store.save_canvas(&mut canvas)?;
-    Ok(Answer::said(format!("Canvas comment {id} answered")).with(json!({"comment": id})))
 }

@@ -233,6 +233,26 @@ pub(crate) fn entry_of<'a>(
     Ok((project_of(args, &reference)?, number, within))
 }
 
+fn entry_kind(
+    args: &Args<'_>,
+    arg: Arg,
+    kind: artifact::kind::Kind,
+) -> Result<(PathBuf, artifact::entry::Entry), Trouble> {
+    let named = args.text(arg)?;
+    let (project, number, within) = entry_of(args, named)?;
+    if within.is_some() {
+        return Err(whole(named));
+    }
+    let entry = entry_numbered(&project, number, named)?;
+    if entry.kind != kind {
+        return Err(Trouble::Refused(format!(
+            "{named} is a {}, not a {kind}",
+            entry.kind
+        )));
+    }
+    Ok((project, entry))
+}
+
 /// The rail, for a refusal to name — a model that named the wrong directory
 /// can see the right one without a second call.
 pub(crate) fn held() -> Option<String> {

@@ -1,5 +1,5 @@
 use crate::{
-    model::{canvas::Canvas, file::File, workspace::references},
+    model::{file::File, workspace::references},
     view::{canvas::CanvasView, component::browse::console::ConsoleLog, kit::web as presentation},
 };
 use artifact::{
@@ -28,27 +28,19 @@ use canvas::{
 };
 use std::{cell::RefCell, collections::HashMap, path::PathBuf, rc::Rc};
 
-mod review;
-
 #[derive(Clone)]
 pub(super) struct Frames {
     views: Rc<RefCell<HashMap<String, Entity<Page>>>>,
     owner: WeakEntity<CanvasView>,
     root: PathBuf,
-    source: Entity<Canvas>,
 }
 
 impl Frames {
-    pub(super) fn new(
-        owner: WeakEntity<CanvasView>,
-        root: PathBuf,
-        source: Entity<Canvas>,
-    ) -> Self {
+    pub(super) fn new(owner: WeakEntity<CanvasView>, root: PathBuf) -> Self {
         Self {
             views: Rc::default(),
             owner,
             root,
-            source,
         }
     }
 
@@ -165,7 +157,6 @@ impl Frames {
                             card.clone(),
                             self.root.clone(),
                             self.owner.clone(),
-                            self.source.clone(),
                             window,
                             cx,
                         )
@@ -187,7 +178,6 @@ pub(crate) struct Page {
     frame: Result<Frame, String>,
     browser: Option<Entity<WebView>>,
     interactive: bool,
-    review: review::Pins,
     focus: FocusHandle,
     source: Option<Entity<File>>,
     _file: Option<Subscription>,
@@ -216,7 +206,6 @@ impl Page {
         card: Card,
         root: PathBuf,
         owner: WeakEntity<CanvasView>,
-        canvas: Entity<Canvas>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -229,7 +218,6 @@ impl Page {
             browser: None,
             console: ConsoleLog::default(),
             interactive: false,
-            review: review::Pins::new(canvas, cx),
             focus: cx.focus_handle(),
             source: None,
             _file: None,
@@ -274,7 +262,6 @@ impl Page {
     }
 
     fn open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.review.cancel_pick();
         self._file = None;
         self.source = None;
         self.source_error = None;
@@ -350,7 +337,6 @@ impl Page {
     }
 
     fn toggle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.review.cancel_pick();
         self.interactive = !self.interactive;
         self.present(window, cx);
         if self.interactive {
@@ -436,11 +422,6 @@ impl Render for Page {
         } else {
             div().into_any_element()
         };
-        let body = if self.webview().is_ok() {
-            self.review_surface(body, viewport, scale, cx)
-        } else {
-            body
-        };
         let menu = self
             .menu
             .render("web-viewport-menu", |this| &mut this.menu, window, cx);
@@ -503,31 +484,6 @@ impl Render for Page {
                                 }
                             })),
                     )
-                    .when(!self.read_only(cx), |bar| {
-                        bar.child(
-                            theme
-                                .button(
-                                    if self.review.picking {
-                                        "Cancel"
-                                    } else {
-                                        "Comment"
-                                    },
-                                    ButtonStyle::Ghost,
-                                    None,
-                                )
-                                .id("web-comment")
-                                .w(px(76.))
-                                .flex_none()
-                                .when(
-                                    self.review.picking || (!loading && self.webview().is_ok()),
-                                    |button| {
-                                        button.on_click(cx.listener(|this, _, window, cx| {
-                                            this.toggle_picking(window, cx);
-                                        }))
-                                    },
-                                ),
-                        )
-                    })
                     .child(
                         theme
                             .button(

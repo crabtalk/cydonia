@@ -1,5 +1,6 @@
 (input => {
-  const url = location.href.split('#')[0];
+  const address = location.href.split('#')[0];
+  const url = input.base && address.startsWith(input.base) ? address.slice(input.base.length) : address;
   const quote = element => (element.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 240);
   const unique = selector => {
     const matches = document.querySelectorAll(selector);

@@ -11,9 +11,12 @@ use crate::{
     model::{media::Png as _, settings::Browsing},
     view::{
         component::{browser::Browser, panel::Panel},
+        design::preview::{self, LivePage},
+        pane::Tab,
         window::root::Cydonia,
     },
 };
+use artifact::{kind::Kind, project::Project as _};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use bezel::gpui::{AnyWindowHandle, App, AsyncApp, Context, Entity, WeakEntity, Window};
 use browser::WebView;
@@ -201,31 +204,79 @@ impl Cydonia {
         let project = self
             .workspace
             .update(cx, |workspace, _| workspace.intern(project));
-        if let Some(space) = self.arrangement(cx)
-            && !self.library_shown(cx)
-        {
-            let fronts = space
-                .zoomed()
-                .map_or_else(|| space.tree.fronts(), |entry| vec![entry]);
-            for leaf in self
-                .leaves
-                .get(self.focused)
-                .into_iter()
-                .chain(&self.leaves)
-            {
-                let leaf = leaf.read(cx);
-                if !fronts.contains(&leaf.entry) {
-                    continue;
-                }
-                if let Some(view) = leaf.canvas_shown(cx) {
-                    let view = view.read(cx);
-                    if view.canvas.id == canvas && view.canvas.project == project {
-                        return view.web_frame(node, cx);
-                    }
+        for leaf in self.shown_tabs(cx) {
+            if let Some(view) = leaf.read(cx).canvas_shown(cx) {
+                let view = view.read(cx);
+                if view.canvas.id == canvas && view.canvas.project == project {
+                    return view.web_frame(node, cx);
                 }
             }
         }
         Err("the canvas is not showing; open it to use its web frame".into())
+    }
+
+    fn shown_tabs(&self, cx: &App) -> Vec<Entity<Tab>> {
+        let Some(space) = self.arrangement(cx).filter(|_| !self.library_shown(cx)) else {
+            return Vec::new();
+        };
+        let fronts = space
+            .zoomed()
+            .map_or_else(|| space.tree.fronts(), |entry| vec![entry]);
+        self.leaves
+            .get(self.focused)
+            .into_iter()
+            .chain(
+                self.leaves
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(ix, leaf)| (ix != self.focused).then_some(leaf)),
+            )
+            .filter(|leaf| fronts.contains(&leaf.read(cx).entry))
+            .cloned()
+            .collect()
+    }
+
+    fn design_page(
+        &mut self,
+        project: &Path,
+        id: &str,
+        page: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<(LivePage, bool), String> {
+        let project = self
+            .workspace
+            .update(cx, |workspace, _| workspace.intern(project));
+        let store = self
+            .workspace
+            .read(cx)
+            .project(project)
+            .ok_or("design project is closed")?
+            .store();
+        let design = store.design(id).ok_or("design is no longer available")?;
+        let page = design
+            .pages
+            .iter()
+            .find(|held| held.id == page)
+            .ok_or_else(|| format!("no page {page} in this design"))?;
+        for leaf in self.shown_tabs(cx) {
+            if let Some(view) = leaf.read(cx).design_shown(cx) {
+                let view = view.read(cx);
+                if view.entry.id == id
+                    && view.entry.project == project
+                    && let Some(live) = view.live_page(page, design.viewport)
+                {
+                    return Ok((live, false));
+                }
+            }
+        }
+        let folder = store
+            .place(Kind::Design, id)
+            .ok_or("design directory is unavailable")?;
+        let live = preview::open(&folder, page, design.viewport, false, window, cx)?;
+        self.browser_tool_page = Some(live.browser.clone());
+        cx.notify();
+        Ok((live, true))
     }
 
     /// The right panel of the open project at `path`.
@@ -287,6 +338,37 @@ async fn serve(
                 }
                 act => on_page(&address, &page, act, cx).await,
             };
+        }
+        PageTarget::Design {
+            design,
+            number,
+            page,
+        } => {
+            let (live, temporary) = window
+                .update(cx, |_, window, cx| {
+                    this.update(cx, |this, cx| {
+                        this.design_page(project, &design, &page, window, cx)
+                    })
+                })
+                .map_err(|error| error.to_string())?
+                .map_err(|error| error.to_string())??;
+            let address = format!("design #{number}, page {page}");
+            let answer = match preview::ready(&live.browser, cx).await {
+                Err(error) => Err(error),
+                Ok(()) => match act {
+                    Act::Console { levels, since } => check_page(&live.browser, cx)
+                        .await
+                        .map(|_| Answer::said(live.console.borrow().read(&levels, since))),
+                    act => on_page(&address, &live.browser, act, cx).await,
+                },
+            };
+            if temporary {
+                let _ = this.update(cx, |this, cx| {
+                    this.browser_tool_page = None;
+                    cx.notify();
+                });
+            }
+            return answer;
         }
     };
     let panel = window

@@ -1,6 +1,6 @@
 use crate::{
     model::{store::Store, workspace::Entry},
-    view::design::preview::Revision,
+    view::design::preview::{LivePage, Revision},
 };
 use artifact::{
     design::{Design, Page, Status},
@@ -23,7 +23,9 @@ use bezel::{
 use browser::WebView;
 use std::{collections::HashMap, sync::Arc};
 
-mod preview;
+mod comments;
+mod pins;
+pub(crate) mod preview;
 
 const CONTEXT: &str = "DesignReview";
 const TILE_WIDTH: f32 = 236.;
@@ -62,8 +64,10 @@ pub(crate) struct DesignView {
     available: Size<gpui::Pixels>,
     thumbnails: HashMap<Revision, Result<Arc<RenderImage>, String>>,
     loading: Option<(Revision, Entity<WebView>, Task<()>)>,
-    live: Option<(Revision, Result<Entity<WebView>, String>)>,
+    live: Option<(Revision, Result<LivePage, String>)>,
     error: Option<String>,
+    pins: pins::Pins,
+    comments: comments::Review,
 }
 
 impl DesignView {
@@ -88,6 +92,8 @@ impl DesignView {
             loading: None,
             live: None,
             error: None,
+            pins: pins::Pins::default(),
+            comments: comments::Review::new(cx),
         }
     }
 
@@ -133,12 +139,38 @@ impl DesignView {
         }
     }
 
+    pub(crate) fn open_browser(&self) -> Option<Entity<WebView>> {
+        self.live
+            .as_ref()
+            .and_then(|(_, live)| live.as_ref().ok())
+            .map(|live| live.browser.clone())
+    }
+
+    pub(crate) fn live_page(&self, page: &Page, viewport: Viewport) -> Option<LivePage> {
+        let (held, live) = self.live.as_ref()?;
+        (Some(held) == Revision::new(page, viewport).as_ref())
+            .then_some(live.as_ref().ok()?)
+            .cloned()
+    }
+
+    fn comment_base(&self, id: &str) -> Option<String> {
+        let folder = self.store.place(Kind::Design, &self.entry.id)?.join(id);
+        #[cfg(not(target_family = "wasm"))]
+        return url::Url::from_directory_path(folder).ok().map(Into::into);
+        #[cfg(target_family = "wasm")]
+        {
+            let _ = folder;
+            None
+        }
+    }
+
     fn close_page(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.open.take().is_none() {
             cx.propagate();
             return;
         }
-        self.live = None;
+        self.park();
+        self.comments.close();
         window.focus(&self.focus, cx);
         cx.notify();
     }
@@ -215,7 +247,8 @@ impl DesignView {
                 continue;
             }
             match preview::open(folder, page, record.viewport, false, window, cx) {
-                Ok(browser) => {
+                Ok(live) => {
+                    let browser = live.browser;
                     let capturing = browser.clone();
                     let captured = key.clone();
                     let task = cx.spawn(async move |this, cx| {
@@ -259,6 +292,7 @@ impl DesignView {
     pub(crate) fn park(&mut self) {
         self.live = None;
         self.loading = None;
+        self.pins = pins::Pins::default();
     }
 
     fn tile(&self, page: &Page, viewport: Viewport, cx: &Context<Self>) -> AnyElement {
@@ -394,14 +428,16 @@ impl Render for DesignView {
                 self.live = None;
             }
             match self.live.as_ref().map(|(_, live)| live) {
-                Some(Ok(browser)) => {
+                Some(Ok(live)) => {
+                    let browser = live.browser.clone();
                     let fit = preview::fit(record.viewport, self.available);
+                    let review = self.review_surface(browser, page, fit, cx);
                     div()
                         .size_full()
                         .flex()
                         .items_center()
                         .justify_center()
-                        .child(div().w(fit.width).h(fit.height).child(browser.clone()))
+                        .child(review)
                         .into_any_element()
                 }
                 preview => div()
@@ -564,6 +600,39 @@ impl Render for DesignView {
                                 })),
                         )
                     })
+                    .when(shown_key.is_some(), |bar| {
+                        bar.when(self.open_browser().is_some(), |bar| {
+                            bar.child(
+                                theme
+                                    .button(
+                                        if self.pins.picking {
+                                            "Cancel"
+                                        } else {
+                                            "Comment"
+                                        },
+                                        ButtonStyle::Ghost,
+                                        None,
+                                    )
+                                    .id("design-comment")
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.toggle_picking(window, cx)
+                                    })),
+                            )
+                        })
+                        .when(
+                            shown_key.is_some_and(|page| !page.comments.is_empty()),
+                            |bar| {
+                                bar.child(
+                                    theme
+                                        .button("Comments", ButtonStyle::Ghost, None)
+                                        .id("design-comments")
+                                        .on_click(
+                                            cx.listener(|this, _, _, cx| this.open_comments(cx)),
+                                        ),
+                                )
+                            },
+                        )
+                    })
                     .when(can_review, |bar| {
                         bar.child(
                             theme
@@ -597,15 +666,12 @@ impl Render for DesignView {
                     .overflow_hidden()
                     .child(measure)
                     .child(body)
-                    .children(self.loading.as_ref().map(|(_, browser, _)| {
-                        div()
-                            .absolute()
-                            .right_0()
-                            .bottom_0()
-                            .size(px(1.))
-                            .opacity(0.01)
-                            .child(browser.clone())
-                    })),
+                    .children(shown_key.and_then(|page| self.comment_panel(page, cx)))
+                    .children(
+                        self.loading
+                            .as_ref()
+                            .map(|(_, browser, _)| preview::host(browser.clone())),
+                    ),
             )
     }
 }
