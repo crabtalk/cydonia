@@ -1,18 +1,23 @@
-//! The browser tabs in a project's right panel, worked in by an agent.
+//! Tools for pages in browser tabs and canvas web frames.
 //!
 //! Every call waits for the window: the page lives there and only answers on
 //! the thread it is drawn on. See [`rail::browse`].
 
 use crate::{
-    rail::{self, Act, Level, Target},
+    rail::{self, Act, Level, PageTarget, Target},
     tool::{Arg, Args, Outcome, Tool, Trouble},
-    tools,
+    tools::{self, canvas},
 };
 use serde_json::{Value, json};
 
 const TAB: Arg = Arg {
     name: "tab",
     about: "Tab id, from browser_tabs. Omit for the project's front browser tab.",
+};
+
+const NODE: Arg = Arg {
+    name: "node",
+    about: "Web frame node id from canvas_read. Supply canvas and node together, without tab.",
 };
 
 const URL: Arg = Arg {
@@ -22,7 +27,7 @@ const URL: Arg = Arg {
 
 const ELEMENT: Arg = Arg {
     name: "element",
-    about: "The element's number, from the last read of this tab.",
+    about: "The element's number, from the last read of this page.",
 };
 
 const TEXT: Arg = Arg {
@@ -85,29 +90,29 @@ pub static TOOLS: [Tool; 10] = [
     },
     Tool {
         name: "browser_read",
-        description: "Read a browser tab as it stands: its text, and the numbered elements that \
+        description: "Read a browser tab or canvas web frame as it stands: its text, and the numbered elements that \
             can be clicked or typed into. The numbers describe this read only; read again after \
             anything changes the page.",
-        schema: |bound| with_tab(tools::fields(bound, &[tools::PROJECT])),
+        schema: |bound| with_page(tools::fields(bound, &[tools::PROJECT])),
         writes: false,
         deletes: false,
         call: read,
     },
     Tool {
         name: "browser_screenshot",
-        description: "Capture a browser tab's current viewport as a PNG image. Scroll to see \
+        description: "Capture a browser tab or canvas web frame's current viewport as a PNG image. Scroll to see \
             another part of the page. The image contains the page only, without browser chrome.",
-        schema: |bound| with_tab(tools::fields(bound, &[tools::PROJECT])),
+        schema: |bound| with_page(tools::fields(bound, &[tools::PROJECT])),
         writes: false,
         deletes: false,
         call: screenshot,
     },
     Tool {
         name: "browser_scroll",
-        description: "Scroll a browser tab and read it back. A read already has the whole \
+        description: "Scroll the page and read it back. A read already has the whole \
             page's text; this is for pages that load more as they are scrolled.",
         schema: |bound| {
-            let mut schema = with_tab(tools::fields(bound, &[tools::PROJECT]));
+            let mut schema = with_page(tools::fields(bound, &[tools::PROJECT]));
             schema["properties"][PAGES.name] =
                 json!({ "type": "number", "description": PAGES.about });
             schema
@@ -118,11 +123,11 @@ pub static TOOLS: [Tool; 10] = [
     },
     Tool {
         name: "browser_console",
-        description: "What a browser tab's page has logged: its console calls, uncaught errors \
+        description: "What the page has logged: its console calls, uncaught errors \
             and unhandled rejections, oldest first, each with the frame that logged it. Failed \
             loads and other messages the engine writes itself are not in it.",
         schema: |bound| {
-            let mut schema = with_tab(tools::fields(bound, &[tools::PROJECT]));
+            let mut schema = with_page(tools::fields(bound, &[tools::PROJECT]));
             schema["properties"][LEVELS.name] = json!({
                 "type": "array", "items": {"type": "string", "enum": Level::ALL},
                 "description": LEVELS.about
@@ -142,7 +147,7 @@ pub static TOOLS: [Tool; 10] = [
             ancestor constraints, scroll containers and overlap at its center. Accepts a number \
             from browser_read or a CSS selector, including non-interactive and hidden elements.",
         schema: |bound| {
-            let mut schema = with_tab(tools::fields(bound, &[tools::PROJECT]));
+            let mut schema = with_page(tools::fields(bound, &[tools::PROJECT]));
             tools::optional(&mut schema, SELECTOR, "string");
             schema["properties"][ELEMENT.name] = json!({
                 "type": "integer", "minimum": 0, "description": ELEMENT.about
@@ -159,21 +164,21 @@ pub static TOOLS: [Tool; 10] = [
     },
     Tool {
         name: "browser_evaluate",
-        description: "Evaluate JavaScript in a browser tab's main frame and return JSON. Awaits \
+        description: "Evaluate JavaScript in the page's main frame and return JSON. Awaits \
             promises and reports thrown errors. Can change the page or send requests using its \
             signed-in session. Results must fit in 16000 characters; return a focused selection.",
-        schema: |bound| with_tab(tools::fields(bound, &[tools::PROJECT, SCRIPT])),
+        schema: |bound| with_page(tools::fields(bound, &[tools::PROJECT, SCRIPT])),
         writes: false,
         deletes: false,
         call: evaluate,
     },
     Tool {
         name: "browser_click",
-        description: "Click an element by its number from the last read of the tab, and read \
+        description: "Click an element by its number from the last read of the page, and read \
             back the page it leaves.",
         schema: |bound| {
-            let mut schema = with_tab(tools::fields(bound, &[tools::PROJECT]));
-            number(&mut schema, ELEMENT, "integer");
+            let mut schema = with_page(tools::fields(bound, &[tools::PROJECT]));
+            tools::required(&mut schema, ELEMENT, "integer");
             schema
         },
         writes: false,
@@ -182,11 +187,11 @@ pub static TOOLS: [Tool; 10] = [
     },
     Tool {
         name: "browser_type",
-        description: "Type into a field by its number from the last read of the tab, replacing \
+        description: "Type into a field by its number from the last read of the page, replacing \
             what it holds, and read back the page.",
         schema: |bound| {
-            let mut schema = with_tab(tools::fields(bound, &[tools::PROJECT, TEXT]));
-            number(&mut schema, ELEMENT, "integer");
+            let mut schema = with_page(tools::fields(bound, &[tools::PROJECT, TEXT]));
+            tools::required(&mut schema, ELEMENT, "integer");
             tools::optional(&mut schema, ENTER, "boolean");
             schema
         },
@@ -212,12 +217,11 @@ fn with_tab(mut schema: Value) -> Value {
     schema
 }
 
-/// A required numeric argument.
-fn number(schema: &mut Value, arg: Arg, kind: &str) {
-    schema["properties"][arg.name] = json!({ "type": kind, "description": arg.about });
-    if let Some(required) = schema["required"].as_array_mut() {
-        required.push(json!(arg.name));
-    }
+fn with_page(schema: Value) -> Value {
+    let mut schema = with_tab(schema);
+    tools::optional(&mut schema, canvas::CANVAS, "string");
+    tools::optional(&mut schema, NODE, "string");
+    schema
 }
 
 fn tab(args: &Args<'_>) -> Result<Option<u64>, Trouble> {
@@ -238,13 +242,40 @@ fn element(args: &Args<'_>) -> Result<usize, Trouble> {
         .ok_or_else(|| Trouble::Invalid("element is required, as a number".to_owned()))
 }
 
-fn ask(args: &Args<'_>, tab: Option<u64>, act: Act) -> Outcome {
-    let project = tools::on_the_rail(tools::root(args)?)?.to_path_buf();
-    rail::browse(project, tab, act)
+fn ask(args: &Args<'_>, act: Act) -> Outcome {
+    let (project, target) = match (args.value(canvas::CANVAS), args.value(NODE)) {
+        (None, None) => (
+            tools::root(args)?.to_path_buf(),
+            PageTarget::Tab(tab(args)?),
+        ),
+        (Some(_), Some(_))
+            if args.value(TAB).is_none() && !matches!(act, Act::Open(_) | Act::Tabs) =>
+        {
+            let (project, number, canvas) = canvas::reference(args)?;
+            let node = args.text(NODE)?;
+            if node.trim().is_empty() {
+                return Err(Trouble::Invalid("node is empty".into()));
+            }
+            (
+                project,
+                PageTarget::Frame {
+                    canvas,
+                    number,
+                    node: node.to_owned(),
+                },
+            )
+        }
+        _ => {
+            return Err(Trouble::Invalid(
+                "supply canvas and node together, without tab, to target a web frame".into(),
+            ));
+        }
+    };
+    rail::browse(tools::on_the_rail(&project)?.to_path_buf(), target, act)
 }
 
 fn tabs(args: Args<'_>) -> Outcome {
-    ask(&args, None, Act::Tabs)
+    ask(&args, Act::Tabs)
 }
 
 fn open(args: Args<'_>) -> Outcome {
@@ -252,15 +283,15 @@ fn open(args: Args<'_>) -> Outcome {
     if url.is_empty() {
         return Err(Trouble::Invalid("url is empty".to_owned()));
     }
-    ask(&args, tab(&args)?, Act::Open(url))
+    ask(&args, Act::Open(url))
 }
 
 fn read(args: Args<'_>) -> Outcome {
-    ask(&args, tab(&args)?, Act::Read)
+    ask(&args, Act::Read)
 }
 
 fn screenshot(args: Args<'_>) -> Outcome {
-    ask(&args, tab(&args)?, Act::Screenshot)
+    ask(&args, Act::Screenshot)
 }
 
 fn console(args: Args<'_>) -> Outcome {
@@ -274,7 +305,7 @@ fn console(args: Args<'_>) -> Outcome {
             Trouble::Invalid("since must be a non-negative message id".to_owned())
         })?,
     };
-    ask(&args, tab(&args)?, Act::Console { levels, since })
+    ask(&args, Act::Console { levels, since })
 }
 
 fn evaluate(args: Args<'_>) -> Outcome {
@@ -282,7 +313,7 @@ fn evaluate(args: Args<'_>) -> Outcome {
     if script.trim().is_empty() {
         return Err(Trouble::Invalid("script is empty".to_owned()));
     }
-    ask(&args, tab(&args)?, Act::Evaluate(script.to_owned()))
+    ask(&args, Act::Evaluate(script.to_owned()))
 }
 
 fn inspect(args: Args<'_>) -> Outcome {
@@ -301,11 +332,11 @@ fn inspect(args: Args<'_>) -> Outcome {
             ));
         }
     };
-    ask(&args, tab(&args)?, Act::Inspect(target))
+    ask(&args, Act::Inspect(target))
 }
 
 fn click(args: Args<'_>) -> Outcome {
-    ask(&args, tab(&args)?, Act::Click(element(&args)?))
+    ask(&args, Act::Click(element(&args)?))
 }
 
 fn type_text(args: Args<'_>) -> Outcome {
@@ -314,7 +345,7 @@ fn type_text(args: Args<'_>) -> Outcome {
         text: args.text(TEXT)?.to_owned(),
         enter: args.boolean(ENTER, false)?,
     };
-    ask(&args, tab(&args)?, act)
+    ask(&args, act)
 }
 
 fn scroll(args: Args<'_>) -> Outcome {
@@ -324,5 +355,5 @@ fn scroll(args: Args<'_>) -> Outcome {
             .as_f64()
             .ok_or_else(|| Trouble::Invalid("pages must be a number".to_owned()))?,
     };
-    ask(&args, tab(&args)?, Act::Scroll(pages))
+    ask(&args, Act::Scroll(pages))
 }

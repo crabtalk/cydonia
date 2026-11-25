@@ -40,6 +40,19 @@ viewport defaults to 1440 × 900. Use separate frames to compare variants.
 HTML source edits reload their frame; development-server HMR remains available.
 Ordinary `link` nodes retain metadata previews.
 
+Use `browser_read`, `browser_screenshot`, `browser_inspect` and other page
+tools with the canvas reference in `canvas` and the frame id in `node`.
+The frame needs a live page. Screenshots use its configured viewport.
+
+Use **Comment** on a web frame, then pick an element and post a note. A pin
+opens its thread. An element with a unique ID keeps its pin through text
+edits. For a structural selector, the original text also has to match. A
+thread whose element no longer matches is marked detached on the frame.
+Canvas **Comments** also lists threads from deleted
+frames. Agents read threads with `canvas_comments` and answer by comment id
+with `canvas_comment_reply`. Listing works without a live page and reports
+missing frames. Use `browser_inspect` to check a selector on a live frame.
+
 An edge has a unique nonempty `id`, `fromNode`, and `toNode`. Both nodes must
 exist after the edit. Optional `fromSide` and `toSide` are `top`, `right`,
 `bottom`, or `left`; `fromEnd` and `toEnd` are `none` or `arrow`. Edges can carry

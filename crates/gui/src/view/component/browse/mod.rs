@@ -1,5 +1,4 @@
-//! What an agent does in a project's browser tabs: open a page, read it, act
-//! on it — the window's half of [`mcp::tools::browser`].
+//! Browser commands for a right-panel tab or a canvas web frame.
 //!
 //! Elements are addressed by the number a read gave them. Every script derives
 //! the list with [`FIND`], so a number from a read names the same element when
@@ -16,16 +15,18 @@ use crate::{
     },
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use bezel::gpui::{AnyWindowHandle, AsyncApp, Context, Entity, WeakEntity, Window};
+use bezel::gpui::{AnyWindowHandle, App, AsyncApp, Context, Entity, WeakEntity, Window};
 use browser::WebView;
 use futures::{StreamExt as _, channel::mpsc};
 use mcp::{
-    rail::{self, Act, Browse, Target},
+    rail::{self, Act, Browse, PageTarget, Target},
     tool::{Answer, Image},
 };
 use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::Value;
 use std::{fmt::Write as _, path::Path, time::Duration};
+
+pub(crate) mod console;
 
 /// Characters of a page's text a read carries. Sliced in the page, so the rest
 /// never crosses the bridge.
@@ -175,12 +176,12 @@ impl Cydonia {
         cx.spawn(async move |this, cx| {
             while let Some(Browse {
                 project,
-                tab,
+                target,
                 act,
                 reply,
             }) = asks.next().await
             {
-                let answer = serve(&this, window, &project, tab, act, cx).await;
+                let answer = serve(&this, window, &project, target, act, cx).await;
                 let _ = reply.send(answer);
                 if this.upgrade().is_none() {
                     return;
@@ -188,6 +189,43 @@ impl Cydonia {
             }
         })
         .detach();
+    }
+
+    fn shown_frame(
+        &mut self,
+        project: &Path,
+        canvas: &str,
+        node: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<Entity<crate::view::canvas::web::Page>, String> {
+        let project = self
+            .workspace
+            .update(cx, |workspace, _| workspace.intern(project));
+        if let Some(space) = self.arrangement(cx)
+            && !self.library_shown(cx)
+        {
+            let fronts = space
+                .zoomed()
+                .map_or_else(|| space.tree.fronts(), |entry| vec![entry]);
+            for leaf in self
+                .leaves
+                .get(self.focused)
+                .into_iter()
+                .chain(&self.leaves)
+            {
+                let leaf = leaf.read(cx);
+                if !fronts.contains(&leaf.entry) {
+                    continue;
+                }
+                if let Some(view) = leaf.canvas_shown(cx) {
+                    let view = view.read(cx);
+                    if view.canvas.id == canvas && view.canvas.project == project {
+                        return view.web_frame(node, cx);
+                    }
+                }
+            }
+        }
+        Err("the canvas is not showing; open it to use its web frame".into())
     }
 
     /// The right panel of the open project at `path`.
@@ -219,10 +257,38 @@ async fn serve(
     this: &WeakEntity<Cydonia>,
     window: AnyWindowHandle,
     project: &Path,
-    tab: Option<u64>,
+    target: PageTarget,
     act: Act,
     cx: &mut AsyncApp,
 ) -> Result<Answer, String> {
+    let tab = match target {
+        PageTarget::Tab(tab) => tab,
+        PageTarget::Frame {
+            canvas,
+            number,
+            node,
+        } => {
+            let frame = this
+                .update(cx, |this, cx| this.shown_frame(project, &canvas, &node, cx))
+                .map_err(|error| error.to_string())??;
+            let page = frame.read_with(cx, |frame, _| frame.webview())?;
+            if !page.read_with(cx, |page, _| page.can_evaluate()) {
+                return Err(
+                    "web frame has no live page; bring it into view and wait for it to load".into(),
+                );
+            }
+            let address = format!("canvas #{number}, node {node}");
+            return match act {
+                Act::Console { levels, since } => {
+                    check_page(&page, cx).await?;
+                    Ok(Answer::said(frame.read_with(cx, |frame, _| {
+                        frame.console.read(&levels, since)
+                    })))
+                }
+                act => on_page(&address, &page, act, cx).await,
+            };
+        }
+    };
     let panel = window
         .update(cx, |_, window, cx| {
             this.update(cx, |this, cx| this.project_panel(project, window, cx))
@@ -247,8 +313,8 @@ async fn serve(
         let url = browser.read_with(cx, |browser, _| browser.url().to_owned());
         refuse_blocked(&browsing, &url)?;
     }
-    let text = match act {
-        Act::Tabs => panel.update(cx, |panel, cx| Ok(tabs(panel, cx))),
+    match act {
+        Act::Tabs => Ok(panel.read_with(cx, |panel, cx| Answer::said(tabs(panel, cx)))),
         Act::Open(url) => {
             refuse_blocked(&browsing, &url)?;
             let browser = match tab {
@@ -269,43 +335,59 @@ async fn serve(
                 .map_err(|error| error.to_string())?;
             let page = built(&browser, cx).await?;
             settle(&page, cx).await;
-            read(&browser, &page, cx).await
+            let address = browser.read_with(cx, |browser, _| format!("tab {}", browser.id));
+            read(&address, &page, cx).await.map(Answer::said)
         }
-        Act::Read => {
+        Act::Console { levels, since } => {
+            let browser = pick(&panel, tab, cx)?;
+            Ok(Answer::said(browser.read_with(cx, |browser, cx| {
+                browser.console(&levels, since, cx)
+            })))
+        }
+        act => {
             let browser = pick(&panel, tab, cx)?;
             let page = built(&browser, cx).await?;
-            read(&browser, &page, cx).await
+            let address = browser.read_with(cx, |browser, _| format!("tab {}", browser.id));
+            on_page(&address, &page, act, cx).await
         }
+    }
+}
+
+async fn check_page(page: &Entity<WebView>, cx: &mut AsyncApp) -> Result<String, String> {
+    let url: String = eval(page, "location.href", cx).await?;
+    let browsing = cx.update(|cx| cx.try_global::<Browsing>().cloned().unwrap_or_default());
+    refuse_blocked(&browsing, &url)?;
+    Ok(url)
+}
+
+async fn on_page(
+    address: &str,
+    page: &Entity<WebView>,
+    act: Act,
+    cx: &mut AsyncApp,
+) -> Result<Answer, String> {
+    check_page(page, cx).await?;
+    let text = match act {
+        Act::Read => read(address, page, cx).await,
         Act::Screenshot => {
-            let browser = pick(&panel, tab, cx)?;
-            let page = built(&browser, cx).await?;
-            settle(&page, cx).await;
-            let url: String = eval(&page, "location.href", cx).await?;
-            refuse_blocked(&browsing, &url)?;
+            settle(page, cx).await;
+            check_page(page, cx).await?;
             let task = page.read_with(cx, |page, cx| page.snapshot(cx));
             let image = task.await?;
             let bytes = cx
                 .background_executor()
                 .spawn(async move { image.png().map_err(|error| error.to_string()) })
                 .await?;
-            let url: String = eval(&page, "location.href", cx).await?;
-            refuse_blocked(&browsing, &url)?;
-            let id = browser.read_with(cx, |browser, _| browser.id);
-            let mut answer = Answer::said(format!("tab {id}: {url}"));
+            let url = check_page(page, cx).await?;
+            let mut answer = Answer::said(format!("{address}: {url}"));
             answer.images.push(Image {
                 data: STANDARD.encode(bytes),
                 mime_type: "image/png".to_owned(),
             });
             return Ok(answer);
         }
-        Act::Evaluate(js) => {
-            let browser = pick(&panel, tab, cx)?;
-            let page = built(&browser, cx).await?;
-            evaluate(&browser, &page, &js, cx).await
-        }
+        Act::Evaluate(js) => evaluate(address, page, &js, cx).await,
         Act::Inspect(target) => {
-            let browser = pick(&panel, tab, cx)?;
-            let page = built(&browser, cx).await?;
             let target = match target {
                 Target::Selector(selector) => format!(
                     "document.querySelector({})",
@@ -314,11 +396,11 @@ async fn serve(
                 Target::Element(element) => format!("found[{element}]"),
             };
             let js = script(INSPECT).replace("$TARGET", &target);
-            evaluate(&browser, &page, &js, cx).await
+            evaluate(address, page, &js, cx).await
         }
         Act::Click(element) => {
             let js = script(CLICK).replace("$N", &element.to_string());
-            act_on(&panel, tab, &js, element, cx).await
+            act_on(address, page, &js, element, cx).await
         }
         Act::Type {
             element,
@@ -332,15 +414,14 @@ async fn serve(
                     &serde_json::to_string(&text).unwrap_or_else(|_| "''".into()),
                 )
                 .replace("$ENTER", if enter { "true" } else { "false" });
-            act_on(&panel, tab, &js, element, cx).await
-        }
-        Act::Console { levels, since } => {
-            let browser = pick(&panel, tab, cx)?;
-            Ok(browser.read_with(cx, |browser, cx| browser.console(&levels, since, cx)))
+            act_on(address, page, &js, element, cx).await
         }
         Act::Scroll(pages) => {
             let js = SCROLL.replace("$PAGES", &format!("{:.2}", pages.clamp(-20., 20.)));
-            act_on(&panel, tab, &js, 0, cx).await
+            act_on(address, page, &js, 0, cx).await
+        }
+        Act::Tabs | Act::Open(_) | Act::Console { .. } => {
+            Err("command does not operate on this page".into())
         }
     };
     text.map(Answer::said)
@@ -355,21 +436,19 @@ fn refuse_blocked(browsing: &Browsing, url: &str) -> Result<(), String> {
     }
 }
 
-/// Run `js` in the tab and answer with the page it leaves.
+/// Run `js` in the page and read it after navigation settles.
 async fn act_on(
-    panel: &Entity<Panel>,
-    tab: Option<u64>,
+    address: &str,
+    page: &Entity<WebView>,
     js: &str,
     element: usize,
     cx: &mut AsyncApp,
 ) -> Result<String, String> {
-    let browser = pick(panel, tab, cx)?;
-    let page = built(&browser, cx).await?;
-    match eval::<String>(&page, js, cx).await?.as_str() {
+    match eval::<String>(page, js, cx).await?.as_str() {
         "ok" => {}
         "gone" => {
             return Err(format!(
-                "element {element} is not on the page any more; read the tab for its current elements"
+                "element {element} is not on the page any more; read the page for its current elements"
             ));
         }
         other => return Err(other.to_owned()),
@@ -378,8 +457,8 @@ async fn act_on(
     cx.background_executor()
         .timer(Duration::from_millis(300))
         .await;
-    settle(&page, cx).await;
-    read(&browser, &page, cx).await
+    settle(page, cx).await;
+    read(address, page, cx).await
 }
 
 /// The browser tab `tab` names, else the panel's front one, else its first.
@@ -485,41 +564,32 @@ async fn eval<T: DeserializeOwned + 'static>(
 }
 
 async fn evaluate(
-    browser: &Entity<Browser>,
+    address: &str,
     page: &Entity<WebView>,
     js: &str,
     cx: &mut AsyncApp,
 ) -> Result<String, String> {
-    let url: String = eval(page, "location.href", cx).await?;
-    let browsing = cx.update(|cx| cx.try_global::<Browsing>().cloned().unwrap_or_default());
-    refuse_blocked(&browsing, &url)?;
     let js = EVALUATE.replace("$SCRIPT", js);
     let task = page.read_with(cx, |page, cx| page.eval_async::<Evaluation>(&js, EVAL, cx));
     let result = task.await.map_err(|error| format!("JavaScript: {error}"))?;
     let browsing = cx.update(|cx| cx.try_global::<Browsing>().cloned().unwrap_or_default());
     refuse_blocked(&browsing, &result.url)?;
-    let id = browser.read_with(cx, |browser, _| browser.id);
     Ok(format!(
-        "tab {id}: {}\n\n{}",
+        "{address}: {}\n\n{}",
         result.url,
         serde_json::to_string_pretty(&result.result).unwrap()
     ))
 }
 
-async fn read(
-    browser: &Entity<Browser>,
-    page: &Entity<WebView>,
-    cx: &mut AsyncApp,
-) -> Result<String, String> {
-    let id = browser.read_with(cx, |browser, _| browser.id);
+async fn read(address: &str, page: &Entity<WebView>, cx: &mut AsyncApp) -> Result<String, String> {
     let page: Page = eval(page, &script(SNAPSHOT), cx).await?;
     let browsing = cx.update(|cx| cx.try_global::<Browsing>().cloned().unwrap_or_default());
     refuse_blocked(&browsing, &page.url)?;
-    Ok(described(id, &page))
+    Ok(described(address, &page))
 }
 
-fn described(id: u64, page: &Page) -> String {
-    let mut out = format!("tab {id}: {}\n{}\n\n{}", page.title, page.url, page.text);
+fn described(address: &str, page: &Page) -> String {
+    let mut out = format!("{address}: {}\n{}\n\n{}", page.title, page.url, page.text);
     if page.truncated {
         out.push_str("\n\n[text truncated; scroll to reach the rest]");
     }
@@ -538,7 +608,7 @@ fn described(id: u64, page: &Page) -> String {
     out
 }
 
-fn tabs(panel: &Panel, cx: &Context<Panel>) -> String {
+fn tabs(panel: &Panel, cx: &App) -> String {
     let browsers = panel.browsers();
     if browsers.is_empty() {
         return "no browser tabs open in this project".to_owned();

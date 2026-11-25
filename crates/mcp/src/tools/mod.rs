@@ -17,6 +17,7 @@ pub mod article;
 pub mod board;
 pub mod browser;
 pub mod canvas;
+mod comment;
 pub mod project;
 pub mod session;
 pub mod table;
@@ -266,6 +267,13 @@ pub(crate) fn many(schema: &mut Value, arg: Arg) {
 /// Offer `arg` as an optional property of JSON type `kind`.
 pub(crate) fn optional(schema: &mut Value, arg: Arg, kind: &str) {
     schema["properties"][arg.name] = json!({ "type": kind, "description": arg.about });
+}
+
+fn required(schema: &mut Value, arg: Arg, kind: &str) {
+    optional(schema, arg, kind);
+    if let Some(required) = schema["required"].as_array_mut() {
+        required.push(json!(arg.name));
+    }
 }
 
 /// [`optional`], with the value a call that leaves it out gets.

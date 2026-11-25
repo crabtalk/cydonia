@@ -253,7 +253,7 @@ fn nobody() -> Trouble {
     Trouble::Refused("no cydonia window to open a project in".to_owned())
 }
 
-/// What a browser tool asks of a project's right-panel browser.
+/// What a browser tool asks of the window's browser.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Act {
     /// The project's browser tabs.
@@ -311,12 +311,20 @@ impl std::fmt::Display for Level {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PageTarget {
+    Tab(Option<u64>),
+    Frame {
+        canvas: String,
+        number: u64,
+        node: String,
+    },
+}
+
 /// One browser call, with where its answer goes.
 pub struct Browse {
     pub project: PathBuf,
-    /// A tab id from [`Act::Tabs`]. `None` is the panel's front browser tab,
-    /// except for [`Act::Open`], where it is a new tab.
-    pub tab: Option<u64>,
+    pub target: PageTarget,
     pub act: Act,
     /// The tool content, or why it is unavailable.
     pub reply: mpsc::Sender<Result<Answer, String>>,
@@ -336,7 +344,7 @@ pub fn install_browser(hand: impl Fn(Browse) + Send + Sync + 'static) {
 /// Blocks the calling thread. Never call it from the thread the window is
 /// drawn on: the answer is made there.
 #[cfg(feature = "http")]
-pub(crate) fn browse(project: PathBuf, tab: Option<u64>, act: Act) -> Result<Answer, Trouble> {
+pub(crate) fn browse(project: PathBuf, target: PageTarget, act: Act) -> Result<Answer, Trouble> {
     let (reply, answer) = mpsc::channel();
     {
         let held = BROWSER.read().map_err(|_| no_browser())?;
@@ -345,7 +353,7 @@ pub(crate) fn browse(project: PathBuf, tab: Option<u64>, act: Act) -> Result<Ans
         };
         hand(Browse {
             project,
-            tab,
+            target,
             act,
             reply,
         });

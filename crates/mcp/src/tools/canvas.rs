@@ -1,15 +1,16 @@
 use crate::{
     tool::{Answer, Arg, Args, Outcome, Tool, Trouble},
-    tools::{self, PROJECT},
+    tools::{self, PROJECT, comment, session},
 };
 use artifact::{
     canvas::{Canvas, Edit},
+    comment::Author,
     kind::Kind,
     project::{Project as _, fs},
 };
 use serde_json::json;
 
-const CANVAS: Arg = Arg {
+pub(super) const CANVAS: Arg = Arg {
     name: "canvas",
     about: "The canvas's stable project reference, such as #12 or foo#12.",
 };
@@ -26,7 +27,7 @@ const EDIT: Arg = Arg {
     about: "Atomic edits: full nodes and edges to upsert, and remove_nodes/remove_edges id lists. Existing items keep their stacking position; new items append. Removing a node removes its incident edges.",
 };
 
-pub static TOOLS: [Tool; 3] = [
+pub static TOOLS: [Tool; 5] = [
     Tool {
         name: "canvas_add",
         description: "Create an empty canvas entry and return its stable reference and version. Read the canvas format resource before editing it.",
@@ -63,6 +64,22 @@ pub static TOOLS: [Tool; 3] = [
         deletes: false,
         call: edit,
     },
+    Tool {
+        name: "canvas_comments",
+        description: "List a canvas's web frame comments, element anchors and replies. Marks comments whose frame is missing as detached.",
+        schema: |bound| tools::fields(bound, &[PROJECT, CANVAS]),
+        writes: false,
+        deletes: false,
+        call: comments,
+    },
+    Tool {
+        name: "canvas_comment_reply",
+        description: "Answer a web frame comment by its id from canvas_comments.",
+        schema: |bound| comment::reply_schema(bound, CANVAS),
+        writes: true,
+        deletes: false,
+        call: comment_reply,
+    },
 ];
 
 fn add(args: Args<'_>) -> Outcome {
@@ -71,7 +88,7 @@ fn add(args: Args<'_>) -> Outcome {
     Ok(answer(&canvas))
 }
 
-fn find(args: &Args<'_>) -> Result<(fs::Project, Canvas), Trouble> {
+pub(super) fn reference(args: &Args<'_>) -> Result<(std::path::PathBuf, u64, String), Trouble> {
     let named = args.text(CANVAS)?;
     let (project, number, within) = tools::entry_of(args, named)?;
     if within.is_some() {
@@ -84,10 +101,15 @@ fn find(args: &Args<'_>) -> Result<(fs::Project, Canvas), Trouble> {
             entry.kind
         )));
     }
+    Ok((project, number, entry.id))
+}
+
+fn find(args: &Args<'_>) -> Result<(fs::Project, Canvas), Trouble> {
+    let (project, _, id) = reference(args)?;
     let store = fs::Project::new(project);
     let canvas = store
-        .canvas(&entry.id)
-        .ok_or_else(|| Trouble::Refused(format!("{named} is no longer available")))?;
+        .canvas(&id)
+        .ok_or_else(|| Trouble::Refused(format!("canvas {id} is no longer available")))?;
     Ok((store, canvas))
 }
 
@@ -115,4 +137,32 @@ fn answer(canvas: &Canvas) -> Answer {
         "version": canvas.version, "document": canvas.document,
     });
     Answer::said(serde_json::to_string_pretty(&data).expect("canvas data serializes")).with(data)
+}
+
+fn comments(args: Args<'_>) -> Outcome {
+    let (_, canvas) = find(&args)?;
+    let data = json!({
+        "canvas": canvas.number,
+        "comments": canvas.comments.iter().map(|comment| json!({
+            "node": comment.node, "anchor": comment.anchor, "thread": comment.thread,
+            "frame_missing": !canvas.has_web_frame(&comment.node),
+        })).collect::<Vec<_>>(),
+    });
+    Ok(Answer::said(serde_json::to_string_pretty(&data).expect("comments serialize")).with(data))
+}
+
+fn comment_reply(args: Args<'_>) -> Outcome {
+    let id = comment::id(&args)?;
+    let answer = args.text(comment::ANSWER)?;
+    let (store, mut canvas) = find(&args)?;
+    let comment = canvas
+        .comments
+        .iter_mut()
+        .find(|comment| comment.thread.id == id)
+        .ok_or_else(|| Trouble::Refused(format!("canvas has no comment {id}")))?;
+    comment
+        .thread
+        .reply(Author::Agent, answer.to_owned(), session::turn_link(&args));
+    store.save_canvas(&mut canvas)?;
+    Ok(Answer::said(format!("Canvas comment {id} answered")).with(json!({"comment": id})))
 }

@@ -1,7 +1,7 @@
 use crate::model::store::Store;
 use artifact::{
     article::Article,
-    canvas::{Canvas as Record, Properties},
+    canvas::{Canvas as Record, Properties, comments::Anchor},
     kind::Kind,
     project::Project as _,
     reference::Reference,
@@ -90,6 +90,24 @@ impl Canvas {
         Ok(article)
     }
 
+    pub fn comment_on_web(
+        &mut self,
+        node: String,
+        anchor: Anchor,
+        note: String,
+        cx: &mut Context<Self>,
+    ) -> Result<u64, String> {
+        let mut next = self.record.clone();
+        next.document = (**self.document.read(cx)).clone();
+        let id = next.web_comment(node, anchor, note)?;
+        self.store
+            .save_canvas(&mut next)
+            .map_err(|error| error.to_string())?;
+        self.record = next;
+        cx.notify();
+        Ok(id)
+    }
+
     pub fn rename(&mut self, title: String, cx: &mut Context<Self>) -> bool {
         self.edit_metadata(|properties| properties.title = title, cx)
     }
@@ -129,9 +147,11 @@ impl Canvas {
         if self.record.version == record.version || self.error.is_some() {
             return;
         }
-        self.document.update(cx, |document, cx| {
-            document.reload(record.document.clone(), cx)
-        });
+        if self.record.document != record.document {
+            self.document.update(cx, |document, cx| {
+                document.reload(record.document.clone(), cx)
+            });
+        }
         self.record = record;
         cx.notify();
     }
@@ -150,6 +170,7 @@ impl Canvas {
     pub fn keep(&mut self, cx: &mut Context<Self>) {
         if let Some(record) = self.store.canvas(&self.record.id) {
             self.record.version = record.version;
+            self.record.comments = record.properties.comments;
             self.save(cx);
         }
     }
