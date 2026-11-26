@@ -5,7 +5,7 @@ use crate::{
     },
     view::{
         design::{
-            preview::{LiveArtboard, Preview, Revision},
+            preview::{LiveArtboard, Preview, Revision, THUMBNAIL_WIDTH},
             toolbar::ViewportButton,
         },
         window::{
@@ -14,18 +14,23 @@ use crate::{
         },
     },
 };
-use artifact::{design::Design, error::Error, kind::Kind, web::Viewport};
+use artifact::{
+    design::{Artboard, Design},
+    error::Error,
+    kind::Kind,
+    web::Viewport,
+};
 use bezel::{
     gpui::{
-        self, App, Context, Entity, FocusHandle, Focusable, KeyBinding, Render, Size, Subscription,
-        Task, WeakEntity, Window, actions, div, prelude::*, px, size,
+        self, App, Bounds, Context, Entity, FocusHandle, Focusable, KeyBinding, Render, Size,
+        Subscription, Task, WeakEntity, Window, actions, div, point, prelude::*, px, size,
     },
     theme::{TextStyle, Theme, Typeset as _},
     ui::input::KEY_CONTEXT,
 };
 use browser::WebView;
 use canvas::{CanvasView as Surface, Document};
-use std::collections::HashMap;
+use std::{collections::HashMap, path::Path, time::Duration};
 
 mod comments;
 mod pins;
@@ -35,6 +40,7 @@ mod toolbar;
 
 const CONTEXT: &str = "DesignArtboard";
 const GUTTER: f32 = 16.;
+const ZOOM_SETTLE: Duration = Duration::from_millis(150);
 
 actions!(design_view, [Back]);
 
@@ -53,15 +59,28 @@ pub(crate) struct DesignView {
     document: Entity<Document>,
     fitted: bool,
     surface: Entity<Surface>,
-    pub(crate) viewport_button: Entity<ViewportButton>,
+    viewport_button: Entity<ViewportButton>,
     hover: Option<(Revision, LiveArtboard, Subscription)>,
     available: Size<gpui::Pixels>,
     thumbnails: HashMap<Revision, Result<Preview, String>>,
-    loading: Option<(Revision, Entity<WebView>, Task<()>)>,
+    details: HashMap<Revision, Detail>,
+    zoom_settle: Option<Task<()>>,
+    loading: Option<Capture>,
     live: Option<(Revision, Result<LiveArtboard, String>)>,
     error: Option<String>,
     pins: pins::Pins,
     comments: comments::Comments,
+}
+
+struct Detail {
+    requested_width: u32,
+    preview: Option<Preview>,
+}
+
+struct Capture {
+    key: Revision,
+    browser: Entity<WebView>,
+    _task: Task<()>,
 }
 
 impl Cydonia {
@@ -106,6 +125,20 @@ impl DesignView {
     ) -> Self {
         cx.observe(&source, |_, _, cx| cx.notify()).detach();
         let (document, surface) = Self::make_surface(cx);
+        cx.observe(&surface, |this, _, cx| {
+            if this.open.is_some() {
+                return;
+            }
+            let timer = cx.background_executor().timer(ZOOM_SETTLE);
+            this.zoom_settle = Some(cx.spawn(async move |this, cx| {
+                timer.await;
+                let _ = this.update(cx, |this, cx| {
+                    this.zoom_settle = None;
+                    cx.notify();
+                });
+            }));
+        })
+        .detach();
         let owner = cx.entity().downgrade();
         let viewport_button = cx.new(|cx| ViewportButton::new(owner, source.clone(), cx));
         Self {
@@ -122,6 +155,8 @@ impl DesignView {
             hover: None,
             available: size(px(0.), px(0.)),
             thumbnails: HashMap::new(),
+            details: HashMap::new(),
+            zoom_settle: None,
             loading: None,
             live: None,
             error: None,
@@ -214,57 +249,140 @@ impl DesignView {
     fn advance_preview(
         &mut self,
         record: &Design,
-        folder: &std::path::Path,
+        folder: &Path,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let artboards = &record.artboards;
-        let revisions: Vec<_> = artboards
-            .iter()
-            .filter_map(|artboard| Revision::new(artboard, record.viewport))
-            .collect();
-        if self
-            .loading
-            .as_ref()
-            .is_some_and(|(key, _, _)| !revisions.contains(key))
-        {
-            self.loading = None;
-        }
         if self.loading.is_some() {
             return;
         }
-        for (artboard, key) in artboards.iter().filter_map(|artboard| {
-            Revision::new(artboard, record.viewport).map(|key| (artboard, key))
-        }) {
-            if self.thumbnails.contains_key(&key) {
-                continue;
+        let artboards = || {
+            record.artboards.iter().filter_map(|artboard| {
+                Revision::new(artboard, record.viewport).map(|key| (artboard, key))
+            })
+        };
+        if let Some((artboard, key)) =
+            artboards().find(|(_, key)| !self.thumbnails.contains_key(key))
+        {
+            self.capture(artboard, key, record.viewport, None, folder, window, cx);
+            return;
+        }
+        if !self.fitted || self.zoom_settle.is_some() {
+            return;
+        }
+
+        let editor = self.surface.read(cx).editor();
+        let Some((x, y, width, height)) = editor.visible() else {
+            return;
+        };
+        let visible = Bounds::new(point(x, y), size(width, height));
+        let zoom = editor.zoom();
+        let scale_factor = window.scale_factor();
+        let visible_artboard = |id: &str| {
+            editor.painted().node(id).is_some_and(|node| {
+                let bounds = Bounds::new(
+                    point(node.x as f32, node.y as f32),
+                    size(node.width as f32, node.height as f32),
+                );
+                !visible.intersect(&bounds).is_empty()
+            })
+        };
+        self.details.retain(|key, detail| {
+            if visible_artboard(&key.artboard) {
+                return true;
             }
-            match preview::open(folder, artboard, record.viewport, false, window, cx) {
-                Ok(live) => {
-                    let browser = live.browser.clone();
-                    let captured = key.clone();
-                    let viewport = record.viewport;
-                    let task = cx.spawn(async move |this, cx| {
-                        let image = live.preview(viewport, cx).await;
-                        let _ = this.update(cx, |this, cx| {
-                            if this
-                                .loading
-                                .as_ref()
-                                .is_some_and(|(key, _, _)| key == &captured)
-                            {
-                                this.thumbnails.insert(captured, image);
-                                this.loading = None;
-                                cx.notify();
-                            }
-                        });
+            if let Some(preview) = detail.preview.take() {
+                let _ = window.drop_image(preview.image);
+            }
+            false
+        });
+        let candidate = artboards().find_map(|(artboard, key)| {
+            let thumbnail = self.thumbnails.get(&key)?.as_ref().ok()?;
+            let width = thumbnail.detail_width(record.viewport, zoom, scale_factor);
+            (width > thumbnail.image.size(0).width.0 as u32
+                && visible_artboard(&artboard.id)
+                && self
+                    .details
+                    .get(&key)
+                    .is_none_or(|detail| width > detail.requested_width))
+            .then_some((artboard, key, width))
+        });
+        if let Some((artboard, key, width)) = candidate {
+            self.capture(
+                artboard,
+                key,
+                record.viewport,
+                Some(width),
+                folder,
+                window,
+                cx,
+            );
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn capture(
+        &mut self,
+        artboard: &Artboard,
+        key: Revision,
+        viewport: Viewport,
+        detail: Option<u32>,
+        folder: &Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match preview::open(folder, artboard, viewport, false, window, cx) {
+            Ok(live) => {
+                let browser = live.browser.clone();
+                let captured = key.clone();
+                let task = cx.spawn(async move |this, cx| {
+                    let width = detail.unwrap_or_else(|| viewport.width.min(THUMBNAIL_WIDTH));
+                    let image = live.preview(viewport, width, cx).await;
+                    let _ = this.update(cx, |this, cx| {
+                        if this.loading.as_ref().is_some_and(|job| job.key == captured) {
+                            this.loading = None;
+                            this.preview_captured(captured, detail, image, cx);
+                            cx.notify();
+                        }
                     });
-                    self.loading = Some((key, browser, task));
-                    return;
-                }
-                Err(error) => {
-                    self.thumbnails.insert(key, Err(error));
-                }
+                });
+                self.loading = Some(Capture {
+                    key,
+                    browser,
+                    _task: task,
+                });
             }
+            Err(error) => {
+                self.preview_captured(key, detail, Err(error), cx);
+                cx.notify();
+            }
+        }
+    }
+
+    fn preview_captured(
+        &mut self,
+        key: Revision,
+        detail: Option<u32>,
+        image: Result<Preview, String>,
+        cx: &mut App,
+    ) {
+        if let Some(requested_width) = detail {
+            let detail = self.details.entry(key).or_insert(Detail {
+                requested_width,
+                preview: None,
+            });
+            detail.requested_width = requested_width;
+            if let Ok(image) = image
+                && detail
+                    .preview
+                    .as_ref()
+                    .is_none_or(|old| image.image.size(0).width > old.image.size(0).width)
+                && let Some(old) = detail.preview.replace(image)
+            {
+                cx.drop_image(old.image, None);
+            }
+        } else {
+            self.thumbnails.insert(key, image);
         }
     }
 
@@ -310,6 +428,22 @@ impl Render for DesignView {
             .filter_map(|artboard| Revision::new(artboard, record.viewport))
             .collect();
         self.thumbnails.retain(|key, _| revisions.contains(key));
+        self.details.retain(|key, detail| {
+            if revisions.contains(key) {
+                return true;
+            }
+            if let Some(preview) = detail.preview.take() {
+                let _ = window.drop_image(preview.image);
+            }
+            false
+        });
+        if self
+            .loading
+            .as_ref()
+            .is_some_and(|job| !revisions.contains(&job.key))
+        {
+            self.loading = None;
+        }
         if self.open.is_some() && shown_key.is_none() {
             self.open = None;
             self.live = None;
@@ -397,12 +531,22 @@ impl Render for DesignView {
                     .overflow_hidden()
                     .child(measure)
                     .child(body)
-                    .children(shown_key.map(|artboard| self.expanded_tools(artboard, cx)))
                     .children(shown_key.and_then(|artboard| self.comment_panel(artboard, cx)))
+                    .child(
+                        div()
+                            .absolute()
+                            .top(px(GUTTER))
+                            .right(px(GUTTER))
+                            .flex()
+                            .items_start()
+                            .gap(px(8.))
+                            .children(shown_key.map(|artboard| self.expanded_tools(artboard, cx)))
+                            .child(self.viewport_button.clone()),
+                    )
                     .children(
                         self.loading
                             .as_ref()
-                            .map(|(_, browser, _)| preview::host(browser.clone())),
+                            .map(|job| preview::host(job.browser.clone())),
                     ),
             )
     }

@@ -1,10 +1,7 @@
 use bezel::{
-    gpui::{App, Entity, Focusable as _, IntoElement, Window, prelude::*, px},
-    theme::Theme,
-    ui::{
-        icons,
-        widgets::{Button, Scaffolding as _},
-    },
+    gpui::{App, Entity, Focusable as _, IntoElement, Window, div, prelude::*, px},
+    theme::{Glass, SurfaceStyle, Theme},
+    ui::{icons, surface, widgets::Button},
 };
 use canvas::{CanvasEditor, CanvasView};
 
@@ -13,7 +10,7 @@ pub(crate) const TOOL_PADDING: f32 = 4.;
 pub(crate) struct Navigation(pub Entity<CanvasView>);
 
 impl Navigation {
-    pub(crate) fn render(self, cx: &App) -> impl IntoElement {
+    pub(crate) fn render(self) -> impl IntoElement {
         let tools = [
             (
                 "canvas-zoom-out",
@@ -34,20 +31,26 @@ impl Navigation {
                 CanvasEditor::zoom_in,
             ),
         ];
-        Theme::of(cx)
-            .group_box()
-            .flex_row()
-            .p(px(TOOL_PADDING))
-            .gap(px(2.))
-            .children(tools.map(|(id, label, icon, command)| {
-                let surface = self.0.clone();
-                Button::new(id, label)
-                    .icon(icon)
-                    .label_hidden()
-                    .on_press(move |_, window, cx| {
-                        Self::apply(&surface, command, window, cx);
-                    })
-            }))
+        surface::of(
+            "canvas-navigation",
+            SurfaceStyle::Glass(Glass::Regular),
+            move |_, _, _| {
+                div()
+                    .rounded(px(Theme::surface_radius()))
+                    .flex()
+                    .flex_row()
+                    .p(px(TOOL_PADDING + 1.))
+                    .gap(px(2.))
+                    .children(tools.map(|(id, label, icon, command)| {
+                        let surface = self.0.clone();
+                        Button::new(id, label).icon(icon).label_hidden().on_press(
+                            move |_, window, cx| {
+                                Self::apply(&surface, command, window, cx);
+                            },
+                        )
+                    }))
+            },
+        )
     }
 
     pub(crate) fn apply(

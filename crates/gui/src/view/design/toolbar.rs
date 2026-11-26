@@ -1,20 +1,20 @@
-use crate::view::{
-    design::{DesignView, GUTTER},
-    kit::web,
+use crate::view::{design::DesignView, kit::web};
+use artifact::{
+    design::{Artboard, Design},
+    web::Viewport,
 };
-use artifact::design::{Artboard, Design};
 use bezel::{
     gpui::{App, Context, Entity, Render, WeakEntity, Window, div, prelude::*, px},
-    theme::Theme,
+    theme::{Glass, SurfaceStyle, Theme},
     ui::{
         context_menu::{ContextMenu, Place},
-        icons,
+        icons, surface,
         tooltip::Tooltip,
-        widgets::{ButtonStyle, Buttons as _},
+        widgets::{ButtonStyle, Buttons as _, Controls as _},
     },
 };
 
-pub(crate) struct ViewportButton {
+pub(super) struct ViewportButton {
     owner: WeakEntity<DesignView>,
     source: Entity<Design>,
     menu: ContextMenu<Self>,
@@ -33,58 +33,86 @@ impl ViewportButton {
             menu: ContextMenu::default(),
         }
     }
+
+    fn toggle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        ContextMenu::toggle(
+            self,
+            |this| &mut this.menu,
+            (),
+            Place::BelowEnd,
+            |this, _, cx| {
+                (
+                    web::viewport_items(Some(this.source.read(cx).viewport)),
+                    Self::choose,
+                )
+            },
+            window,
+            cx,
+        );
+    }
+
+    fn choose(&mut self, path: &[usize], window: &mut Window, cx: &mut Context<Self>) {
+        let Some(preset) = path
+            .first()
+            .and_then(|index| Viewport::PRESETS.get(*index))
+            .copied()
+        else {
+            return;
+        };
+        let _ = self.owner.update(cx, |view, cx| {
+            view.defer_edit(
+                window,
+                cx,
+                move |workspace, entry, cx| {
+                    workspace.edit_design(
+                        entry,
+                        |design| {
+                            design.viewport = preset;
+                            Ok(())
+                        },
+                        cx,
+                    )
+                },
+                |_, (), _| {},
+            );
+        });
+    }
 }
 
 impl Render for ViewportButton {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let viewport = self.source.read(cx).viewport;
-        let menu = self
-            .menu
-            .render("design-viewport-menu", |this| &mut this.menu, window, cx);
+        let picker = cx.entity();
+        let button = surface::of(
+            "design-viewport-glass",
+            SurfaceStyle::Glass(Glass::Regular),
+            move |theme, _, cx| {
+                picker.update(cx, |_, cx| {
+                    let icon = icons::icon(icons::glyph::Monitor)
+                        .size(px(14.))
+                        .text_color(theme.text_muted);
+                    let button = theme
+                        .select_trigger_with(Some(icon), viewport.to_string())
+                        .id("design-viewport")
+                        .rounded(px(Theme::surface_radius()))
+                        .border_0()
+                        .py(px(0.))
+                        .h(px(Theme::BUTTON_HEIGHT + 4.))
+                        .w(px(162.))
+                        .tooltip(|window, cx| Tooltip::text("Artboard viewport", window, cx))
+                        .on_click(cx.listener(|this, _, window, cx| this.toggle(window, cx)));
+                    ContextMenu::trigger(button, |this| &mut this.menu, (), cx)
+                })
+            },
+        );
         div()
             .relative()
             .flex_none()
-            .child(
-                Theme::of(cx)
-                    .button(viewport.to_string(), ButtonStyle::Ghost, None)
-                    .id("design-viewport")
-                    .w(px(110.))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.menu.open(
-                            (),
-                            Place::At(window.mouse_position()),
-                            web::viewport_items(Some(viewport)),
-                            |this, path, window, cx| {
-                                if let Some(preset) = path
-                                    .first()
-                                    .and_then(|index| artifact::web::Viewport::PRESETS.get(*index))
-                                    .copied()
-                                {
-                                    let _ = this.owner.update(cx, |view, cx| {
-                                        view.defer_edit(
-                                            window,
-                                            cx,
-                                            move |workspace, entry, cx| {
-                                                workspace.edit_design(
-                                                    entry,
-                                                    |design| {
-                                                        design.viewport = preset;
-                                                        Ok(())
-                                                    },
-                                                    cx,
-                                                )
-                                            },
-                                            |_, (), _| {},
-                                        );
-                                    });
-                                }
-                            },
-                            window,
-                            cx,
-                        );
-                    })),
+            .child(button)
+            .children(
+                self.menu
+                    .render("design-viewport-menu", |this| &mut this.menu, window, cx),
             )
-            .children(menu)
     }
 }
 
@@ -117,9 +145,6 @@ impl DesignView {
         };
         theme
             .control_group()
-            .absolute()
-            .top(px(GUTTER))
-            .right(px(GUTTER))
             .child(
                 theme
                     .icon_button(comment, ButtonStyle::Ghost, None)

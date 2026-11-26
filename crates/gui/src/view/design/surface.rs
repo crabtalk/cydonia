@@ -129,7 +129,7 @@ impl DesignView {
                     .absolute()
                     .bottom(px(12.))
                     .right(px(12.))
-                    .child(Navigation(self.surface.clone()).render(cx)),
+                    .child(Navigation(self.surface.clone()).render()),
             )
             .into_any_element()
     }
@@ -152,6 +152,9 @@ impl DesignView {
         let theme = Theme::of(cx);
         let key = Revision::new(artboard, record.viewport);
         let image = key.as_ref().and_then(|key| self.thumbnails.get(key));
+        let detail = key
+            .as_ref()
+            .and_then(|key| self.details.get(key)?.preview.as_ref());
         let live = self
             .hover
             .as_ref()
@@ -177,7 +180,7 @@ impl DesignView {
                 });
             })
             .child(match image {
-                Some(Ok(preview)) => img(preview.image.clone())
+                Some(Ok(preview)) => img(detail.unwrap_or(preview).image.clone())
                     .size_full()
                     .object_fit(ObjectFit::Fill)
                     .into_any_element(),

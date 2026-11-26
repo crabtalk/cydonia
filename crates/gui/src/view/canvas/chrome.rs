@@ -108,7 +108,7 @@ impl CanvasView {
             .justify_between()
             .gap(px(8.))
             .child(tools)
-            .child(Navigation(self.surface.clone()).render(cx))
+            .child(Navigation(self.surface.clone()).render())
             .into_any_element()
     }
 }

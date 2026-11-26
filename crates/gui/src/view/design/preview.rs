@@ -11,8 +11,10 @@ use browser::{WebView, WebViewEvent};
 use std::{cell::RefCell, path::Path, rc::Rc, sync::Arc, time::Duration};
 
 const WAIT: Duration = Duration::from_secs(12);
-const PREVIEW_WIDTH: u32 = 960;
+pub(super) const THUMBNAIL_WIDTH: u32 = 960;
+const MAX_PREVIEW_PIXELS: f64 = 12_000_000.;
 const PREVIEW_HEIGHT: u32 = 8192;
+const DETAIL_STEP: u32 = 256;
 const EVAL: Duration = Duration::from_secs(2);
 const STEP: Duration = Duration::from_millis(50);
 
@@ -120,6 +122,7 @@ impl LiveArtboard {
     pub(super) async fn preview(
         &self,
         viewport: Viewport,
+        requested_width: u32,
         cx: &mut AsyncApp,
     ) -> Result<Preview, String> {
         self.ready(cx).await?;
@@ -134,15 +137,7 @@ impl LiveArtboard {
             })
             .await
             .map_err(|error| error.to_string())?;
-        let width_for_height =
-            u64::from(PREVIEW_HEIGHT) * u64::from(viewport.width) / u64::from(height.max(1));
-        let width =
-            (u64::from(viewport.width.min(PREVIEW_WIDTH)).min(width_for_height)).max(1) as u32;
-        let scaled = |length| {
-            (u64::from(length) * u64::from(width) / u64::from(viewport.width))
-                .min(u64::from(PREVIEW_HEIGHT)) as u32
-        };
-        let mut assembled = image::RgbaImage::new(width, scaled(height).max(1));
+        let mut assembled = None;
         let mut top = 0;
         while top < height {
             // Keep the configured viewport so height media queries and vh units
@@ -163,47 +158,74 @@ impl LiveArtboard {
             if offset > top || bottom <= top {
                 return Err("Could not scroll to the end of the artboard".into());
             }
-            let target_y = scaled(top);
-            let target_rows = scaled(bottom).saturating_sub(target_y);
-            if target_rows == 0 {
-                top = bottom;
-                continue;
-            }
             let screenshot = self
                 .browser
                 .read_with(cx, |browser, cx| browser.snapshot(cx))
                 .await?;
+            let width = assembled.as_ref().map_or_else(
+                || {
+                    Preview::width_limit(
+                        viewport,
+                        height,
+                        requested_width.min(screenshot.size(0).width.0 as u32),
+                    )
+                },
+                image::RgbaImage::width,
+            );
+            let scaled = |length| {
+                (u64::from(length) * u64::from(width) / u64::from(viewport.width))
+                    .min(u64::from(PREVIEW_HEIGHT)) as u32
+            };
+            let target_y = scaled(top);
+            let target_rows = scaled(bottom)
+                .max(u32::from(bottom == height))
+                .saturating_sub(target_y);
+            if target_rows == 0 {
+                top = bottom;
+                continue;
+            }
+            let output_height = scaled(height).max(1);
             let to_px = move |length, rows| {
                 (u64::from(length) * u64::from(rows) / u64::from(viewport.height)) as u32
             };
-            assembled = cx
-                .background_executor()
-                .spawn(async move {
-                    let size = screenshot.size(0);
-                    let (columns, rows) = (size.width.0 as u32, size.height.0 as u32);
-                    let strip = image::RgbaImage::from_raw(
-                        columns,
-                        rows,
-                        screenshot
-                            .as_bytes(0)
-                            .ok_or("Artboard snapshot is empty")?
-                            .to_vec(),
-                    )
-                    .ok_or("Artboard snapshot has invalid dimensions")?;
-                    let start = to_px(top - offset, rows);
-                    let end = to_px(bottom - offset, rows);
-                    let crop =
-                        image::imageops::crop_imm(&strip, 0, start, columns, (end - start).max(1));
-                    let resized = image::imageops::thumbnail(&*crop, width, target_rows);
-                    image::imageops::replace(&mut assembled, &resized, 0, i64::from(target_y));
-                    Ok::<_, String>(assembled)
-                })
-                .await?;
+            assembled = Some(
+                cx.background_executor()
+                    .spawn(async move {
+                        let size = screenshot.size(0);
+                        let (columns, rows) = (size.width.0 as u32, size.height.0 as u32);
+                        let strip = image::RgbaImage::from_raw(
+                            columns,
+                            rows,
+                            screenshot
+                                .as_bytes(0)
+                                .ok_or("Artboard snapshot is empty")?
+                                .to_vec(),
+                        )
+                        .ok_or("Artboard snapshot has invalid dimensions")?;
+                        let start = to_px(top - offset, rows);
+                        let end = to_px(bottom - offset, rows);
+                        let crop = image::imageops::crop_imm(
+                            &strip,
+                            0,
+                            start,
+                            columns,
+                            (end - start).max(1),
+                        );
+                        let mut assembled = assembled
+                            .unwrap_or_else(|| image::RgbaImage::new(width, output_height));
+                        let resized = image::imageops::thumbnail(&*crop, width, target_rows);
+                        image::imageops::replace(&mut assembled, &resized, 0, i64::from(target_y));
+                        Ok::<_, String>(assembled)
+                    })
+                    .await?,
+            );
             top = bottom;
         }
         Ok(Preview {
             height,
-            image: Arc::new(RenderImage::new(vec![image::Frame::new(assembled)])),
+            image: Arc::new(RenderImage::new(vec![image::Frame::new(
+                assembled.ok_or("Artboard snapshot is empty")?,
+            )])),
         })
     }
 }
@@ -211,6 +233,27 @@ impl LiveArtboard {
 pub(super) struct Preview {
     pub(super) height: u32,
     pub(super) image: Arc<RenderImage>,
+}
+
+impl Preview {
+    pub(super) fn detail_width(&self, viewport: Viewport, zoom: f32, scale_factor: f32) -> u32 {
+        let native_width = viewport.width as f32 * scale_factor;
+        let wanted = (native_width * zoom).ceil() as u32;
+        let bucket = wanted.div_ceil(DETAIL_STEP).saturating_mul(DETAIL_STEP);
+        Self::width_limit(
+            viewport,
+            self.height,
+            bucket.min(native_width.ceil() as u32),
+        )
+    }
+
+    fn width_limit(viewport: Viewport, height: u32, requested_width: u32) -> u32 {
+        let ratio = f64::from(viewport.width) / f64::from(height.max(1));
+        requested_width
+            .min((ratio * f64::from(PREVIEW_HEIGHT)) as u32)
+            .min((ratio * MAX_PREVIEW_PIXELS).sqrt() as u32)
+            .max(1)
+    }
 }
 
 pub(super) fn fit(viewport: Viewport, available: Size<Pixels>) -> Size<Pixels> {
@@ -222,3 +265,7 @@ pub(super) fn fit(viewport: Viewport, available: Size<Pixels>) -> Size<Pixels> {
         px(viewport.height as f32 * scale),
     )
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit/design_preview.rs"]
+mod tests;
