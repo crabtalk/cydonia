@@ -1,4 +1,4 @@
-use crate::view::design::DesignView;
+use crate::view::design::{DesignView, Tool};
 use artifact::{comment::Anchor, design::Artboard};
 use bezel::{
     gpui::{
@@ -26,22 +26,21 @@ struct Position {
 
 #[derive(Default)]
 pub(super) struct Pins {
-    pub(super) picking: bool,
     positions: HashMap<u64, Position>,
     refresh: Option<Task<()>>,
     pick: Option<Task<()>>,
     error: Option<String>,
 }
 
-impl DesignView {
-    pub(super) fn toggle_picking(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.pins.picking = !self.pins.picking;
-        self.pins.error = None;
-        self.pins.pick = None;
-        window.focus(&self.focus, cx);
-        cx.notify();
+impl Pins {
+    /// Forgets a pick in flight and what the last one said.
+    pub(super) fn drop_pick(&mut self) {
+        self.pick = None;
+        self.error = None;
     }
+}
 
+impl DesignView {
     fn pick_element(&mut self, point: [f32; 2], window: &Window, cx: &mut Context<Self>) {
         let Some(artboard) = self.open_browser() else {
             return;
@@ -59,14 +58,13 @@ impl DesignView {
             let anchor = task.await;
             let _ = this.update_in(cx, |this, window, cx| {
                 this.pins.pick = None;
-                if !this.pins.picking || this.open_browser().as_ref() != Some(&artboard) {
+                if this.active_tool() != Tool::Comment
+                    || this.open_browser().as_ref() != Some(&artboard)
+                {
                     return;
                 }
                 match anchor {
-                    Ok(Some(anchor)) => {
-                        this.pins.picking = false;
-                        this.draft_comment(id, anchor, window, cx);
-                    }
+                    Ok(Some(anchor)) => this.draft_comment(id, anchor, window, cx),
                     _ => {
                         this.pins.error =
                             Some("Could not select an element. Try another spot.".into())
@@ -161,7 +159,7 @@ impl DesignView {
         let width = fit.width.as_f32();
         let height = fit.height.as_f32();
         let mut overlay = div().relative().w(fit.width).h(fit.height).child(browser);
-        if self.pins.picking && width > 0. && height > 0. {
+        if self.active_tool() == Tool::Comment && width > 0. && height > 0. {
             let bounds = Rc::new(Cell::new(Bounds::<Pixels>::default()));
             overlay = overlay
                 .child(
@@ -210,6 +208,9 @@ impl DesignView {
                                 ),
                         ),
                 );
+        }
+        if self.active_tool() != Tool::Comment {
+            return overlay.into_any_element();
         }
         let mut detached = Vec::new();
         for (i, (id, _)) in Self::comment_anchors(artboard).into_iter().enumerate() {

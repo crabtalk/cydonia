@@ -27,17 +27,17 @@ fn design_escape_yields_to_the_comment_field() {
 }
 
 #[test]
-fn design_zoom_keys_yield_to_the_comment_field() {
+fn design_tool_and_zoom_keys_yield_to_the_comment_field() {
     let keymap = Keymap::new(bindings());
     let review = KeyContext::parse(CONTEXT).unwrap();
     let text = KeyContext::parse(KEY_CONTEXT).unwrap();
 
-    let keys = if cfg!(target_os = "macos") {
-        ["cmd-=", "cmd--", "cmd-0"]
+    let zoom = if cfg!(target_os = "macos") {
+        ["cmd-=", "cmd--"]
     } else {
-        ["ctrl-=", "ctrl--", "ctrl-0"]
+        ["ctrl-=", "ctrl--"]
     };
-    for key in keys {
+    for key in zoom.into_iter().chain(["shift-1", "v", "h", "c"]) {
         let input = [Keystroke::parse(key).unwrap()];
         assert_eq!(
             keymap

@@ -1,6 +1,6 @@
 use crate::view::{
     design::{
-        DesignView,
+        DesignView, Tool,
         preview::{self, Revision},
     },
     kit::web,
@@ -156,8 +156,6 @@ impl DesignView {
         let hover_id = id.clone();
         let weak = owner.downgrade();
         let expand = weak.clone();
-        let comment = weak.clone();
-        let artboard_id = id.clone();
         let comments_id = id.clone();
         let external = owner.downgrade();
         let path = artboard.path();
@@ -211,28 +209,12 @@ impl DesignView {
                 web::frame_header(&artboard.title, cx)
                     .w(header_width)
                     .child(
-                        theme
-                            .icon_button(icons::glyph::MessageCirclePlus, ButtonStyle::Ghost, None)
-                            .id("artboard-comment")
-                            .w(px(22.))
-                            .flex_none()
-                            .tooltip(|window, cx| {
-                                Tooltip::text("Comment on an element", window, cx)
-                            })
-                            .on_click(move |_, window, cx| {
-                                let _ = comment.update(cx, |view, cx| {
-                                    view.expand(artboard_id.clone(), window, cx);
-                                    view.toggle_picking(window, cx);
-                                });
-                            }),
-                    )
-                    .child(
                         Self::comments_button(artboard.comments.len(), cx).on_click({
                             let owner = owner.downgrade();
                             move |_, window, cx| {
                                 let _ = owner.update(cx, |view, cx| {
+                                    view.set_tool(Tool::Comment, cx);
                                     view.expand(comments_id.clone(), window, cx);
-                                    view.open_comments(cx);
                                 });
                             }
                         }),

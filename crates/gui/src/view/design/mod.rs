@@ -45,25 +45,40 @@ const ZOOM_SETTLE: Duration = Duration::from_millis(150);
 /// canvas's does its zoom.
 const MAGNIFICATION_STEP: f32 = 1.25;
 /// The scales the zoom menu offers by name.
-const ZOOM_LEVELS: [f32; 2] = [1., 2.];
+const ZOOM_LEVELS: [f32; 6] = [0.25, 0.5, 0.75, 1., 1.5, 2.];
 const MAX_MAGNIFICATION: f32 = 8.;
+const PAN_EVAL: Duration = Duration::from_secs(1);
 
-actions!(design_view, [Back, ZoomIn, ZoomOut, ZoomToFit]);
+actions!(
+    design_view,
+    [
+        Back,
+        ZoomIn,
+        ZoomOut,
+        FitArtboards,
+        SelectTool,
+        HandTool,
+        CommentTool
+    ]
+);
 
 pub(crate) fn bindings() -> Vec<KeyBinding> {
     let predicate = format!("{CONTEXT} && !{KEY_CONTEXT}");
     let predicate = Some(predicate.as_str());
-    let [zoom_in, zoom_in_plus, zoom_out, zoom_fit] = if cfg!(target_os = "macos") {
-        ["cmd-=", "cmd-+", "cmd--", "cmd-0"]
+    let [zoom_in, zoom_in_plus, zoom_out] = if cfg!(target_os = "macos") {
+        ["cmd-=", "cmd-+", "cmd--"]
     } else {
-        ["ctrl-=", "ctrl-+", "ctrl--", "ctrl-0"]
+        ["ctrl-=", "ctrl-+", "ctrl--"]
     };
     vec![
         KeyBinding::new("escape", Back, predicate),
         KeyBinding::new(zoom_in, ZoomIn, predicate),
         KeyBinding::new(zoom_in_plus, ZoomIn, predicate),
         KeyBinding::new(zoom_out, ZoomOut, predicate),
-        KeyBinding::new(zoom_fit, ZoomToFit, predicate),
+        KeyBinding::new("shift-1", FitArtboards, predicate),
+        KeyBinding::new("v", SelectTool, predicate),
+        KeyBinding::new("h", HandTool, predicate),
+        KeyBinding::new("c", CommentTool, predicate),
     ]
 }
 
@@ -88,9 +103,25 @@ pub(crate) struct DesignView {
     /// Redraws the zoom's reading when a pinch magnifies the open artboard.
     magnified: Option<Subscription>,
     zoom_menu: ContextMenu<Self>,
+    tool: Tool,
+    /// Space is held: the hand stands in for the tool.
+    space: bool,
+    /// Where the hand's drag last was.
+    pan_from: Option<gpui::Point<gpui::Pixels>>,
     error: Option<String>,
     pins: pins::Pins,
     comments: comments::Comments,
+}
+
+/// What a press on the design does.
+#[derive(Clone, Copy, PartialEq)]
+enum Tool {
+    /// Opens an artboard, and works the open artboard's page.
+    Select,
+    /// Pans the canvas, or the open artboard's page.
+    Hand,
+    /// Comments on an element of the open artboard's page.
+    Comment,
 }
 
 #[derive(Clone, Copy)]
@@ -191,6 +222,9 @@ impl DesignView {
             live: None,
             magnified: None,
             zoom_menu: ContextMenu::default(),
+            tool: Tool::Select,
+            space: false,
+            pan_from: None,
             error: None,
             pins: pins::Pins::default(),
             comments: comments::Comments::new(cx),
@@ -201,6 +235,9 @@ impl DesignView {
         self.open = Some(id);
         self.hover = None;
         self.loading = None;
+        if self.tool == Tool::Comment {
+            self.open_comments(cx);
+        }
         window.focus(&self.focus, cx);
         cx.notify();
     }
@@ -257,8 +294,58 @@ impl DesignView {
         }
     }
 
-    /// Magnifies the open artboard's page, or zooms the canvas.
-    fn zoom(&mut self, zoom: Zoom, cx: &mut Context<Self>) {
+    fn active_tool(&self) -> Tool {
+        if self.space { Tool::Hand } else { self.tool }
+    }
+
+    fn set_tool(&mut self, tool: Tool, cx: &mut Context<Self>) {
+        if self.tool == tool {
+            return;
+        }
+        self.tool = tool;
+        self.pins.drop_pick();
+        match tool {
+            Tool::Comment if self.open.is_some() => self.open_comments(cx),
+            Tool::Comment => {}
+            Tool::Select | Tool::Hand => self.comments.close(),
+        }
+        cx.notify();
+    }
+
+    /// Moves what is shown with the pointer by `delta`: the open artboard's
+    /// page, or the canvas.
+    fn pan(&mut self, delta: gpui::Point<gpui::Pixels>, cx: &mut Context<Self>) {
+        let Some(browser) = self.open_browser() else {
+            self.surface.update(cx, |surface, cx| {
+                surface.update_editor(cx, |editor| {
+                    editor.pan_by(delta.x.as_f32(), delta.y.as_f32())
+                })
+            });
+            return;
+        };
+        let scale = self.scale(cx);
+        if scale <= 0. {
+            return;
+        }
+        let script = format!(
+            "scrollBy({}, {})",
+            -delta.x.as_f32() / scale,
+            -delta.y.as_f32() / scale
+        );
+        browser
+            .read(cx)
+            .eval::<serde_json::Value>(&script, PAN_EVAL, cx)
+            .detach();
+    }
+
+    /// Magnifies the open artboard's page, or zooms the canvas. Fitting the
+    /// artboards from an open one goes back to the canvas.
+    fn zoom(&mut self, zoom: Zoom, window: &mut Window, cx: &mut Context<Self>) {
+        if let Zoom::Fit = zoom
+            && self.open.is_some()
+        {
+            self.close_artboard(window, cx);
+        }
         let Some(browser) = self.open_browser() else {
             self.surface.update(cx, |surface, cx| {
                 surface.update_editor(cx, |editor| match zoom {
@@ -601,9 +688,29 @@ impl Render for DesignView {
             .track_focus(&self.focus)
             .key_context(CONTEXT)
             .on_action(cx.listener(|this, _: &Back, window, cx| this.close_artboard(window, cx)))
-            .on_action(cx.listener(|this, _: &ZoomIn, _, cx| this.zoom(Zoom::In, cx)))
-            .on_action(cx.listener(|this, _: &ZoomOut, _, cx| this.zoom(Zoom::Out, cx)))
-            .on_action(cx.listener(|this, _: &ZoomToFit, _, cx| this.zoom(Zoom::Fit, cx)))
+            .on_action(cx.listener(|this, _: &ZoomIn, window, cx| this.zoom(Zoom::In, window, cx)))
+            .on_action(
+                cx.listener(|this, _: &ZoomOut, window, cx| this.zoom(Zoom::Out, window, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &FitArtboards, window, cx| this.zoom(Zoom::Fit, window, cx)),
+            )
+            .on_action(cx.listener(|this, _: &SelectTool, _, cx| this.set_tool(Tool::Select, cx)))
+            .on_action(cx.listener(|this, _: &HandTool, _, cx| this.set_tool(Tool::Hand, cx)))
+            .on_action(cx.listener(|this, _: &CommentTool, _, cx| this.set_tool(Tool::Comment, cx)))
+            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                if event.keystroke.key == "space" && !this.space && this.focus.is_focused(window) {
+                    this.space = true;
+                    cx.notify();
+                }
+            }))
+            .on_key_up(cx.listener(|this, event: &gpui::KeyUpEvent, _, cx| {
+                if event.keystroke.key == "space" && this.space {
+                    this.space = false;
+                    this.pan_from = None;
+                    cx.notify();
+                }
+            }))
             .children(self.error.as_ref().map(|error| {
                 div()
                     .px(px(GUTTER))
@@ -619,14 +726,9 @@ impl Render for DesignView {
                     .child(measure)
                     .child(body)
                     .children(shown_key.and_then(|artboard| self.comment_panel(artboard, cx)))
-                    .child(self.dock(shown_key, window, cx))
-                    .child(
-                        div()
-                            .absolute()
-                            .top(px(GUTTER))
-                            .right(px(GUTTER))
-                            .child(self.viewport_button.clone()),
-                    )
+                    .children((self.active_tool() == Tool::Hand).then(|| self.hand(cx)))
+                    .child(self.dock(cx))
+                    .child(self.corner(window, cx))
                     .children(
                         self.loading
                             .as_ref()
