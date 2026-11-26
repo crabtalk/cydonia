@@ -2,7 +2,10 @@ use artifact::web::Viewport;
 use bezel::{
     gpui::{self, App, Entity, MouseButton, Window, div, prelude::*, px, size},
     theme::{TextStyle, Theme, Typeset as _},
-    ui::menu::Item,
+    ui::{
+        icons::{Icon, glyph},
+        menu::Item,
+    },
 };
 use browser::{LoadState, Presentation, WebView};
 use std::{cell::Cell, rc::Rc};
@@ -68,10 +71,36 @@ impl WebPresentation for Entity<WebView> {
     }
 }
 
+/// How a viewport is shown: the device's mark, and its preset name or, for
+/// any other size, its dimensions.
+pub(crate) trait ViewportLook {
+    fn icon(self) -> Icon;
+    fn title(self) -> String;
+}
+
+impl ViewportLook for Viewport {
+    fn icon(self) -> Icon {
+        match self {
+            Viewport::TABLET => glyph::Tablet.into(),
+            Viewport::PHONE => glyph::Smartphone.into(),
+            _ => glyph::Monitor.into(),
+        }
+    }
+
+    fn title(self) -> String {
+        self.name().map_or_else(|| self.to_string(), str::to_owned)
+    }
+}
+
 pub(crate) fn viewport_items(current: Option<Viewport>) -> Vec<Item> {
     Viewport::PRESETS
         .into_iter()
-        .map(|viewport| Item::action(viewport.label()).checked(current == Some(viewport)))
+        .map(|viewport| {
+            Item::action(viewport.title())
+                .with_icon(viewport.icon())
+                .with_inline_description(viewport.to_string())
+                .checked(current == Some(viewport))
+        })
         .collect()
 }
 

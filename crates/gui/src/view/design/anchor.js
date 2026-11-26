@@ -6,8 +6,12 @@
     const matches = document.querySelectorAll(selector);
     return matches.length === 1 ? matches[0] : null;
   };
+  const view = visualViewport || { offsetLeft: 0, offsetTop: 0, width: innerWidth, height: innerHeight };
   if (input.point) {
-    const element = document.elementFromPoint(input.point[0] * innerWidth, input.point[1] * innerHeight);
+    const element = document.elementFromPoint(
+      view.offsetLeft + input.point[0] * view.width,
+      view.offsetTop + input.point[1] * view.height,
+    );
     if (!element) return null;
     const path = [];
     for (let part = element; part; part = part.parentElement) {
@@ -34,13 +38,16 @@
     const hasStableId = element.id && '#' + CSS.escape(element.id) === anchor.selector;
     if (!hasStableId && quote(element) !== anchor.quote) return { attached: false };
     const box = element.getBoundingClientRect();
-    const left = Math.max(0, box.left);
-    const right = Math.min(innerWidth, box.right);
-    const top = Math.max(0, box.top);
-    const bottom = Math.min(innerHeight, box.bottom);
+    const left = Math.max(view.offsetLeft, box.left);
+    const right = Math.min(view.offsetLeft + view.width, box.right);
+    const top = Math.max(view.offsetTop, box.top);
+    const bottom = Math.min(view.offsetTop + view.height, box.bottom);
     if (left >= right || top >= bottom || getComputedStyle(element).visibility !== 'visible') {
       return { attached: true };
     }
-    return { attached: true, point: [right / innerWidth, (top + bottom) / 2 / innerHeight] };
+    return {
+      attached: true,
+      point: [(right - view.offsetLeft) / view.width, ((top + bottom) / 2 - view.offsetTop) / view.height],
+    };
   });
 })

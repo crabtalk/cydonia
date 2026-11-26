@@ -28,12 +28,13 @@ impl Viewport {
     };
     pub const PRESETS: [Self; 3] = [Self::DESKTOP, Self::TABLET, Self::PHONE];
 
-    pub fn label(self) -> &'static str {
+    /// The preset's name; `None` for any other size.
+    pub fn name(self) -> Option<&'static str> {
         match self {
-            Self::DESKTOP => "Desktop",
-            Self::TABLET => "Tablet",
-            Self::PHONE => "Phone",
-            _ => "Custom",
+            Self::DESKTOP => Some("Desktop"),
+            Self::TABLET => Some("Tablet"),
+            Self::PHONE => Some("Phone"),
+            _ => None,
         }
     }
 }

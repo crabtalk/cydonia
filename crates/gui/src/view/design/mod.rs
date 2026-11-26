@@ -26,9 +26,9 @@ use bezel::{
         Subscription, Task, WeakEntity, Window, actions, div, point, prelude::*, px, size,
     },
     theme::{TextStyle, Theme, Typeset as _},
-    ui::input::KEY_CONTEXT,
+    ui::{context_menu::ContextMenu, input::KEY_CONTEXT},
 };
-use browser::WebView;
+use browser::{WebView, WebViewEvent};
 use canvas::{CanvasView as Surface, Document};
 use std::{collections::HashMap, path::Path, time::Duration};
 
@@ -41,12 +41,30 @@ mod toolbar;
 const CONTEXT: &str = "DesignArtboard";
 const GUTTER: f32 = 16.;
 const ZOOM_SETTLE: Duration = Duration::from_millis(150);
+/// What one zoom in multiplies an open artboard's magnification by, as the
+/// canvas's does its zoom.
+const MAGNIFICATION_STEP: f32 = 1.25;
+/// The scales the zoom menu offers by name.
+const ZOOM_LEVELS: [f32; 2] = [1., 2.];
+const MAX_MAGNIFICATION: f32 = 8.;
 
-actions!(design_view, [Back]);
+actions!(design_view, [Back, ZoomIn, ZoomOut, ZoomToFit]);
 
 pub(crate) fn bindings() -> Vec<KeyBinding> {
     let predicate = format!("{CONTEXT} && !{KEY_CONTEXT}");
-    vec![KeyBinding::new("escape", Back, Some(&predicate))]
+    let predicate = Some(predicate.as_str());
+    let [zoom_in, zoom_in_plus, zoom_out, zoom_fit] = if cfg!(target_os = "macos") {
+        ["cmd-=", "cmd-+", "cmd--", "cmd-0"]
+    } else {
+        ["ctrl-=", "ctrl-+", "ctrl--", "ctrl-0"]
+    };
+    vec![
+        KeyBinding::new("escape", Back, predicate),
+        KeyBinding::new(zoom_in, ZoomIn, predicate),
+        KeyBinding::new(zoom_in_plus, ZoomIn, predicate),
+        KeyBinding::new(zoom_out, ZoomOut, predicate),
+        KeyBinding::new(zoom_fit, ZoomToFit, predicate),
+    ]
 }
 
 pub(crate) struct DesignView {
@@ -67,9 +85,21 @@ pub(crate) struct DesignView {
     zoom_settle: Option<Task<()>>,
     loading: Option<Capture>,
     live: Option<(Revision, Result<LiveArtboard, String>)>,
+    /// Redraws the zoom's reading when a pinch magnifies the open artboard.
+    magnified: Option<Subscription>,
+    zoom_menu: ContextMenu<Self>,
     error: Option<String>,
     pins: pins::Pins,
     comments: comments::Comments,
+}
+
+#[derive(Clone, Copy)]
+enum Zoom {
+    In,
+    Out,
+    Fit,
+    /// To this scale of the artboard's own pixels.
+    To(f32),
 }
 
 struct Detail {
@@ -159,6 +189,8 @@ impl DesignView {
             zoom_settle: None,
             loading: None,
             live: None,
+            magnified: None,
+            zoom_menu: ContextMenu::default(),
             error: None,
             pins: pins::Pins::default(),
             comments: comments::Comments::new(cx),
@@ -207,6 +239,51 @@ impl DesignView {
             let _ = folder;
             None
         }
+    }
+
+    /// How large an open artboard's page is drawn against its own pixels
+    /// before it is magnified.
+    fn fitted_scale(&self, cx: &App) -> f32 {
+        let viewport = self.source.read(cx).viewport;
+        preview::fit(viewport, self.available).width.as_f32() / viewport.width as f32
+    }
+
+    /// The scale the zoom reads: the open artboard's page against its own
+    /// pixels, or the canvas's zoom.
+    fn scale(&self, cx: &App) -> f32 {
+        match self.open_browser() {
+            Some(browser) => self.fitted_scale(cx) * browser.read(cx).magnification(),
+            None => self.surface.read(cx).editor().zoom(),
+        }
+    }
+
+    /// Magnifies the open artboard's page, or zooms the canvas.
+    fn zoom(&mut self, zoom: Zoom, cx: &mut Context<Self>) {
+        let Some(browser) = self.open_browser() else {
+            self.surface.update(cx, |surface, cx| {
+                surface.update_editor(cx, |editor| match zoom {
+                    Zoom::In => editor.zoom_in(),
+                    Zoom::Out => editor.zoom_out(),
+                    Zoom::Fit => editor.fit(),
+                    Zoom::To(scale) => editor.set_zoom(scale),
+                })
+            });
+            return;
+        };
+        let fitted = self.fitted_scale(cx);
+        browser.update(cx, |page, cx| {
+            let level = page.magnification();
+            let level = match zoom {
+                Zoom::In => level * MAGNIFICATION_STEP,
+                Zoom::Out => level / MAGNIFICATION_STEP,
+                Zoom::Fit => 1.,
+                Zoom::To(scale) if fitted > 0. => scale / fitted,
+                Zoom::To(_) => level,
+            };
+            page.set_magnification(level.clamp(1., MAX_MAGNIFICATION));
+            cx.notify();
+        });
+        cx.notify();
     }
 
     fn close_artboard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -475,6 +552,13 @@ impl Render for DesignView {
                     .and_then(|folder| {
                         preview::open(folder, artboard, record.viewport, true, window, cx)
                     });
+                self.magnified = opened.as_ref().ok().map(|live| {
+                    cx.subscribe(&live.browser, |_, _, event: &WebViewEvent, cx| {
+                        if let WebViewEvent::Magnified = event {
+                            cx.notify();
+                        }
+                    })
+                });
                 self.live = Some((key, opened));
             }
             if artboard.revision.is_none() {
@@ -517,6 +601,9 @@ impl Render for DesignView {
             .track_focus(&self.focus)
             .key_context(CONTEXT)
             .on_action(cx.listener(|this, _: &Back, window, cx| this.close_artboard(window, cx)))
+            .on_action(cx.listener(|this, _: &ZoomIn, _, cx| this.zoom(Zoom::In, cx)))
+            .on_action(cx.listener(|this, _: &ZoomOut, _, cx| this.zoom(Zoom::Out, cx)))
+            .on_action(cx.listener(|this, _: &ZoomToFit, _, cx| this.zoom(Zoom::Fit, cx)))
             .children(self.error.as_ref().map(|error| {
                 div()
                     .px(px(GUTTER))
@@ -532,15 +619,12 @@ impl Render for DesignView {
                     .child(measure)
                     .child(body)
                     .children(shown_key.and_then(|artboard| self.comment_panel(artboard, cx)))
+                    .child(self.dock(shown_key, window, cx))
                     .child(
                         div()
                             .absolute()
                             .top(px(GUTTER))
                             .right(px(GUTTER))
-                            .flex()
-                            .items_start()
-                            .gap(px(8.))
-                            .children(shown_key.map(|artboard| self.expanded_tools(artboard, cx)))
                             .child(self.viewport_button.clone()),
                     )
                     .children(

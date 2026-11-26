@@ -269,7 +269,10 @@ impl Browser {
                 }
             }
             WebViewEvent::Title(title) => self.title = title.clone(),
-            WebViewEvent::Load(_) | WebViewEvent::History { .. } | WebViewEvent::Error(_) => {}
+            WebViewEvent::Load(_)
+            | WebViewEvent::History { .. }
+            | WebViewEvent::Magnified
+            | WebViewEvent::Error(_) => {}
             WebViewEvent::Console(message) => {
                 let log = cx.default_global::<Logs>().0.entry(self.id).or_default();
                 log.push(message.clone());

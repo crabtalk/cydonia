@@ -3,7 +3,7 @@ use crate::view::{
         DesignView,
         preview::{self, Revision},
     },
-    kit::{canvas::Navigation, web},
+    kit::web,
 };
 use artifact::{canvas::web::Source, design::Design, kind::Kind};
 use bezel::{
@@ -124,13 +124,6 @@ impl DesignView {
                         .child("Ask an agent to add an artboard."),
                 )
             })
-            .child(
-                div()
-                    .absolute()
-                    .bottom(px(12.))
-                    .right(px(12.))
-                    .child(Navigation(self.surface.clone()).render()),
-            )
             .into_any_element()
     }
 

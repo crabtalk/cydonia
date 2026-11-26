@@ -68,9 +68,14 @@ pub(crate) fn open(
     }
     let url = Source::try_from(artboard.path())?.resolve(folder)?.url;
     let browser = cx.new(|cx| {
-        WebView::new(url, window, cx)
+        let page = WebView::new(url, window, cx)
             .with_read_access(directory.to_path_buf())
-            .with_console()
+            .with_console();
+        if interactive {
+            page.with_pinch_zoom()
+        } else {
+            page
+        }
     });
     browser.present(viewport, interactive, window, cx)?;
     let console = Rc::new(RefCell::new(ConsoleLog::default()));
