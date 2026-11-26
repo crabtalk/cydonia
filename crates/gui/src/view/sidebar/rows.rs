@@ -338,7 +338,7 @@ impl Sidebar {
                     .pl(px(6.))
                     .pr(px(root::SIDEBAR_GUTTER))
                     .h(px(ROW_PILL))
-                    .rounded(px(Theme::control_radius()))
+                    .rounded(px(Shape::Line.radius()))
             })
             .when(lifted, |el| el.m_0())
             .flex()
@@ -732,6 +732,7 @@ impl Sidebar {
                 };
                 frame
                     .h(px(shape.pill()))
+                    .rounded(px(shape.radius()))
                     .py(px(EXTENDED_PAD))
                     .flex_col()
                     .items_start()

@@ -16,7 +16,6 @@ use crate::{
             watch::Watch,
         },
         pane::arrangement,
-        sidebar::Dragged,
         window::{
             chrome,
             entry::Host,
@@ -56,7 +55,7 @@ pub(crate) enum StripMenu {
 pub(crate) struct Strip {
     workspace: Entity<Workspace>,
     root: WeakEntity<Cydonia>,
-    reorder: tabs::Reorder<Dragged>,
+    reorder: tabs::Reorder<Slot>,
     menu: ContextMenu<Self, StripMenu>,
     /// The name field, on the tab of the space it renames.
     rename: Rename,
@@ -325,15 +324,15 @@ impl Render for Strip {
             .iter()
             .map(|slot| {
                 let el = self.tab(slot, Some(slot) == front.as_ref(), &theme, window, cx);
-                (Dragged::Tab(slot.clone()), el)
+                (slot.clone(), el)
             })
             .collect();
         let mut model = tabs::Strip::new();
         for slot in &strip {
-            model.open(Dragged::Tab(slot.clone()));
+            model.open(slot.clone());
         }
         if let Some(front) = &front {
-            model.activate(&Dragged::Tab(front.clone()));
+            model.activate(front);
         }
         chrome::top_band(global)
             .id("window-strip")

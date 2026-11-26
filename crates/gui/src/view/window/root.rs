@@ -21,7 +21,7 @@ use crate::{
         kit::{menu::Menu, watch::Watch},
         pane::{Pane, Tab},
         settings,
-        sidebar::{Dragged, Sidebar},
+        sidebar::{Row, Sidebar},
         window::{
             chrome,
             lights::{self, Lights},
@@ -565,9 +565,8 @@ pub struct Cydonia {
     pub(crate) pressed_pane: Option<Member>,
     /// The modal over the window, while one is up.
     pub(crate) modals: Entity<ModalLayer>,
-    /// Where a sidebar row or a pane's tab lands on a pane. The panes are its
-    /// targets, by the member in front of each; the window is its surface.
-    pub(crate) dock: docking::Dock<Member, Dragged>,
+    /// The pane targets for a sidebar row, keyed by each pane's front member.
+    pub(crate) dock: docking::Dock<Member, Row>,
     /// Every board on screen: cards between lanes and boards, lanes and list
     /// groups along their own board.
     pub(crate) board_sort: drag::Domain<board::BoardRegion, board::BoardItem>,
@@ -1136,10 +1135,10 @@ impl Cydonia {
             pressed_pane: None,
             dock: docking::Dock::new(Painter::of(cx), {
                 let this = cx.entity().downgrade();
-                move |item, _, cx| {
+                move |row: &Row, _, cx| {
                     let label = this
                         .upgrade()
-                        .map(|this| this.read(cx).label_of_dragged(item, cx))
+                        .map(|this| row.label(this.read(cx).workspace.read(cx), cx))
                         .unwrap_or_default();
                     bezel::ui::drag::ghost_label("pane-entry-ghost", label).into_any_element()
                 }

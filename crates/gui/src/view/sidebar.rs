@@ -177,6 +177,11 @@ impl Shape {
             Shape::Extended { detail: true } => EXTENDED_PILL,
         }
     }
+
+    /// The corner radius that makes the wash a pill.
+    pub(crate) fn radius(self) -> f32 {
+        self.pill() / 2.
+    }
 }
 
 impl Row {
@@ -496,15 +501,6 @@ pub(crate) fn tint(selected: bool, archived: bool, theme: &Theme) -> Hsla {
     }
 }
 
-/// What the sidebar's list and the window's strip carry, and what a pane takes
-/// a drop of: a sidebar row, or a tab off the window's strip.
-#[derive(Clone, PartialEq)]
-pub(crate) enum Dragged {
-    Row(Row),
-    /// A tab of the window's strip.
-    Tab(crate::model::workspace::Slot),
-}
-
 /// A row's kind and the section it is listed in.
 pub(crate) struct Place {
     kind: SharedString,
@@ -517,22 +513,19 @@ pub(crate) struct Place {
 /// lands in front of one of its kind, or at the end of its section.
 fn lands(
     places: &HashMap<Row, Place>,
-    item: &Dragged,
-    after: Option<&Dragged>,
-    before: Option<&Dragged>,
+    item: &Row,
+    after: Option<&Row>,
+    before: Option<&Row>,
 ) -> bool {
-    let place = |at: Option<&Dragged>| match at {
-        Some(Dragged::Row(row)) => places.get(row),
-        _ => None,
-    };
+    let place = |at: Option<&Row>| at.and_then(|row| places.get(row));
     let Some(own) = place(Some(item)) else {
         return false;
     };
     match item {
-        Dragged::Row(Row::Group(_)) => {
+        Row::Group(_) => {
             place(before).is_some_and(|place| place.kind == own.kind)
                 || match before {
-                    Some(Dragged::Row(Row::Heading(_))) => {
+                    Some(Row::Heading(_)) => {
                         place(before).is_some_and(|place| place.section_above == Some(own.section))
                     }
                     None => place(after).is_some_and(|place| place.section == own.section),
@@ -636,7 +629,7 @@ pub(crate) fn row_frame(
         .flex_row()
         .items_center()
         .gap(px(ROW_GAP))
-        .rounded(px(Theme::control_radius()))
+        .rounded(px(Shape::Line.radius()))
         .cursor_pointer()
 }
 
@@ -687,7 +680,7 @@ pub(crate) struct Sidebar {
     hovered: Option<SidebarMenu>,
     rename: Rename,
     /// The drag domain of the list: a row moves within it, or out onto a pane.
-    pub(crate) sort: drag::Domain<(), Dragged>,
+    pub(crate) sort: drag::Domain<(), Row>,
     rail: ListState,
     /// The list as [`Self::relist`] last worked it out. Render reads it and
     /// never works it out.
@@ -808,7 +801,7 @@ impl Sidebar {
     fn drawn(&self) -> Listing {
         let listing = &self.listing;
         let rows = &listing.rows;
-        let Some(Dragged::Row(head @ Row::Group(_))) = self.sort.carried() else {
+        let Some(head @ Row::Group(_)) = self.sort.carried() else {
             return listing.clone();
         };
         let Some(at) = rows.iter().position(|row| *row == head) else {
@@ -1114,7 +1107,7 @@ impl Sidebar {
                 return Empty.into_any_element();
             };
             view.update(cx, |this, cx| {
-                let item = Dragged::Row(row.clone());
+                let item = row.clone();
                 let lifted = this.sort.carried().as_ref() == Some(&item);
                 let el = this.sidebar_row(&row, shapes[ix], lifted, window, cx);
                 match row {
@@ -1129,12 +1122,13 @@ impl Sidebar {
         self.sort
             .region("sidebar-list", (), gpui::Axis::Vertical, list)
             .track_scroll(&self.rail)
-            .accepts(|item| matches!(item, Dragged::Row(_)))
             .lands(move |item, after, before| lands(&places, item, after, before))
             .size_full()
-            .on_drop(cx.listener(|this, event: &drag::Drop<(), Dragged>, _, cx| {
-                this.sidebar_moved(event, cx)
-            }))
+            .on_drop(
+                cx.listener(|this, event: &drag::Drop<(), Row>, _, cx| {
+                    this.sidebar_moved(event, cx)
+                }),
+            )
     }
 
     /// The heading of the group whose rows are under the scroll, held at the
@@ -1191,14 +1185,11 @@ impl Sidebar {
     /// itself, at its width in the list.
     fn sidebar_ghost(
         &self,
-        item: &Dragged,
+        item: &Row,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let Dragged::Row(row) = item else {
-            return Empty.into_any_element();
-        };
-        let row = row.clone();
+        let row = item.clone();
         let sidebar = cx.entity();
         drag::ghost("sidebar-row-ghost", move |_, window, cx| {
             sidebar.update(cx, |this, cx| {
@@ -1210,7 +1201,7 @@ impl Sidebar {
                 div()
                     .w(px(width - root::SIDEBAR_GUTTER - this.trail(cx)))
                     .h(px(shape.pill()))
-                    .rounded(px(Theme::control_radius()))
+                    .rounded(px(shape.radius()))
                     .overflow_hidden()
                     .child(this.sidebar_row(&row, shape, true, window, cx))
             })
@@ -1220,14 +1211,13 @@ impl Sidebar {
 
     /// A row let go in the list, between the painted rows `after` and
     /// `before`.
-    fn sidebar_moved(&mut self, event: &drag::Drop<(), Dragged>, cx: &mut Context<Self>) {
-        let Dragged::Row(carried) = &event.item else {
-            return;
-        };
+    fn sidebar_moved(&mut self, event: &drag::Drop<(), Row>, cx: &mut Context<Self>) {
+        let carried = &event.item;
         let rows = self.list(cx).rows();
-        let at = |neighbour: &Option<Dragged>| match neighbour {
-            Some(Dragged::Row(row)) => rows.iter().position(|at| at == row),
-            _ => None,
+        let at = |neighbour: &Option<Row>| {
+            neighbour
+                .as_ref()
+                .and_then(|row| rows.iter().position(|at| at == row))
         };
         let after = || at(&event.after).map(|ix| ix + 1);
         let before = || at(&event.before);

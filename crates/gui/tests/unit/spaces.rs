@@ -731,8 +731,7 @@ fn leaving_the_space_is_remembered(cx: &mut gpui::TestAppContext) {
 }
 
 /// A session that has had no turn has no file, and a space names its members
-/// by file. Dropping one into an arrangement mints the file first — see
-/// `Cydonia::dropped`, whose half of this is the gesture.
+/// by file. Dropping its sidebar row into an arrangement mints the file first.
 #[gpui::test]
 fn a_session_with_no_file_can_be_given_one_and_arranged(cx: &mut gpui::TestAppContext) {
     let scratch = Scratch::new("fresh-session");
