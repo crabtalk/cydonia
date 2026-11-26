@@ -32,8 +32,6 @@ use browser::{WebView, WebViewEvent};
 use canvas::{CanvasView as Surface, Document};
 use std::{collections::HashMap, path::Path, time::Duration};
 
-mod comments;
-mod pins;
 pub(crate) mod preview;
 mod surface;
 mod toolbar;
@@ -51,15 +49,7 @@ const PAN_EVAL: Duration = Duration::from_secs(1);
 
 actions!(
     design_view,
-    [
-        Back,
-        ZoomIn,
-        ZoomOut,
-        FitArtboards,
-        SelectTool,
-        HandTool,
-        CommentTool
-    ]
+    [Back, ZoomIn, ZoomOut, FitArtboards, SelectTool, HandTool]
 );
 
 pub(crate) fn bindings() -> Vec<KeyBinding> {
@@ -78,7 +68,6 @@ pub(crate) fn bindings() -> Vec<KeyBinding> {
         KeyBinding::new("shift-1", FitArtboards, predicate),
         KeyBinding::new("v", SelectTool, predicate),
         KeyBinding::new("h", HandTool, predicate),
-        KeyBinding::new("c", CommentTool, predicate),
     ]
 }
 
@@ -89,6 +78,8 @@ pub(crate) struct DesignView {
     root: WeakEntity<Cydonia>,
     focus: FocusHandle,
     open: Option<String>,
+    /// The artboard opened last, which the one-artboard view goes back to.
+    last_open: Option<String>,
     document: Entity<Document>,
     fitted: bool,
     surface: Entity<Surface>,
@@ -109,8 +100,6 @@ pub(crate) struct DesignView {
     /// Where the hand's drag last was.
     pan_from: Option<gpui::Point<gpui::Pixels>>,
     error: Option<String>,
-    pins: pins::Pins,
-    comments: comments::Comments,
 }
 
 /// What a press on the design does.
@@ -120,8 +109,6 @@ enum Tool {
     Select,
     /// Pans the canvas, or the open artboard's page.
     Hand,
-    /// Comments on an element of the open artboard's page.
-    Comment,
 }
 
 #[derive(Clone, Copy)]
@@ -209,6 +196,7 @@ impl DesignView {
             root,
             focus: cx.focus_handle(),
             open: None,
+            last_open: None,
             document,
             fitted: false,
             surface,
@@ -226,18 +214,14 @@ impl DesignView {
             space: false,
             pan_from: None,
             error: None,
-            pins: pins::Pins::default(),
-            comments: comments::Comments::new(cx),
         }
     }
 
     fn expand(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.last_open = Some(id.clone());
         self.open = Some(id);
         self.hover = None;
         self.loading = None;
-        if self.tool == Tool::Comment {
-            self.open_comments(cx);
-        }
         window.focus(&self.focus, cx);
         cx.notify();
     }
@@ -267,17 +251,6 @@ impl DesignView {
             .cloned()
     }
 
-    fn comment_base(&self, id: &str) -> Option<String> {
-        let folder = self.store.place(Kind::Design, &self.entry.id)?.join(id);
-        #[cfg(not(target_family = "wasm"))]
-        return url::Url::from_directory_path(folder).ok().map(Into::into);
-        #[cfg(target_family = "wasm")]
-        {
-            let _ = folder;
-            None
-        }
-    }
-
     /// How large an open artboard's page is drawn against its own pixels
     /// before it is magnified.
     fn fitted_scale(&self, cx: &App) -> f32 {
@@ -303,12 +276,6 @@ impl DesignView {
             return;
         }
         self.tool = tool;
-        self.pins.drop_pick();
-        match tool {
-            Tool::Comment if self.open.is_some() => self.open_comments(cx),
-            Tool::Comment => {}
-            Tool::Select | Tool::Hand => self.comments.close(),
-        }
         cx.notify();
     }
 
@@ -379,7 +346,6 @@ impl DesignView {
             return;
         }
         self.park();
-        self.comments.close();
         window.focus(&self.focus, cx);
         cx.notify();
     }
@@ -554,7 +520,6 @@ impl DesignView {
         self.live = None;
         self.hover = None;
         self.loading = None;
-        self.pins = pins::Pins::default();
     }
 }
 
@@ -655,7 +620,7 @@ impl Render for DesignView {
                 Some(Ok(live)) => {
                     let browser = live.browser.clone();
                     let fit = preview::fit(record.viewport, self.available);
-                    let review = self.interactive_artboard(browser, artboard, fit, cx);
+                    let review = div().w(fit.width).h(fit.height).child(browser);
                     div()
                         .size_full()
                         .bg(theme.canvas_bg)
@@ -697,7 +662,6 @@ impl Render for DesignView {
             )
             .on_action(cx.listener(|this, _: &SelectTool, _, cx| this.set_tool(Tool::Select, cx)))
             .on_action(cx.listener(|this, _: &HandTool, _, cx| this.set_tool(Tool::Hand, cx)))
-            .on_action(cx.listener(|this, _: &CommentTool, _, cx| this.set_tool(Tool::Comment, cx)))
             .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
                 if event.keystroke.key == "space" && !this.space && this.focus.is_focused(window) {
                     this.space = true;
@@ -725,8 +689,8 @@ impl Render for DesignView {
                     .overflow_hidden()
                     .child(measure)
                     .child(body)
-                    .children(shown_key.and_then(|artboard| self.comment_panel(artboard, cx)))
                     .children((self.active_tool() == Tool::Hand).then(|| self.hand(cx)))
+                    .child(self.view_switch(cx))
                     .child(self.dock(cx))
                     .child(self.corner(window, cx))
                     .children(

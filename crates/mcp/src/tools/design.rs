@@ -1,10 +1,9 @@
 use crate::{
     tool::{Answer, Arg, Args, Outcome, Tool, Trouble},
-    tools::{self, PROJECT, comment, session},
+    tools::{self, PROJECT},
 };
 use artifact::{
-    comment::Author,
-    design::{Artboard, Design},
+    design::Design,
     kind::Kind,
     project::{Project as _, fs},
 };
@@ -24,7 +23,7 @@ const TITLE: Arg = Arg {
     about: "The name to show.",
 };
 
-pub static TOOLS: [Tool; 6] = [
+pub static TOOLS: [Tool; 4] = [
     Tool {
         name: "design_add",
         description: "Create a Design entry for artboards to review.",
@@ -43,7 +42,7 @@ pub static TOOLS: [Tool; 6] = [
     },
     Tool {
         name: "design_read",
-        description: "Read a design's viewport, path, artboards and comment counts.",
+        description: "Read a design's viewport, path and artboards.",
         schema: |bound| tools::fields(bound, &[PROJECT, DESIGN]),
         writes: false,
         deletes: false,
@@ -56,26 +55,6 @@ pub static TOOLS: [Tool; 6] = [
         writes: true,
         deletes: false,
         call: add_artboard,
-    },
-    Tool {
-        name: "design_comments",
-        description: "Read an element comment's selector, original text, and thread for each comment on a design artboard.",
-        schema: |bound| tools::fields(bound, &[PROJECT, DESIGN, ARTBOARD]),
-        writes: false,
-        deletes: false,
-        call: comments,
-    },
-    Tool {
-        name: "design_comment_reply",
-        description: "Append an agent's reply to an element comment on a design artboard.",
-        schema: |bound| {
-            let mut schema = comment::reply_schema(bound, DESIGN);
-            tools::required(&mut schema, ARTBOARD, "string");
-            schema
-        },
-        writes: true,
-        deletes: false,
-        call: comment_reply,
     },
 ];
 
@@ -142,7 +121,6 @@ fn data(store: &fs::Project, root: &Path, design: &Design) -> Result<Value, Trou
         .map(|artboard| {
             json!({
                 "id": artboard.id, "title": artboard.title, "path": dir.join(artboard.path()),
-                "comment_count": artboard.comments.len(),
             })
         })
         .collect();
@@ -156,39 +134,4 @@ fn data(store: &fs::Project, root: &Path, design: &Design) -> Result<Value, Trou
 
 fn answer(value: Value) -> Answer {
     Answer::said(serde_json::to_string_pretty(&value).expect("design data serializes")).with(value)
-}
-
-fn comment_artboard<'a>(id: &str, design: &'a mut Design) -> Result<&'a mut Artboard, Trouble> {
-    design
-        .artboards
-        .iter_mut()
-        .find(|artboard| artboard.id == id)
-        .ok_or_else(|| Trouble::Refused(format!("no artboard {id} in this design")))
-}
-
-fn comments(args: Args<'_>) -> Outcome {
-    let (_, _, mut design) = find(&args)?;
-    let number = design.number;
-    let artboard = comment_artboard(args.text(ARTBOARD)?, &mut design)?;
-    Ok(answer(
-        json!({ "design": number, "artboard": artboard.id, "comments": artboard.comments }),
-    ))
-}
-
-fn comment_reply(args: Args<'_>) -> Outcome {
-    let id = comment::id(&args)?;
-    let (_, store, mut design) = find(&args)?;
-    let artboard = comment_artboard(args.text(ARTBOARD)?, &mut design)?;
-    let note = artboard
-        .comments
-        .iter_mut()
-        .find(|note| note.thread.id == id)
-        .ok_or_else(|| Trouble::Refused(format!("this artboard has no comment {id}")))?;
-    note.thread.reply(
-        Author::Agent,
-        args.text(comment::ANSWER)?.to_owned(),
-        session::turn_link(&args),
-    );
-    store.save_design(&mut design)?;
-    Ok(Answer::said(format!("Design comment {id} answered")).with(json!({"comment": id})))
 }

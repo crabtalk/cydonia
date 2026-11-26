@@ -5,7 +5,7 @@ use bezel::{
 };
 
 #[test]
-fn design_escape_yields_to_the_comment_field() {
+fn design_escape_yields_to_text_fields() {
     let keymap = Keymap::new(bindings());
     let review = KeyContext::parse(CONTEXT).unwrap();
     let text = KeyContext::parse(KEY_CONTEXT).unwrap();
@@ -27,7 +27,7 @@ fn design_escape_yields_to_the_comment_field() {
 }
 
 #[test]
-fn design_tool_and_zoom_keys_yield_to_the_comment_field() {
+fn design_tool_and_zoom_keys_yield_to_text_fields() {
     let keymap = Keymap::new(bindings());
     let review = KeyContext::parse(CONTEXT).unwrap();
     let text = KeyContext::parse(KEY_CONTEXT).unwrap();
@@ -37,7 +37,7 @@ fn design_tool_and_zoom_keys_yield_to_the_comment_field() {
     } else {
         ["ctrl-=", "ctrl--"]
     };
-    for key in zoom.into_iter().chain(["shift-1", "v", "h", "c"]) {
+    for key in zoom.into_iter().chain(["shift-1", "v", "h"]) {
         let input = [Keystroke::parse(key).unwrap()];
         assert_eq!(
             keymap

@@ -1,6 +1,6 @@
 use crate::view::{
     design::{
-        DesignView, Tool,
+        DesignView,
         preview::{self, Revision},
     },
     kit::web,
@@ -156,7 +156,6 @@ impl DesignView {
         let hover_id = id.clone();
         let weak = owner.downgrade();
         let expand = weak.clone();
-        let comments_id = id.clone();
         let external = owner.downgrade();
         let path = artboard.path();
         let body = div()
@@ -208,17 +207,6 @@ impl DesignView {
             .child(
                 web::frame_header(&artboard.title, cx)
                     .w(header_width)
-                    .child(
-                        Self::comments_button(artboard.comments.len(), cx).on_click({
-                            let owner = owner.downgrade();
-                            move |_, window, cx| {
-                                let _ = owner.update(cx, |view, cx| {
-                                    view.set_tool(Tool::Comment, cx);
-                                    view.expand(comments_id.clone(), window, cx);
-                                });
-                            }
-                        }),
-                    )
                     .child(
                         theme
                             .icon_button(icons::arrows::Maximize2, ButtonStyle::Ghost, None)

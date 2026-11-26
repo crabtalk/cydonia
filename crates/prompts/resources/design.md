@@ -26,7 +26,7 @@ Use the artboard id and project-relative path returned by the tool.
 Write `index.html` and its CSS, images and scripts in that artboard directory.
 Use relative paths for those files. Keep entry metadata in the design tools.
 To revise an existing artboard, edit the files at the path from `design_read`
-so the artboard keeps its id and comment threads.
+so the artboard keeps its id.
 
 ## Check each artboard
 
@@ -35,11 +35,3 @@ from `design_read` in `artboard`. Inspect each screenshot at the design's
 configured viewport before handing the work back. Exercise forms, menus and
 other interactions with `browser_read`, `browser_inspect` and `browser_click`.
 See `cydonia://resources/browser` for target fields and element numbers.
-
-## Respond to comments
-
-Use `design_read` for comment counts, then pass the design reference and
-artboard id to `design_comments`. Read each thread with its element selector
-and quoted text. Revise the artboard and check it again in the browser. Reply
-with `design_comment_reply`, passing the design, artboard, comment id and an
-answer that states what changed or what remains open.

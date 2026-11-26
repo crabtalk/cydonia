@@ -1,19 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Anchor {
-    pub url: String,
-    pub selector: String,
-    pub quote: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ElementComment {
-    pub anchor: Anchor,
-    #[serde(flatten)]
-    pub thread: Thread,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Thread {
     pub id: u64,

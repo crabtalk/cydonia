@@ -8,8 +8,8 @@ use crate::view::{
 use artifact::{design::Design, web::Viewport};
 use bezel::{
     gpui::{
-        App, Context, CursorStyle, Entity, MouseButton, MouseDownEvent, MouseMoveEvent,
-        MouseUpEvent, Render, ScrollEvent, WeakEntity, Window, div, prelude::*, px,
+        Context, CursorStyle, Entity, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+        Render, ScrollEvent, WeakEntity, Window, div, prelude::*, px,
     },
     theme::{Glass, SurfaceStyle, Theme},
     ui::{
@@ -18,7 +18,7 @@ use bezel::{
         menu::Item,
         surface,
         tooltip::Tooltip,
-        widgets::{ButtonStyle, Buttons as _, Controls as _},
+        widgets::Controls as _,
     },
 };
 
@@ -125,23 +125,50 @@ impl Render for ViewportButton {
 }
 
 impl DesignView {
-    pub(super) fn comments_button(
-        count: usize,
-        cx: &App,
-    ) -> bezel::gpui::Stateful<bezel::gpui::Div> {
-        Theme::of(cx)
-            .icon_button(icons::social::MessageCircle, ButtonStyle::Ghost, None)
-            .id("artboard-comments")
-            .flex_none()
-            .w_auto()
-            .px(px(6.))
-            .gap(px(4.))
-            .child(count.to_string())
-            .tooltip(move |window, cx| Tooltip::text(format!("Comments ({count})"), window, cx))
+    /// The top left: all the artboards on the canvas, or one open.
+    pub(super) fn view_switch(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = Theme::of(cx).clone();
+        let artboards = &self.source.read(cx).artboards;
+        let single = artboards
+            .iter()
+            .find(|artboard| Some(&artboard.id) == self.last_open.as_ref())
+            .or_else(|| artboards.first())
+            .map(|artboard| artboard.id.clone());
+        let open = self.open.is_some();
+        let all = theme
+            .toggle_group_icon(icons::glyph::LayoutGrid, !open)
+            .id("design-view-all")
+            .tooltip(|window, cx| Tooltip::with_keystroke("All artboards", "shift-1", window, cx))
+            .on_click(cx.listener(|this, _, window, cx| this.close_artboard(window, cx)));
+        let one = theme
+            .toggle_group_icon(icons::glyph::Square, open)
+            .id("design-view-one")
+            .tooltip(|window, cx| Tooltip::text("One artboard", window, cx))
+            .when_some(single.filter(|_| !open), |button, id| {
+                button.on_click(
+                    cx.listener(move |this, _, window, cx| this.expand(id.clone(), window, cx)),
+                )
+            });
+        let row = div()
+            .rounded(px(Theme::surface_radius()))
+            .flex()
+            .flex_row()
+            .items_center()
+            .p(px(TOOL_PADDING + 1.))
+            .gap(px(2.))
+            .child(all)
+            .child(one);
+        div()
+            .absolute()
+            .top(px(GUTTER))
+            .left(px(GUTTER))
+            .child(surface::of(
+                "design-view-switch",
+                SurfaceStyle::Glass(Glass::Regular),
+                move |_, _, _| row,
+            ))
     }
 
-    /// The toolbar floating at the bottom middle: an open artboard's tools,
-    /// then the zoom, read as a percentage, that opens the zoom menu.
     /// The tools, floating at the bottom middle.
     pub(super) fn dock(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::of(cx).clone();
@@ -160,13 +187,6 @@ impl DesignView {
                 "Hand",
                 "h",
                 icons::glyph::Hand,
-            ),
-            (
-                Tool::Comment,
-                "design-tool-comment",
-                "Comment",
-                "c",
-                icons::glyph::MessageCircle,
             ),
         ]
         .map(|(tool, id, label, key, icon)| {

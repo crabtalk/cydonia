@@ -530,7 +530,6 @@ impl Project {
         let artboard = Artboard {
             id,
             title: title.into(),
-            comments: Vec::new(),
             revision: None,
         };
         design.artboards.push(artboard.clone());

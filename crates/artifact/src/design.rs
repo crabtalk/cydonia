@@ -1,8 +1,4 @@
-use crate::{
-    comment::{Anchor, ElementComment, Thread},
-    stamp,
-    web::Viewport,
-};
+use crate::{stamp, web::Viewport};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -35,26 +31,12 @@ pub struct Design {
 pub struct Artboard {
     pub id: String,
     pub title: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub comments: Vec<ElementComment>,
     /// Version of the files used to invalidate a rendered preview.
     #[serde(skip)]
     pub revision: Option<String>,
 }
 
 impl Artboard {
-    pub fn comment(&mut self, anchor: Anchor, note: String) -> u64 {
-        let id = Thread::fresh_id(
-            stamp::now() as u64,
-            self.comments.iter().map(|comment| comment.thread.id),
-        );
-        self.comments.push(ElementComment {
-            anchor,
-            thread: Thread::new(id, note, None),
-        });
-        id
-    }
-
     pub fn path(&self) -> PathBuf {
         PathBuf::from(&self.id).join(INDEX)
     }
