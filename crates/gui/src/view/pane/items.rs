@@ -165,7 +165,8 @@ impl Tab {
         let workspace = self.workspace.read(cx);
         let source = workspace.canvas_entity(&canvas)?.clone();
         let path = workspace.project(canvas.project)?.path.clone();
-        let view = cx.new(|cx| CanvasView::new(canvas, source, self.root.clone(), path, cx));
+        let (root, workspace) = (self.root.clone(), self.workspace.clone());
+        let view = cx.new(|cx| CanvasView::new(canvas, source, root, workspace, path, cx));
         self.canvases.push(view.clone());
         Some(view)
     }

@@ -1,13 +1,46 @@
+use crate::model::workspace::{Entry, Workspace};
 use bezel::{
-    gpui::{App, Entity, Focusable as _, IntoElement, Window, div, prelude::*, px},
+    gpui::{App, Context, Entity, Focusable as _, IntoElement, Window, div, prelude::*, px},
     theme::{Glass, SurfaceStyle, Theme},
     ui::{icons, surface, widgets::Button},
 };
-use canvas::{CanvasEditor, CanvasView};
+use canvas::{CanvasEditor, CanvasView, Opening};
 
 pub(crate) const TOOL_PADDING: f32 = 4.;
 
 pub(crate) struct Navigation(pub Entity<CanvasView>);
+
+/// Open `surface` where `entry` was last looked at, or as `otherwise` where it
+/// never was, and note on `workspace` where it looks as that moves.
+pub(crate) fn remember<V: 'static>(
+    surface: &Entity<CanvasView>,
+    entry: Entry,
+    workspace: Entity<Workspace>,
+    otherwise: Option<Opening>,
+    cx: &mut Context<V>,
+) {
+    let opening = workspace
+        .read(cx)
+        .camera(&entry)
+        .map(Opening::At)
+        .or(otherwise);
+    if let Some(opening) = opening {
+        surface.update(cx, |surface, cx| {
+            surface.update_editor(cx, |editor| editor.open_with(opening))
+        });
+    }
+    let mut noted = None;
+    cx.observe(surface, move |_, surface, cx| {
+        let camera = surface.read(cx).editor().camera();
+        if camera.is_some() && camera != noted {
+            noted = camera;
+            if let Some(camera) = camera {
+                workspace.update(cx, |workspace, _| workspace.set_camera(&entry, camera));
+            }
+        }
+    })
+    .detach();
+}
 
 impl Navigation {
     pub(crate) fn render(self) -> impl IntoElement {

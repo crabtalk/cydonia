@@ -1,11 +1,14 @@
 use crate::{
     model::{
         canvas::Canvas,
-        workspace::{Entry, Member, Opening},
+        workspace::{Entry, Member, Opening, Workspace},
     },
     view::{
         canvas::actions::Scope,
-        kit::{canvas::Navigation, menu::MenuHost},
+        kit::{
+            canvas::{self as canvas_kit, Navigation},
+            menu::MenuHost,
+        },
         window::{
             reach::InWindow,
             root::{Cydonia, NewCanvas},
@@ -128,6 +131,7 @@ impl CanvasView {
         canvas: Entry,
         source: Entity<Canvas>,
         root: WeakEntity<Cydonia>,
+        workspace: Entity<Workspace>,
         path: PathBuf,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -162,6 +166,7 @@ impl CanvasView {
                     guides: false,
                 })
         });
+        canvas_kit::remember(&surface, canvas.clone(), workspace, None, cx);
         let error = source.read(cx).error.clone();
         cx.observe(&source, |this, source, cx| {
             let source = source.read(cx);

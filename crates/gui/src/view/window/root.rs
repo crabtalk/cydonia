@@ -429,6 +429,7 @@ pub fn open(settings: Settings, state: State, cx: &mut App) -> Result<WindowHand
                 cx.on_app_quit(|root: &mut Cydonia, cx| {
                     root.save_panel_layout(cx);
                     root.save_window(cx);
+                    root.workspace.read(cx).save();
                     async {}
                 })
                 .detach();

@@ -19,7 +19,7 @@ use bezel::{
     },
 };
 use canvas::{
-    CanvasEditor, CanvasView as Surface, Document,
+    CanvasView as Surface, Document,
     kind::{self, Card, Kinds},
     layout,
     model::{Canvas, Node},
@@ -94,19 +94,6 @@ impl DesignView {
                 cx,
             )
         });
-        if !self.fitted
-            && self.available.width > px(0.)
-            && !record.artboards.is_empty()
-            && self.loading.is_none()
-        {
-            self.fitted = true;
-            let surface = self.surface.clone();
-            cx.defer(move |cx| {
-                surface.update(cx, |surface, cx| {
-                    surface.update_editor(cx, CanvasEditor::fit)
-                });
-            });
-        }
         div()
             .size_full()
             .relative()

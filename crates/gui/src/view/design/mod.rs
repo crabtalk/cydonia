@@ -9,6 +9,7 @@ use crate::{
             toolbar::ViewportButton,
         },
         kit::{
+            canvas as canvas_kit,
             menu::{self, Act, MenuHost},
             rename::{Rename, Renaming},
         },
@@ -38,7 +39,7 @@ use bezel::{
     },
 };
 use browser::{WebView, WebViewEvent};
-use canvas::{CanvasView as Surface, Document};
+use canvas::{CanvasView as Surface, Document, Opening};
 use std::{collections::HashMap, path::Path, time::Duration};
 
 pub(crate) mod preview;
@@ -90,7 +91,6 @@ pub(crate) struct DesignView {
     /// The artboard opened last, which the one-artboard view goes back to.
     last_open: Option<String>,
     document: Entity<Document>,
-    fitted: bool,
     surface: Entity<Surface>,
     viewport_button: Entity<ViewportButton>,
     hover: Option<(Revision, LiveArtboard, Subscription)>,
@@ -206,6 +206,13 @@ impl DesignView {
             }));
         })
         .detach();
+        canvas_kit::remember(
+            &surface,
+            entry.clone(),
+            workspace.clone(),
+            Some(Opening::Fit),
+            cx,
+        );
         let owner = cx.entity().downgrade();
         let viewport_button = cx.new(|cx| ViewportButton::new(owner, source.clone(), cx));
         Self {
@@ -217,7 +224,6 @@ impl DesignView {
             open: None,
             last_open: None,
             document,
-            fitted: false,
             surface,
             viewport_button,
             hover: None,
@@ -475,7 +481,7 @@ impl DesignView {
             self.capture(artboard, key, record.viewport, None, folder, window, cx);
             return;
         }
-        if !self.fitted || self.zoom_settle.is_some() {
+        if self.zoom_settle.is_some() {
             return;
         }
 
