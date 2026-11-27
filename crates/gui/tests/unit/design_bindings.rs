@@ -37,7 +37,7 @@ fn design_tool_and_zoom_keys_yield_to_text_fields() {
     } else {
         ["ctrl-=", "ctrl--"]
     };
-    for key in zoom.into_iter().chain(["shift-1", "v", "h"]) {
+    for key in zoom.into_iter().chain(["shift-1", "shift-0", "v", "h"]) {
         let input = [Keystroke::parse(key).unwrap()];
         assert_eq!(
             keymap

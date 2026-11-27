@@ -1,7 +1,7 @@
 use crate::view::{
     design::{
-        CONTEXT, DesignMenu, DesignView, FitArtboards, GUTTER, Tool, ZOOM_LEVELS, Zoom, ZoomIn,
-        ZoomOut,
+        ActualSize, CONTEXT, DesignMenu, DesignView, FitArtboards, GUTTER, Tool, ZOOM_LEVELS, Zoom,
+        ZoomIn, ZoomOut,
     },
     kit::{
         canvas::TOOL_PADDING,
@@ -311,7 +311,7 @@ impl DesignView {
         self.toggle_menu(
             DesignMenu::Zoom,
             Place::BelowEnd,
-            |this, window, cx| {
+            |_, window, cx| {
                 let zoom = |zoom| {
                     move |this: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
                         this.zoom(zoom, window, cx)
@@ -327,7 +327,7 @@ impl DesignView {
                         zoom(Zoom::Out),
                     ),
                     menu::row(
-                        Item::action("Fit artboards").with_shortcut_in(
+                        Item::action("Zoom to fit").with_shortcut_in(
                             &FitArtboards,
                             CONTEXT,
                             window,
@@ -336,13 +336,15 @@ impl DesignView {
                         zoom(Zoom::Fit),
                     ),
                     menu::row(Item::Separator, |_: &mut Self, _, _| {}),
-                    menu::heading(format!("Now {}", percent(this.scale(cx)))),
                 ];
-                rows.extend(
-                    ZOOM_LEVELS.map(|level| {
-                        menu::row(Item::action(percent(level)), zoom(Zoom::To(level)))
-                    }),
-                );
+                rows.extend(ZOOM_LEVELS.map(|level| {
+                    let item = Item::action(format!("Zoom to {}", percent(level)));
+                    let item = match level == 1. {
+                        true => item.with_shortcut_in(&ActualSize, CONTEXT, window, cx),
+                        false => item,
+                    };
+                    menu::row(item, zoom(Zoom::To(level)))
+                }));
                 rows
             },
             window,

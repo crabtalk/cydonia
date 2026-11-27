@@ -51,15 +51,23 @@ const GUTTER: f32 = 16.;
 const ZOOM_SETTLE: Duration = Duration::from_millis(150);
 /// What one zoom in multiplies an open artboard's magnification by, as the
 /// canvas's does its zoom.
-const MAGNIFICATION_STEP: f32 = 1.25;
+const MAGNIFICATION_STEP: f32 = 2.;
 /// The scales the zoom menu offers by name.
-const ZOOM_LEVELS: [f32; 6] = [0.25, 0.5, 0.75, 1., 1.5, 2.];
+const ZOOM_LEVELS: [f32; 3] = [0.5, 1., 2.];
 const MAX_MAGNIFICATION: f32 = 8.;
 const PAN_EVAL: Duration = Duration::from_secs(1);
 
 actions!(
     design_view,
-    [Back, ZoomIn, ZoomOut, FitArtboards, SelectTool, HandTool]
+    [
+        Back,
+        ZoomIn,
+        ZoomOut,
+        FitArtboards,
+        ActualSize,
+        SelectTool,
+        HandTool
+    ]
 );
 
 pub(crate) fn bindings() -> Vec<KeyBinding> {
@@ -76,6 +84,7 @@ pub(crate) fn bindings() -> Vec<KeyBinding> {
         KeyBinding::new(zoom_in_plus, ZoomIn, predicate),
         KeyBinding::new(zoom_out, ZoomOut, predicate),
         KeyBinding::new("shift-1", FitArtboards, predicate),
+        KeyBinding::new("shift-0", ActualSize, predicate),
         KeyBinding::new("v", SelectTool, predicate),
         KeyBinding::new("h", HandTool, predicate),
     ]
@@ -757,6 +766,9 @@ impl Render for DesignView {
             )
             .on_action(
                 cx.listener(|this, _: &FitArtboards, window, cx| this.zoom(Zoom::Fit, window, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &ActualSize, window, cx| this.zoom(Zoom::To(1.), window, cx)),
             )
             .on_action(cx.listener(|this, _: &SelectTool, _, cx| this.set_tool(Tool::Select, cx)))
             .on_action(cx.listener(|this, _: &HandTool, _, cx| this.set_tool(Tool::Hand, cx)))

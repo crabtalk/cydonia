@@ -28,6 +28,10 @@ use canvas::{
 const ARTBOARD: &str = "artboard";
 const FRAME_GUTTER: i64 = 120;
 const ROW_WIDTH: i64 = 5_000;
+/// How far the artboards zoom out.
+const MIN_ZOOM: f32 = 0.02;
+/// What one zoom in multiplies the zoom by.
+const ZOOM_STEP: f32 = 2.;
 
 impl DesignView {
     pub(super) fn make_surface(cx: &mut Context<Self>) -> (Entity<Document>, Entity<Surface>) {
@@ -47,6 +51,8 @@ impl DesignView {
                 .with_kinds(kinds)
                 .with_options(canvas::Options {
                     read_only: true,
+                    min_zoom: MIN_ZOOM,
+                    zoom_step: ZOOM_STEP,
                     ..Default::default()
                 })
         });
