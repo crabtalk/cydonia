@@ -9,7 +9,7 @@ use artifact::{
     article::{Article, comments::Comments, properties::Properties},
     board::Board,
     canvas::Canvas,
-    design::Design,
+    design::{Artboard, Design},
     kind::Kind,
     project::{Project, Result, Watching, fs, memory},
     session::record::Record,
@@ -180,6 +180,12 @@ impl Project for Store {
     }
     fn remove_design(&self, id: &str) -> Result<()> {
         each!(self, store => store.remove_design(id))
+    }
+    fn add_design_artboard(&self, design: &mut Design, title: &str) -> Result<Artboard> {
+        each!(self, store => store.add_design_artboard(design, title))
+    }
+    fn remove_design_artboard(&self, design: &mut Design, artboard: &str) -> Result<()> {
+        each!(self, store => store.remove_design_artboard(design, artboard))
     }
 
     fn articles(&self) -> Vec<Article> {

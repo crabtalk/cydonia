@@ -1,8 +1,14 @@
 use crate::model::{
     project::HeldDesign,
+    store::Store,
     workspace::{Entry, Member, Workspace},
 };
-use artifact::{design::Design, error::Error, kind::Kind, project::Project as _};
+use artifact::{
+    design::{Artboard, Design},
+    error::Error,
+    kind::Kind,
+    project::Project as _,
+};
 use bezel::gpui::{Context, Entity};
 
 impl Workspace {
@@ -73,14 +79,58 @@ impl Workspace {
         edit: impl FnOnce(&mut Design) -> Result<T, Error>,
         cx: &mut Context<Self>,
     ) -> Result<T, Error> {
+        self.change_design(
+            entry,
+            |store, design| {
+                let value = edit(design)?;
+                store.save_design(design)?;
+                Ok(value)
+            },
+            cx,
+        )
+    }
+
+    pub fn add_design_artboard(
+        &mut self,
+        entry: &Entry,
+        title: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<Artboard, Error> {
+        self.change_design(
+            entry,
+            |store, design| store.add_design_artboard(design, title),
+            cx,
+        )
+    }
+
+    pub fn remove_design_artboard(
+        &mut self,
+        entry: &Entry,
+        artboard: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<(), Error> {
+        self.change_design(
+            entry,
+            |store, design| store.remove_design_artboard(design, artboard),
+            cx,
+        )
+    }
+
+    /// Run `change` over a copy of the design, which saves it, and hold what
+    /// it saved.
+    fn change_design<T>(
+        &mut self,
+        entry: &Entry,
+        change: impl FnOnce(&Store, &mut Design) -> Result<T, Error>,
+        cx: &mut Context<Self>,
+    ) -> Result<T, Error> {
         let gone = || Error::Gone {
             named: "This design".into(),
         };
         let project = self.project(entry.project).ok_or_else(gone)?;
         let held = self.design_entity(entry).cloned().ok_or_else(gone)?;
         let mut next = held.read(cx).clone();
-        let value = edit(&mut next)?;
-        project.store().save_design(&mut next)?;
+        let value = change(&project.store(), &mut next)?;
         let archive_changed = held.read(cx).archived != next.archived;
         held.update(cx, |held, cx| {
             *held = next;

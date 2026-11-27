@@ -53,6 +53,8 @@ pub(crate) enum Renaming {
     Session(u64),
     Canvas(Entry),
     Design(Entry),
+    /// One artboard of a design, by its id.
+    Artboard(Entry, String),
     Table(Entry),
     /// A space, by its id — auto-named `space-1` until someone gives it a
     /// name of their own.
@@ -120,6 +122,14 @@ impl Renaming {
                 .design_entity(entry)
                 .map(|design| design.read(cx).label().to_owned())
                 .unwrap_or_default(),
+            Self::Artboard(entry, id) => workspace
+                .design_entity(entry)
+                .and_then(|design| {
+                    let design = design.read(cx);
+                    let artboard = design.artboards.iter().find(|held| &held.id == id)?;
+                    Some(artboard.title.clone())
+                })
+                .unwrap_or_default(),
             Self::Table(entry) => workspace
                 .table_entity(entry)
                 .map(|table| table.read(cx).record.name.clone())
@@ -154,6 +164,26 @@ impl Renaming {
                     },
                     cx,
                 );
+            }
+            Self::Artboard(entry, id) => {
+                let name = name.trim().to_owned();
+                if name.is_empty() {
+                    return Ok(());
+                }
+                workspace
+                    .edit_design(
+                        &entry,
+                        |design| {
+                            if let Some(artboard) =
+                                design.artboards.iter_mut().find(|held| held.id == id)
+                            {
+                                artboard.title = name;
+                            }
+                            Ok(())
+                        },
+                        cx,
+                    )
+                    .map_err(|error| error.to_string())?;
             }
             Self::Table(entry) => return workspace.rename_table(&entry, name, cx),
             Self::Space(id) => workspace.rename_space(&id, name, cx),

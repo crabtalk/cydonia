@@ -8,6 +8,10 @@ use crate::{
             preview::{LiveArtboard, Preview, Revision, THUMBNAIL_WIDTH},
             toolbar::ViewportButton,
         },
+        kit::{
+            menu::{self, Act, MenuHost},
+            rename::{Rename, Renaming},
+        },
         window::{
             reach::InWindow,
             root::{Cydonia, NewDesign},
@@ -26,7 +30,12 @@ use bezel::{
         Subscription, Task, WeakEntity, Window, actions, div, point, prelude::*, px, size,
     },
     theme::{TextStyle, Theme, Typeset as _},
-    ui::{context_menu::ContextMenu, input::KEY_CONTEXT},
+    ui::{
+        context_menu::{ContextMenu, Place},
+        icons,
+        input::KEY_CONTEXT,
+        menu::Item,
+    },
 };
 use browser::{WebView, WebViewEvent};
 use canvas::{CanvasView as Surface, Document};
@@ -93,7 +102,8 @@ pub(crate) struct DesignView {
     live: Option<(Revision, Result<LiveArtboard, String>)>,
     /// Redraws the zoom's reading when a pinch magnifies the open artboard.
     magnified: Option<Subscription>,
-    zoom_menu: ContextMenu<Self>,
+    menu: ContextMenu<Self, DesignMenu>,
+    rename: Rename,
     tool: Tool,
     /// Space is held: the hand stands in for the tool.
     space: bool,
@@ -109,6 +119,14 @@ enum Tool {
     Select,
     /// Pans the canvas, or the open artboard's page.
     Hand,
+}
+
+/// Which of the view's menus is up.
+#[derive(Clone, PartialEq)]
+pub(crate) enum DesignMenu {
+    Zoom,
+    /// One artboard's, by its id, where it was right-pressed.
+    Artboard(String),
 }
 
 #[derive(Clone, Copy)]
@@ -169,6 +187,7 @@ impl DesignView {
         source: Entity<Design>,
         store: Store,
         root: WeakEntity<Cydonia>,
+        workspace: Entity<Workspace>,
         cx: &mut Context<Self>,
     ) -> Self {
         cx.observe(&source, |_, _, cx| cx.notify()).detach();
@@ -209,7 +228,8 @@ impl DesignView {
             loading: None,
             live: None,
             magnified: None,
-            zoom_menu: ContextMenu::default(),
+            menu: ContextMenu::default(),
+            rename: Rename::new(workspace, |this: &mut Self| &mut this.rename, cx),
             tool: Tool::Select,
             space: false,
             pan_from: None,
@@ -224,6 +244,64 @@ impl DesignView {
         self.loading = None;
         window.focus(&self.focus, cx);
         cx.notify();
+    }
+
+    /// Put the name field over artboard `id`'s title.
+    fn rename_artboard(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.rename
+            .start(Renaming::Artboard(self.entry.clone(), id), window, cx);
+        cx.notify();
+    }
+
+    /// Artboard `id`'s menu, at the window point `at`.
+    fn artboard_menu(
+        &mut self,
+        id: String,
+        at: gpui::Point<gpui::Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(title) = self
+            .source
+            .read(cx)
+            .artboards
+            .iter()
+            .find(|artboard| artboard.id == id)
+            .map(|artboard| artboard.title.clone())
+        else {
+            return;
+        };
+        let key = DesignMenu::Artboard(id.clone());
+        let renamed = id.clone();
+        let rows: Vec<(Item, Act<Self>)> = vec![
+            menu::row(
+                Item::action("Rename").with_icon(icons::text::SquarePen),
+                move |this: &mut Self, window, cx| {
+                    this.rename_artboard(renamed.clone(), window, cx)
+                },
+            ),
+            menu::row(
+                Item::action("Delete").with_icon(icons::files::Trash),
+                move |this: &mut Self, window, cx| {
+                    let (entry, id, title) = (this.entry.clone(), id.clone(), title.clone());
+                    this.defer_window(window, cx, move |root, window, cx| {
+                        root.ask_delete_artboard(entry, id, title, window, cx)
+                    });
+                },
+            ),
+        ];
+        self.toggle_menu(key, Place::At(at), |_, _, _| rows, window, cx);
+    }
+
+    /// Add an empty artboard after the last.
+    fn new_artboard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let title = format!("Artboard {}", self.source.read(cx).artboards.len() + 1);
+        self.defer_edit(
+            window,
+            cx,
+            move |workspace, entry, cx| workspace.add_design_artboard(entry, &title, cx),
+            |_, _, _| {},
+        );
     }
 
     pub(crate) fn open_browser(&self) -> Option<Entity<WebView>> {
@@ -523,6 +601,18 @@ impl DesignView {
     }
 }
 
+impl MenuHost for DesignView {
+    type Key = DesignMenu;
+
+    fn menu(&self) -> &ContextMenu<Self, DesignMenu> {
+        &self.menu
+    }
+
+    fn menu_mut(&mut self) -> &mut ContextMenu<Self, DesignMenu> {
+        &mut self.menu
+    }
+}
+
 impl InWindow for DesignView {
     fn root(&self) -> &WeakEntity<Cydonia> {
         &self.root
@@ -693,6 +783,15 @@ impl Render for DesignView {
                     .child(self.view_switch(cx))
                     .child(self.dock(cx))
                     .child(self.corner(window, cx))
+                    .children(
+                        self.menu()
+                            .key()
+                            .filter(|key| matches!(key, DesignMenu::Artboard(_)))
+                            .cloned()
+                            .and_then(|key| {
+                                self.menu_here(&key, "design-artboard-menu", window, cx)
+                            }),
+                    )
                     .children(
                         self.loading
                             .as_ref()

@@ -1,7 +1,11 @@
 use crate::view::{
-    design::{CONTEXT, DesignView, FitArtboards, GUTTER, Tool, ZOOM_LEVELS, Zoom, ZoomIn, ZoomOut},
+    design::{
+        CONTEXT, DesignMenu, DesignView, FitArtboards, GUTTER, Tool, ZOOM_LEVELS, Zoom, ZoomIn,
+        ZoomOut,
+    },
     kit::{
         canvas::TOOL_PADDING,
+        menu::{self, MenuHost as _},
         web::{self, ViewportLook as _},
     },
 };
@@ -18,7 +22,7 @@ use bezel::{
         menu::Item,
         surface,
         tooltip::Tooltip,
-        widgets::Controls as _,
+        widgets::{ButtonStyle, Buttons as _, Controls as _},
     },
 };
 
@@ -206,7 +210,15 @@ impl DesignView {
                 .tooltip(move |window, cx| Tooltip::with_keystroke(label, key, window, cx))
                 .on_click(cx.listener(move |this, _, _, cx| this.set_tool(tool, cx)))
         });
-        tool_row().children(tools)
+        let add = theme
+            .icon_button(icons::math::Plus, ButtonStyle::Ghost, None)
+            .id("design-new-artboard")
+            .tooltip(|window, cx| Tooltip::text("New artboard", window, cx))
+            .on_click(cx.listener(|this, _, window, cx| this.new_artboard(window, cx)));
+        tool_row()
+            .children(tools)
+            .child(div().w(px(1.)).h(px(16.)).mx(px(4.)).bg(theme.border))
+            .child(add)
     }
 
     /// The top right: the viewport, then the zoom, read as a percentage, that
@@ -245,16 +257,11 @@ impl DesignView {
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.toggle_zoom_menu(window, cx)
                                     }));
-                                ContextMenu::trigger(zoom, |this| &mut this.zoom_menu, (), cx)
+                                this.menu_trigger(zoom, DesignMenu::Zoom, cx)
                             })
                         },
                     ))
-                    .children(self.zoom_menu.render(
-                        "design-zoom-menu",
-                        |this| &mut this.zoom_menu,
-                        window,
-                        cx,
-                    )),
+                    .children(self.menu_here(&DesignMenu::Zoom, "design-zoom-menu", window, cx)),
             )
     }
 
@@ -301,45 +308,46 @@ impl DesignView {
     }
 
     fn toggle_zoom_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        ContextMenu::toggle(
-            self,
-            |this| &mut this.zoom_menu,
-            (),
+        self.toggle_menu(
+            DesignMenu::Zoom,
             Place::BelowEnd,
             |this, window, cx| {
-                let scale = this.scale(cx);
-                let mut items = vec![
-                    Item::action("Zoom in").with_shortcut_in(&ZoomIn, CONTEXT, window, cx),
-                    Item::action("Zoom out").with_shortcut_in(&ZoomOut, CONTEXT, window, cx),
-                    Item::action("Fit artboards").with_shortcut_in(
-                        &FitArtboards,
-                        CONTEXT,
-                        window,
-                        cx,
+                let zoom = |zoom| {
+                    move |this: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
+                        this.zoom(zoom, window, cx)
+                    }
+                };
+                let mut rows = vec![
+                    menu::row(
+                        Item::action("Zoom in").with_shortcut_in(&ZoomIn, CONTEXT, window, cx),
+                        zoom(Zoom::In),
                     ),
-                    Item::Separator,
-                    Item::Heading(format!("Now {}", percent(scale)).into()),
+                    menu::row(
+                        Item::action("Zoom out").with_shortcut_in(&ZoomOut, CONTEXT, window, cx),
+                        zoom(Zoom::Out),
+                    ),
+                    menu::row(
+                        Item::action("Fit artboards").with_shortcut_in(
+                            &FitArtboards,
+                            CONTEXT,
+                            window,
+                            cx,
+                        ),
+                        zoom(Zoom::Fit),
+                    ),
+                    menu::row(Item::Separator, |_: &mut Self, _, _| {}),
+                    menu::heading(format!("Now {}", percent(this.scale(cx)))),
                 ];
-                items.extend(ZOOM_LEVELS.map(|level| Item::action(percent(level))));
-                (items, Self::choose_zoom)
+                rows.extend(
+                    ZOOM_LEVELS.map(|level| {
+                        menu::row(Item::action(percent(level)), zoom(Zoom::To(level)))
+                    }),
+                );
+                rows
             },
             window,
             cx,
         );
-    }
-
-    fn choose_zoom(&mut self, path: &[usize], window: &mut Window, cx: &mut Context<Self>) {
-        let zoom = match path.first() {
-            Some(0) => Zoom::In,
-            Some(1) => Zoom::Out,
-            Some(2) => Zoom::Fit,
-            Some(index) => match index.checked_sub(5).and_then(|at| ZOOM_LEVELS.get(at)) {
-                Some(level) => Zoom::To(*level),
-                None => return,
-            },
-            None => return,
-        };
-        self.zoom(zoom, window, cx);
     }
 }
 

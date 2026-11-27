@@ -14,7 +14,7 @@ use crate::{
     },
     board::{Board, key},
     canvas::{self as canvas_artifact, Canvas, Document as CanvasDocument},
-    design::Design,
+    design::{Artboard, Design},
     error::Error,
     id,
     kind::Kind,
@@ -488,6 +488,37 @@ impl super::Project for Project {
             .remove(id)
             .ok_or_else(|| not_found("design", id))?;
         state.retire(Kind::Design, id);
+        Ok(())
+    }
+
+    fn add_design_artboard(&self, design: &mut Design, title: &str) -> super::Result<Artboard> {
+        let id = stamp::free(stamp::now(), |id| {
+            design.artboards.iter().any(|held| held.id == id)
+        });
+        let artboard = Artboard {
+            id,
+            title: title.into(),
+            revision: None,
+        };
+        design.artboards.push(artboard.clone());
+        if let Err(error) = self.save_design(design) {
+            design.artboards.pop();
+            return Err(error);
+        }
+        Ok(artboard)
+    }
+
+    fn remove_design_artboard(&self, design: &mut Design, artboard: &str) -> super::Result<()> {
+        let at = design
+            .artboards
+            .iter()
+            .position(|held| held.id == artboard)
+            .ok_or_else(|| not_found("artboard", artboard))?;
+        let removed = design.artboards.remove(at);
+        if let Err(error) = self.save_design(design) {
+            design.artboards.insert(at, removed);
+            return Err(error);
+        }
         Ok(())
     }
 

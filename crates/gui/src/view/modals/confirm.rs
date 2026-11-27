@@ -2,7 +2,7 @@
 //! from a card's, so it lives beside neither.
 
 use crate::{
-    model::workspace::Showing,
+    model::workspace::{Entry, Showing},
     view::{
         kit::{
             dialog::{answers, dialog},
@@ -30,6 +30,8 @@ pub(crate) enum Doomed {
     Entry(Row),
     /// One card, by the board it is on and its own id.
     Card(String, String),
+    /// One artboard, by its design and its own id.
+    Artboard(Entry, String),
     /// One column, by the board it is on and its own id.
     Column(String, String),
     /// A session's last turn, by the session and the item its message is.
@@ -169,6 +171,19 @@ impl Cydonia {
         match doomed {
             Doomed::Entry(entry) => self.delete_entry(entry, window, cx),
             Doomed::Card(board, card) => self.delete_card(board, card, cx),
+            Doomed::Artboard(design, artboard) => {
+                let removed = self.workspace.update(cx, |workspace, cx| {
+                    workspace.remove_design_artboard(design, artboard, cx)
+                });
+                if let Err(error) = removed {
+                    self.show_error(
+                        "Cannot delete artboard".into(),
+                        error.to_string(),
+                        window,
+                        cx,
+                    );
+                }
+            }
             Doomed::Column(board, column) => self.drop_column(board, column, cx),
             Doomed::Turn(id, at) => self.rewind(*id, *at, window, cx),
             Doomed::Identity(id) => {
@@ -291,6 +306,30 @@ impl Cydonia {
                 label,
                 goes: None,
                 note: "This cannot be undone.".to_owned(),
+                root: cx.entity().downgrade(),
+                focus: cx.focus_handle(),
+            },
+            window,
+            cx,
+        );
+    }
+
+    /// The same for one artboard of a design, whose folder goes with it.
+    pub(crate) fn ask_delete_artboard(
+        &mut self,
+        design: Entry,
+        artboard: String,
+        title: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let goes = Some(format!(".cydonia/designs/{}/{artboard}/", design.id));
+        self.ask(
+            Confirm {
+                doomed: Doomed::Artboard(design, artboard),
+                label: format!("the artboard \u{201c}{title}\u{201d}"),
+                goes,
+                note: "Every file goes with it. This cannot be undone.".to_owned(),
                 root: cx.entity().downgrade(),
                 focus: cx.focus_handle(),
             },

@@ -130,7 +130,7 @@ impl Frames {
                                     .size_full()
                                     .object_fit(ObjectFit::Contain),
                             )
-                            .child(frame_header(&title, cx)),
+                            .child(frame_header(title.clone(), cx)),
                     )
                     .into_any_element()
             });
@@ -441,7 +441,7 @@ impl Render for Page {
                     .child(body),
             )
             .child(
-                frame_header(&title, cx)
+                frame_header(title.clone(), cx)
                     .child(
                         theme
                             .button(viewport.to_string(), ButtonStyle::Ghost, None)

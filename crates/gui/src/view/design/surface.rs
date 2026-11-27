@@ -3,13 +3,13 @@ use crate::view::{
         DesignView,
         preview::{self, Revision},
     },
-    kit::web,
+    kit::{rename::Renaming, web},
 };
 use artifact::{canvas::web::Source, design::Design, kind::Kind};
 use bezel::{
     gpui::{
-        AnyElement, AppContext as _, Context, Entity, ObjectFit, SharedString, StyledImage as _,
-        Window, div, img, prelude::*, px,
+        AnyElement, AppContext as _, Context, Entity, MouseButton, ObjectFit, SharedString,
+        StyledImage as _, Window, div, img, prelude::*, px,
     },
     theme::{TextStyle, Theme, Typeset as _},
     ui::{
@@ -158,12 +158,20 @@ impl DesignView {
         let expand = weak.clone();
         let external = owner.downgrade();
         let path = artboard.path();
+        let pressed = owner.downgrade();
+        let pressed_id = id.clone();
         let body = div()
             .id(SharedString::from(id.clone()))
             .size_full()
             .relative()
             .overflow_hidden()
             .bg(theme.surface_card)
+            .on_mouse_down(MouseButton::Right, move |event, window, cx| {
+                cx.stop_propagation();
+                let _ = pressed.update(cx, |view, cx| {
+                    view.artboard_menu(pressed_id.clone(), event.position, window, cx)
+                });
+            })
             .on_hover(move |over, window, cx| {
                 let _ = weak.update(cx, |view, cx| {
                     view.hover_artboard(&hover_id, *over, window, cx)
@@ -200,12 +208,31 @@ impl DesignView {
             }));
         let extra = px((FRAME_GUTTER as f32 * card.zoom - 6.).max(0.));
         let header_width = card.size.width + extra.min((px(210.) - card.size.width).max(px(0.)));
+        let renaming = Renaming::Artboard(self.entry.clone(), node.id.clone());
+        let title = if self.rename.what.as_ref() == Some(&renaming) {
+            self.rename.field.clone().into_any_element()
+        } else {
+            let rename = owner.downgrade();
+            let rename_id = id.clone();
+            div()
+                .id("artboard-title")
+                .truncate()
+                .child(artboard.title.clone())
+                .on_click(move |event, window, cx| {
+                    if event.click_count() == 2 {
+                        let _ = rename.update(cx, |view, cx| {
+                            view.rename_artboard(rename_id.clone(), window, cx)
+                        });
+                    }
+                })
+                .into_any_element()
+        };
         div()
             .size_full()
             .relative()
             .child(body)
             .child(
-                web::frame_header(&artboard.title, cx)
+                web::frame_header(title, cx)
                     .w(header_width)
                     .child(
                         theme

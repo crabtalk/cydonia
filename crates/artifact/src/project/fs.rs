@@ -521,26 +521,6 @@ impl Project {
         Ok(self.cydonia().join(design::DIR).join(component(id)?))
     }
 
-    pub fn add_design_artboard(&self, design: &mut Design, title: &str) -> super::Result<Artboard> {
-        let dir = self.design_dir(&design.id)?;
-        if !dir.join(design::FILE).is_file() {
-            return Err(crate::error::Error::Stale);
-        }
-        let id = reserve_directory(&dir)?;
-        let artboard = Artboard {
-            id,
-            title: title.into(),
-            revision: None,
-        };
-        design.artboards.push(artboard.clone());
-        if let Err(error) = self.save_design(design) {
-            design.artboards.pop();
-            let _ = std::fs::remove_dir(dir.join(&artboard.id));
-            return Err(error);
-        }
-        Ok(artboard)
-    }
-
     pub fn canvas_file(&self, id: &str) -> Result<PathBuf> {
         Ok(self
             .cydonia()
@@ -885,6 +865,47 @@ impl super::Project for Project {
         let _lock = entry_lock(&self.cydonia().join(design::DIR), id)?;
         std::fs::remove_dir_all(self.design_dir(id)?)?;
         self.retire(Kind::Design, id)
+    }
+
+    fn add_design_artboard(&self, design: &mut Design, title: &str) -> super::Result<Artboard> {
+        let dir = self.design_dir(&design.id)?;
+        if !dir.join(design::FILE).is_file() {
+            return Err(crate::error::Error::Stale);
+        }
+        let id = reserve_directory(&dir)?;
+        let artboard = Artboard {
+            id,
+            title: title.into(),
+            revision: None,
+        };
+        design.artboards.push(artboard.clone());
+        if let Err(error) = self.save_design(design) {
+            design.artboards.pop();
+            let _ = std::fs::remove_dir(dir.join(&artboard.id));
+            return Err(error);
+        }
+        Ok(artboard)
+    }
+
+    fn remove_design_artboard(&self, design: &mut Design, artboard: &str) -> super::Result<()> {
+        let dir = self.design_dir(&design.id)?.join(component(artboard)?);
+        let at = design
+            .artboards
+            .iter()
+            .position(|held| held.id == artboard)
+            .ok_or_else(|| crate::error::Error::NotFound {
+                what: "artboard",
+                named: artboard.to_owned(),
+            })?;
+        let removed = design.artboards.remove(at);
+        if let Err(error) = self.save_design(design) {
+            design.artboards.insert(at, removed);
+            return Err(error);
+        }
+        match std::fs::remove_dir_all(dir) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error.into()),
+            _ => Ok(()),
+        }
     }
 
     fn articles(&self) -> Vec<Article> {

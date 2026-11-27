@@ -104,7 +104,7 @@ pub(crate) fn viewport_items(current: Option<Viewport>) -> Vec<Item> {
         .collect()
 }
 
-pub(crate) fn frame_header(title: &str, cx: &App) -> gpui::Div {
+pub(crate) fn frame_header(title: impl IntoElement, cx: &App) -> gpui::Div {
     div()
         .absolute()
         .left_0()
@@ -122,6 +122,6 @@ pub(crate) fn frame_header(title: &str, cx: &App) -> gpui::Div {
                 .text_style(TextStyle::Callout)
                 .text_color(Theme::of(cx).text_muted)
                 .truncate()
-                .child(title.to_owned()),
+                .child(title),
         )
 }

@@ -13,7 +13,7 @@ use crate::{
     article::{Article, comments::Comments, properties::Properties},
     board::Board,
     canvas::{Canvas, Document as CanvasDocument},
-    design::Design,
+    design::{Artboard, Design},
     kind::Kind,
     session::record::Record,
 };
@@ -107,6 +107,10 @@ pub trait Project {
 
     fn save_design(&self, design: &mut Design) -> Result<()>;
     fn remove_design(&self, id: &str) -> Result<()>;
+    /// Add an empty artboard to the end of `design` and save it.
+    fn add_design_artboard(&self, design: &mut Design, title: &str) -> Result<Artboard>;
+    /// Take artboard `artboard` out of `design`, files and all, and save it.
+    fn remove_design_artboard(&self, design: &mut Design, artboard: &str) -> Result<()>;
 
     // ── articles ─────────────────────────────────────────────────────
 
