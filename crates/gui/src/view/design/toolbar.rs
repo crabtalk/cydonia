@@ -8,8 +8,8 @@ use crate::view::{
 use artifact::{design::Design, web::Viewport};
 use bezel::{
     gpui::{
-        Context, CursorStyle, Entity, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-        Render, ScrollEvent, WeakEntity, Window, div, prelude::*, px,
+        Context, CursorStyle, Div, Entity, MouseButton, MouseDownEvent, MouseMoveEvent,
+        MouseUpEvent, Render, ScrollEvent, WeakEntity, Window, div, prelude::*, px,
     },
     theme::{Glass, SurfaceStyle, Theme},
     ui::{
@@ -127,7 +127,19 @@ impl Render for ViewportButton {
 impl DesignView {
     /// The top left: all the artboards on the canvas, or one open.
     pub(super) fn view_switch(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = Theme::of(cx).clone();
+        let view = cx.entity();
+        div()
+            .absolute()
+            .top(px(GUTTER))
+            .left(px(GUTTER))
+            .child(surface::of(
+                "design-view-switch",
+                SurfaceStyle::Glass(Glass::Regular),
+                move |theme, _, cx| view.update(cx, |this, cx| this.view_switch_row(theme, cx)),
+            ))
+    }
+
+    fn view_switch_row(&self, theme: &Theme, cx: &mut Context<Self>) -> Div {
         let artboards = &self.source.read(cx).artboards;
         let single = artboards
             .iter()
@@ -149,29 +161,27 @@ impl DesignView {
                     cx.listener(move |this, _, window, cx| this.expand(id.clone(), window, cx)),
                 )
             });
-        let row = div()
-            .rounded(px(Theme::surface_radius()))
-            .flex()
-            .flex_row()
-            .items_center()
-            .p(px(TOOL_PADDING + 1.))
-            .gap(px(2.))
-            .child(all)
-            .child(one);
-        div()
-            .absolute()
-            .top(px(GUTTER))
-            .left(px(GUTTER))
-            .child(surface::of(
-                "design-view-switch",
-                SurfaceStyle::Glass(Glass::Regular),
-                move |_, _, _| row,
-            ))
+        tool_row().child(all).child(one)
     }
 
     /// The tools, floating at the bottom middle.
     pub(super) fn dock(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = Theme::of(cx).clone();
+        let view = cx.entity();
+        div()
+            .absolute()
+            .left_0()
+            .right_0()
+            .bottom(px(12.))
+            .flex()
+            .justify_center()
+            .child(surface::of(
+                "design-tools",
+                SurfaceStyle::Glass(Glass::Regular),
+                move |theme, _, cx| view.update(cx, |this, cx| this.tools(theme, cx)),
+            ))
+    }
+
+    fn tools(&self, theme: &Theme, cx: &mut Context<Self>) -> Div {
         let active = self.active_tool();
         let tools = [
             (
@@ -196,26 +206,7 @@ impl DesignView {
                 .tooltip(move |window, cx| Tooltip::with_keystroke(label, key, window, cx))
                 .on_click(cx.listener(move |this, _, _, cx| this.set_tool(tool, cx)))
         });
-        let row = div()
-            .rounded(px(Theme::surface_radius()))
-            .flex()
-            .flex_row()
-            .items_center()
-            .p(px(TOOL_PADDING + 1.))
-            .gap(px(2.))
-            .children(tools);
-        div()
-            .absolute()
-            .left_0()
-            .right_0()
-            .bottom(px(12.))
-            .flex()
-            .justify_center()
-            .child(surface::of(
-                "design-tools",
-                SurfaceStyle::Glass(Glass::Regular),
-                move |_, _, _| row,
-            ))
+        tool_row().children(tools)
     }
 
     /// The top right: the viewport, then the zoom, read as a percentage, that
@@ -225,18 +216,7 @@ impl DesignView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let theme = Theme::of(cx).clone();
-        let zoom = theme
-            .select_trigger_with(None::<bezel::gpui::Div>, percent(self.scale(cx)))
-            .id("design-zoom")
-            .rounded(px(Theme::surface_radius()))
-            .border_0()
-            .py(px(0.))
-            .h(px(Theme::BUTTON_HEIGHT + 4.))
-            .w(px(76.))
-            .tooltip(|window, cx| Tooltip::text("Zoom", window, cx))
-            .on_click(cx.listener(|this, _, window, cx| this.toggle_zoom_menu(window, cx)));
-        let zoom = ContextMenu::trigger(zoom, |this| &mut this.zoom_menu, (), cx);
+        let view = cx.entity();
         div()
             .absolute()
             .top(px(GUTTER))
@@ -251,7 +231,23 @@ impl DesignView {
                     .child(surface::of(
                         "design-zoom-glass",
                         SurfaceStyle::Glass(Glass::Regular),
-                        move |_, _, _| zoom,
+                        move |theme, _, cx| {
+                            view.update(cx, |this, cx| {
+                                let zoom = theme
+                                    .select_trigger_with(None::<Div>, percent(this.scale(cx)))
+                                    .id("design-zoom")
+                                    .rounded(px(Theme::surface_radius()))
+                                    .border_0()
+                                    .py(px(0.))
+                                    .h(px(Theme::BUTTON_HEIGHT + 4.))
+                                    .w(px(76.))
+                                    .tooltip(|window, cx| Tooltip::text("Zoom", window, cx))
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.toggle_zoom_menu(window, cx)
+                                    }));
+                                ContextMenu::trigger(zoom, |this| &mut this.zoom_menu, (), cx)
+                            })
+                        },
                     ))
                     .children(self.zoom_menu.render(
                         "design-zoom-menu",
@@ -345,6 +341,17 @@ impl DesignView {
         };
         self.zoom(zoom, window, cx);
     }
+}
+
+/// The padded row a glass tool group lays its buttons in.
+fn tool_row() -> Div {
+    div()
+        .rounded(px(Theme::surface_radius()))
+        .flex()
+        .flex_row()
+        .items_center()
+        .p(px(TOOL_PADDING + 1.))
+        .gap(px(2.))
 }
 
 /// A scale as the zoom reads it.
