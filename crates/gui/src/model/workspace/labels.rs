@@ -1,7 +1,8 @@
 //! Labels across every open project — see [`artifact::label`]. Each entry
 //! holds its own; the set of labels is whatever the entries carry.
 
-use super::{Showing, Workspace};
+use crate::model::workspace::{Entry, Showing, Workspace};
+use artifact::kind::Kind;
 use bezel::gpui::{App, Context};
 use std::collections::BTreeMap;
 
@@ -26,6 +27,9 @@ impl Workspace {
             Showing::Canvas(id) => open
                 .canvas_ix(id)
                 .map(|ix| open.canvases[ix].canvas.read(cx).record.labels.as_slice()),
+            Showing::Design(id) => open
+                .design_ix(id)
+                .map(|ix| open.designs[ix].design.read(cx).labels.as_slice()),
             Showing::Table(_) => None,
         }
     }
@@ -64,6 +68,22 @@ impl Workspace {
                     });
                 }
             }
+            Showing::Design(id) => {
+                let entry = Entry {
+                    project: self.projects[project].id,
+                    kind: Kind::Design,
+                    id: id.clone(),
+                };
+                let _ = self.edit_design(
+                    &entry,
+                    |design| {
+                        design.labels = labels;
+                        Ok(())
+                    },
+                    cx,
+                );
+                return;
+            }
             Showing::Table(_) => return,
         }
         cx.notify();
@@ -99,6 +119,11 @@ impl Workspace {
                 open.canvases
                     .iter()
                     .map(|held| (at, Showing::Canvas(held.id.clone()))),
+            );
+            out.extend(
+                open.designs
+                    .iter()
+                    .map(|held| (at, Showing::Design(held.id.clone()))),
             );
             out.extend(
                 open.boards

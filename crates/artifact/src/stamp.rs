@@ -1,10 +1,13 @@
 //! The millisecond an entry is named for, and the one it last changed at.
 
-use std::{
-    path::Path,
-    sync::atomic::{AtomicU64, Ordering},
-    time::UNIX_EPOCH,
+use std::sync::{
+    OnceLock,
+    atomic::{AtomicU64, Ordering},
 };
+#[cfg(feature = "fs")]
+use std::{path::Path, time::UNIX_EPOCH};
+
+static CLOCK: OnceLock<fn() -> u64> = OnceLock::new();
 
 /// The last stamp [`fresh`] handed out in this process.
 static LAST: AtomicU64 = AtomicU64::new(0);
@@ -14,10 +17,22 @@ pub fn seconds() -> u64 {
     u64::try_from(now() / 1000).unwrap_or(u64::MAX)
 }
 
-/// Now.
+/// Install a host clock in Unix milliseconds. Featureless bare Wasm guests
+/// must install it before using operations that mint timestamps.
+pub fn set_clock(clock: fn() -> u64) -> Result<(), fn() -> u64> {
+    CLOCK.set(clock)
+}
+
 pub fn now() -> u128 {
-    web_time::SystemTime::now()
-        .duration_since(web_time::UNIX_EPOCH)
+    if let Some(clock) = CLOCK.get() {
+        return u128::from(clock());
+    }
+    #[cfg(not(feature = "fs"))]
+    use std::time::{SystemTime, UNIX_EPOCH};
+    #[cfg(feature = "fs")]
+    use web_time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
         .map(|since| since.as_millis())
         .unwrap_or_default()
 }
@@ -52,6 +67,7 @@ pub fn named(name: &str) -> Option<u128> {
 
 /// When a file was last written, as the same stamp ids carry — the key entries
 /// are listed by, so the one you touched last is the one on top.
+#[cfg(feature = "fs")]
 pub fn of(path: &Path) -> u128 {
     std::fs::metadata(path)
         .and_then(|meta| meta.modified())

@@ -3,11 +3,12 @@
 //!
 //! A range is byte offsets into `content.md` as it was when the file was last
 //! written, and `content` is a hash of that text. Every write of `content.md`
-//! through [`crate::document::write`] maps the ranges through the change. A
+//! through `document::write` maps the ranges through the change. A
 //! file whose hash does not match the document is re-found by each comment's
 //! quote and the text around it.
 
-use crate::project;
+pub use crate::comment::{Author, Reply};
+use crate::{comment::Thread, project};
 use serde::{Deserialize, Serialize};
 use similar::{Algorithm, DiffOp, capture_diff_slices};
 use std::{
@@ -31,8 +32,6 @@ pub struct Comments {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Comment {
-    /// A millisecond stamp, unique within the article.
-    pub id: u64,
     pub start: usize,
     pub end: usize,
     /// The text the range held when the comment was filed.
@@ -41,36 +40,22 @@ pub struct Comment {
     pub before: String,
     #[serde(default)]
     pub after: String,
-    pub note: String,
-    /// The session turn that produced it, as a `cydonia://` link.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub turn: Option<String>,
-    #[serde(default)]
-    pub resolved: bool,
-    /// What was said after the note: follow-ups asked on it, and their
-    /// answers, oldest first.
-    #[serde(default, rename = "reply", skip_serializing_if = "Vec::is_empty")]
-    pub replies: Vec<Reply>,
+    #[serde(flatten)]
+    pub thread: Thread,
 }
 
-/// One message after a comment's note.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Reply {
-    pub from: Author,
-    pub text: String,
-    /// The session turn that produced it, as a `cydonia://` link.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub turn: Option<String>,
+impl std::ops::Deref for Comment {
+    type Target = Thread;
+
+    fn deref(&self) -> &Thread {
+        &self.thread
+    }
 }
 
-/// Who wrote a [`Reply`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Author {
-    /// The person reading the article, asking a follow-up.
-    Reader,
-    /// The agent, answering one.
-    Agent,
+impl std::ops::DerefMut for Comment {
+    fn deref_mut(&mut self) -> &mut Thread {
+        &mut self.thread
+    }
 }
 
 impl Comment {
@@ -85,16 +70,12 @@ impl Comment {
         let before = floor(text, range.start.saturating_sub(CONTEXT));
         let after = ceil(text, (range.end + CONTEXT).min(text.len()));
         Self {
-            id,
             start: range.start,
             end: range.end,
             quote: text[range.clone()].to_owned(),
             before: text[before..range.start].to_owned(),
             after: text[range.end..after].to_owned(),
-            note,
-            turn,
-            resolved: false,
-            replies: Vec::new(),
+            thread: Thread::new(id, note, turn),
         }
     }
 
@@ -102,16 +83,6 @@ impl Comment {
         self.start..self.end
     }
 
-    /// How many replies an agent has written on the note.
-    pub fn agent_replies(&self) -> usize {
-        self.replies
-            .iter()
-            .filter(|reply| reply.from == Author::Agent)
-            .count()
-    }
-
-    /// Whether a press on its words opens its note. A resolved comment's words
-    /// keep their range but open nothing.
     pub fn opens(&self) -> bool {
         !self.resolved
     }
@@ -119,15 +90,6 @@ impl Comment {
     /// Whether the words it was on are gone.
     pub fn detached(&self) -> bool {
         self.start >= self.end
-    }
-
-    /// The note's first line with any text on it.
-    pub fn headline(&self) -> &str {
-        self.note
-            .lines()
-            .map(str::trim)
-            .find(|line| !line.is_empty())
-            .unwrap_or_default()
     }
 }
 
@@ -221,8 +183,7 @@ impl Comments {
 
     /// An id no comment here has, from `now`.
     pub fn fresh_id(&self, now: u64) -> u64 {
-        let top = self.comments.iter().map(|comment| comment.id).max();
-        top.map_or(now, |top| now.max(top + 1))
+        Thread::fresh_id(now, self.comments.iter().map(|comment| comment.id))
     }
 }
 
@@ -234,12 +195,14 @@ pub fn path(content: &Path) -> PathBuf {
 /// The comments beside `content` as they were written, held against whatever
 /// text their hash names. Empty for an article with none, or a file that does
 /// not parse.
+#[cfg(feature = "fs")]
 pub fn read(content: &Path) -> Comments {
     parse(&std::fs::read_to_string(path(content)).unwrap_or_default())
 }
 
 /// Write `comments`, held against `text`, beside `content`. No comments
 /// removes the file.
+#[cfg(feature = "fs")]
 pub fn save(content: &Path, text: &str, comments: &Comments) -> std::io::Result<()> {
     let path = path(content);
     if comments.comments.is_empty() {

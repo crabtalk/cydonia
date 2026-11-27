@@ -42,7 +42,7 @@ A client added by hand reaches every project the app has open, and names one per
 | Projects | `project_open`, `project_close`, `project_entries`, `project_read_entry`, `project_label_entry` |
 | Articles | `article_list`, `article_read`, `article_add`, `article_edit`, `article_rewrite`, `article_rename`, `article_move`, `article_comment`, `article_set_cover`, `article_archive`, `article_remove` |
 | Boards | `board_list`, `board_search`, `board_search_cards`, `board_read`, `board_add`, `board_rename`, `board_archive`, `board_remove`, `board_add_column`, `board_rename_column`, `board_move_column`, `board_remove_column`, `board_add_card`, `board_rewrite_card`, `board_move_card`, `board_remove_card`, `board_set_card_busy`, `board_set_card_blockers` |
-| Sessions | `session_send`, `session_read`, `session_search`, `session_rename` |
+| Sessions | `session_send`, `session_wait`, `session_read`, `session_search`, `session_rename` |
 | Workspace | `workspace_focus` |
 | Browser | `browser_tabs`, `browser_open`, `browser_read`, `browser_scroll`, `browser_console`, `browser_click`, `browser_type` |
 
@@ -61,13 +61,20 @@ Eight tools take a list where they take one thing, so a turn that touches severa
 
 `article_read` and `project_read_entry` take part of an article as well as the whole: `#12:5-7` answers lines 5 to 7, `#12#setup` the section under the heading whose anchor is `setup`, each with the lines it is — see [References](../working/references.md#lines-and-headings). The other article tools take a whole article and refuse a part.
 
-`session_read` and `session_search` take [references](../working/references.md), including a run of turns (`#43:5-7`) and a session in another open project (`cydonia#43`). `session_send` takes a session in the project the call is about (`#43`).
+`session_read` and `session_search` take [references](../working/references.md), including a run of turns (`#43:5-7`) and a session in another open project (`cydonia#43`). `session_send` and `session_wait` take a session in the project the call is about (`#43`).
 
 - `session_send` queues a message as another session's next prompt, or starts a
   new session on a named agent with it. The tool returns the new session's ID
   and project entry reference (such as `#43`) before the agent answers.
   Terminal runs return an ID for the current app process. A message sent from
-  a session starts with `from #42:7`, the sender and the turn it was on.
+  a session starts with `from #42:7`, the sender and the turn it was on, and
+  tells the agent its last message in the turn is read as its answer.
+- `session_wait` waits until a session has no turn in flight and no message
+  queued, then answers the last message its agent wrote in that turn, or why
+  the turn stopped: cancelled, failed, or the agent gone. It answers at once
+  for a session already idle. Its `timeout` (50 seconds unless given, at most
+  1800) ends the wait with an answer that the session is still working. A
+  session cannot wait on itself, and terminal runs are refused.
 - `session_read` answers turns of a session, the last 3 when none are named. Each tool call is one line unless `full` is asked for.
 - `session_search` finds text case-insensitively in one session or every session in a project, archived ones included, and answers each matching turn as a reference such as `#43:5`, at most 20.
 - `session_rename` retitles the session that calls it, and no other. Where you titled the session yourself it is refused unless the agent sets `replace_user_title`, which it is told to do only when you asked for the rename; the new title then replaces yours.

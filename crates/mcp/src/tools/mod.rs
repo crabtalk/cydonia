@@ -17,6 +17,8 @@ pub mod article;
 pub mod board;
 pub mod browser;
 pub mod canvas;
+mod comment;
+pub mod design;
 pub mod project;
 pub mod session;
 pub mod table;
@@ -231,6 +233,26 @@ pub(crate) fn entry_of<'a>(
     Ok((project_of(args, &reference)?, number, within))
 }
 
+fn entry_kind(
+    args: &Args<'_>,
+    arg: Arg,
+    kind: artifact::kind::Kind,
+) -> Result<(PathBuf, artifact::entry::Entry), Trouble> {
+    let named = args.text(arg)?;
+    let (project, number, within) = entry_of(args, named)?;
+    if within.is_some() {
+        return Err(whole(named));
+    }
+    let entry = entry_numbered(&project, number, named)?;
+    if entry.kind != kind {
+        return Err(Trouble::Refused(format!(
+            "{named} is a {}, not a {kind}",
+            entry.kind
+        )));
+    }
+    Ok((project, entry))
+}
+
 /// The rail, for a refusal to name — a model that named the wrong directory
 /// can see the right one without a second call.
 pub(crate) fn held() -> Option<String> {
@@ -266,6 +288,13 @@ pub(crate) fn many(schema: &mut Value, arg: Arg) {
 /// Offer `arg` as an optional property of JSON type `kind`.
 pub(crate) fn optional(schema: &mut Value, arg: Arg, kind: &str) {
     schema["properties"][arg.name] = json!({ "type": kind, "description": arg.about });
+}
+
+fn required(schema: &mut Value, arg: Arg, kind: &str) {
+    optional(schema, arg, kind);
+    if let Some(required) = schema["required"].as_array_mut() {
+        required.push(json!(arg.name));
+    }
 }
 
 /// [`optional`], with the value a call that leaves it out gets.

@@ -1,10 +1,10 @@
 //! What a written reference, `[project]#ref[:from[-to] | #anchor]`, names
 //! among the open projects — see [`artifact::reference`].
 
-use super::{Showing, Workspace};
 use crate::model::{
     article::Disk,
-    project::{Project, ProjectId},
+    project::{Facts, Project, ProjectId},
+    workspace::{Showing, Workspace},
 };
 use artifact::{
     article::anchor,
@@ -116,7 +116,10 @@ impl Workspace {
             Target::Entry { number, within } => (number, within),
             Target::Card { key, handle } => return card(project, key, handle, text, cx),
         };
-        let Some((showing, title)) = entry(project, number, cx) else {
+        let Some(Facts { showing, title, .. }) = project
+            .entries(cx)
+            .find(|entry| entry.number == Some(number))
+        else {
             return Err(Error::NotFound {
                 what: "entry",
                 named: text.to_owned(),
@@ -194,44 +197,6 @@ impl Workspace {
             (None, None) => self.active_project(),
         }
     }
-}
-
-/// The entry `number` names in `project`: what shows it, and its own title.
-fn entry(project: &Project, number: u64, cx: &App) -> Option<(Showing, String)> {
-    project
-        .chats(cx)
-        .find(|chat| chat.number == Some(number))
-        .map(|chat| (Showing::Session(chat.id), chat.title.clone()))
-        .or_else(|| {
-            project
-                .articles
-                .iter()
-                .find(|article| article.number == Some(number))
-                .map(|article| (Showing::Article(article.id.clone()), article.title.clone()))
-        })
-        .or_else(|| {
-            project
-                .boards
-                .iter()
-                .map(|held| held.board.read(cx))
-                .find(|board| board.number == Some(number))
-                .map(|board| (Showing::Board(board.id.clone()), board.name.clone()))
-        })
-        .or_else(|| {
-            project.canvases.iter().find_map(|held| {
-                let canvas = &held.canvas.read(cx).record;
-                (canvas.number == Some(number))
-                    .then(|| (Showing::Canvas(held.id.clone()), canvas.label().to_owned()))
-            })
-        })
-        .or_else(|| {
-            project
-                .tables
-                .iter()
-                .map(|held| &held.table.read(cx).record)
-                .find(|table| table.number == Some(number))
-                .map(|table| (Showing::Table(table.key.clone()), table.name.clone()))
-        })
 }
 
 /// The card `key-handle` names in `project`, as a part of its board. `text`

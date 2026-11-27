@@ -44,6 +44,10 @@ impl Workspace {
                                 let _ = start.reply.send(result);
                                 return;
                             }
+                            rail::Request::Wait(wait) => {
+                                workspace.wait_on(wait, cx);
+                                return;
+                            }
                         };
                         match change {
                             Change::Open(path) => workspace.open_project(path, cx),
@@ -230,6 +234,7 @@ impl Workspace {
                 }
             }
             Kind::Canvas => project.canvas = at,
+            Kind::Design => project.design = at,
             Kind::App => {}
         }
         // Landing back in a session is being in front of it — see
@@ -341,11 +346,21 @@ impl Workspace {
     /// could have been armed with — the rail is reorderable, and closing a
     /// project shifts every one after it.
     pub fn reload_project(&mut self, project: ProjectId, cx: &mut Context<Self>) {
+        self.reload_changed_project(project, None, cx);
+    }
+
+    pub fn reload_changed_project(
+        &mut self,
+        project: ProjectId,
+        paths: Option<&[PathBuf]>,
+        cx: &mut Context<Self>,
+    ) {
         let Some(ix) = self.project_ix(project) else {
             return;
         };
         let before: Vec<_> = self.projects[ix].entries(cx).collect();
-        if self.projects[ix].reload(cx) {
+        let shown = self.shown_designs();
+        if self.projects[ix].reload(paths, &shown, cx) {
             cx.emit(Reloaded);
         }
         self.prune_archived(cx);
@@ -371,8 +386,9 @@ impl Workspace {
             .flat_map(|project| project.entries(cx))
             .collect();
         let mut moved = false;
+        let shown = self.shown_designs();
         for ix in 0..self.projects.len() {
-            moved |= self.projects[ix].reload(cx);
+            moved |= self.projects[ix].reload(None, &shown, cx);
         }
         if moved {
             cx.emit(Reloaded);

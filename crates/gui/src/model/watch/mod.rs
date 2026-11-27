@@ -5,11 +5,8 @@
 //! they change — see [`artifact::project::Project::watch`] — and the project
 //! re-reads.
 //!
-//! The event is a knock, never the news. Which paths the OS reports and under
-//! which kind is not something the platforms agree on — FSEvents coalesces a
-//! burst into the directory that held it, an atomic save arrives as a rename
-//! nobody paired, and a rename out of the tree looks like one into it. So a
-//! knock carries nothing: the answer to any of them is the same re-read.
+//! File events identify subtrees to re-read. The paths may name a parent
+//! directory when the platform coalesces events.
 
 use crate::model::{project::ProjectId, store, workspace::Workspace};
 use artifact::project::Project as _;
@@ -53,8 +50,8 @@ impl Watch {
         let pump = cx.spawn(async move |workspace, cx| {
             loop {
                 let (tx, mut knocks) = mpsc::unbounded();
-                let knock = move || {
-                    let _ = tx.unbounded_send(());
+                let knock = move |paths: Vec<PathBuf>| {
+                    let _ = tx.unbounded_send(paths);
                 };
                 let Some(watching) = store::open(&root).watch(knock) else {
                     // No watcher this backend will give us, and no event
@@ -62,18 +59,22 @@ impl Watch {
                     return;
                 };
                 loop {
-                    if knocks.next().await.is_none() {
+                    let Some(mut paths) = knocks.next().await else {
                         return;
-                    }
+                    };
                     // Read per pass rather than captured: moving the setting
                     // takes effect on the next event, with nothing to re-arm.
                     let settle = workspace
                         .read_with(cx, |workspace, _| bounce(workspace.settings.watch_bounce))
                         .unwrap_or_else(|_| bounce(BOUNCE));
                     cx.background_executor().timer(settle).await;
-                    while knocks.try_recv().is_ok() {}
+                    while let Ok(more) = knocks.try_recv() {
+                        paths.extend(more);
+                    }
                     let held = workspace
-                        .update(cx, |workspace, cx| workspace.reload_project(project, cx))
+                        .update(cx, |workspace, cx| {
+                            workspace.reload_changed_project(project, Some(&paths), cx)
+                        })
                         .is_ok();
                     // The workspace went away, and the watch goes with it.
                     if !held {

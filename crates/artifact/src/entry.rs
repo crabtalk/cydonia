@@ -150,6 +150,17 @@ pub fn catalog(store: &impl Project) -> Result<Vec<Entry>> {
             article: None,
         });
     }
+    for design in store.designs() {
+        entries.push(Entry {
+            number: store.number(Kind::Design, &design.id)?,
+            title: design.label().to_owned(),
+            kind: Kind::Design,
+            id: design.id,
+            archived: design.archived,
+            labels: design.labels,
+            article: None,
+        });
+    }
     for session in store.sessions() {
         let article = match &session.article {
             Some(article) => Some(store.number(Kind::Article, article)?),
@@ -176,6 +187,11 @@ pub fn open(store: &impl Project, entry: &Entry) -> Result<Option<serde_json::Va
             store
                 .canvas(&entry.id)
                 .ok_or_else(|| anyhow::anyhow!("canvas no longer exists"))?,
+        )?,
+        Kind::Design => serde_json::to_value(
+            store
+                .design(&entry.id)
+                .ok_or_else(|| anyhow::anyhow!("design no longer exists"))?,
         )?,
         Kind::Article => serde_json::json!({"markdown": store.read_article(&entry.id)?}),
         Kind::Board => serde_json::to_value(

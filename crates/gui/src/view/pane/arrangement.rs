@@ -5,12 +5,12 @@
 //! means. This is only how it lands on the window.
 
 use crate::{
-    model::workspace::{Member, Opening, Slot, Space},
+    model::workspace::{Member, Opening, Space},
     view::{
         component::divider,
         kit::{icon, menu},
         pane::{Edge, Pane},
-        sidebar::{Dragged, Row},
+        sidebar::Row,
         window::root::{self, Cydonia},
     },
 };
@@ -462,32 +462,6 @@ impl Cydonia {
         self.reveal_applied_match(cx);
     }
 
-    /// The member a carried item names, once it has landed.
-    fn dropped(&mut self, item: &Dragged, cx: &mut Context<Self>) -> Option<Member> {
-        match item {
-            Dragged::Tab(slot) => slot.entry().cloned(),
-            Dragged::Row(row) => row.landed(&self.workspace.clone(), cx),
-        }
-    }
-
-    /// What a carried item is called, for the ghost that follows the pointer.
-    pub(crate) fn label_of_dragged(&self, item: &Dragged, cx: &App) -> String {
-        match item {
-            Dragged::Row(row) => row.label(self.workspace.read(cx), cx),
-            Dragged::Tab(Slot::Entry(member)) => self
-                .member_toolbar(member, cx)
-                .map(|toolbar| toolbar.title)
-                .unwrap_or_default(),
-            Dragged::Tab(Slot::Space { space }) => self
-                .workspace
-                .read(cx)
-                .space_by_id(space)
-                .map(|space| space.label().to_owned())
-                .unwrap_or_default(),
-            Dragged::Tab(Slot::Library {}) => "Library".to_owned(),
-        }
-    }
-
     /// New entries join the focused stack in a space, or open in the strip.
     pub(crate) fn land_member(
         &mut self,
@@ -528,12 +502,12 @@ impl Cydonia {
     /// of its stack anywhere else. Answers the entry the focus is now on.
     pub(crate) fn dock_drop(
         &mut self,
-        event: &docking::Drop<Member, Dragged>,
+        event: &docking::Drop<Member, Row>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Member> {
         let target = &event.pane;
-        let arriving = self.dropped(&event.item, cx)?;
+        let arriving = event.item.landed(&self.workspace.clone(), cx)?;
         if arriving == *target {
             return None;
         }

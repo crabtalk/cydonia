@@ -129,9 +129,11 @@ impl Canvas {
         if self.record.version == record.version || self.error.is_some() {
             return;
         }
-        self.document.update(cx, |document, cx| {
-            document.reload(record.document.clone(), cx)
-        });
+        if self.record.document != record.document {
+            self.document.update(cx, |document, cx| {
+                document.reload(record.document.clone(), cx)
+            });
+        }
         self.record = record;
         cx.notify();
     }

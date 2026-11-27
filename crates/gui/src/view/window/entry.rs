@@ -82,6 +82,18 @@ impl Cydonia {
                     Showing::Article(_) => self.open_article(project, ix, opening, window, cx),
                     Showing::Table(_) => self.open_table(project, ix, opening, window, cx),
                     Showing::Canvas(_) => self.open_canvas(project, ix, opening, window, cx),
+                    Showing::Design(id) => {
+                        self.enter_member(
+                            Member::new(
+                                self.workspace.read(cx).projects[project].id,
+                                Kind::Design,
+                                id.clone(),
+                            ),
+                            opening,
+                            window,
+                            cx,
+                        );
+                    }
                     Showing::Session(_) => {}
                 }
             }
@@ -454,6 +466,7 @@ impl Cydonia {
                     Showing::Article(_) => workspace.delete_article(project, ix, cx),
                     Showing::Table(_) => workspace.delete_table(project, ix, cx),
                     Showing::Canvas(_) => workspace.delete_canvas(project, ix, cx),
+                    Showing::Design(_) => workspace.delete_design(project, ix, cx),
                     Showing::Session(_) => {}
                 },
                 (Row::Group(Group::Space(id)), _) => workspace.delete_space_id(id, cx),
@@ -577,6 +590,32 @@ impl Cydonia {
                 return;
             }
         }
+        if let Showing::Design(id) = showing {
+            let entry = Entry {
+                project: *project,
+                kind: Kind::Design,
+                id: id.clone(),
+            };
+            let result = self.workspace.update(cx, |workspace, cx| {
+                workspace.edit_design(
+                    &entry,
+                    |design| {
+                        design.archived = archived;
+                        Ok(())
+                    },
+                    cx,
+                )
+            });
+            if let Err(error) = result {
+                self.show_error(
+                    "Cannot change design archive status".into(),
+                    error.to_string(),
+                    window,
+                    cx,
+                );
+                return;
+            }
+        }
         if let Showing::Table(key) = showing {
             let table = Entry {
                 project: *project,
@@ -638,7 +677,7 @@ impl Cydonia {
                 }
             }
             Showing::Table(_) => {}
-            Showing::Canvas(_) => {}
+            Showing::Canvas(_) | Showing::Design(_) => {}
         });
         // A pane closed in a space has already handed the focus on.
         if let Some(project) = landing.filter(|_| !arranged) {

@@ -145,6 +145,20 @@ pub struct State {
     /// The tab in front. One the strip no longer holds, or none, is its first.
     #[serde(default)]
     pub front: Option<Slot<PathBuf>>,
+    /// Where each canvas and design was last looked at, by project path.
+    #[serde(default)]
+    pub cameras: BTreeMap<PathBuf, Vec<Camera>>,
+}
+
+/// Where a canvas or a design was last looked at: the canvas point in the
+/// middle of its view, and its zoom.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Camera {
+    pub kind: Kind,
+    pub id: String,
+    pub x: f32,
+    pub y: f32,
+    pub zoom: f32,
 }
 
 /// Where the main window stands, in the platform's logical pixels. For a

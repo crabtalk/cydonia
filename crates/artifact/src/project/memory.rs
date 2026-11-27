@@ -2,18 +2,19 @@
 //! everything is gone when it is dropped.
 //!
 //! [`Project::seed`] fills one from the files of a `.cydonia/` in the layout
-//! [`super::fs`] writes, so a fixture directory reads the same through either.
+//! `project::fs` writes, so a fixture directory reads the same through either.
 //! Tables (`data.db`) are not part of it. Article covers are not carried: an
 //! [`Article`] from here has no cover.
 
 use crate::{
     article::{
-        Article,
+        self, Article,
         comments::Comments,
         properties::{self, Properties},
     },
     board::{Board, key},
-    canvas::{self as canvas_artifact, Canvas},
+    canvas::{self as canvas_artifact, Canvas, Document as CanvasDocument},
+    design::{Artboard, Design},
     error::Error,
     id,
     kind::Kind,
@@ -22,7 +23,6 @@ use crate::{
     stamp,
 };
 use anyhow::anyhow;
-use canvas::model::Canvas as CanvasDocument;
 use std::{
     cmp::Reverse,
     collections::{BTreeMap, HashMap, HashSet},
@@ -40,6 +40,7 @@ pub struct Project(Mutex<State>);
 struct State {
     boards: BTreeMap<String, Board>,
     canvases: BTreeMap<String, Canvas>,
+    designs: BTreeMap<String, Design>,
     /// How many times each board has been written, which is its version.
     writes: HashMap<String, u64>,
     sessions: BTreeMap<String, Record>,
@@ -137,21 +138,21 @@ impl Project {
                         }
                         state.sessions.insert(record.id.clone(), record);
                     }
-                    ["articles", article, "content.md"] => {
+                    [article::DIR, article, "content.md"] => {
                         state
                             .articles
                             .entry((*article).to_owned())
                             .or_default()
                             .markdown = text();
                     }
-                    ["articles", article, "properties.toml"] => {
+                    [article::DIR, article, "properties.toml"] => {
                         state
                             .articles
                             .entry((*article).to_owned())
                             .or_default()
                             .properties = text();
                     }
-                    ["articles", article, "assets", name] => {
+                    [article::DIR, article, "assets", name] => {
                         state
                             .articles
                             .entry((*article).to_owned())
@@ -209,6 +210,14 @@ impl Project {
 }
 
 impl State {
+    fn put_design(&mut self, design: &mut Design) {
+        design.labels = crate::label::normalize_all(&design.labels);
+        design.number = Some(self.number(Kind::Design, &design.id));
+        design.touched = stamp::now();
+        design.version = Some(project::version(format!("{design:?}").as_bytes()));
+        self.designs.insert(design.id.clone(), design.clone());
+    }
+
     fn number(&mut self, kind: Kind, id: &str) -> u64 {
         let key = (kind, id.to_owned());
         if let Some(number) = self.numbers.get(&key) {
@@ -424,6 +433,92 @@ impl super::Project for Project {
             .remove(id)
             .ok_or_else(|| not_found("canvas", id))?;
         state.retire(Kind::Canvas, id);
+        Ok(())
+    }
+
+    fn designs(&self) -> Vec<Design> {
+        self.state().designs.values().cloned().collect()
+    }
+
+    fn design(&self, id: &str) -> Option<Design> {
+        self.state().designs.get(id).cloned()
+    }
+
+    fn create_design(&self, title: &str) -> super::Result<Design> {
+        let mut state = self.state();
+        let id = stamp::free(stamp::now(), |id| state.designs.contains_key(id));
+        let mut design = Design {
+            id,
+            title: title.into(),
+            ..Design::default()
+        };
+        state.put_design(&mut design);
+        Ok(design)
+    }
+
+    fn design_artboard_revision(&self, design: &str, artboard: &str) -> Option<String> {
+        self.state()
+            .designs
+            .get(design)?
+            .artboards
+            .iter()
+            .find(|held| held.id == artboard)?
+            .revision
+            .clone()
+    }
+
+    fn save_design(&self, design: &mut Design) -> super::Result<()> {
+        let mut state = self.state();
+        if state
+            .designs
+            .get(&design.id)
+            .and_then(|held| held.version.as_ref())
+            != design.version.as_ref()
+        {
+            return Err(Error::Stale);
+        }
+        state.put_design(design);
+        Ok(())
+    }
+
+    fn remove_design(&self, id: &str) -> super::Result<()> {
+        let mut state = self.state();
+        state
+            .designs
+            .remove(id)
+            .ok_or_else(|| not_found("design", id))?;
+        state.retire(Kind::Design, id);
+        Ok(())
+    }
+
+    fn add_design_artboard(&self, design: &mut Design, title: &str) -> super::Result<Artboard> {
+        let id = stamp::free(stamp::now(), |id| {
+            design.artboards.iter().any(|held| held.id == id)
+        });
+        let artboard = Artboard {
+            id,
+            title: title.into(),
+            revision: None,
+        };
+        design.artboards.push(artboard.clone());
+        if let Err(error) = self.save_design(design) {
+            design.artboards.pop();
+            return Err(error);
+        }
+        Ok(artboard)
+    }
+
+    fn remove_design_artboard(&self, design: &mut Design, artboard: &str) -> super::Result<()> {
+        let at = design
+            .artboards
+            .iter()
+            .position(|held| held.id == artboard)
+            .ok_or_else(|| not_found("artboard", artboard))?;
+        let removed = design.artboards.remove(at);
+        if let Err(error) = self.save_design(design) {
+            design.artboards.insert(at, removed);
+            return Err(error);
+        }
         Ok(())
     }
 

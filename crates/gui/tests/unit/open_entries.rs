@@ -242,11 +242,12 @@ fn making_entries_inside_a_space_lands_in_the_focused_pane(cx: &mut gpui::TestAp
                 workspace.settings.features.canvases = true;
             });
             let strip = root.workspace.read(cx).strip().to_vec();
-            for kind in [Kind::Article, Kind::Table, Kind::Canvas] {
+            for kind in [Kind::Article, Kind::Table, Kind::Canvas, Kind::Design] {
                 match kind {
                     Kind::Article => root.new_article(0, window, cx),
                     Kind::Table => root.new_table(0, window, cx),
                     Kind::Canvas => root.new_canvas(0, window, cx),
+                    Kind::Design => root.new_design(0, window, cx),
                     _ => unreachable!(),
                 }
                 assert!(root.workspace.read(cx).active_space().is_some());
@@ -276,12 +277,13 @@ fn making_entries_outside_a_space_opens_strip_tabs(cx: &mut gpui::TestAppContext
                 workspace.settings.features.canvases = true;
                 workspace.open_project(scratch.project("one"), cx);
             });
-            for kind in [Kind::Article, Kind::Table, Kind::Canvas] {
+            for kind in [Kind::Article, Kind::Table, Kind::Canvas, Kind::Design] {
                 let before = root.workspace.read(cx).strip().len();
                 match kind {
                     Kind::Article => root.new_article(0, window, cx),
                     Kind::Table => root.new_table(0, window, cx),
                     Kind::Canvas => root.new_canvas(0, window, cx),
+                    Kind::Design => root.new_design(0, window, cx),
                     _ => unreachable!(),
                 }
                 root.sync_leaves(window, cx);

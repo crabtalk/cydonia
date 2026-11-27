@@ -16,12 +16,15 @@ Start new sessions under a saved Cydonia agent in the target project. In
 session_send, set `agent` to that agent identity's ID from the tool's choices,
 leave `session` out, and pass the first prompt as `message`. If the target
 project has no suitable agent identity, tell the user one needs to be set up.
+To get the answer to a message sent with session_send, call session_wait on
+the session; call it again while it answers that the session is still working.
 
 ## Files under .cydonia/
 
 - Read and change managed artifacts under .cydonia/ only through Cydonia tools. Never edit, move or delete their files directly.
 - A Cydonia tool that is not offered is switched off in Cydonia's settings. Do not do its work by other means; tell the user it is off.
 - Exception: agents with filesystem access may create an article's own assets/ directory and read or write media files there. Article read and creation results include assets_path, that directory relative to the project directory.
+- Exception: agents with filesystem access may write HTML, CSS, images and scripts in a design artboard directory returned by design_add_artboard or design_read. Leave the design metadata to the design tools.
 - In assets/, use unique filenames and preserve existing files unless replacement or removal is requested.
 - This exception does not override read-only settings or filesystem permissions, and does not grant filesystem access to remote clients.
 

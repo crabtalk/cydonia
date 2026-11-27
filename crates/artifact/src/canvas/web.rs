@@ -1,25 +1,10 @@
+use crate::web::Viewport;
 use canvas::model::Node;
-use serde::Deserialize;
 use std::path::{Component, Path, PathBuf};
 use url::Url;
 
 pub const KIND: &str = "web";
 pub const VIEWPORT: &str = "viewport";
-
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
-pub struct Viewport {
-    pub width: u32,
-    pub height: u32,
-}
-
-impl Default for Viewport {
-    fn default() -> Self {
-        Self {
-            width: 1440,
-            height: 900,
-        }
-    }
-}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Source {
@@ -39,15 +24,16 @@ pub struct Resolved {
 }
 
 impl Source {
-    pub fn resolve(&self, root: &Path) -> Result<Resolved, String> {
+    pub fn resolve(&self, _root: &Path) -> Result<Resolved, String> {
         match self {
             Self::Url(url) => Ok(Resolved {
                 url: url.to_string(),
                 file: None,
             }),
+            #[cfg(all(feature = "fs", not(target_family = "wasm")))]
             Self::File(file) => {
                 let file =
-                    std::path::absolute(root.join(file)).map_err(|error| error.to_string())?;
+                    std::path::absolute(_root.join(file)).map_err(|error| error.to_string())?;
                 let url = Url::from_file_path(&file)
                     .map_err(|_| "cannot make a URL for the HTML file")?;
                 Ok(Resolved {
@@ -55,6 +41,8 @@ impl Source {
                     file: Some(file),
                 })
             }
+            #[cfg(not(all(feature = "fs", not(target_family = "wasm"))))]
+            Self::File(_) => Err("local web frame files require a native filesystem".into()),
         }
     }
 }

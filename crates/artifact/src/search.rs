@@ -1,18 +1,20 @@
 //! Finding text across project entries.
 //!
 //! No index: a search walks the text it is handed. [`run`] searches what a
-//! caller already holds in memory; [`disk`] reads a project off its
+//! caller already holds in memory; `disk` reads a project off its
 //! `.cydonia/`, open in the app or not.
 //!
 //! Matches stream over a channel as they are found, in no particular order,
 //! and a search stops early once the receiver is dropped.
 
+#[cfg(feature = "fs")]
+use crate::project::fs;
 use crate::{
     article::Article,
     board::Board,
     canvas::Canvas,
+    design::Design,
     kind::Kind,
-    project::fs,
     session::{chat::ChatItem, record::Record},
 };
 use regex::bytes::{Regex, RegexBuilder};
@@ -182,6 +184,19 @@ impl Searchable for Canvas {
     }
 }
 
+impl Searchable for Design {
+    fn item(&self) -> Item {
+        Item {
+            kind: Kind::Design,
+            id: self.id.clone(),
+        }
+    }
+
+    fn blocks(&self, each: &mut dyn FnMut(Block, &str)) {
+        each(Block::Title, self.label());
+    }
+}
+
 impl Searchable for Record {
     fn item(&self) -> Item {
         Item {
@@ -249,6 +264,7 @@ pub fn run(sources: &[&(dyn Searchable + Sync)], query: &Query, found: &Sender<M
 ///
 /// Only items of the given kinds are read. Reads only: nothing a read of the
 /// project would write back is written.
+#[cfg(feature = "fs")]
 pub fn disk(project: &fs::Project, kinds: &[Kind], query: &Query, found: &Sender<Match>) {
     // Sessions are JSON, so the query is looked for as JSON writes it.
     let escaped = serde_json::to_string(query.text()).unwrap_or_default();
@@ -278,6 +294,14 @@ pub fn disk(project: &fs::Project, kinds: &[Kind], query: &Query, found: &Sender
             .into_iter()
             .map(|(id, path)| (Kind::Canvas, id, path)),
     );
+    if kinds.contains(&Kind::Design) {
+        files.extend(
+            project
+                .design_files()
+                .into_iter()
+                .map(|(id, path)| (Kind::Design, id, path)),
+        );
+    }
     files.retain(|(kind, ..)| kinds.contains(kind));
     parallel(&files, |(kind, id, path)| {
         if *kind == Kind::Board {
@@ -286,6 +310,11 @@ pub fn disk(project: &fs::Project, kinds: &[Kind], query: &Query, found: &Sender
                 return true;
             };
             return one(&board, query, found);
+        }
+        if *kind == Kind::Design {
+            return project
+                .read_design_file(id, path)
+                .is_none_or(|design| one(&design, query, found));
         }
         let Ok(bytes) = std::fs::read(path) else {
             return true;
@@ -331,7 +360,7 @@ pub fn disk(project: &fs::Project, kinds: &[Kind], query: &Query, found: &Sender
                 canvas.id = id.clone();
                 one(&canvas, query, found)
             }
-            Kind::Board | Kind::Table | Kind::App => true,
+            Kind::Board | Kind::Table | Kind::App | Kind::Design => true,
         }
     });
 }

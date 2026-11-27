@@ -148,7 +148,7 @@ impl BoardView {
             };
             let row = |chat: &ChatSession| {
                 let (on, sent, to) = (on.clone(), sent.clone(), To::Session(chat.id));
-                let icon = session_icon(chat, workspace);
+                let icon = session_icon(&chat.entry.name, workspace);
                 menu::row::<Self>(
                     Item::action(chat.label()).with_icon(icon),
                     move |this, _, cx| this.send(&on, &sent, to, cx),

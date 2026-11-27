@@ -1,6 +1,6 @@
 use crate::{
     model::{project::ProjectIds, workspace::Showing},
-    view::sidebar::{self, Dragged, Group, Heading, Place, Row},
+    view::sidebar::{self, Group, Heading, Place, Row},
 };
 use std::{collections::HashMap, path::Path};
 
@@ -56,23 +56,17 @@ fn an_agent_can_land_last_when_the_last_session_also_appears_in_a_space() {
             },
         ),
     ]);
-    let moving = Dragged::Row(moving);
     assert!(sidebar::lands(
         &places,
         &moving,
-        Some(&Dragged::Row(last_session)),
-        Some(&Dragged::Row(boundary.clone())),
+        Some(&last_session),
+        Some(&boundary),
     ));
     assert!(!sidebar::lands(
         &places,
         &moving,
-        Some(&Dragged::Row(boundary)),
-        Some(&Dragged::Row(space)),
+        Some(&boundary),
+        Some(&space),
     ));
-    assert!(sidebar::lands(
-        &places,
-        &moving,
-        None,
-        Some(&Dragged::Row(other)),
-    ));
+    assert!(sidebar::lands(&places, &moving, None, Some(&other),));
 }

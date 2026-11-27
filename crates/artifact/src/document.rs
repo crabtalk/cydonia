@@ -5,6 +5,7 @@
 //! The properties file is edited in place with `toml_edit`, so keys cydonia
 //! does not know about — an agent's, a later version's — survive a write.
 
+#[cfg(feature = "fs")]
 use crate::{article::comments, project::fs, stamp};
 use std::path::{Path, PathBuf};
 
@@ -31,6 +32,7 @@ pub fn properties(content: &Path) -> PathBuf {
 /// When the document was last written, whichever of its two files took the
 /// write. The properties file is only asked about when it is there:
 /// [`stamp::of`] answers `now` for a file it cannot stat.
+#[cfg(feature = "fs")]
 pub fn touched(content: &Path) -> u128 {
     let written = stamp::of(content);
     match properties(content) {
@@ -41,6 +43,7 @@ pub fn touched(content: &Path) -> u128 {
 
 /// Write `text` as the document at `content`, carrying the comments beside it
 /// through the change — see [`crate::article::comments`].
+#[cfg(feature = "fs")]
 pub fn write(content: &Path, text: &str) -> std::io::Result<()> {
     let Ok(held) = std::fs::read_to_string(comments::path(content)) else {
         return crate::fs::save(content, text);
@@ -78,6 +81,7 @@ pub fn apply(text: &str, fields: &[(&str, Option<toml_edit::Item>)]) -> Option<S
 
 /// Write fields into the properties file beside `content`, removing the file
 /// when nothing is left in it.
+#[cfg(feature = "fs")]
 pub fn save(content: &Path, fields: &[(&str, Option<toml_edit::Item>)]) -> std::io::Result<()> {
     let path = properties(content);
     let text = std::fs::read_to_string(&path).unwrap_or_default();
@@ -94,6 +98,7 @@ pub fn save(content: &Path, fields: &[(&str, Option<toml_edit::Item>)]) -> std::
 
 /// Move a directory, falling back to a copy where a rename cannot cross what
 /// is between the two — a project on another disk is the usual reason.
+#[cfg(feature = "fs")]
 pub fn carry(from: &Path, to: &Path) -> std::io::Result<()> {
     if std::fs::rename(from, to).is_ok() {
         return Ok(());
@@ -102,6 +107,7 @@ pub fn carry(from: &Path, to: &Path) -> std::io::Result<()> {
     std::fs::remove_dir_all(from)
 }
 
+#[cfg(feature = "fs")]
 pub fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(to)?;
     for entry in std::fs::read_dir(from)? {
@@ -119,6 +125,7 @@ pub fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
 
 /// Point the body at where its own directory is now: whole paths into the
 /// directory it came from are rewritten to the one it is in. Best effort.
+#[cfg(feature = "fs")]
 pub fn repoint(content: &Path, from: &Path, to: &Path) {
     let (from, to) = (from.to_string_lossy(), to.to_string_lossy());
     let Ok(text) = std::fs::read_to_string(content) else {
@@ -134,6 +141,7 @@ pub fn repoint(content: &Path, from: &Path, to: &Path) {
 /// to another project's, and point the body there. The file names are hashes
 /// of the bytes, so a picture already in the destination is the same file.
 /// Best effort.
+#[cfg(feature = "fs")]
 pub fn carry_assets(content: &Path, from: &Path, to: &Path) {
     let Ok(text) = std::fs::read_to_string(content) else {
         return;
@@ -164,6 +172,7 @@ pub fn carry_assets(content: &Path, from: &Path, to: &Path) {
 /// `text` with the pictures it points at in `shared` copied into `own`, and
 /// pointed at there as `assets/<name>`. A picture that cannot be copied keeps
 /// its whole path. The shared copies stay.
+#[cfg(feature = "fs")]
 pub fn adopt_assets(text: &str, shared: &Path, own: &Path) -> String {
     let shared = shared.to_string_lossy();
     if !text.contains(shared.as_ref()) {
@@ -185,6 +194,7 @@ pub fn adopt_assets(text: &str, shared: &Path, own: &Path) -> String {
 /// The file names under `assets` the document mentions. Everything up to what
 /// cannot be in one: a path in markdown is followed by a quote, a bracket or
 /// the end of the line, and none of those are in a name this app writes.
+#[cfg(feature = "fs")]
 fn assets_named(text: &str, assets: &str) -> Vec<String> {
     let mut names = Vec::new();
     for rest in text.split(assets).skip(1) {

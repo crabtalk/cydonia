@@ -542,6 +542,17 @@ impl Workspace {
         }
     }
 
+    /// Answer `wait` once the session it names is settled — see [`rail::Wait`].
+    pub(super) fn wait_on(&self, wait: rail::Wait, cx: &mut Context<Self>) {
+        let Some(id) = self.session_by_key(&wait.session, cx).map(|chat| chat.id) else {
+            let _ = wait
+                .reply
+                .send(Err("the session is not open in Cydonia".to_owned()));
+            return;
+        };
+        self.update_session(id, cx, |chat| chat.wait(wait.reply));
+    }
+
     /// Open a session on the agent named `agent` in the project at `path`,
     /// seeded with `content`, behind whatever the window shows.
     pub(super) fn start_in(

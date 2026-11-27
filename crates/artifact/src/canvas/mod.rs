@@ -1,5 +1,5 @@
 use crate::{label, project, stamp};
-use canvas::model::Canvas as Document;
+pub use canvas::model::Canvas as Document;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -8,6 +8,7 @@ use std::{
     str::FromStr,
 };
 
+#[cfg(feature = "fs")]
 pub mod bundle;
 pub mod web;
 

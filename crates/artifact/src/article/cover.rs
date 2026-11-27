@@ -19,7 +19,7 @@ pub const MARK: &str = "cover-";
 /// shorter than the band the app draws.
 pub const RATIO: (u32, u32) = (5, 2);
 
-/// The widest a cover is kept at. [`import`] resamples anything wider down to
+/// The widest a cover is kept at. `import` resamples anything wider down to
 /// this.
 pub const WIDTH: u32 = 1500;
 
@@ -29,10 +29,12 @@ pub const WIDTH: u32 = 1500;
 /// Takes the path of the `content.md`. The first file a directory offers
 /// under [`MARK`] wins — there is only ever one, and a directory holding two
 /// is a directory something else wrote into.
+#[cfg(feature = "fs")]
 pub fn of(content: &Path) -> Option<PathBuf> {
     within(&super::assets(content)).or_else(|| within(content.parent()?))
 }
 
+#[cfg(feature = "fs")]
 fn within(dir: &Path) -> Option<PathBuf> {
     std::fs::read_dir(dir)
         .ok()?

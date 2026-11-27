@@ -2,7 +2,7 @@ use crate::{
     model::{
         file::File,
         workspace::{
-            Showing, Workspace,
+            Entry, Showing, Workspace,
             references::{self, Part},
         },
     },
@@ -216,6 +216,16 @@ impl Embed {
                         .map(|held| held.canvas.clone())
                     {
                         watch.push(cx.observe(&canvas, |_, _, cx| cx.notify()));
+                    }
+                }
+                Showing::Design(id) => {
+                    let entry = Entry {
+                        project: resolved.project,
+                        kind: Kind::Design,
+                        id: id.clone(),
+                    };
+                    if let Some(design) = workspace.read(cx).design_entity(&entry).cloned() {
+                        watch.push(cx.observe(&design, |_, _, cx| cx.notify()));
                     }
                 }
                 _ => {}

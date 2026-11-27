@@ -1,7 +1,7 @@
 use cydonia_mcp::{
     Server,
     proto::Request,
-    rail::{self, Act, Level, Target},
+    rail::{self, Act, Level, PageTarget, Target},
     tool::{Answer, Image},
     tools,
 };
@@ -19,7 +19,7 @@ fn screenshot_returns_image_content_for_the_requested_tab() {
     let project = scratch.path().to_path_buf();
     rail::install_browser(move |request| {
         assert_eq!(request.project, project);
-        assert_eq!(request.tab, Some(42));
+        assert_eq!(request.target, PageTarget::Tab(Some(42)));
         assert_eq!(request.act, Act::Screenshot);
         let mut answer = Answer::said("tab 42: https://example.com");
         answer.images.push(Image {
@@ -54,7 +54,7 @@ fn screenshot_uses_the_front_tab_and_reports_capture_failures() {
     let scratch = common::Scratch::new("browser-screenshot-error");
     rail::set_open(vec![scratch.path().to_path_buf()]);
     rail::install_browser(|request| {
-        assert_eq!(request.tab, None);
+        assert_eq!(request.target, PageTarget::Tab(None));
         assert_eq!(request.act, Act::Screenshot);
         request
             .reply
@@ -127,7 +127,7 @@ fn debugging_tools_route_expressions_selectors_and_console_filters() {
     ));
     let pending = expected.clone();
     rail::install_browser(move |request| {
-        assert_eq!(request.tab, Some(7));
+        assert_eq!(request.target, PageTarget::Tab(Some(7)));
         assert_eq!(request.act, pending.lock().unwrap().pop_front().unwrap());
         request
             .reply
@@ -163,5 +163,96 @@ fn debugging_tools_reject_ambiguous_targets_and_invalid_filters() {
         ("browser_evaluate", json!({"script": "\n "})),
     ] {
         assert!(!common::invalid(server.call(name, arguments, None)).is_empty());
+    }
+}
+
+#[test]
+fn page_tools_route_canvas_references_and_keep_tab_targets_exclusive() {
+    let scratch = common::Scratch::new("browser-frame");
+    let project = scratch.path().to_path_buf();
+    rail::set_open(vec![project.clone()]);
+    let server = scratch.server().mount(&tools::browser::TOOLS);
+    let canvas =
+        common::structured(server.call("canvas_add", json!({"title": "Design"}), Some(&project)));
+    let number = canvas["number"].as_u64().unwrap();
+    let id = canvas["id"].as_str().unwrap().to_owned();
+    let named = format!("#{number}");
+    rail::install_browser(move |request| {
+        assert_eq!(
+            request.target,
+            PageTarget::Frame {
+                canvas: id.clone(),
+                number,
+                node: "preview".into(),
+            }
+        );
+        assert_eq!(request.act, Act::Screenshot);
+        request
+            .reply
+            .send(Ok(Answer::said("frame screenshot")))
+            .unwrap();
+    });
+    assert_eq!(
+        common::said(server.call(
+            "browser_screenshot",
+            json!({"canvas": named, "node": "preview"}),
+            Some(&project),
+        )),
+        "frame screenshot"
+    );
+    for arguments in [
+        json!({"canvas": named}),
+        json!({"node": "preview"}),
+        json!({"canvas": named, "node": "preview", "tab": 42}),
+    ] {
+        assert!(
+            !common::invalid(server.call("browser_read", arguments, Some(&project))).is_empty()
+        );
+    }
+}
+
+#[test]
+fn design_artboards_route_to_browser_commands_and_exclude_other_targets() {
+    let scratch = common::Scratch::new("browser-design-artboard");
+    let project = scratch.path().to_path_buf();
+    rail::set_open(vec![project.clone()]);
+    let server = scratch.server().mount(&tools::browser::TOOLS);
+    let design =
+        common::structured(server.call("design_add", json!({"title": "Settings"}), Some(&project)));
+    let number = design["number"].as_u64().unwrap();
+    let id = design["id"].as_str().unwrap().to_owned();
+    let named = format!("#{number}");
+    rail::install_browser(move |request| {
+        assert_eq!(
+            request.target,
+            PageTarget::Design {
+                design: id.clone(),
+                number,
+                artboard: "preview".into(),
+            }
+        );
+        assert_eq!(request.act, Act::Inspect(Target::Selector("#title".into())));
+        request
+            .reply
+            .send(Ok(Answer::said("design element")))
+            .unwrap();
+    });
+    assert_eq!(
+        common::said(server.call(
+            "browser_inspect",
+            json!({"design": named, "artboard": "preview", "selector": "#title"}),
+            Some(&project),
+        )),
+        "design element"
+    );
+    for arguments in [
+        json!({"design": named}),
+        json!({"artboard": "preview"}),
+        json!({"design": named, "artboard": "preview", "tab": 42}),
+        json!({"design": named, "artboard": "preview", "canvas": "#5", "node": "frame"}),
+    ] {
+        assert!(
+            !common::invalid(server.call("browser_read", arguments, Some(&project))).is_empty()
+        );
     }
 }

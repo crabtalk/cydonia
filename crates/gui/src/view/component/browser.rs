@@ -3,7 +3,7 @@
 //! A tab holds a tab id, not the page. Pages live in [`Pages`], app-wide, so a
 //! panel or window dropping does not drop them; only closing the tab does.
 
-use crate::model::settings::Browsing;
+use crate::{model::settings::Browsing, view::kit::web::console::ConsoleLog};
 use bezel::{
     gpui::{
         self, AnyElement, App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable,
@@ -21,21 +21,15 @@ use bezel::{
         widgets::{ButtonStyle, Buttons as _},
     },
 };
-use browser::{ConsoleLevel, ConsoleMessage, DataStore, WebView, WebViewEvent};
+use browser::{DataStore, WebView, WebViewEvent};
 use mcp::rail::Level;
-use std::{
-    collections::{HashMap, VecDeque},
-    fmt::Write as _,
-};
+use std::collections::HashMap;
 
 /// Claimed on the address field, so `enter` loads what it holds.
 const ADDRESS_CONTEXT: &str = "CydoniaAddress";
 
 /// Claimed on the whole tab, the address field included.
 const CONTEXT: &str = "CydoniaBrowser";
-
-/// Messages a tab's log keeps; older ones are dropped.
-const LOG_LIMIT: usize = 500;
 
 actions!(cydonia_browser, [Go, Reload, HardReload]);
 
@@ -89,54 +83,6 @@ impl Global for Pages {}
 /// What each live page has logged, by tab id, oldest first.
 #[derive(Default)]
 struct Logs(HashMap<u64, ConsoleLog>);
-
-#[derive(Default)]
-struct ConsoleLog {
-    cursor: u64,
-    entries: VecDeque<(u64, ConsoleMessage)>,
-}
-
-impl ConsoleLog {
-    fn push(&mut self, message: ConsoleMessage) {
-        self.cursor += 1;
-        if self.entries.len() == LOG_LIMIT {
-            self.entries.pop_front();
-        }
-        self.entries.push_back((self.cursor, message));
-    }
-
-    fn read(&self, levels: &[Level], since: u64) -> String {
-        let mut out = format!("cursor: {}", self.cursor);
-        if let Some((first, _)) = self.entries.front()
-            && since < first - 1
-        {
-            let _ = write!(out, "\n[messages before {first} are no longer retained]");
-        }
-        let mut matched = false;
-        for (id, message) in &self.entries {
-            let level = match message.level {
-                ConsoleLevel::Debug => Level::Debug,
-                ConsoleLevel::Log => Level::Log,
-                ConsoleLevel::Info => Level::Info,
-                ConsoleLevel::Warn => Level::Warn,
-                ConsoleLevel::Error => Level::Error,
-            };
-            if *id <= since || (!levels.is_empty() && !levels.contains(&level)) {
-                continue;
-            }
-            matched = true;
-            let _ = write!(
-                out,
-                "\n[{id}] [{level}] {} ({})",
-                message.text, message.source
-            );
-        }
-        if !matched {
-            out.push_str("\nno matching console messages");
-        }
-        out
-    }
-}
 
 impl Global for Logs {}
 
@@ -323,7 +269,10 @@ impl Browser {
                 }
             }
             WebViewEvent::Title(title) => self.title = title.clone(),
-            WebViewEvent::Load(_) | WebViewEvent::History { .. } | WebViewEvent::Error(_) => {}
+            WebViewEvent::Load(_)
+            | WebViewEvent::History { .. }
+            | WebViewEvent::Magnified
+            | WebViewEvent::Error(_) => {}
             WebViewEvent::Console(message) => {
                 let log = cx.default_global::<Logs>().0.entry(self.id).or_default();
                 log.push(message.clone());
@@ -521,7 +470,3 @@ impl Render for Browser {
             .into_any_element()
     }
 }
-
-#[cfg(test)]
-#[path = "../../../tests/unit/browser_console.rs"]
-mod tests;

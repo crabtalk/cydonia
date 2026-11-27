@@ -1,6 +1,9 @@
 use crate::view::{
     canvas::{CanvasView, Menu, actions::Scope},
-    kit::menu::{self, MenuHost as _},
+    kit::{
+        canvas::{Navigation, TOOL_PADDING},
+        menu::{self, MenuHost as _},
+    },
 };
 use bezel::{
     gpui::{AnyElement, Context, Entity, Render, WeakEntity, Window, div, prelude::*, px},
@@ -12,10 +15,9 @@ use bezel::{
         widgets::{Button, Scaffolding as _},
     },
 };
-use canvas::{CanvasEditor, CanvasView as Surface};
+use canvas::CanvasView as Surface;
 
-const PADDING: f32 = 4.;
-pub(super) const HEIGHT: f32 = ControlSize::Regular.height() + 2. * (PADDING + 1.);
+pub(super) const HEIGHT: f32 = ControlSize::Regular.height() + 2. * (TOOL_PADDING + 1.);
 
 pub(super) struct Chrome {
     owner: WeakEntity<CanvasView>,
@@ -79,7 +81,7 @@ impl CanvasView {
         let tools = theme
             .group_box()
             .flex_row()
-            .p(px(PADDING))
+            .p(px(TOOL_PADDING))
             .gap(px(2.))
             .child(
                 Button::new("canvas-add-text", "Text")
@@ -100,42 +102,13 @@ impl CanvasView {
                     })),
             )
             .child(actions);
-        let zoom = theme
-            .group_box()
-            .flex_row()
-            .p(px(PADDING))
-            .gap(px(2.))
-            .child(
-                Button::new("canvas-zoom-out", "Zoom out")
-                    .icon(icons::glyph::Minus)
-                    .label_hidden()
-                    .on_press(cx.listener(|this, _, window, cx| {
-                        this.navigate(CanvasEditor::zoom_out, window, cx)
-                    })),
-            )
-            .child(
-                Button::new("canvas-fit", "Zoom to fit")
-                    .icon(icons::layout::Maximize)
-                    .label_hidden()
-                    .on_press(cx.listener(|this, _, window, cx| {
-                        this.navigate(CanvasEditor::fit, window, cx)
-                    })),
-            )
-            .child(
-                Button::new("canvas-zoom-in", "Zoom in")
-                    .icon(icons::math::Plus)
-                    .label_hidden()
-                    .on_press(cx.listener(|this, _, window, cx| {
-                        this.navigate(CanvasEditor::zoom_in, window, cx)
-                    })),
-            );
         div()
             .w_full()
             .flex()
             .justify_between()
             .gap(px(8.))
             .child(tools)
-            .child(zoom)
+            .child(Navigation(self.surface.clone()).render())
             .into_any_element()
     }
 }

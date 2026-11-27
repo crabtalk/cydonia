@@ -9,7 +9,7 @@ use artifact::{
 };
 use serde_json::json;
 
-const CANVAS: Arg = Arg {
+pub(super) const CANVAS: Arg = Arg {
     name: "canvas",
     about: "The canvas's stable project reference, such as #12 or foo#12.",
 };
@@ -71,23 +71,17 @@ fn add(args: Args<'_>) -> Outcome {
     Ok(answer(&canvas))
 }
 
+pub(super) fn reference(args: &Args<'_>) -> Result<(std::path::PathBuf, u64, String), Trouble> {
+    let (project, entry) = tools::entry_kind(args, CANVAS, Kind::Canvas)?;
+    Ok((project, entry.number, entry.id))
+}
+
 fn find(args: &Args<'_>) -> Result<(fs::Project, Canvas), Trouble> {
-    let named = args.text(CANVAS)?;
-    let (project, number, within) = tools::entry_of(args, named)?;
-    if within.is_some() {
-        return Err(tools::whole(named));
-    }
-    let entry = tools::entry_numbered(&project, number, named)?;
-    if entry.kind != Kind::Canvas {
-        return Err(Trouble::Refused(format!(
-            "{named} is a {}, not a canvas",
-            entry.kind
-        )));
-    }
+    let (project, _, id) = reference(args)?;
     let store = fs::Project::new(project);
     let canvas = store
-        .canvas(&entry.id)
-        .ok_or_else(|| Trouble::Refused(format!("{named} is no longer available")))?;
+        .canvas(&id)
+        .ok_or_else(|| Trouble::Refused(format!("canvas {id} is no longer available")))?;
     Ok((store, canvas))
 }
 

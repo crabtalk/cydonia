@@ -8,7 +8,7 @@
 //!
 //! The rail hands tool requests across to the window's thread. Changes are
 //! queued. Session creation waits for the workspace to return the new
-//! session's identity.
+//! session's identity, and a wait for the session to settle.
 //!
 //! Installed once at launch, like a highlighter or a link preview. A build with
 //! nothing installed — the tests, a caller that mounted the tool sets on their
@@ -77,6 +77,7 @@ pub enum Change {
 pub enum Request {
     Change(Change),
     Start(Start),
+    Wait(Wait),
 }
 
 pub struct Start {
@@ -90,6 +91,26 @@ pub struct Started {
     pub id: String,
     /// Terminal runs have an in-process id and no project entry number.
     pub number: Option<u64>,
+}
+
+/// A wait on the session filed under `session`, answered once it is settled:
+/// no turn in flight and no prompt queued, or its agent gone. Answered at once
+/// when it already is, refused when the session is not open. A session closed
+/// before then drops `reply`.
+pub struct Wait {
+    pub session: String,
+    pub reply: mpsc::Sender<Result<Settled, String>>,
+}
+
+/// The turn a session settled on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Settled {
+    /// Counted from 1, as `session_read` counts. 0 when nothing was said.
+    pub turn: u64,
+    /// The agent's last message in that turn.
+    pub answer: Option<String>,
+    /// The last notice in that turn: why it stopped short, where it did.
+    pub notice: Option<String>,
 }
 
 /// A named agent or installed ACP program offered for session creation.
@@ -238,6 +259,24 @@ pub(crate) fn start(project: PathBuf, agent: String, message: String) -> Result<
     }
 }
 
+/// Blocks the calling thread until the session is settled, or `timeout`
+/// passes (`Ok(None)`). Call off the UI thread.
+#[cfg(feature = "http")]
+pub(crate) fn wait(
+    session: String,
+    timeout: std::time::Duration,
+) -> Result<Option<Settled>, Trouble> {
+    let (reply, answer) = mpsc::channel();
+    dispatch(Request::Wait(Wait { session, reply }))?;
+    match answer.recv_timeout(timeout) {
+        Ok(settled) => settled.map(Some).map_err(Trouble::Refused),
+        Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
+        Err(mpsc::RecvTimeoutError::Disconnected) => Err(Trouble::Refused(
+            "the session closed before its turn ended".to_owned(),
+        )),
+    }
+}
+
 #[cfg(feature = "http")]
 fn dispatch(request: Request) -> Result<(), Trouble> {
     let held = HAND.read().map_err(|_| nobody())?;
@@ -253,7 +292,7 @@ fn nobody() -> Trouble {
     Trouble::Refused("no cydonia window to open a project in".to_owned())
 }
 
-/// What a browser tool asks of a project's right-panel browser.
+/// What a browser tool asks of the window's browser.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Act {
     /// The project's browser tabs.
@@ -311,12 +350,25 @@ impl std::fmt::Display for Level {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PageTarget {
+    Tab(Option<u64>),
+    Frame {
+        canvas: String,
+        number: u64,
+        node: String,
+    },
+    Design {
+        design: String,
+        number: u64,
+        artboard: String,
+    },
+}
+
 /// One browser call, with where its answer goes.
 pub struct Browse {
     pub project: PathBuf,
-    /// A tab id from [`Act::Tabs`]. `None` is the panel's front browser tab,
-    /// except for [`Act::Open`], where it is a new tab.
-    pub tab: Option<u64>,
+    pub target: PageTarget,
     pub act: Act,
     /// The tool content, or why it is unavailable.
     pub reply: mpsc::Sender<Result<Answer, String>>,
@@ -336,7 +388,7 @@ pub fn install_browser(hand: impl Fn(Browse) + Send + Sync + 'static) {
 /// Blocks the calling thread. Never call it from the thread the window is
 /// drawn on: the answer is made there.
 #[cfg(feature = "http")]
-pub(crate) fn browse(project: PathBuf, tab: Option<u64>, act: Act) -> Result<Answer, Trouble> {
+pub(crate) fn browse(project: PathBuf, target: PageTarget, act: Act) -> Result<Answer, Trouble> {
     let (reply, answer) = mpsc::channel();
     {
         let held = BROWSER.read().map_err(|_| no_browser())?;
@@ -345,7 +397,7 @@ pub(crate) fn browse(project: PathBuf, tab: Option<u64>, act: Act) -> Result<Ans
         };
         hand(Browse {
             project,
-            tab,
+            target,
             act,
             reply,
         });

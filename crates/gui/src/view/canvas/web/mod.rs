@@ -1,44 +1,37 @@
 use crate::{
     model::{file::File, workspace::references},
-    view::canvas::CanvasView,
+    view::{
+        canvas::CanvasView,
+        kit::web::{
+            Navigation, WebPresentation, console::ConsoleLog, frame_header, viewport_items,
+        },
+    },
 };
-use artifact::canvas::web::{self, Frame, Source, Viewport};
+use artifact::{
+    canvas::web::{self, Frame, Source},
+    web::Viewport,
+};
+#[cfg(not(target_os = "linux"))]
+use bezel::gpui::{self, point, size};
 use bezel::{
     gpui::{
-        self, AnyElement, App, AppContext as _, Context, Entity, FocusHandle, Focusable as _,
-        MouseButton, ObjectFit, Render, StyledImage as _, Subscription, Task, WeakEntity, Window,
-        div, img, prelude::*, px, size,
+        AnyElement, App, AppContext as _, Context, Entity, FocusHandle, Focusable as _, ObjectFit,
+        Render, StyledImage as _, Subscription, Task, WeakEntity, Window, div, img, prelude::*, px,
     },
     theme::{TextStyle, Theme, Typeset as _},
     ui::{
         context_menu::{ContextMenu, Place},
         icons,
-        menu::Item,
         widgets::{ButtonStyle, Buttons as _},
     },
 };
-use browser::{Presentation, WebView, WebViewEvent};
+use browser::{WebView, WebViewEvent};
 use canvas::{
     Change,
     kind::{self, Card, Chrome},
     model::Node,
 };
 use std::{cell::RefCell, collections::HashMap, path::PathBuf, rc::Rc};
-
-const PRESETS: [Viewport; 3] = [
-    Viewport {
-        width: 1440,
-        height: 900,
-    },
-    Viewport {
-        width: 768,
-        height: 1024,
-    },
-    Viewport {
-        width: 390,
-        height: 844,
-    },
-];
 
 #[derive(Clone)]
 pub(super) struct Frames {
@@ -97,26 +90,32 @@ impl Frames {
         .handles(canvas::handle::frame)
     }
 
+    fn page(&self, node: &Node, cx: &App) -> Result<Entity<Page>, String> {
+        let page = self
+            .views
+            .borrow()
+            .get(&node.id)
+            .cloned()
+            .ok_or("web frame has not rendered yet")?;
+        if Frame::try_from(node) != page.read(cx).frame {
+            return Err("web frame source or viewport has changed; waiting for its preview".into());
+        }
+        Ok(page)
+    }
+
     fn snapshot(&self, node: &Node, cx: &mut App) -> Task<Result<kind::Paint, String>> {
-        let Some(page) = self.views.borrow().get(&node.id).cloned() else {
-            return Task::ready(Err("web frame has not rendered yet".into()));
+        let page = match self.page(node, cx) {
+            Ok(page) => page,
+            Err(error) => return Task::ready(Err(error)),
         };
         let page = page.read(cx);
-        if Frame::try_from(node) != page.frame {
-            return Task::ready(Err(
-                "web frame source or viewport has changed; waiting for its preview".into(),
-            ));
-        }
-        if let Some(error) = page
-            .source_error
-            .as_ref()
-            .or(page.presentation_error.as_ref())
-        {
-            return Task::ready(Err(error.clone()));
-        }
-        let Some(browser) = &page.browser else {
-            return Task::ready(Err("web frame is unavailable".into()));
+        let browser = match page.webview() {
+            Ok(browser) => browser,
+            Err(error) => return Task::ready(Err(error)),
         };
+        if !page.navigation.ready(browser.read(cx)) {
+            return Task::ready(Err("web frame is still loading".into()));
+        }
         let title = Page::title(node, &page.frame);
         let snapshot = browser.read(cx).snapshot(cx);
         cx.foreground_executor().spawn(async move {
@@ -133,20 +132,7 @@ impl Frames {
                                     .size_full()
                                     .object_fit(ObjectFit::Contain),
                             )
-                            .child(
-                                div()
-                                    .absolute()
-                                    .left_0()
-                                    .right_0()
-                                    .top(px(-32.))
-                                    .h(px(28.))
-                                    .flex()
-                                    .items_center()
-                                    .text_style(TextStyle::Callout)
-                                    .text_color(Theme::of(cx).text_muted)
-                                    .truncate()
-                                    .child(title.clone()),
-                            ),
+                            .child(frame_header(title.clone(), cx)),
                     )
                     .into_any_element()
             });
@@ -178,7 +164,8 @@ impl Frames {
     }
 }
 
-struct Page {
+pub(crate) struct Page {
+    pub(crate) console: ConsoleLog,
     node: Node,
     card: Card,
     root: PathBuf,
@@ -186,6 +173,7 @@ struct Page {
     frame: Result<Frame, String>,
     browser: Option<Entity<WebView>>,
     interactive: bool,
+    navigation: Navigation,
     focus: FocusHandle,
     source: Option<Entity<File>>,
     _file: Option<Subscription>,
@@ -196,6 +184,26 @@ struct Page {
 }
 
 impl Page {
+    pub(crate) fn webview(&self) -> Result<Entity<WebView>, String> {
+        if let Some(error) = self
+            .source_error
+            .as_ref()
+            .or(self.presentation_error.as_ref())
+        {
+            return Err(error.clone());
+        }
+        self.browser
+            .clone()
+            .ok_or_else(|| "web frame is unavailable".into())
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub(crate) fn ready(&self, cx: &App) -> bool {
+        self.browser
+            .as_ref()
+            .is_some_and(|browser| self.navigation.ready(browser.read(cx)))
+    }
+
     fn new(
         node: Node,
         card: Card,
@@ -211,7 +219,9 @@ impl Page {
             root,
             owner,
             browser: None,
+            console: ConsoleLog::default(),
             interactive: false,
+            navigation: Navigation::default(),
             focus: cx.focus_handle(),
             source: None,
             _file: None,
@@ -256,6 +266,7 @@ impl Page {
     }
 
     fn open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.navigation.reset();
         self._file = None;
         self.source = None;
         self.source_error = None;
@@ -282,11 +293,18 @@ impl Page {
                     .with_read_access(root)
                     .with_console()
             });
-            self._page = Some(cx.subscribe(&page, |_, _, event: &WebViewEvent, cx| {
-                if matches!(event, WebViewEvent::Load(_) | WebViewEvent::Error(_)) {
-                    cx.notify();
-                }
-            }));
+            self._page = Some(cx.subscribe(
+                &page,
+                |this, page, event: &WebViewEvent, cx| match event {
+                    WebViewEvent::Console(message) => this.console.push(message.clone()),
+                    WebViewEvent::Load(state) => {
+                        this.navigation.update(*state, page.read(cx));
+                        cx.notify();
+                    }
+                    WebViewEvent::Error(_) => cx.notify(),
+                    _ => {}
+                },
+            ));
             self.browser = Some(page);
         }
         if let Some(path) = resolved.file
@@ -298,6 +316,7 @@ impl Page {
                     Some(Ok(_)) => {
                         this.source_error = None;
                         if let Some(page) = &this.browser {
+                            this.navigation.reset();
                             page.update(cx, |page, _| page.reload_bypassing_cache());
                         }
                     }
@@ -323,23 +342,9 @@ impl Page {
         let (Some(page), Ok(frame)) = (&self.browser, &self.frame) else {
             return;
         };
-        let viewport = gpui::native_view::Viewport::try_from(size(
-            px(frame.viewport.width as f32),
-            px(frame.viewport.height as f32),
-        ));
-        let result = viewport.and_then(|viewport| {
-            page.update(cx, |page, cx| {
-                page.set_presentation(
-                    Some(Presentation {
-                        viewport,
-                        interactive: self.interactive,
-                    }),
-                    window,
-                    cx,
-                )
-            })
-        });
-        self.presentation_error = result.err().map(|error| error.to_string());
+        self.presentation_error = page
+            .present(frame.viewport, self.interactive, window, cx)
+            .err();
     }
 
     fn toggle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -357,19 +362,15 @@ impl Page {
 
     fn viewport_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let current = self.frame.as_ref().map(|frame| frame.viewport).ok();
-        let items = PRESETS
-            .iter()
-            .map(|viewport| {
-                Item::action(format!("{} × {}", viewport.width, viewport.height))
-                    .checked(current == Some(*viewport))
-            })
-            .collect();
         self.menu.open(
             (),
             Place::At(window.mouse_position()),
-            items,
+            viewport_items(current),
             |this, path, _, cx| {
-                let Some(viewport) = path.first().and_then(|index| PRESETS.get(*index)).copied()
+                let Some(viewport) = path
+                    .first()
+                    .and_then(|index| Viewport::PRESETS.get(*index))
+                    .copied()
                 else {
                     return;
                 };
@@ -443,32 +444,10 @@ impl Render for Page {
                     .child(body),
             )
             .child(
-                div()
-                    .absolute()
-                    .left_0()
-                    .right_0()
-                    .top(px(-32.))
-                    .h(px(28.))
-                    .flex()
-                    .items_center()
-                    .gap(px(4.))
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .text_style(TextStyle::Callout)
-                            .text_color(theme.text_muted)
-                            .truncate()
-                            .child(title),
-                    )
+                frame_header(title.clone(), cx)
                     .child(
                         theme
-                            .button(
-                                format!("{} × {}", viewport.width, viewport.height),
-                                ButtonStyle::Ghost,
-                                None,
-                            )
+                            .button(viewport.to_string(), ButtonStyle::Ghost, None)
                             .id("web-viewport")
                             .flex_none()
                             .on_click(
@@ -482,6 +461,7 @@ impl Render for Page {
                             .flex_none()
                             .on_click(cx.listener(|this, _, _, cx| {
                                 if let Some(page) = &this.browser {
+                                    this.navigation.reset();
                                     page.update(cx, |page, _| page.reload_bypassing_cache());
                                     cx.notify();
                                 }
@@ -515,6 +495,29 @@ impl Render for Page {
 }
 
 impl CanvasView {
+    #[cfg(not(target_os = "linux"))]
+    pub(crate) fn web_frame(&self, id: &str, cx: &App) -> Result<Entity<Page>, String> {
+        let surface = self.surface.read(cx);
+        let editor = surface.editor();
+        let node = editor
+            .painted()
+            .node(id)
+            .filter(|node| node.kind == web::KIND)
+            .ok_or_else(|| format!("no web frame {id} on this canvas"))?;
+        let in_view = editor.visible().is_some_and(|(x, y, width, height)| {
+            let visible = gpui::Bounds::new(point(x, y), size(width, height));
+            let frame = gpui::Bounds::new(
+                point(node.x as f32, node.y as f32),
+                size(node.width as f32, node.height as f32),
+            );
+            !frame.intersect(&visible).is_empty()
+        });
+        if !in_view {
+            return Err("web frame is outside the canvas viewport; bring it into view".into());
+        }
+        self.pages.page(node, cx)
+    }
+
     fn set_web_viewport(&mut self, id: &str, viewport: Viewport, cx: &mut Context<Self>) {
         if self.surface.read(cx).editor().options().read_only {
             return;

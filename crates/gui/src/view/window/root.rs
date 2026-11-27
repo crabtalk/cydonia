@@ -17,10 +17,11 @@ use crate::{
             meter,
             terminal::TerminalPanel,
         },
+        design::preview,
         kit::{menu::Menu, watch::Watch},
         pane::{Pane, Tab},
         settings,
-        sidebar::{Dragged, Sidebar},
+        sidebar::{Row, Sidebar},
         window::{
             chrome,
             lights::{self, Lights},
@@ -123,6 +124,7 @@ actions!(
         NewBoard,
         NewArticle,
         NewCanvas,
+        NewDesign,
         ImportCanvas,
         NewTable,
         InstallApp,
@@ -427,6 +429,7 @@ pub fn open(settings: Settings, state: State, cx: &mut App) -> Result<WindowHand
                 cx.on_app_quit(|root: &mut Cydonia, cx| {
                     root.save_panel_layout(cx);
                     root.save_window(cx);
+                    root.workspace.read(cx).save();
                     async {}
                 })
                 .detach();
@@ -476,6 +479,7 @@ fn stepped(at: Option<usize>, len: usize, step: isize) -> Option<usize> {
 /// [`Tab`]'s.
 pub struct Cydonia {
     pub(crate) workspace: Entity<Workspace>,
+    pub(crate) browser_tool_page: Option<Entity<browser::WebView>>,
     /// A tab for every entry the open space holds and every entry of the
     /// window's strip, and which of them has the focus. Empty where no tab is
     /// open.
@@ -562,9 +566,8 @@ pub struct Cydonia {
     pub(crate) pressed_pane: Option<Member>,
     /// The modal over the window, while one is up.
     pub(crate) modals: Entity<ModalLayer>,
-    /// Where a sidebar row or a pane's tab lands on a pane. The panes are its
-    /// targets, by the member in front of each; the window is its surface.
-    pub(crate) dock: docking::Dock<Member, Dragged>,
+    /// The pane targets for a sidebar row, keyed by each pane's front member.
+    pub(crate) dock: docking::Dock<Member, Row>,
     /// Every board on screen: cards between lanes and boards, lanes and list
     /// groups along their own board.
     pub(crate) board_sort: drag::Domain<board::BoardRegion, board::BoardItem>,
@@ -1024,6 +1027,10 @@ impl Cydonia {
                 .find(|view| view.board.id == *id)
                 .filter(|view| view.editing.is_some())
                 .map(|view| view.card_field.read(cx).focus_handle(cx)),
+            Showing::Design(_) => leaf
+                .read(cx)
+                .design_shown(cx)
+                .map(|view| view.read(cx).focus_handle(cx)),
             Showing::Canvas(_) => leaf
                 .read(cx)
                 .canvas_shown(cx)
@@ -1098,6 +1105,7 @@ impl Cydonia {
             meter: cx.new(Stats::new),
             meter_at: Floating::new(Painter::of(cx)),
             workspace,
+            browser_tool_page: None,
             leaves: Vec::new(),
             panes: Vec::new(),
             session_watches: Watch::default(),
@@ -1128,10 +1136,10 @@ impl Cydonia {
             pressed_pane: None,
             dock: docking::Dock::new(Painter::of(cx), {
                 let this = cx.entity().downgrade();
-                move |item, _, cx| {
+                move |row: &Row, _, cx| {
                     let label = this
                         .upgrade()
-                        .map(|this| this.read(cx).label_of_dragged(item, cx))
+                        .map(|this| row.label(this.read(cx).workspace.read(cx), cx))
                         .unwrap_or_default();
                     bezel::ui::drag::ghost_label("pane-entry-ghost", label).into_any_element()
                 }
@@ -1647,6 +1655,7 @@ impl Render for Cydonia {
                 root.child(self.sidebar_column(window, cx))
             })
             .child(self.detail(window, cx))
+            .children(self.browser_tool_page.clone().map(preview::host))
             // Rides on the seam between the sidebar and the detail column
             // rather than sitting in flow, so neither gives up a column.
             // Floating, the seam is the chrome between them.

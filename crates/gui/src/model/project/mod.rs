@@ -14,11 +14,12 @@ use crate::{
         store::{self, Store},
         table::Table,
         watch::Watch,
-        workspace::{Showing, Workspace},
+        workspace::{Entry, Showing, Workspace},
     },
 };
 use artifact::{
-    board::Board, canvas::Canvas as CanvasRecord, kind::Kind, project::Project as _, text,
+    board::Board, canvas::Canvas as CanvasRecord, design::Design, kind::Kind,
+    project::Project as _, text,
 };
 use bezel::gpui::{App, AppContext as _, Context, Entity};
 use std::{
@@ -35,6 +36,7 @@ pub use id::{ProjectId, ProjectIds};
 #[derive(PartialEq)]
 pub struct Facts {
     pub showing: Showing,
+    pub title: String,
     pub label: String,
     pub number: Option<u64>,
     pub touched: u128,
@@ -44,6 +46,8 @@ pub struct Facts {
     pub labels: Vec<String>,
     /// The agent a session runs on; `None` for every other kind.
     pub agent: Option<String>,
+    /// The prefix on a board's card handles.
+    pub board_key: Option<String>,
 }
 
 /// A board a project holds: its id, which never changes, and the board, which
@@ -81,6 +85,20 @@ impl HeldSession {
 }
 
 #[derive(Clone)]
+pub struct HeldDesign {
+    pub id: String,
+    pub design: Entity<Design>,
+}
+
+impl HeldDesign {
+    pub(crate) fn new(record: Design, cx: &mut App) -> Self {
+        Self {
+            id: record.id.clone(),
+            design: cx.new(|_| record),
+        }
+    }
+}
+
 pub struct HeldCanvas {
     pub id: String,
     pub canvas: Entity<Canvas>,
@@ -121,6 +139,8 @@ pub struct Project {
     pub articles: Vec<Article>,
     pub canvases: Vec<HeldCanvas>,
     pub canvas: Option<usize>,
+    pub designs: Vec<HeldDesign>,
+    pub design: Option<usize>,
     /// Which article the article pane shows.
     pub article: Option<usize>,
     pub data: Option<Rc<RefCell<Data>>>,
@@ -153,6 +173,12 @@ impl Project {
                 .map(|record| HeldCanvas::new(record, store.clone(), cx))
                 .collect(),
             canvas: None,
+            designs: store
+                .designs()
+                .into_iter()
+                .map(|record| HeldDesign::new(record, cx))
+                .collect(),
+            design: None,
             data: Data::attach(&Home::Project(path.clone()))
                 .map(|data| Rc::new(RefCell::new(data))),
             path,
@@ -183,7 +209,12 @@ impl Project {
         Some(self.boards.get(ix)?.board.read(cx))
     }
 
-    pub fn reload(&mut self, cx: &mut Context<Workspace>) -> bool {
+    pub fn reload(
+        &mut self,
+        paths: Option<&[PathBuf]>,
+        shown: &[Entry],
+        cx: &mut Context<Workspace>,
+    ) -> bool {
         // The store can appear long after the project was opened, and an agent
         // making one is exactly the case this watch is here for.
         if self.data.is_none() {
@@ -192,6 +223,7 @@ impl Project {
         }
         self.reload_articles(cx);
         self.reload_canvases(cx);
+        self.reload_designs(paths, shown, cx);
         let boards = self.reload_boards(cx);
         let before = self.shape();
         self.reload_tables(cx);
@@ -295,6 +327,51 @@ impl Project {
         self.canvas = open.and_then(|id| self.canvas_ix(&id));
     }
 
+    fn reload_designs(&mut self, paths: Option<&[PathBuf]>, shown: &[Entry], cx: &mut App) {
+        let open = self
+            .design
+            .and_then(|ix| self.designs.get(ix))
+            .map(|held| held.id.clone());
+        let mut held: HashMap<String, HeldDesign> = self
+            .designs
+            .drain(..)
+            .map(|held| (held.id.clone(), held))
+            .collect();
+        let store = self.store();
+        self.designs = store
+            .designs()
+            .into_iter()
+            .map(|mut record| match held.remove(&record.id) {
+                Some(kept) => {
+                    let dir = Path::new(artifact::design::DIR).join(&record.id);
+                    let touched = paths.is_none_or(|paths| {
+                        paths
+                            .iter()
+                            .any(|path| path.starts_with(&dir) || dir.starts_with(path))
+                    });
+                    let previous = kept.design.read(cx);
+                    if touched || previous.version != record.version {
+                        if shown
+                            .iter()
+                            .any(|entry| entry.project == self.id && entry.id == record.id)
+                        {
+                            store.load_design_revisions(&mut record);
+                        }
+                        kept.design.update(cx, |held, cx| {
+                            if *held != record {
+                                *held = record;
+                                cx.notify();
+                            }
+                        });
+                    }
+                    kept
+                }
+                None => HeldDesign::new(record, cx),
+            })
+            .collect();
+        self.design = open.and_then(|id| self.design_ix(&id));
+    }
+
     pub fn reload_tables(&mut self, cx: &mut App) {
         let Some(data) = self.data.clone() else {
             return;
@@ -390,6 +467,7 @@ impl Project {
             Kind::Article => Showing::Article(self.articles[ix].id.clone()),
             Kind::Table => Showing::Table(self.tables[ix].key.clone()),
             Kind::Canvas => Showing::Canvas(self.canvases[ix].id.clone()),
+            Kind::Design => Showing::Design(self.designs[ix].id.clone()),
             Kind::App => return None,
         })
     }
@@ -405,6 +483,7 @@ impl Project {
             Kind::Article => self.article_ix(id),
             Kind::Table => self.table_ix(id),
             Kind::Canvas => self.canvas_ix(id),
+            Kind::Design => self.design_ix(id),
             Kind::App => None,
         }
     }
@@ -422,6 +501,7 @@ impl Project {
             Kind::Article => self.articles.len(),
             Kind::Table => self.tables.len(),
             Kind::Canvas => self.canvases.len(),
+            Kind::Design => self.designs.len(),
             Kind::App => 0,
         };
         (0..len).map(move |ix| self.facts_at(kind, ix, cx))
@@ -434,6 +514,7 @@ impl Project {
                 let chat = self.sessions[ix].chat.read(cx);
                 Facts {
                     showing: Showing::Session(chat.id),
+                    title: chat.title.clone(),
                     label: chat.label(),
                     number: chat.number,
                     touched: chat.touched(),
@@ -441,12 +522,14 @@ impl Project {
                     archived: chat.closed,
                     labels: chat.labels.clone(),
                     agent: Some(chat.entry.name.clone()),
+                    board_key: None,
                 }
             }
             Kind::Board => {
                 let board = self.boards[ix].board.read(cx);
                 Facts {
                     showing: Showing::Board(board.id.clone()),
+                    title: board.name.clone(),
                     label: board.label().to_owned(),
                     number: board.number,
                     touched: board.touched,
@@ -454,12 +537,14 @@ impl Project {
                     archived: board.archived,
                     labels: board.labels.clone(),
                     agent: None,
+                    board_key: (!board.key.is_empty()).then(|| board.key.clone()),
                 }
             }
             Kind::Article => {
                 let article = &self.articles[ix];
                 Facts {
                     showing: Showing::Article(article.id.clone()),
+                    title: article.title.clone(),
                     label: article.label().to_owned(),
                     number: article.number,
                     touched: article.touched,
@@ -467,12 +552,14 @@ impl Project {
                     archived: article.archived,
                     labels: article.labels.clone(),
                     agent: None,
+                    board_key: None,
                 }
             }
             Kind::Table => {
                 let table = &self.tables[ix].table.read(cx).record;
                 Facts {
                     showing: Showing::Table(table.key.clone()),
+                    title: table.name.clone(),
                     label: table.name.clone(),
                     number: table.number,
                     touched: table.touched_ms(),
@@ -480,12 +567,14 @@ impl Project {
                     archived: table.archived,
                     labels: Vec::new(),
                     agent: None,
+                    board_key: None,
                 }
             }
             Kind::Canvas => {
                 let canvas = &self.canvases[ix].canvas.read(cx).record;
                 Facts {
                     showing: Showing::Canvas(canvas.id.clone()),
+                    title: canvas.label().to_owned(),
                     label: canvas.label().to_owned(),
                     number: canvas.number,
                     touched: canvas.touched,
@@ -493,6 +582,22 @@ impl Project {
                     archived: canvas.archived,
                     labels: canvas.labels.clone(),
                     agent: None,
+                    board_key: None,
+                }
+            }
+            Kind::Design => {
+                let design = &self.designs[ix].design.read(cx);
+                Facts {
+                    showing: Showing::Design(design.id.clone()),
+                    title: design.label().to_owned(),
+                    label: design.label().to_owned(),
+                    number: design.number,
+                    touched: design.touched,
+                    created: design.created(),
+                    archived: design.archived,
+                    labels: design.labels.clone(),
+                    agent: None,
+                    board_key: None,
                 }
             }
             Kind::App => unreachable!("an app is no project's entry"),
@@ -518,6 +623,14 @@ impl Project {
             }
             Kind::Article => self.articles[ix].preview().to_owned(),
             Kind::Table => String::new(),
+            Kind::Design => self.designs[ix]
+                .design
+                .read(cx)
+                .artboards
+                .iter()
+                .map(|page| page.title.as_str())
+                .collect::<Vec<_>>()
+                .join(", "),
             Kind::Canvas => self.canvases[ix]
                 .canvas
                 .read(cx)
@@ -541,6 +654,7 @@ impl Project {
             Showing::Article(id) => self.article_ix(id),
             Showing::Table(key) => self.table_ix(key),
             Showing::Canvas(id) => self.canvas_ix(id),
+            Showing::Design(id) => self.design_ix(id),
         }
     }
 
@@ -556,6 +670,10 @@ impl Project {
 
     pub fn canvas_ix(&self, id: &str) -> Option<usize> {
         self.canvases.iter().position(|held| held.id == id)
+    }
+
+    pub fn design_ix(&self, id: &str) -> Option<usize> {
+        self.designs.iter().position(|held| held.id == id)
     }
 
     pub fn entries<'a>(&'a self, cx: &'a App) -> impl Iterator<Item = Facts> + 'a {
@@ -581,3 +699,7 @@ mod archive_tests;
 #[cfg(all(test, feature = "desktop"))]
 #[path = "../../../tests/unit/tables.rs"]
 mod table_tests;
+
+#[cfg(test)]
+#[path = "../../../tests/unit/design_reload.rs"]
+mod design_reload_tests;

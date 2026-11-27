@@ -126,7 +126,13 @@ pub fn lines(markdown: &str, span: Span) -> Option<Range<usize>> {
 /// The lines a non-empty byte range of the markdown covers — [`lines`] the
 /// other way.
 pub fn span_of(markdown: &str, range: Range<usize>) -> Span {
-    let line = |at: usize| markdown[..at].matches('\n').count() as u64 + 1;
+    let line = |at: usize| {
+        markdown.as_bytes()[..at]
+            .iter()
+            .filter(|&&byte| byte == b'\n')
+            .count() as u64
+            + 1
+    };
     Span {
         from: line(range.start),
         to: line(range.end.max(range.start + 1) - 1),

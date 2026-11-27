@@ -177,6 +177,11 @@ impl Shape {
             Shape::Extended { detail: true } => EXTENDED_PILL,
         }
     }
+
+    /// The corner radius that makes the wash a pill.
+    pub(crate) fn radius(self) -> f32 {
+        self.pill() / 2.
+    }
 }
 
 impl Row {
@@ -348,6 +353,7 @@ impl Row {
             Showing::Article(id) => (Kind::Article, id.clone()),
             Showing::Board(id) => (Kind::Board, id.clone()),
             Showing::Canvas(id) => (Kind::Canvas, id.clone()),
+            Showing::Design(id) => (Kind::Design, id.clone()),
             Showing::Session(id) => (Kind::Session, open.session(*id, cx)?.filed()?.to_owned()),
             Showing::Table(_) => return None,
         };
@@ -482,13 +488,7 @@ pub(crate) fn on_disk(path: PathBuf) -> [(Item, Act); 2] {
 /// neither do the two rows that are not entries — a project heading and the
 /// line its archive folds under stand whatever is listed beneath them.
 pub(crate) fn shown(row: &Row, features: &Features) -> bool {
-    match row.showing() {
-        Some(Showing::Session(_)) => features.sessions,
-        Some(Showing::Board(_)) => features.boards,
-        Some(Showing::Table(_)) => features.tables,
-        Some(Showing::Canvas(_)) => features.canvases,
-        Some(Showing::Article(_)) | None => true,
-    }
+    row.kind().is_none_or(|kind| features.shows_entry(kind))
 }
 
 /// What an entry's row is written in: the one on screen at full strength, one
@@ -499,15 +499,6 @@ pub(crate) fn tint(selected: bool, archived: bool, theme: &Theme) -> Hsla {
         (false, true) => theme.text_faint,
         (false, false) => theme.text_muted,
     }
-}
-
-/// What the sidebar's list and the window's strip carry, and what a pane takes
-/// a drop of: a sidebar row, or a tab off the window's strip.
-#[derive(Clone, PartialEq)]
-pub(crate) enum Dragged {
-    Row(Row),
-    /// A tab of the window's strip.
-    Tab(crate::model::workspace::Slot),
 }
 
 /// A row's kind and the section it is listed in.
@@ -522,22 +513,19 @@ pub(crate) struct Place {
 /// lands in front of one of its kind, or at the end of its section.
 fn lands(
     places: &HashMap<Row, Place>,
-    item: &Dragged,
-    after: Option<&Dragged>,
-    before: Option<&Dragged>,
+    item: &Row,
+    after: Option<&Row>,
+    before: Option<&Row>,
 ) -> bool {
-    let place = |at: Option<&Dragged>| match at {
-        Some(Dragged::Row(row)) => places.get(row),
-        _ => None,
-    };
+    let place = |at: Option<&Row>| at.and_then(|row| places.get(row));
     let Some(own) = place(Some(item)) else {
         return false;
     };
     match item {
-        Dragged::Row(Row::Group(_)) => {
+        Row::Group(_) => {
             place(before).is_some_and(|place| place.kind == own.kind)
                 || match before {
-                    Some(Dragged::Row(Row::Heading(_))) => {
+                    Some(Row::Heading(_)) => {
                         place(before).is_some_and(|place| place.section_above == Some(own.section))
                     }
                     None => place(after).is_some_and(|place| place.section == own.section),
@@ -585,6 +573,7 @@ pub(crate) fn key_of(entry: &Row) -> String {
             Showing::Article(id) => format!("article-{project}-{id}"),
             Showing::Table(key) => format!("table-{project}-{key}"),
             Showing::Canvas(id) => format!("canvas-{project}-{id}"),
+            Showing::Design(id) => format!("design-{project}-{id}"),
         },
         Row::App(id) => format!("app-{id}"),
     }
@@ -640,7 +629,7 @@ pub(crate) fn row_frame(
         .flex_row()
         .items_center()
         .gap(px(ROW_GAP))
-        .rounded(px(Theme::control_radius()))
+        .rounded(px(Shape::Line.radius()))
         .cursor_pointer()
 }
 
@@ -691,7 +680,7 @@ pub(crate) struct Sidebar {
     hovered: Option<SidebarMenu>,
     rename: Rename,
     /// The drag domain of the list: a row moves within it, or out onto a pane.
-    pub(crate) sort: drag::Domain<(), Dragged>,
+    pub(crate) sort: drag::Domain<(), Row>,
     rail: ListState,
     /// The list as [`Self::relist`] last worked it out. Render reads it and
     /// never works it out.
@@ -705,6 +694,7 @@ pub(crate) struct Sidebar {
     /// Every app's program, whose build names its row.
     apps: Watch,
     canvases: Watch,
+    designs: Watch,
     /// What each session's row showed when it was last drawn.
     listed: HashMap<u64, Listed>,
     sessions: Watch,
@@ -762,6 +752,7 @@ impl Sidebar {
             boards: Watch::default(),
             apps: Watch::default(),
             canvases: Watch::default(),
+            designs: Watch::default(),
             listed: HashMap::new(),
             sessions: Watch::default(),
             focus,
@@ -810,7 +801,7 @@ impl Sidebar {
     fn drawn(&self) -> Listing {
         let listing = &self.listing;
         let rows = &listing.rows;
-        let Some(Dragged::Row(head @ Row::Group(_))) = self.sort.carried() else {
+        let Some(head @ Row::Group(_)) = self.sort.carried() else {
             return listing.clone();
         };
         let Some(at) = rows.iter().position(|row| *row == head) else {
@@ -1116,7 +1107,7 @@ impl Sidebar {
                 return Empty.into_any_element();
             };
             view.update(cx, |this, cx| {
-                let item = Dragged::Row(row.clone());
+                let item = row.clone();
                 let lifted = this.sort.carried().as_ref() == Some(&item);
                 let el = this.sidebar_row(&row, shapes[ix], lifted, window, cx);
                 match row {
@@ -1131,12 +1122,13 @@ impl Sidebar {
         self.sort
             .region("sidebar-list", (), gpui::Axis::Vertical, list)
             .track_scroll(&self.rail)
-            .accepts(|item| matches!(item, Dragged::Row(_)))
             .lands(move |item, after, before| lands(&places, item, after, before))
             .size_full()
-            .on_drop(cx.listener(|this, event: &drag::Drop<(), Dragged>, _, cx| {
-                this.sidebar_moved(event, cx)
-            }))
+            .on_drop(
+                cx.listener(|this, event: &drag::Drop<(), Row>, _, cx| {
+                    this.sidebar_moved(event, cx)
+                }),
+            )
     }
 
     /// The heading of the group whose rows are under the scroll, held at the
@@ -1193,14 +1185,11 @@ impl Sidebar {
     /// itself, at its width in the list.
     fn sidebar_ghost(
         &self,
-        item: &Dragged,
+        item: &Row,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let Dragged::Row(row) = item else {
-            return Empty.into_any_element();
-        };
-        let row = row.clone();
+        let row = item.clone();
         let sidebar = cx.entity();
         drag::ghost("sidebar-row-ghost", move |_, window, cx| {
             sidebar.update(cx, |this, cx| {
@@ -1212,7 +1201,7 @@ impl Sidebar {
                 div()
                     .w(px(width - root::SIDEBAR_GUTTER - this.trail(cx)))
                     .h(px(shape.pill()))
-                    .rounded(px(Theme::control_radius()))
+                    .rounded(px(shape.radius()))
                     .overflow_hidden()
                     .child(this.sidebar_row(&row, shape, true, window, cx))
             })
@@ -1222,14 +1211,13 @@ impl Sidebar {
 
     /// A row let go in the list, between the painted rows `after` and
     /// `before`.
-    fn sidebar_moved(&mut self, event: &drag::Drop<(), Dragged>, cx: &mut Context<Self>) {
-        let Dragged::Row(carried) = &event.item else {
-            return;
-        };
+    fn sidebar_moved(&mut self, event: &drag::Drop<(), Row>, cx: &mut Context<Self>) {
+        let carried = &event.item;
         let rows = self.list(cx).rows();
-        let at = |neighbour: &Option<Dragged>| match neighbour {
-            Some(Dragged::Row(row)) => rows.iter().position(|at| at == row),
-            _ => None,
+        let at = |neighbour: &Option<Row>| {
+            neighbour
+                .as_ref()
+                .and_then(|row| rows.iter().position(|at| at == row))
         };
         let after = || at(&event.after).map(|ix| ix + 1);
         let before = || at(&event.before);
@@ -1389,6 +1377,10 @@ impl Render for Sidebar {
         let mut canvases = std::mem::take(&mut self.canvases);
         canvases.set_in(&sources, window, cx, |this, _, _, cx| this.relisted(cx));
         self.canvases = canvases;
+        let sources = self.workspace.read(cx).design_entities();
+        let mut designs = std::mem::take(&mut self.designs);
+        designs.set_in(&sources, window, cx, |this, _, _, cx| this.relisted(cx));
+        self.designs = designs;
         let programs: Vec<_> = self.workspace.read(cx).programs().cloned().collect();
         let mut apps = std::mem::take(&mut self.apps);
         // A build names an app's row, and the apps are listed by name.

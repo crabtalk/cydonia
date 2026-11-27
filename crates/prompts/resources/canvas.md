@@ -40,6 +40,13 @@ viewport defaults to 1440 × 900. Use separate frames to compare variants.
 HTML source edits reload their frame; development-server HMR remains available.
 Ordinary `link` nodes retain metadata previews.
 
+Use `browser_read`, `browser_screenshot`, `browser_inspect` and other page
+tools with the canvas reference in `canvas` and the frame id in `node`.
+The frame needs a live page. Screenshots use its configured viewport.
+
+Design entries own artboard review. Read `cydonia://resources/design` for
+that workflow.
+
 An edge has a unique nonempty `id`, `fromNode`, and `toNode`. Both nodes must
 exist after the edit. Optional `fromSide` and `toSide` are `top`, `right`,
 `bottom`, or `left`; `fromEnd` and `toEnd` are `none` or `arrow`. Edges can carry

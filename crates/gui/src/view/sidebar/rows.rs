@@ -338,7 +338,7 @@ impl Sidebar {
                     .pl(px(6.))
                     .pr(px(root::SIDEBAR_GUTTER))
                     .h(px(ROW_PILL))
-                    .rounded(px(Theme::control_radius()))
+                    .rounded(px(Shape::Line.radius()))
             })
             .when(lifted, |el| el.m_0())
             .flex()
@@ -647,6 +647,11 @@ impl Sidebar {
                 "canvas-row",
                 glyph(icons::layout::PanelsTopLeft.into()),
             ),
+            Showing::Design(_) => (
+                SharedString::from(key_of(entry)).into(),
+                "design-row",
+                glyph(icons::layout::LayoutGrid.into()),
+            ),
             Showing::Table(_) => (
                 SharedString::from(key_of(entry)).into(),
                 "table-row",
@@ -727,6 +732,7 @@ impl Sidebar {
                 };
                 frame
                     .h(px(shape.pill()))
+                    .rounded(px(shape.radius()))
                     .py(px(EXTENDED_PAD))
                     .flex_col()
                     .items_start()
@@ -1047,6 +1053,7 @@ impl Sidebar {
                 New::Board => this.ask_new_board(ix, window, cx),
                 New::Article => this.new_article(ix, window, cx),
                 New::Canvas => this.new_canvas(ix, window, cx),
+                New::Design => this.new_design(ix, window, cx),
                 New::Table => this.new_table(ix, window, cx),
             })
         })

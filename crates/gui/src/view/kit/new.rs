@@ -1,10 +1,14 @@
 //! The "New …" choices a project offers: a session on each agent, a board, an
-//! article, a table — as far as the settings switch them on.
+//! article, a canvas, a design or a table.
 
 use crate::{
     model::workspace::Workspace,
-    view::kit::menu::{self, Act},
+    view::kit::{
+        icon,
+        menu::{self, Act},
+    },
 };
+use artifact::kind::Kind;
 use bezel::{
     gpui::{Context, Window},
     ui::{
@@ -21,6 +25,7 @@ pub(crate) enum New {
     Board,
     Article,
     Canvas,
+    Design,
     Table,
 }
 
@@ -31,6 +36,7 @@ impl New {
             Self::Board => "New board",
             Self::Article => "New article",
             Self::Canvas => "New canvas",
+            Self::Design => "New design",
             Self::Table => "New table",
         }
     }
@@ -41,6 +47,7 @@ impl New {
             Self::Board => icons::development::SquareKanban.into(),
             Self::Article => icons::files::FilePlus.into(),
             Self::Canvas => icons::layout::PanelsTopLeft.into(),
+            Self::Design => icon::kind_icon(Kind::Design),
             Self::Table => icons::files::Table2.into(),
         }
     }
@@ -51,7 +58,7 @@ pub(crate) struct Offered {
     pub(crate) sessions: bool,
     /// The agents a session can open on, by name and mark.
     pub(crate) agents: Vec<(String, Icon)>,
-    /// Boards, articles and tables, where switched on.
+    /// The project entry types that are switched on.
     pub(crate) kinds: Vec<New>,
 }
 
@@ -72,6 +79,7 @@ pub(crate) fn offered(workspace: &Workspace) -> Offered {
         (features.boards, New::Board),
         (true, New::Article),
         (features.canvases, New::Canvas),
+        (features.designs, New::Design),
         (features.tables, New::Table),
     ]
     .into_iter()

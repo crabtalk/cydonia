@@ -11,20 +11,20 @@
 //! disagreeing — and a path already handed to an agent is not one we can
 //! rewrite the way a vault rewrites its own links.
 
-use crate::model::language::Grammars as _;
 use crate::model::{
     cover, file_url, language,
+    language::Grammars as _,
     store::{self, Store},
     workspace::Workspace,
 };
-use artifact::kind::Kind;
-use artifact::project::Project as _;
 use artifact::{
     article as layout,
     article::{
-        comments::{Author, Comment, Comments, Reply},
+        comments::{Author, Comment, Comments},
         properties::{self, CommentDisplay, Properties},
     },
+    kind::Kind,
+    project::Project as _,
 };
 use bezel::{
     gpui::{App, AppContext as _, Context, Entity},
@@ -509,11 +509,7 @@ impl Article {
         let Some(comment) = self.comments.get_mut(id) else {
             return;
         };
-        comment.replies.push(Reply {
-            from: Author::Reader,
-            text: question,
-            turn: None,
-        });
+        comment.reply(Author::Reader, question, None);
         self.save_comments(&self.saved.clone());
         self.restate_comments(cx);
     }

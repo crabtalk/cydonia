@@ -37,6 +37,7 @@ pub enum Showing {
     /// An article's id.
     Article(String),
     Canvas(String),
+    Design(String),
     /// A table's key.
     Table(String),
 }
@@ -48,6 +49,7 @@ impl Showing {
             Self::Board(_) => Kind::Board,
             Self::Article(_) => Kind::Article,
             Self::Canvas(_) => Kind::Canvas,
+            Self::Design(_) => Kind::Design,
             Self::Table(_) => Kind::Table,
         }
     }
@@ -612,6 +614,10 @@ impl Workspace {
                 open.canvas_ix(&id)?;
                 (Kind::Canvas, id)
             }
+            Showing::Design(id) => {
+                open.design_ix(&id)?;
+                (Kind::Design, id)
+            }
             Showing::Table(key) => {
                 open.table_ix(&key)?;
                 (Kind::Table, key)
@@ -725,6 +731,7 @@ impl Workspace {
             }
             Showing::Article(id) => open.article = open.article_ix(id),
             Showing::Canvas(id) => open.canvas = open.canvas_ix(id),
+            Showing::Design(id) => open.design = open.design_ix(id),
             Showing::Table(key) => {
                 if let Some(ix) = open.table_ix(key) {
                     open.table = Some(ix);
@@ -755,6 +762,7 @@ impl Workspace {
                 true
             }
             Showing::Canvas(id) => open.canvas_ix(id).is_some(),
+            Showing::Design(id) => open.design_ix(id).is_some(),
             Showing::Session(_) | Showing::Table(_) => true,
         }
     }

@@ -24,6 +24,26 @@ A tab's page exists only once its panel has been on screen. A call on a tab
 whose panel is not showing answers that it cannot load; say so rather than
 retrying.
 
+## Canvas web frames
+
+For a web frame, pass `canvas` (the stable canvas reference, such as `#12`)
+and `node` (its id from `canvas_read`) in place of `tab`. Read, screenshot,
+scroll, console, inspect, evaluate, click and type use the frame's existing
+page. `browser_tabs` and `browser_open` work with right-panel tabs.
+
+Open the canvas and bring the frame into view to start its page. Frames with
+no live page return an error. A screenshot uses the frame's configured page
+viewport, independent of its size or zoom on the canvas.
+
+## Design artboards
+
+Pass `design` (a stable design reference) and `artboard` (an id from
+`design_read`) as the artboard target. Browser artboard commands use the
+design's configured viewport. If that artboard is open, commands use its live
+WebView. Otherwise Cydonia loads it for the call and releases it afterward.
+Scroll position, form state and console history persist between calls when the
+artboard is open in the design view.
+
 ## Reading and acting
 
 A read gives the page's text and a numbered list of the elements on it that can
@@ -41,22 +61,22 @@ reach text past that limit.
 
 ## The console
 
-`browser_console` gives what a tab's page has logged since the tab opened:
+`browser_console` gives what the page has logged since it was created:
 console calls, uncaught errors and unhandled rejections, each with a message id,
 level and the frame that logged it. Filter with `levels`, a list of `debug`,
 `log`, `info`, `warn` or `error`. Omit it for all levels.
 
 Every reply includes a `cursor`, even when nothing matches. Pass it as `since`
 on the next call to read only newer messages. The last 500 messages are kept;
-a reply reports when older messages have been dropped. IDs belong to the tab
+a reply reports when older messages have been dropped. IDs belong to the page
 and continue across navigation. Failed loads and other messages the engine
 writes itself are not in this log.
 
 ## Screenshots
 
-`browser_screenshot` returns a PNG image of the tab's current viewport, without
+`browser_screenshot` returns a PNG image of the page's current viewport, without
 browser chrome. Use it to inspect layout, images, charts or canvas content.
-Scroll to capture another part of the page. It accepts the same optional tab id
+Scroll to capture another part of the page. It accepts the same page target
 as `browser_read`.
 
 ## Debugging

@@ -4,7 +4,7 @@ mod common;
 
 use artifact::{kind::Kind, session::mode::Mode};
 use common::{Rail, Scratch, refused, said, structured};
-use cydonia_mcp::rail::{self, Change, Request, Started};
+use cydonia_mcp::rail::{self, Change, Request, Settled, Started};
 use serde_json::json;
 
 #[test]
@@ -295,8 +295,87 @@ fn a_message_from_a_session_is_signed_with_its_turn() {
     let link = format!("cydonia://{project}{from}:2");
     assert!(rail.was_asked(Change::Send {
         session: target,
-        message: format!("from [{link}]({link} \"chip\")\n\nfoo"),
+        message: format!(
+            "from [{link}]({link} \"chip\"), which can wait on this turn and read your last \
+             message in it as your answer\n\nfoo"
+        ),
     }));
+}
+
+/// The record id a session reference such as `#4` names in `scratch`.
+fn record_of(scratch: &Scratch, reference: &str) -> String {
+    artifact::entry::Registry::open(scratch.path())
+        .unwrap()
+        .resolve(Kind::Session, reference[1..].parse().unwrap())
+        .unwrap()
+        .unwrap()
+}
+
+#[test]
+fn a_wait_answers_the_last_message_of_the_turn_the_session_settled_on() {
+    let scratch = Scratch::new("session-wait");
+    let server = scratch.server();
+    let to = filed(&scratch, &[("one", "a"), ("two", "b")]);
+    let record = record_of(&scratch, &to);
+    rail::install(move |request| {
+        let Request::Wait(wait) = request else {
+            panic!("expected a wait");
+        };
+        assert_eq!(wait.session, record);
+        wait.reply
+            .send(Ok(Settled {
+                turn: 2,
+                answer: Some("done".to_owned()),
+                notice: None,
+            }))
+            .unwrap();
+    });
+
+    let answer = said(server.call(
+        "session_wait",
+        json!({ "session": to }),
+        Some(scratch.path()),
+    ));
+
+    assert_eq!(answer, format!("{to}:2 answered:\n\ndone"));
+}
+
+#[test]
+fn a_wait_past_its_timeout_says_the_session_is_still_working() {
+    static HELD: std::sync::Mutex<Vec<rail::Wait>> = std::sync::Mutex::new(Vec::new());
+    let scratch = Scratch::new("session-wait-timeout");
+    let server = scratch.server();
+    let to = filed(&scratch, &[("one", "a")]);
+    rail::install(|request| {
+        if let Request::Wait(wait) = request {
+            HELD.lock().unwrap().push(wait);
+        }
+    });
+
+    let answer = said(server.call(
+        "session_wait",
+        json!({ "session": to, "timeout": 1 }),
+        Some(scratch.path()),
+    ));
+
+    assert!(answer.contains("still working"), "{answer}");
+}
+
+#[test]
+fn a_session_cannot_wait_on_itself() {
+    let scratch = Scratch::new("session-wait-self");
+    let server = scratch.server();
+    let to = filed(&scratch, &[("one", "a")]);
+    let record = record_of(&scratch, &to);
+
+    let why = refused(server.call_from(
+        "session_wait",
+        json!({ "session": to }),
+        Some(scratch.path()),
+        Some(&record),
+    ));
+
+    assert!(why.contains("itself"), "{why}");
 }
 
 /// A session filed in `scratch` titled `title`, and named `name` by the user

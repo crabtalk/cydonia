@@ -227,3 +227,31 @@ fn applied_board_search_has_visible_working_exit_controls(cx: &mut gpui::TestApp
         assert!(cx.debug_bounds("search-pill").is_none());
     }
 }
+
+#[test]
+fn workspace_search_finds_design_titles() {
+    use artifact::project::Project as _;
+    let root = std::env::temp_dir().join(format!("cydonia-search-design-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    let design = fs::Project::new(&root)
+        .create_design("Account settings")
+        .unwrap();
+    let hits = search_all(
+        std::slice::from_ref(&root),
+        &Query::literal("Account").unwrap(),
+    );
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].kind, Kind::Design);
+    assert_eq!(hits[0].id, design.id);
+    assert!(hits[0].in_title);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn design_settings_default_on_for_existing_files() {
+    use crate::model::settings::Features;
+    let existing: Features = toml::from_str("canvases = false").unwrap();
+    assert!(existing.designs);
+    let disabled: Features = toml::from_str("designs = false").unwrap();
+    assert!(!disabled.designs);
+}

@@ -63,6 +63,17 @@ const FULL: Arg = Arg {
 default: each tool call is one line.",
 };
 
+const WAITED: Arg = Arg {
+    name: "session",
+    about: "The session to wait on, such as #43, in the project the call is about.",
+};
+
+const TIMEOUT: Arg = Arg {
+    name: "timeout",
+    about: "Seconds to wait before answering that the session is still working. \
+Keep it under your client's tool-call timeout.",
+};
+
 const TITLE: Arg = Arg {
     name: "title",
     about: "The session's new title.",
@@ -80,7 +91,13 @@ const LATEST: u64 = 3;
 /// Characters of a hit's line shown, at most.
 const SNIPPET: usize = 160;
 
-pub static TOOLS: [Tool; 4] = [
+/// Seconds `session_wait` waits when no timeout is given.
+const WAIT: u64 = 50;
+
+/// Seconds `session_wait` waits at most.
+const WAIT_MOST: u64 = 1800;
+
+pub static TOOLS: [Tool; 5] = [
     Tool {
         name: "session_send",
         description: "Send a message to another agent session in the project, named by its entry \
@@ -106,6 +123,22 @@ pub static TOOLS: [Tool; 4] = [
         writes: true,
         deletes: false,
         call: send,
+    },
+    Tool {
+        name: "session_wait",
+        description: "Wait until a session in the project has nothing in flight and nothing \
+            queued, then answer the last message its agent wrote in its last turn, or why that \
+            turn stopped. Use it after session_send to get another agent's answer. Answers \
+            at once for a session already idle. When the timeout passes first, the session is \
+            still working: call it again to keep waiting.",
+        schema: |bound| {
+            let mut schema = fields(bound, &[PROJECT, WAITED]);
+            super::defaulted(&mut schema, TIMEOUT, "integer", json!(WAIT));
+            schema
+        },
+        writes: false,
+        deletes: false,
+        call: wait,
     },
     Tool {
         name: "session_read",
@@ -162,13 +195,78 @@ fn send(args: Args<'_>) -> Outcome {
     // Sessions run in the app, and only for projects on the rail.
     super::on_the_rail(project)?;
     let signed = match sender(&args) {
-        Some(from) => format!("from {from}\n\n{message}"),
+        Some(from) => format!(
+            "from {from}, which can wait on this turn and read your last message in it as your \
+             answer\n\n{message}"
+        ),
         None => message.to_owned(),
     };
     let message = signed.as_str();
     let Some(named) = args.maybe(SESSION) else {
         return start(project, args.maybe(AGENT), message);
     };
+    let (number, entry) = session_entry(project, named)?;
+    if terminal(project, &entry.id) {
+        return Err(Trouble::Refused("Messages to terminal runs must be entered in the native CLI. Name an agent to start a new run with this message.".into()));
+    }
+    rail::ask(Change::Send {
+        session: entry.id.clone(),
+        message: message.to_owned(),
+    })?;
+    Ok(Answer::said(format!("sent to #{number} {}", entry.title)))
+}
+
+fn wait(args: Args<'_>) -> Outcome {
+    let project = root(&args)?;
+    let named = args.text(WAITED)?;
+    let seconds = match args.value(TIMEOUT) {
+        None | Some(serde_json::Value::Null) => WAIT,
+        Some(value) => value
+            .as_u64()
+            .filter(|seconds| *seconds > 0)
+            .ok_or_else(|| {
+                Trouble::Invalid("timeout must be a positive number of seconds".to_owned())
+            })?
+            .min(WAIT_MOST),
+    };
+    super::on_the_rail(project)?;
+    let (number, entry) = session_entry(project, named)?;
+    if args.session() == Some(entry.id.as_str()) {
+        return Err(Trouble::Refused(
+            "a session cannot wait on itself".to_owned(),
+        ));
+    }
+    if terminal(project, &entry.id) {
+        return Err(Trouble::Refused(format!(
+            "#{number} is a terminal run; its turns are not recorded, so there is nothing to wait on"
+        )));
+    }
+    let Some(settled) = rail::wait(entry.id, std::time::Duration::from_secs(seconds))? else {
+        return Ok(Answer::said(format!(
+            "#{number} is still working after {seconds}s; call session_wait again to keep waiting"
+        ))
+        .with(json!({ "reference": format!("#{number}"), "settled": false })));
+    };
+    let turn = format!("#{number}:{}", settled.turn);
+    let text = match (&settled.notice, &settled.answer) {
+        (Some(notice), _) if settled.turn == 0 => format!("#{number} has no turns: {notice}"),
+        (None, _) if settled.turn == 0 => format!("#{number} has no turns"),
+        (Some(notice), Some(answer)) => format!("{turn} ended with: {notice}\n\n{answer}"),
+        (Some(notice), None) => format!("{turn} ended with: {notice}"),
+        (None, Some(answer)) => format!("{turn} answered:\n\n{answer}"),
+        (None, None) => format!("{turn} ended without a message"),
+    };
+    Ok(Answer::said(text).with(json!({
+        "reference": format!("#{number}"),
+        "settled": true,
+        "turn": settled.turn,
+        "answer": settled.answer,
+        "notice": settled.notice,
+    })))
+}
+
+/// The session entry `named` refers to in `project`, with its number.
+fn session_entry(project: &Path, named: &str) -> Result<(u64, artifact::entry::Entry), Trouble> {
     let number = super::number_in(project, named)?
         .ok_or_else(|| Trouble::Invalid("session must be a reference such as #43".to_owned()))?;
     let entry = super::entry_numbered(project, number, named)?;
@@ -178,17 +276,14 @@ fn send(args: Args<'_>) -> Outcome {
             entry.kind
         )));
     }
-    if fs::Project::new(project)
-        .session(&entry.id)
+    Ok((number, entry))
+}
+
+/// Whether the session filed under `record` is a terminal run.
+fn terminal(project: &Path, record: &str) -> bool {
+    fs::Project::new(project)
+        .session(record)
         .is_some_and(|record| record.mode == Mode::Terminal)
-    {
-        return Err(Trouble::Refused("Messages to terminal runs must be entered in the native CLI. Name an agent to start a new run with this message.".into()));
-    }
-    rail::ask(Change::Send {
-        session: entry.id.clone(),
-        message: message.to_owned(),
-    })?;
-    Ok(Answer::said(format!("sent to #{number} {}", entry.title)))
 }
 
 fn rename(args: Args<'_>) -> Outcome {

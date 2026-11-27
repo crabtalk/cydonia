@@ -187,7 +187,7 @@ impl Tab {
             Kind::Article => Some(self.article_shown(cx)?.read(cx).hits(cx)),
             Kind::Board => Some(self.board_shown(cx)?.read(cx).hits(cx)),
             Kind::Session => Some(self.session_shown(cx)?.read(cx).hits(cx)),
-            Kind::Table | Kind::App | Kind::Canvas => None,
+            Kind::Table | Kind::App | Kind::Canvas | Kind::Design => None,
         }
     }
 
@@ -281,7 +281,7 @@ impl Tab {
                     view.update(cx, |view, cx| view.reveal_hit(cx));
                 }
             }
-            Kind::Table | Kind::App | Kind::Canvas => {}
+            Kind::Table | Kind::App | Kind::Canvas | Kind::Design => {}
         }
     }
 

@@ -1,24 +1,26 @@
 //! A project, as whatever holds it: the boards, sessions and articles in one,
 //! the numbers they are referred to by, and the reads and writes over them.
 //!
-//! [`Project`] is what a backend answers, and [`fs`] is the one cydonia ships
+//! [`Project`] is what a backend answers, and `fs` is the one cydonia ships
 //! — files under the project's own `.cydonia/`. The shapes themselves name no
 //! file and open none, which is what lets a board be the same board whichever
 //! backend handed it over.
 //!
-//! Everything is named by id. A path is a detail of [`fs`] and never crosses
+//! Everything is named by id. A path is a detail of `fs` and never crosses
 //! this trait.
 
 use crate::{
     article::{Article, comments::Comments, properties::Properties},
     board::Board,
-    canvas::Canvas,
+    canvas::{Canvas, Document as CanvasDocument},
+    design::{Artboard, Design},
     kind::Kind,
     session::record::Record,
 };
-use canvas::model::Canvas as CanvasDocument;
 use sha2::{Digest as _, Sha256};
+use std::path::PathBuf;
 
+#[cfg(feature = "fs")]
 pub mod fs;
 pub mod layout;
 pub mod memory;
@@ -90,6 +92,26 @@ pub trait Project {
     fn save_canvas(&self, canvas: &mut Canvas) -> Result<()>;
     fn remove_canvas(&self, id: &str) -> Result<()>;
 
+    /// Lists design metadata without reading artboard files.
+    fn designs(&self) -> Vec<Design>;
+    fn design(&self, id: &str) -> Option<Design>;
+    fn create_design(&self, title: &str) -> Result<Design>;
+    fn design_artboard_revision(&self, design: &str, artboard: &str) -> Option<String>;
+
+    fn load_design_revisions(&self, design: &mut Design) {
+        for artboard in &mut design.artboards {
+            artboard.revision = self.design_artboard_revision(&design.id, &artboard.id);
+        }
+        design.revisions_loaded = true;
+    }
+
+    fn save_design(&self, design: &mut Design) -> Result<()>;
+    fn remove_design(&self, id: &str) -> Result<()>;
+    /// Add an empty artboard to the end of `design` and save it.
+    fn add_design_artboard(&self, design: &mut Design, title: &str) -> Result<Artboard>;
+    /// Take artboard `artboard` out of `design`, files and all, and save it.
+    fn remove_design_artboard(&self, design: &mut Design, artboard: &str) -> Result<()>;
+
     // ── articles ─────────────────────────────────────────────────────
 
     /// Every article filed here, most recently touched first. Bodies are not
@@ -136,10 +158,9 @@ pub trait Project {
 
     // ── changes ──────────────────────────────────────────────────────
 
-    /// Call `knock` whenever something this backend reads back changes under
-    /// it, from any thread. A knock carries nothing: the answer to one is a
-    /// re-read. `None` for a backend that has nothing to watch or cannot.
-    fn watch(&self, knock: impl Fn() + Send + Sync + 'static) -> Option<Watching> {
+    /// Changed paths are relative to the project store. An empty path requests
+    /// a full re-read. The callback may run on any thread.
+    fn watch(&self, knock: impl Fn(Vec<PathBuf>) + Send + Sync + 'static) -> Option<Watching> {
         let _ = knock;
         None
     }

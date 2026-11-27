@@ -27,6 +27,7 @@ use bezel::{
     theme::{AppExt as _, Brand, Tint, Vibrancy, appearance::AppearanceMode},
     ui::{AppExt as _, icons::Icon},
 };
+use canvas::Camera;
 use cydonia_acp::proto::SessionConfigOptionValue;
 use editor::AppExt as _;
 use futures::{StreamExt as _, channel::mpsc};
@@ -53,6 +54,7 @@ mod apps;
 mod articles;
 mod boards;
 mod canvases;
+mod designs;
 mod identities;
 mod labels;
 mod spaces;
@@ -176,6 +178,9 @@ pub struct Workspace {
     sent_commands: std::collections::BTreeMap<String, Vec<String>>,
     /// The release whose What's New was last shown — [`State::release`].
     release: Option<crate::model::version::Version>,
+    /// Where each canvas and design was last looked at — [`State::cameras`].
+    /// Written with the rest of the state, not as it moves.
+    cameras: BTreeMap<ProjectId, Vec<state::Camera>>,
     /// Every app on this machine, by id — see [`apps`].
     pub apps: Vec<crate::model::apps::HeldApp>,
     /// The watch on the apps' records and loaded folders.
@@ -203,6 +208,7 @@ impl Workspace {
         let order = ids.intern_keys(state.order);
         let pinned = ids.intern_keys(state.pinned);
         let sort = ids.intern_keys(state.sort);
+        let cameras = ids.intern_keys(state.cameras);
         let spaces = Self::in_order(
             <crate::model::spaces::Shelf as crate::model::spaces::Store>::all()
                 .into_iter()
@@ -278,6 +284,7 @@ impl Workspace {
             recent_commands: state.commands,
             sent_commands: state.sent_commands,
             release: state.release,
+            cameras,
             apps: Vec::new(),
             apps_watch: None,
             skills: cx.new(|_| Skills::default()),
@@ -310,7 +317,7 @@ impl Workspace {
         this
     }
 
-    fn save(&self) {
+    pub(crate) fn save(&self) {
         // The tools' copy of the rail, pushed wherever the list is written
         // down. A tool cannot read what is in memory here, and `state.toml` is
         // rewritten whole from this one place — so reading the file back would
@@ -374,6 +381,7 @@ impl Workspace {
             front: self
                 .front_slot()
                 .map(|slot| slot.clone().map(|id| self.path_of(id).to_path_buf())),
+            cameras: self.ids.path_keys(&self.cameras),
         });
     }
 
@@ -421,6 +429,31 @@ impl Workspace {
         sent.insert(0, command);
         sent.truncate(SENT_COMMANDS);
         self.save();
+    }
+
+    /// Where `entry` was last looked at.
+    pub fn camera(&self, entry: &Entry) -> Option<Camera> {
+        self.cameras
+            .get(&entry.project)?
+            .iter()
+            .find(|held| held.kind == entry.kind && held.id == entry.id)
+            .map(|held| Camera {
+                center: (held.x, held.y),
+                zoom: held.zoom,
+            })
+    }
+
+    /// Note where `entry` is looked at, for the next [`Self::save`].
+    pub fn set_camera(&mut self, entry: &Entry, camera: Camera) {
+        let held = self.cameras.entry(entry.project).or_default();
+        held.retain(|held| held.kind != entry.kind || held.id != entry.id);
+        held.push(state::Camera {
+            kind: entry.kind,
+            id: entry.id.clone(),
+            x: camera.center.0,
+            y: camera.center.1,
+            zoom: camera.zoom,
+        });
     }
 
     /// Write down where the main window stands, if it has moved.
