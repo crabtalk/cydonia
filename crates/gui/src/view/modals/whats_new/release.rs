@@ -4,14 +4,11 @@
 
 use crate::{
     model::workspace::Workspace,
-    view::{kit::icon::kind_icon, window::root::EditAgent},
+    view::{kit::web::ViewportLook as _, window::root::NewDesign},
 };
-use artifact::kind::Kind;
+use artifact::web::Viewport;
 use bezel::{
-    agent::{Face, avatar::Motion, mascot},
-    gpui::{
-        AnyElement, Context, Div, Entity, Subscription, Task, Window, div, prelude::*, px, relative,
-    },
+    gpui::{Context, Div, Entity, Subscription, Task, Window, div, prelude::*, px, relative},
     theme::{TextStyle, Theme, Typeset},
     ui::{
         icons,
@@ -21,35 +18,33 @@ use bezel::{
 use std::time::Duration;
 
 /// The release these notes are for.
-pub(crate) const VERSION: &str = "0.2.7";
+pub(crate) const VERSION: &str = "0.2.14";
 
 /// Each page's line under the title, in page order.
-pub(super) const HEADLINES: [&str; 1] =
-    ["Name an agent, give it a face, and keep its sessions under it in the sidebar."];
-
-/// The agents the sidebar in miniature lists, each by name and its sessions'
-/// titles.
-const AGENTS: [(&str, [&str; 2]); 2] = [
-    ("Ada", ["Plan the release", "Fix the flaky test"]),
-    ("Turing", ["Review the parser", "Answer the issue"]),
+pub(super) const HEADLINES: [&str; 1] = [
+    "Designs: agents draw pages as live artboards. Review them side by side, switch the device, and open one to zoom in.",
 ];
 
-/// Which of [`AGENTS`] are open at each step of the loop; a folded one sleeps.
-const LOOP: [[bool; 2]; 3] = [[true, false], [true, true], [false, true]];
+/// The artboards the canvas in miniature lays out, by title.
+const ARTBOARDS: [&str; 3] = ["Home", "Pricing", "Sign in"];
 
-/// How long the sidebar holds still between two steps of its loop.
-const STEP: Duration = Duration::from_millis(1400);
+/// How long the canvas holds one device before the next.
+const STEP: Duration = Duration::from_millis(1600);
 
-/// The sidebar in miniature: how tall it stands, and how wide a blob is drawn.
-const SIDEBAR_HEIGHT: f32 = 168.;
-const BLOB: f32 = 14.;
+/// The canvas in miniature: how tall it stands, how tall an artboard is drawn,
+/// and how wide a desktop artboard is; the other devices keep their own
+/// proportion to it.
+const CANVAS_HEIGHT: f32 = 168.;
+const ARTBOARD_HEIGHT: f32 = 84.;
+const DESKTOP_WIDTH: f32 = 112.;
 
-/// What follows the headline: the sidebar's Agents in miniature, an agent
-/// folding to sleep and waking open on a loop, and the way to make one.
+/// What follows the headline: a design's canvas in miniature, its artboards
+/// redrawn at each device in turn, and the way to make one.
 pub(super) struct Body {
     workspace: Entity<Workspace>,
     /// Which of [`HEADLINES`]' pages is shown.
     pub(super) page: usize,
+    /// Which of [`Viewport::PRESETS`] the artboards are drawn at.
     at: usize,
     _loop: Task<()>,
     _watch: Subscription,
@@ -62,7 +57,7 @@ impl Body {
             loop {
                 cx.background_executor().timer(STEP).await;
                 let stepped = this.update(cx, |this, cx| {
-                    this.at = (this.at + 1) % LOOP.len();
+                    this.at = (this.at + 1) % Viewport::PRESETS.len();
                     cx.notify();
                 });
                 if stepped.is_err() {
@@ -83,21 +78,13 @@ impl Body {
 impl Render for Body {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::of(cx).clone();
-        let sessions = self.workspace.read(cx).settings.features.sessions;
-        let make = sessions.then(|| {
+        let designs = self.workspace.read(cx).settings.features.designs;
+        let make = designs.then(|| {
             div().flex().justify_center().child(
                 theme
-                    .button("New agent…", ButtonStyle::Ghost, None)
-                    .id("whats-new-agent")
-                    .on_click(|_, window, cx| {
-                        window.dispatch_action(
-                            Box::new(EditAgent {
-                                id: None,
-                                from: None,
-                            }),
-                            cx,
-                        )
-                    }),
+                    .button("New design", ButtonStyle::Ghost, None)
+                    .id("whats-new-design")
+                    .on_click(|_, window, cx| window.dispatch_action(Box::new(NewDesign), cx)),
             )
         });
         div()
@@ -105,78 +92,90 @@ impl Render for Body {
             .flex()
             .flex_col()
             .gap(px(14.))
-            .child(sidebar(LOOP[self.at], &theme))
+            .child(canvas(Viewport::PRESETS[self.at], &theme))
             .children(make)
     }
 }
 
-/// The sidebar in miniature: the Agents heading, then each of [`AGENTS`] with
-/// its blob, its sessions under it where `open` says so.
-fn sidebar(open: [bool; 2], theme: &Theme) -> Div {
-    let groups = AGENTS
-        .iter()
-        .zip(open)
-        .map(|((name, sessions), open)| agent(name, sessions, open, theme));
-    div()
-        .w(relative(1.))
-        .h(px(SIDEBAR_HEIGHT))
+/// The canvas in miniature: the device it is drawn at in its corner, and each
+/// of [`ARTBOARDS`] under its title, as wide as `viewport` is against desktop.
+fn canvas(viewport: Viewport, theme: &Theme) -> Div {
+    let width = DESKTOP_WIDTH * viewport.width as f32 / Viewport::DESKTOP.width as f32;
+    let device = div()
+        .absolute()
+        .top(px(8.))
+        .right(px(8.))
         .flex()
-        .flex_col()
-        .gap(px(2.))
-        .p(px(10.))
+        .flex_row()
+        .items_center()
+        .gap(px(4.))
+        .px(px(6.))
+        .py(px(2.))
+        .rounded_full()
+        .border_1()
+        .border_color(theme.border)
+        .text_style(TextStyle::Caption)
+        .text_color(theme.text_muted)
+        .child(icons::icon(viewport.icon()).size(px(12.)))
+        .child(viewport.title());
+    div()
+        .relative()
+        .w(relative(1.))
+        .h(px(CANVAS_HEIGHT))
+        .flex()
+        .flex_row()
+        .items_center()
+        .justify_center()
+        .gap(px(14.))
+        .pt(px(16.))
         .overflow_hidden()
         .rounded(px(8.))
         .border_1()
         .border_color(theme.border)
-        .bg(theme.sidebar_bg())
-        .child(
-            div()
-                .pb(px(4.))
-                .text_style(TextStyle::Callout)
-                .text_color(theme.text_faint)
-                .child("Agents"),
-        )
-        .children(groups)
+        .bg(theme.content_bg())
+        .children(ARTBOARDS.map(|title| artboard(title, width, theme)))
+        .child(device)
 }
 
-/// One agent: its blob and name, asleep while folded, and its sessions under
-/// it while open.
-fn agent(name: &'static str, sessions: &[&'static str], open: bool, theme: &Theme) -> AnyElement {
-    let face = Face::from(name).motion(match open {
-        true => Motion::default(),
-        false => Motion::ASLEEP,
-    });
-    let head = div()
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap(px(6.))
-        .py(px(3.))
-        .text_style(TextStyle::Callout)
-        .text_color(theme.text)
-        .child(div().size(px(BLOB)).flex_none().child(mascot(&face, 0.)))
-        .child(name);
-    let rows = sessions.iter().filter(|_| open).map(|title| {
+/// One artboard: its title over a page `width` wide, a bar and two lines of
+/// text standing in for what an agent drew.
+fn artboard(title: &'static str, width: f32, theme: &Theme) -> Div {
+    let line = |share: f32| {
         div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(6.))
-            .pl(px(BLOB + 6.))
-            .py(px(2.))
-            .text_style(TextStyle::Caption)
-            .text_color(theme.text_muted)
-            .child(
-                icons::icon(kind_icon(Kind::Session))
-                    .size(px(12.))
-                    .text_color(theme.text_muted),
-            )
-            .child(*title)
-    });
+            .h(px(4.))
+            .w(relative(share))
+            .rounded_full()
+            .bg(theme.element_hover)
+    };
+    let page = div()
+        .w(px(width))
+        .h(px(ARTBOARD_HEIGHT))
+        .flex()
+        .flex_col()
+        .gap(px(5.))
+        .p(px(6.))
+        .overflow_hidden()
+        .border_1()
+        .border_color(theme.border)
+        .bg(theme.surface_card)
+        .child(
+            div()
+                .h(px(8.))
+                .w_full()
+                .rounded(px(2.))
+                .bg(theme.element_active),
+        )
+        .child(line(0.9))
+        .child(line(0.6));
     div()
         .flex()
         .flex_col()
-        .child(head)
-        .children(rows)
-        .into_any_element()
+        .gap(px(4.))
+        .child(
+            div()
+                .text_style(TextStyle::Caption)
+                .text_color(theme.text_muted)
+                .child(title),
+        )
+        .child(page)
 }

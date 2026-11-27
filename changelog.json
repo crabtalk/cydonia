@@ -1,5 +1,31 @@
 [
   {
+    "version": "0.2.14",
+    "date": "2026-11-27",
+    "summary": "Design entries: agents draw pages as live artboards, and you review them on a canvas at each device's size.",
+    "new": [
+      "Add design entries: agents create artboards with the design tools and write each one as an HTML page, which the design lays out side by side on a canvas",
+      "Switch a design between Desktop, Tablet and Phone, and open one artboard to use its live page at that size",
+      "Zoom artboards like Figma, halving and doubling from 2% up, with Zoom to fit, 50%, 100% and 200%",
+      "Pan with the Hand tool or by holding Space, and pinch to zoom an open artboard",
+      "Rename, add and delete artboards from the canvas",
+      "Canvases and designs reopen where you last looked at them",
+      "Point the browser tools at a canvas web frame or a design artboard, and read a page's console",
+      "Wait on another session's answer with `session_wait`",
+      "Mention tables in the `@` list"
+    ],
+    "changed": [
+      "Canvases and designs sit on the same background as other entries",
+      "Sidebar rows highlight as pills, and selected sidebar rows and tabs use Liquid Glass in light and dark",
+      "What's New introduces designs",
+      "Use Bezel 0.2.31 from crates.io"
+    ],
+    "fixed": [
+      "Keep the terminal cursor steady while programs redraw the screen",
+      "Open a design at its fitted view without first showing it at full size"
+    ]
+  },
+  {
     "version": "0.2.13",
     "date": "2026-11-23",
     "summary": "Edit tables like spreadsheets, sort and format columns, and reorder agents in the sidebar.",

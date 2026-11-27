@@ -3,7 +3,7 @@ members = ["acp/*", "apps/*", "crates/*"]
 resolver = "3"
 
 [workspace.package]
-version = "0.2.13"
+version = "0.2.14"
 edition = "2024"
 rust-version = "1.95"
 license = "MIT"
@@ -19,13 +19,13 @@ artifact = { version = "0.2.0", path = "crates/artifact", package = "cydonia-art
 anyhow = "1"
 axum = "0.8"
 base64 = "0.22"
-bezel = "0.2.30"
-browser = { version = "0.2.30", package = "bezel-browser", features = ["inspector"] }
-canvas = { version = "0.2.30", package = "bezel-canvas", default-features = false }
+bezel = "0.2.31"
+browser = { version = "0.2.31", package = "bezel-browser", features = ["inspector"] }
+canvas = { version = "0.2.31", package = "bezel-canvas", default-features = false }
 chrono = "0.4"
 csv = "1.4"
 dirs = "6"
-editor = { version = "0.2.30", package = "bezel-editor" }
+editor = { version = "0.2.31", package = "bezel-editor" }
 futures = "0.3"
 guest = { version = "0.2.0", path = "crates/guest", package = "cydonia-guest" }
 guest-macros = { version = "0.2.0", path = "crates/guest-macros", package = "cydonia-guest-macros" }
@@ -35,7 +35,7 @@ gpui = { version = "0.3.30", package = "bezel-gpui" }
 gpui_platform = { version = "0.3.30", package = "bezel-gpui-platform" }
 image = "0.25"
 manifest = { version = "0.2.0", path = "crates/manifest", package = "cydonia-manifest" }
-markdown = { version = "0.2.30", package = "bezel-markdown", features = ["mermaid"] }
+markdown = { version = "0.2.31", package = "bezel-markdown", features = ["mermaid"] }
 mcp = { version = "0.2.0", path = "crates/mcp", package = "cydonia-mcp", default-features = false }
 notify = "8"
 portable-pty = "0.9"
@@ -50,9 +50,9 @@ sha2 = "0.10"
 similar = "2"
 skills = { version = "0.2.0", path = "crates/skills", package = "cydonia-skills" }
 thiserror = "2"
-syntax = { version = "0.2.30", package = "bezel-syntax", features = ["wasm"] }
+syntax = { version = "0.2.31", package = "bezel-syntax", features = ["wasm"] }
 prompts = { version = "0.2.0", path = "crates/prompts", package = "cydonia-prompts" }
-terminal = { version = "0.2.30", package = "bezel-terminal" }
+terminal = { version = "0.2.31", package = "bezel-terminal" }
 tokio = "1"
 toml = "0.8"
 toml_edit = "0.22"
@@ -72,19 +72,3 @@ lto = "fat"
 codegen-units = 1
 strip = "symbols"
 
-[patch.crates-io]
-bezel-agent = { path = "../bezel/crates/agent" }
-bezel = { path = "../bezel/crates/bezel" }
-bezel-blocks = { path = "../bezel/crates/blocks" }
-bezel-browser = { path = "../bezel/crates/browser" }
-bezel-canvas = { path = "../bezel/crates/canvas" }
-bezel-chart = { path = "../bezel/crates/chart" }
-bezel-editor = { path = "../bezel/crates/editor" }
-bezel-icons = { path = "../bezel/crates/icons" }
-bezel-markdown = { path = "../bezel/crates/markdown" }
-bezel-mermaid = { path = "../bezel/crates/mermaid" }
-bezel-motion = { path = "../bezel/crates/motion" }
-bezel-syntax = { path = "../bezel/crates/syntax" }
-bezel-terminal = { path = "../bezel/crates/terminal" }
-bezel-theme = { path = "../bezel/crates/theme" }
-bezel-ui = { path = "../bezel/crates/ui" }
