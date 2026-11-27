@@ -871,6 +871,15 @@ impl Features {
     pub fn threads(&self) -> bool {
         self.sessions && self.article_threads
     }
+
+    /// Turns off what this build does not carry, whatever the file says.
+    pub fn normalize(&mut self) {
+        for feature in Feature::ALL.into_iter().chain(Feature::PANEL) {
+            if !feature.available() {
+                feature.set(self, false);
+            }
+        }
+    }
 }
 
 impl Default for Features {
@@ -879,7 +888,7 @@ impl Default for Features {
             sessions: true,
             boards: true,
             canvases: true,
-            designs: true,
+            designs: Feature::Designs.available(),
             tables: false,
             article_threads: true,
             panel: PanelTabs::default(),
@@ -953,9 +962,10 @@ impl Feature {
         }
     }
 
-    /// Whether this build carries it: Linux builds have no browser.
+    /// Whether this build carries it: Linux builds have no browser and no
+    /// designs.
     pub fn available(self) -> bool {
-        !(cfg!(target_os = "linux") && self == Self::Browser)
+        !(cfg!(target_os = "linux") && matches!(self, Self::Browser | Self::Designs))
     }
 
     fn in_panel(self) -> bool {
@@ -1177,6 +1187,7 @@ pub fn load() -> Result<Settings> {
     // the file, where it can be read and fixed; it just never launches.
     settings.agents.retain(Agent::pinned);
     settings.appearance.normalize();
+    settings.features.normalize();
     Ok(settings)
 }
 

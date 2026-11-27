@@ -1,11 +1,15 @@
-use crate::view::kit::web::{Navigation, WebPresentation, console::ConsoleLog};
+#[cfg(not(target_os = "linux"))]
+use crate::view::kit::web::console::ConsoleLog;
+use crate::view::kit::web::{Navigation, WebPresentation};
 use artifact::{canvas::web::Source, design::Artboard, web::Viewport};
 use bezel::gpui::{
     App, AppContext as _, AsyncApp, Entity, Pixels, RenderImage, Size, Subscription, Window, div,
     prelude::*, px, size,
 };
 use browser::{WebView, WebViewEvent};
-use std::{cell::RefCell, path::Path, rc::Rc, sync::Arc, time::Duration};
+#[cfg(not(target_os = "linux"))]
+use std::cell::RefCell;
+use std::{path::Path, rc::Rc, sync::Arc, time::Duration};
 
 const WAIT: Duration = Duration::from_secs(12);
 pub(super) const THUMBNAIL_WIDTH: u32 = 960;
@@ -35,6 +39,7 @@ impl Revision {
 #[derive(Clone)]
 pub(crate) struct LiveArtboard {
     pub(crate) browser: Entity<WebView>,
+    #[cfg(not(target_os = "linux"))]
     pub(crate) console: Rc<RefCell<ConsoleLog>>,
     navigation: Navigation,
     _events: Rc<Subscription>,
@@ -75,13 +80,16 @@ pub(crate) fn open(
         }
     });
     browser.present(viewport, interactive, window, cx)?;
+    #[cfg(not(target_os = "linux"))]
     let console = Rc::new(RefCell::new(ConsoleLog::default()));
+    #[cfg(not(target_os = "linux"))]
     let log = console.clone();
     let navigation = Navigation::default();
     let load = navigation.clone();
     let events = cx.subscribe(
         &browser,
         move |browser, event: &WebViewEvent, cx| match event {
+            #[cfg(not(target_os = "linux"))]
             WebViewEvent::Console(message) => log.borrow_mut().push(message.clone()),
             WebViewEvent::Load(state) => load.update(*state, browser.read(cx)),
             _ => {}
@@ -89,6 +97,7 @@ pub(crate) fn open(
     );
     Ok(LiveArtboard {
         browser,
+        #[cfg(not(target_os = "linux"))]
         console,
         navigation,
         _events: Rc::new(events),

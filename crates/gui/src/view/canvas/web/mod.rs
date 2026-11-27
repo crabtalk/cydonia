@@ -11,11 +11,12 @@ use artifact::{
     canvas::web::{self, Frame, Source},
     web::Viewport,
 };
+#[cfg(not(target_os = "linux"))]
+use bezel::gpui::{self, point, size};
 use bezel::{
     gpui::{
-        self, AnyElement, App, AppContext as _, Context, Entity, FocusHandle, Focusable as _,
-        ObjectFit, Render, StyledImage as _, Subscription, Task, WeakEntity, Window, div, img,
-        point, prelude::*, px, size,
+        AnyElement, App, AppContext as _, Context, Entity, FocusHandle, Focusable as _, ObjectFit,
+        Render, StyledImage as _, Subscription, Task, WeakEntity, Window, div, img, prelude::*, px,
     },
     theme::{TextStyle, Theme, Typeset as _},
     ui::{
@@ -196,6 +197,7 @@ impl Page {
             .ok_or_else(|| "web frame is unavailable".into())
     }
 
+    #[cfg(not(target_os = "linux"))]
     pub(crate) fn ready(&self, cx: &App) -> bool {
         self.browser
             .as_ref()
@@ -493,6 +495,7 @@ impl Render for Page {
 }
 
 impl CanvasView {
+    #[cfg(not(target_os = "linux"))]
     pub(crate) fn web_frame(&self, id: &str, cx: &App) -> Result<Entity<Page>, String> {
         let surface = self.surface.read(cx);
         let editor = surface.editor();

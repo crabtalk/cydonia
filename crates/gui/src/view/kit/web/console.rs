@@ -1,6 +1,11 @@
-use browser::{ConsoleLevel, ConsoleMessage};
+#[cfg(not(target_os = "linux"))]
+use browser::ConsoleLevel;
+use browser::ConsoleMessage;
+#[cfg(not(target_os = "linux"))]
 use mcp::rail::Level;
-use std::{collections::VecDeque, fmt::Write as _};
+use std::collections::VecDeque;
+#[cfg(not(target_os = "linux"))]
+use std::fmt::Write as _;
 
 pub(crate) const LOG_LIMIT: usize = 500;
 
@@ -19,6 +24,7 @@ impl ConsoleLog {
         self.entries.push_back((self.cursor, message));
     }
 
+    #[cfg(not(target_os = "linux"))]
     pub(crate) fn read(&self, levels: &[Level], since: u64) -> String {
         let mut out = format!("cursor: {}", self.cursor);
         if let Some((first, _)) = self.entries.front()

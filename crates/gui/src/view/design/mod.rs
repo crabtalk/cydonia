@@ -326,6 +326,7 @@ impl DesignView {
             .map(|live| live.browser.clone())
     }
 
+    #[cfg(not(target_os = "linux"))]
     pub(crate) fn live_artboard(
         &self,
         artboard: &str,
