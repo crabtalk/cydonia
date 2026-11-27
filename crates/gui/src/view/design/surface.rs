@@ -165,6 +165,8 @@ impl DesignView {
             .size_full()
             .relative()
             .overflow_hidden()
+            .border_1()
+            .border_color(theme.border)
             .bg(theme.surface_card)
             .on_mouse_down(MouseButton::Right, move |event, window, cx| {
                 cx.stop_propagation();

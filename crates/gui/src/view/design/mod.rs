@@ -710,10 +710,12 @@ impl Render for DesignView {
                 Some(Ok(live)) => {
                     let browser = live.browser.clone();
                     let fit = preview::fit(record.viewport, self.available);
-                    let review = div().w(fit.width).h(fit.height).child(browser);
+                    let review = div()
+                        .border_1()
+                        .border_color(theme.border)
+                        .child(div().w(fit.width).h(fit.height).child(browser));
                     div()
                         .size_full()
-                        .bg(theme.canvas_bg)
                         .flex()
                         .items_center()
                         .justify_center()
