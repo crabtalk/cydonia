@@ -12,6 +12,8 @@ use std::{cell::Cell, rc::Rc};
 
 const INITIAL_DOCUMENT: &str = "about:blank";
 
+pub(crate) mod console;
+
 #[derive(Clone, Default)]
 pub(crate) struct Navigation(Rc<Cell<bool>>);
 

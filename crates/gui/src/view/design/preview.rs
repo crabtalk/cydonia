@@ -1,7 +1,4 @@
-use crate::view::{
-    component::browse::console::ConsoleLog,
-    kit::web::{Navigation, WebPresentation},
-};
+use crate::view::kit::web::{Navigation, WebPresentation, console::ConsoleLog};
 use artifact::{canvas::web::Source, design::Artboard, web::Viewport};
 use bezel::gpui::{
     App, AppContext as _, AsyncApp, Entity, Pixels, RenderImage, Size, Subscription, Window, div,

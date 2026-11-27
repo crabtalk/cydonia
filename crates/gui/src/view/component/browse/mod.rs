@@ -29,8 +29,6 @@ use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::Value;
 use std::{fmt::Write as _, path::Path, time::Duration};
 
-pub(crate) mod console;
-
 /// Characters of a page's text a read carries. Sliced in the page, so the rest
 /// never crosses the bridge.
 const MAX_TEXT: usize = 8000;

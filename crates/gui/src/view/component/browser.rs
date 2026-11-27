@@ -3,7 +3,7 @@
 //! A tab holds a tab id, not the page. Pages live in [`Pages`], app-wide, so a
 //! panel or window dropping does not drop them; only closing the tab does.
 
-use crate::{model::settings::Browsing, view::component::browse::console::ConsoleLog};
+use crate::{model::settings::Browsing, view::kit::web::console::ConsoleLog};
 use bezel::{
     gpui::{
         self, AnyElement, App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable,

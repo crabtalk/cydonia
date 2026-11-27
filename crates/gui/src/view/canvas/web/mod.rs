@@ -2,8 +2,9 @@ use crate::{
     model::{file::File, workspace::references},
     view::{
         canvas::CanvasView,
-        component::browse::console::ConsoleLog,
-        kit::web::{Navigation, WebPresentation, frame_header, viewport_items},
+        kit::web::{
+            Navigation, WebPresentation, console::ConsoleLog, frame_header, viewport_items,
+        },
     },
 };
 use artifact::{
